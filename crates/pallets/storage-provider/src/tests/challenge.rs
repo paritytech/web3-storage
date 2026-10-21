@@ -1211,7 +1211,17 @@ mod challenge_tests {
 
     /// Root and proof of a single-leaf MMR over `data_root` and `data_size`.
     fn single_leaf_mmr(data_root: H256, data_size: u64) -> (H256, MmrProof) {
+        single_leaf_mmr_of_version(storage_primitives::LEAF_VERSION, data_root, data_size)
+    }
+
+    /// [`single_leaf_mmr`] with a leaf of `leaf_version`.
+    fn single_leaf_mmr_of_version(
+        leaf_version: u8,
+        data_root: H256,
+        data_size: u64,
+    ) -> (H256, MmrProof) {
         let leaf = MmrLeaf {
+            leaf_version,
             data_root,
             data_size,
             total_size: data_size,
@@ -1397,14 +1407,18 @@ mod challenge_tests {
         });
     }
 
-    /// A leaf with `data_size == 0` has no chunk: `chunk_count(0)` is 0, so no
-    /// `Proof` verifies for any `chunk_index`. The provider must not commit
-    /// such a leaf (`/commit` rejects a tree whose only chunk is empty).
+    /// A leaf whose `leaf_version` the pallet does not know has an undefined
+    /// chunk size and tree shape, so no proof for it verifies.
     #[test]
-    fn empty_leaf_has_no_chunk_to_prove() {
+    fn unknown_leaf_version_is_an_invalid_proof() {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
-            let (mmr_root, mmr_proof) = single_leaf_mmr(hash_leaf(&[]), 0);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof) = single_leaf_mmr_of_version(
+                storage_primitives::LEAF_VERSION + 1,
+                hash_leaf(&chunk_data),
+                chunk_data.len() as u64,
+            );
             setup_primary_with_snapshot(mmr_root, 0, 1);
 
             assert_ok!(StorageProvider::challenge_checkpoint(
@@ -1424,13 +1438,51 @@ mod challenge_tests {
                         index: 0u16,
                     },
                     ChallengeResponse::Proof {
-                        chunk_data: make_chunk_bv(&[]),
+                        chunk_data: make_chunk_bv(&chunk_data),
                         mmr_proof,
                         chunk_proof: vec![],
                     },
                 ),
                 Error::<Test>::InvalidProof
             );
+            assert_challenge_still_open();
+        });
+    }
+
+    /// A `ChunkOutOfRange` response for a leaf with an unknown `leaf_version`
+    /// is rejected: the pallet cannot count that leaf's chunks.
+    #[test]
+    fn unknown_leaf_version_rejects_chunk_out_of_range() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof) = single_leaf_mmr_of_version(
+                storage_primitives::LEAF_VERSION + 1,
+                hash_leaf(b"chunk-0"),
+                7,
+            );
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 1,
+                },
+            ));
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::ChunkOutOfRange { mmr_proof },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_challenge_still_open();
         });
     }
 
@@ -1703,6 +1755,7 @@ mod challenge_tests {
             // An MMR proof for a different leaf — its bagged root won't match
             // the challenged root.
             let bad_leaf = MmrLeaf {
+                leaf_version: storage_primitives::LEAF_VERSION,
                 data_root: H256::repeat_byte(0xff),
                 data_size: 1,
                 total_size: 1,
@@ -2992,11 +3045,13 @@ mod challenge_tests {
         let chunk0 = b"file0".to_vec();
         let chunk1 = b"file1".to_vec();
         let leaf0 = MmrLeaf {
+            leaf_version: storage_primitives::LEAF_VERSION,
             data_root: storage_primitives::hash_leaf(&chunk0),
             data_size: 5,
             total_size: 5,
         };
         let leaf1 = MmrLeaf {
+            leaf_version: storage_primitives::LEAF_VERSION,
             data_root: storage_primitives::hash_leaf(&chunk1),
             data_size: 5,
             total_size: 10,
@@ -3005,15 +3060,131 @@ mod challenge_tests {
         (root, [(chunk0, leaf0), (chunk1, leaf1)])
     }
 
+    /// MMR proof of leaf `index` of `two_leaf_mmr`.
+    fn two_leaf_mmr_proof(leaves: &[(Vec<u8>, MmrLeaf); 2], index: usize) -> MmrProof {
+        let mmr_leaves: Vec<MmrLeaf> = leaves.iter().map(|(_, leaf)| leaf.clone()).collect();
+        mmr::proof(&mmr_leaves, index as u64).unwrap().unwrap().1
+    }
+
     /// `Proof` response for leaf `index` of `two_leaf_mmr`.
     fn two_leaf_proof(leaves: &[(Vec<u8>, MmrLeaf); 2], index: usize) -> ChallengeResponse<Test> {
-        let mmr_leaves: Vec<MmrLeaf> = leaves.iter().map(|(_, leaf)| leaf.clone()).collect();
-        let (_, mmr_proof) = mmr::proof(&mmr_leaves, index as u64).unwrap().unwrap();
         ChallengeResponse::Proof {
             chunk_data: make_chunk_bv(&leaves[index].0),
-            mmr_proof,
+            mmr_proof: two_leaf_mmr_proof(leaves, index),
             chunk_proof: vec![],
         }
+    }
+
+    /// A `ChunkOutOfRange` response defends a challenge whose `chunk_index` is
+    /// at or past the leaf's chunk count: the leaf has no such chunk, so no
+    /// `Proof` exists, and without this response the provider would be
+    /// slashed on timeout.
+    #[test]
+    fn chunk_out_of_range_defends_a_challenge_past_the_last_chunk() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 1,
+                },
+            ));
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::ChunkOutOfRange { mmr_proof },
+            ));
+
+            assert!(Challenges::<Test>::get(101, 0).is_none());
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stake, 200);
+            assert_eq!(provider.stats.challenges_failed, 0);
+        });
+    }
+
+    /// `ChunkOutOfRange` is rejected when the leaf has the challenged chunk:
+    /// the provider has to send that chunk.
+    #[test]
+    fn chunk_out_of_range_rejects_an_index_the_leaf_has() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::ChunkOutOfRange { mmr_proof },
+                ),
+                Error::<Test>::InvalidProof
+            );
+        });
+    }
+
+    /// `ChunkOutOfRange` is bound to the challenged `leaf_index`: the proof of
+    /// another leaf is rejected even when that leaf has no such chunk either,
+    /// so a provider cannot pick a shorter leaf to claim the index is out of
+    /// range.
+    #[test]
+    fn chunk_out_of_range_binds_leaf_index() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (root, leaves) = two_leaf_mmr();
+            setup_primary_with_snapshot(root, 0, 2);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 1,
+                },
+            ));
+            let challenge_id = ChallengeId {
+                deadline: 101u64,
+                index: 0u16,
+            };
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    challenge_id,
+                    ChallengeResponse::ChunkOutOfRange {
+                        mmr_proof: two_leaf_mmr_proof(&leaves, 1),
+                    },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                challenge_id,
+                ChallengeResponse::ChunkOutOfRange {
+                    mmr_proof: two_leaf_mmr_proof(&leaves, 0),
+                },
+            ));
+        });
     }
 
     /// A `Proof` is bound to the challenged `leaf_index`: a proof that is

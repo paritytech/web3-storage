@@ -25,7 +25,8 @@ pub(crate) fn decode_hash(hash: &str) -> Result<H256, Error> {
     })
 }
 
-/// Request to upload a node (chunk or internal node).
+/// Request to upload a node: a chunk (`data`) or an internal node
+/// (`children`). A request with both or neither is rejected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadNodeRequest {
     /// Bucket this node belongs to
@@ -33,11 +34,11 @@ pub struct UploadNodeRequest {
     /// Expected hash of the node: the chunk hash for a chunk, the hash of
     /// the two children for an internal node
     pub hash: String,
-    /// Base64-encoded node data: the chunk bytes for a chunk, the left child
-    /// hash followed by the right child hash for an internal node. The
-    /// provider rejects an internal node whose data differs.
-    pub data: String,
-    /// Left and right child hashes for an internal node, null for a chunk
+    /// Base64-encoded chunk bytes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    /// Left and right child hashes of an internal node
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<String>>,
 }
 
@@ -47,25 +48,27 @@ pub struct UploadNodeResponse {
     pub stored: bool,
 }
 
-/// Response from downloading a node.
+/// Response from downloading a node: a chunk has `data`, an internal node has
+/// `children`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadNodeResponse {
     pub hash: H256,
-    pub data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<H256>>,
 }
 
 impl DownloadNodeResponse {
     /// The wire form of `node`, which is stored under `hash`.
     pub fn new(hash: H256, node: &ChunkTreeNode) -> Self {
-        let children = match node {
-            ChunkTreeNode::Chunk(_) => None,
-            ChunkTreeNode::Internal { left, right } => Some(vec![*left, *right]),
+        let (data, children) = match node {
+            ChunkTreeNode::Chunk(data) => (Some(BASE64.encode(data)), None),
+            ChunkTreeNode::Internal { left, right } => (None, Some(vec![*left, *right])),
         };
-
         Self {
             hash,
-            data: BASE64.encode(node.preimage()),
+            data,
             children,
         }
     }

@@ -60,7 +60,7 @@ primaries (replicas stay challengeable by anyone).
 
 Users who create conflicts without checkpointing waste their quota—providers must keep all signed data.
 
-**Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. Internal nodes are data whose content is child hashes. Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete.
+**Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. An internal node is its two child hashes; chunks and nodes are hashed with different prefixes (`0x00` for a chunk, `0x01` for a node). Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete. The provider signs a commitment only over roots whose tree is the RFC 9162 tree over `CHUNK_SIZE` chunks (see "Chunk Tree"), and rejects other shapes and chunk sizes.
 
 ### Provider Lifecycle in Bucket
 
@@ -228,7 +228,10 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     #[pallet::constant]
     type MinProviderStake: Get<BalanceOf<Self>>;
 
-    /// Maximum chunk size for challenge responses (e.g., 256 KiB).
+    /// Upper bound of `chunk_data` in a challenge response: at least the
+    /// `CHUNK_SIZE` of every leaf version the pallet accepts. A leaf's chunk
+    /// count comes from its own version's `CHUNK_SIZE`, not from this value,
+    /// so a runtime upgrade that changes it does not change `n` for any leaf.
     #[pallet::constant]
     type MaxChunkSize: Get<u32>;
 
@@ -289,7 +292,7 @@ parachain `HOURS`:
 | `MaxMultiaddrLength` | `128` |
 | `MaxMembers` | `100` |
 | `MaxPrimaryProviders` | `5` |
-| `MaxChunkSize` | `262_144` (256 KiB) |
+| `MaxChunkSize` | `262_144` (256 KiB, the `CHUNK_SIZE` of leaf version 1) |
 | `ChallengeTimeout` | `48 * RC_HOURS` |
 | `SettlementTimeout` | `24 * RC_HOURS` |
 | `RequestTimeout` | `6 * RC_HOURS` |
@@ -1907,8 +1910,14 @@ pub enum ChallengeResponse<T: Config> {
     Proof {
         chunk_data: BoundedVec<u8, T::MaxChunkSize>,
         mmr_proof: MmrProof,
-        /// Sibling hashes from the chunk up to `mmr_proof.leaf.data_root`.
+        /// RFC 9162 inclusion path: sibling hashes from the chunk to data_root
         chunk_proof: Vec<H256>,
+    },
+    /// The challenged `chunk_index` is at or beyond the leaf's chunk count.
+    /// The MMR proof carries the leaf, so the chain derives the count from
+    /// `leaf.data_size` itself.
+    ChunkOutOfRange {
+        mmr_proof: MmrProof,
     },
     /// Data was deleted - show newer commitment without this seq.
     /// Admin signature proves the admin authorized the deletion (new MMR excludes the challenged data).
@@ -1989,13 +1998,21 @@ Upload Node (chunk or internal node)
 PUT /node
 Authorization: Web3Storage <...>       # Writer or Admin
 
-Request:
+Request (a chunk):
 {
   "bucket_id": 1234,                   // u64
-  "hash": "0xabc...",
-  "data": "<base64 encoded>",
-  "children": ["0xchild1...", "0xchild2..."] | null  // null for leaf chunks
+  "hash": "0xabc...",                  // hash_leaf(data)
+  "data": "<base64 encoded>"
 }
+
+Request (an internal node):
+{
+  "bucket_id": 1234,
+  "hash": "0xdef...",                  // hash_children(left, right)
+  "children": ["0xleft...", "0xright..."]
+}
+
+A request carries exactly one of `data` and `children`.
 
 Note: HTTP API is used for simplicity and firewall-friendliness. Binary protocols
 (e.g., libp2p streams) could be added later for efficiency. Base64 encoding adds
@@ -2007,6 +2024,9 @@ Response (200 OK):
 
 Response (400 Bad Request):
 { "error": "children_missing", "missing": ["0xchild2..."] }
+{ "error": "invalid_node" }               // both or neither of data and children
+{ "error": "invalid_child_count", "expected": 2, "actual": 3 }
+{ "error": "chunk_too_large", "size": 300000, "max": 262144 }
 
 Response (507 Insufficient Storage):
 { "error": "quota_exceeded", "used": 1000000, "max": 1000000 }
@@ -2041,6 +2061,14 @@ If a node exists, skip its subtree. Upload missing nodes bottom-up.
 
 After uploading, client requests provider to add data_root(s) to MMR.
 
+Before it signs, the provider checks every `data_root` against the chunk tree
+rules (see "Chunk Tree"): the stored tree has the RFC 9162 shape over its
+chunks, every chunk except the last has exactly `CHUNK_SIZE` bytes, and the
+last has 1 to `CHUNK_SIZE` bytes. The provider sets the leaf's `data_size` to
+the sum of the chunk lengths. A root that fails a check is rejected with
+`non_canonical_tree`. The provider never signs a root it cannot prove every
+chunk of.
+
 ```
 Commit
 ──────
@@ -2063,6 +2091,7 @@ Response (200 OK):
 
 Response (400 Bad Request):
 { "error": "root_not_found", "missing": ["0xroot2..."] }
+{ "error": "non_canonical_tree", "data_root": "0xroot1..." }
 ```
 
 ### Read
@@ -2131,12 +2160,11 @@ Download Node
 ─────────────
 GET /node?hash=0x...
 
-Response (200 OK):
-{
-  "hash": "0xabc...",
-  "data": "<base64 encoded>",
-  "children": ["0xchild1...", "0xchild2..."] | null
-}
+Response (200 OK), a chunk:
+{ "hash": "0xabc...", "data": "<base64 encoded>" }
+
+Response (200 OK), an internal node:
+{ "hash": "0xdef...", "children": ["0xleft...", "0xright..."] }
 
 Response (404 Not Found):
 { "error": "not_found" }
@@ -2186,7 +2214,7 @@ GET /mmr_proof?bucket_id=0x...&leaf_index=5
 
 Response:
 {
-  "leaf": { "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
+  "leaf": { "leaf_version": 1, "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
   "items": ["0x...", ...]
 }
 
@@ -2197,11 +2225,14 @@ GET /chunk_proof?data_root=0x...&chunk_index=3
 Response:
 {
   "chunk_hash": "0xabc...",
-  "proof": ["0x...", ...]
+  "proof": ["0xsibling1...", "0xsibling2..."]   // RFC 9162 inclusion path
 }
 
 Response (404 Not Found):
 { "error": "data_root_not_found" }
+
+Response (400 Bad Request):
+{ "error": "chunk_index_out_of_range" }   // chunk_index >= ceil(data_size / CHUNK_SIZE)
 
 Delete Data (admin only)
 ────────────────────────
@@ -2339,7 +2370,7 @@ Response:
 }
 
 Note: Replica already knows the trusted mmr_root from the chain. It fetches
-peaks from a provider and verifies: hash(peaks) == trusted_root. If verification
+peaks from a provider and verifies: bag_peaks(peaks) == trusted_root (peak bagging uses the `0x02` prefix). If verification
 fails, try another provider. Once verified, use peaks to start top-down traversal.
 
 Get MMR Subtree
@@ -2379,8 +2410,8 @@ Request:
 Response:
 {
   "nodes": [
-    { "hash": "0xdef...", "data": "<base64>", "children": ["0xchild1...", "0xchild2..."] },
-    { "hash": "0x456...", "data": "<base64>", "children": null }  // leaf chunk
+    { "hash": "0xdef...", "children": ["0xleft...", "0xright..."] },  // internal node
+    { "hash": "0x456...", "data": "<base64>" }                        // chunk
   ]
 }
 
@@ -2394,14 +2425,15 @@ requests when syncing many nodes.
 1. Query chain for bucket's current snapshot (mmr_root, start_seq, leaf_count)
    Also note historical_roots for fallback positions
 2. Fetch mmr_peaks from any provider
-3. Verify: hash(peaks) == trusted mmr_root from chain
+3. Verify: bag_peaks(peaks) == trusted mmr_root from chain (bagging uses the `0x02` prefix)
    If mismatch, try another provider
 4. Compare verified peaks with locally stored peaks
 5. For each differing peak:
    a. Fetch subtree level by level (breadth-first)
    b. At each level, check which nodes exist locally
    c. Fetch missing nodes from any available provider
-   d. Verify fetched nodes: hash(data) == expected_hash
+   d. Verify fetched nodes against expected_hash: a node with `data` is a chunk, hashed with `0x00`;
+      a node with `children` is hashed with `0x01` over left ++ right; reject a mismatch
    e. Continue to children of newly fetched nodes
 6. Once all nodes fetched and verified:
    a. Build signature over roots array matching on-chain historical_roots
@@ -2458,7 +2490,10 @@ the exact chunk a challenge targets.
 pub struct ChunkLocation {
     /// Index of the challenged leaf within the MMR
     pub leaf_index: u64,
-    /// Index of the challenged chunk within the leaf's data
+    /// Index of the challenged chunk within the leaf's data: chunk `i` covers
+    /// bytes `[i * CHUNK_SIZE, min((i + 1) * CHUNK_SIZE, data_size))`. An
+    /// index at or beyond the chunk count is answered with
+    /// `ChallengeResponse::ChunkOutOfRange`.
     pub chunk_index: u64,
 }
 ```
@@ -2485,9 +2520,14 @@ pub struct CommitmentPayload {
 
 ```rust
 pub struct MmrLeaf {
-    /// Merkle root of chunk tree
+    /// Leaf format version (`LEAF_VERSION = 1`). First field, so the leaf
+    /// hash preimage is `0x00 ++ leaf_version ++ ...`. The version defines the
+    /// fields below, `CHUNK_SIZE` and the chunk tree shape.
+    pub leaf_version: u8,
+    /// Root of the chunk tree (see "Chunk Tree")
     pub data_root: H256,
-    /// Size of content under this data_root
+    /// Byte length of the data under `data_root`. The chunk count is
+    /// `ceil(data_size / CHUNK_SIZE)` and is never zero.
     pub data_size: u64,
     /// Cumulative unique bytes in MMR at this point
     pub total_size: u64,
@@ -2495,11 +2535,53 @@ pub struct MmrLeaf {
 // Sequence number is implicit: start_seq + leaf_position
 ```
 
-### Merkle Proofs
+The provider writes `LEAF_VERSION`, the current version, into every leaf it
+commits. A verifier reads `leaf_version` first and checks the rest of the leaf
+under that version: its fields, its `CHUNK_SIZE`, the chunk tree shape and the
+hash prefixes. The pallet accepts every version it knows; a response whose
+leaf has an unknown version fails with `InvalidProof`. A format change bumps
+`LEAF_VERSION`; leaves of different versions share one MMR, so no root has to
+be recomputed.
 
-A chunk proof is a `Vec<H256>`: the sibling hashes from the chunk up to
-`data_root`. The verifier takes the side of each sibling from `chunk_index` and
-`chunk_count(data_size)`, so the proof contains no directions.
+### Hash Prefixes
+
+Every hash in the chunk tree and the MMR is `blake2_256` over a one-byte
+prefix and the payload. The prefix identifies the kind of node the payload
+is, so a node's bytes never verify as a leaf of the same tree.
+
+| Prefix | Preimage | Hashes | Function |
+|---|---|---|---|
+| `0x00` | `0x00 ++ chunk` | a chunk: leaf of the chunk tree | `hash_leaf` |
+| `0x00` | `0x00 ++ leaf.encode()` | an `MmrLeaf`: leaf of the MMR (`leaf_version` is the first byte after the prefix) | `hash_leaf` |
+| `0x01` | `0x01 ++ left ++ right` | an internal node, in the chunk tree and in the MMR | `hash_children` |
+| `0x02` | `0x02 ++ peak ++ rest` | the MMR root: peaks folded right to left, one peak is the root, no peaks give zero | `bag_peaks` |
+
+### Chunk Tree
+
+The chunk tree is the binary Merkle tree of RFC 9162 (section 2.1.1) over the
+chunks of one piece of data, with the hashes of "Hash Prefixes" in place of
+SHA-256: the tree over one chunk is `hash_leaf(chunk)`; the tree over `n > 1`
+chunks is `hash_children(tree(chunks[0..k]), tree(chunks[k..n]))` with `k` the
+largest power of two smaller than `n`.
+
+Every chunk has `CHUNK_SIZE` bytes (256 KiB in leaf version 1) except the
+last, which has 1 to `CHUNK_SIZE` bytes, so `n = ceil(data_size / CHUNK_SIZE)`
+and `n >= 1`. Empty data has no chunks: the client does not upload it, and a
+root whose last chunk is empty fails the `/commit` check.
+
+Pairing nodes left to right at each level and moving an unpaired last node up
+unchanged builds the same tree. Reference implementation:
+`storage_primitives::merkle` (`merkle_root`, `build_merkle_proofs`,
+`verify_merkle_proof`).
+
+A chunk proof is the RFC 9162 inclusion proof (section 2.1.3.1): the sibling
+hashes from the chunk to the root, and nothing else. The verifier runs the
+algorithm of section 2.1.3.2 with `leaf_index = chunk_index` and
+`tree_size = n`; it derives every left/right direction from those two values,
+so the prover cannot choose them and the proof is bound to the chunk count
+that `data_size` implies. A proof against a tree of another size fails.
+
+### MMR Proof
 
 ```rust
 pub struct MmrProof {
@@ -2597,11 +2679,13 @@ fn verify_challenge_response(
     match response {
         ChallengeResponse::Proof { chunk_data, mmr_proof, chunk_proof } => {
             // The chunk must sit in the leaf and the leaf in the committed MMR.
-            let chunk_hash = blake2_256(chunk_data);
+            // The chunk count comes from the proven leaf, not from the prover.
+            let chunk_count = chunk_count(&mmr_proof.leaf); // ceil(data_size / CHUNK_SIZE of leaf_version)
+            let chunk_hash = hash_leaf(chunk_data); // blake2_256(0x00 ++ chunk_data)
             let chunk_ok = verify_merkle_proof(
                 chunk_hash,
                 challenge.target.chunk_index,
-                chunk_count(mmr_proof.leaf.data_size),
+                chunk_count,
                 chunk_proof,
                 &mmr_proof.leaf.data_root,
             );
@@ -2610,6 +2694,15 @@ fn verify_challenge_response(
             // proof, so a proof for a different leaf of the same MMR does not verify.
             let mmr_ok = verify_mmr_proof(mmr_proof, challenge.target.leaf_index, &challenge.commitment);
             if chunk_ok && mmr_ok { Ok(()) } else { Err(Error::InvalidProof) }
+        }
+
+        ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
+            // The challenged leaf must be in the committed MMR and have no chunk at
+            // the index. Bound to target.leaf_index like the Proof arm, so the
+            // prover cannot pick a shorter leaf to claim the index is out of range.
+            let mmr_ok = verify_mmr_proof(mmr_proof, challenge.target.leaf_index, &challenge.commitment);
+            let out_of_range = challenge.target.chunk_index >= chunk_count(&mmr_proof.leaf);
+            if mmr_ok && out_of_range { Ok(()) } else { Err(Error::InvalidProof) }
         }
 
         ChallengeResponse::Deleted { new_mmr_root, new_start_seq, admin, admin_signature } => {

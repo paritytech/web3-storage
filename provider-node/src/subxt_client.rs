@@ -11,7 +11,9 @@
 //! connection).
 
 use crate::chain_connection::{self, ChainWatch};
-use crate::challenge_responder::{ChallengeChainClient, ChallengeError, DetectedChallenge};
+use crate::challenge_responder::{
+    ChallengeChainClient, ChallengeError, ChallengeResponse, DetectedChallenge,
+};
 use crate::Error;
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
@@ -815,6 +817,18 @@ fn to_runtime_hash(hash: H256) -> subxt::utils::H256 {
     subxt::utils::H256(hash.0)
 }
 
+fn to_runtime_mmr_proof(mmr_proof: storage_primitives::MmrProof) -> RuntimeMmrProof {
+    RuntimeMmrProof {
+        leaf: RuntimeMmrLeaf {
+            leaf_version: mmr_proof.leaf.leaf_version,
+            data_root: to_runtime_hash(mmr_proof.leaf.data_root),
+            data_size: mmr_proof.leaf.data_size,
+            total_size: mmr_proof.leaf.total_size,
+        },
+        items: mmr_proof.items.into_iter().map(to_runtime_hash).collect(),
+    }
+}
+
 fn commitment(commitment: RuntimeCommitment) -> Commitment {
     Commitment {
         mmr_root: H256::from(commitment.mmr_root.0),
@@ -977,23 +991,24 @@ impl ChallengeChainClient for SubxtChainClient {
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
-        chunk_data: Vec<u8>,
-        mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: Vec<H256>,
+        response: ChallengeResponse,
     ) -> Result<H256, ChallengeError> {
         let (deadline, index) = challenge_id;
-
-        let response = RuntimeChallengeResponse::Proof {
-            chunk_data: BoundedVec(chunk_data),
-            mmr_proof: RuntimeMmrProof {
-                leaf: RuntimeMmrLeaf {
-                    data_root: to_runtime_hash(mmr_proof.leaf.data_root),
-                    data_size: mmr_proof.leaf.data_size,
-                    total_size: mmr_proof.leaf.total_size,
-                },
-                items: mmr_proof.items.into_iter().map(to_runtime_hash).collect(),
+        let response = match response {
+            ChallengeResponse::Proof {
+                chunk_data,
+                mmr_proof,
+                chunk_proof,
+            } => RuntimeChallengeResponse::Proof {
+                chunk_data: BoundedVec(chunk_data),
+                mmr_proof: to_runtime_mmr_proof(mmr_proof),
+                chunk_proof: chunk_proof.into_iter().map(to_runtime_hash).collect(),
             },
-            chunk_proof: chunk_proof.into_iter().map(to_runtime_hash).collect(),
+            ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
+                RuntimeChallengeResponse::ChunkOutOfRange {
+                    mmr_proof: to_runtime_mmr_proof(mmr_proof),
+                }
+            }
         };
 
         let tx = storage_subxt::api::tx()

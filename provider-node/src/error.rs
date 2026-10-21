@@ -172,10 +172,23 @@ impl IntoResponse for Error {
                         })),
                     },
                 ),
-                StorageError::InvalidInternalNodeData => (
+                StorageError::ChunkIndexOutOfRange {
+                    chunk_index,
+                    chunk_count,
+                } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
-                        error: "invalid_internal_node_data".to_string(),
+                        error: "chunk_index_out_of_range".to_string(),
+                        details: Some(serde_json::json!({
+                            "chunk_index": chunk_index,
+                            "chunk_count": chunk_count,
+                        })),
+                    },
+                ),
+                StorageError::InvalidNode => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_node".to_string(),
                         details: None,
                     },
                 ),
@@ -531,6 +544,13 @@ mod tests {
         assert_eq!(
             status_of(Error::from(provider_storage::Error::ChunkTooLarge {
                 size: 2
+            })),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::ChunkIndexOutOfRange {
+                chunk_index: 1,
+                chunk_count: 1
             })),
             StatusCode::BAD_REQUEST
         );

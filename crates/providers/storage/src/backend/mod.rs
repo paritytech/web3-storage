@@ -198,14 +198,22 @@ pub trait StorageBackend: Send + Sync {
         Ok(chunk_sizes.iter().map(|size| *size as u64).sum())
     }
 
-    /// Get chunk data and Merkle proof at the given index from a data root.
+    /// Chunk data and Merkle proof at `chunk_index` under `data_root`.
+    /// `ChunkIndexOutOfRange` when the tree has no chunk at that index.
     fn get_chunk_at_index(
         &self,
         data_root: H256,
         chunk_index: u64,
     ) -> Result<(Vec<u8>, Vec<H256>), Error> {
-        let (_, data, proof) = self
-            .get_chunks_in_range(data_root, chunk_index..chunk_index.saturating_add(1))?
+        let chunk_hashes = chunk_hashes(self, data_root);
+        let chunk_count = chunk_hashes.len() as u64;
+        if chunk_index >= chunk_count {
+            return Err(Error::ChunkIndexOutOfRange {
+                chunk_index,
+                chunk_count,
+            });
+        }
+        let (_, data, proof) = proven_chunks(self, &chunk_hashes, chunk_index..chunk_index + 1)?
             .pop()
             .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))?;
         Ok((data, proof))
@@ -218,25 +226,7 @@ pub trait StorageBackend: Send + Sync {
         data_root: H256,
         range: Range<u64>,
     ) -> Result<Vec<ProvenChunk>, Error> {
-        let chunk_hashes: Vec<H256> = self
-            .collect_leaves(data_root)
-            .into_iter()
-            .map(|(hash, _)| hash)
-            .collect();
-
-        let chunk_count = chunk_hashes.len() as u64;
-        let start = range.start.min(chunk_count) as usize;
-        let proofs = build_merkle_proofs(&chunk_hashes, start..range.end.min(chunk_count) as usize);
-
-        chunk_hashes[start..]
-            .iter()
-            .zip(proofs)
-            .enumerate()
-            .map(|(i, (hash, proof))| match self.get_node(hash) {
-                Some(ChunkTreeNode::Chunk(data)) => Ok((*hash, data, proof)),
-                _ => Err(Error::NodeNotFound(format!("chunk_data_{}", start + i))),
-            })
-            .collect()
+        proven_chunks(self, &chunk_hashes(self, data_root), range)
     }
 
     /// Delete data before a sequence number.
@@ -269,6 +259,37 @@ pub trait StorageBackend: Send + Sync {
 
     /// Get MMR peaks.
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
+}
+
+/// Leaf hashes of the tree under `data_root`, in chunk order.
+fn chunk_hashes<B: StorageBackend + ?Sized>(backend: &B, data_root: H256) -> Vec<H256> {
+    backend
+        .collect_leaves(data_root)
+        .into_iter()
+        .map(|(hash, _)| hash)
+        .collect()
+}
+
+/// Hash, data and Merkle proof of the chunks of `chunk_hashes` with an index
+/// in `range`, clipped to the tree.
+fn proven_chunks<B: StorageBackend + ?Sized>(
+    backend: &B,
+    chunk_hashes: &[H256],
+    range: Range<u64>,
+) -> Result<Vec<ProvenChunk>, Error> {
+    let chunk_count = chunk_hashes.len() as u64;
+    let start = range.start.min(chunk_count) as usize;
+    let proofs = build_merkle_proofs(chunk_hashes, start..range.end.min(chunk_count) as usize);
+
+    chunk_hashes[start..]
+        .iter()
+        .zip(proofs)
+        .enumerate()
+        .map(|(i, (hash, proof))| match backend.get_node(hash) {
+            Some(ChunkTreeNode::Chunk(data)) => Ok((*hash, data, proof)),
+            _ => Err(Error::NodeNotFound(format!("chunk_data_{}", start + i))),
+        })
+        .collect()
 }
 
 /// Store the internal nodes of `storage_primitives::merkle_tree` over `leaves`
@@ -367,7 +388,10 @@ mod tests {
             .is_empty());
         assert!(matches!(
             storage.get_chunk_at_index(root, 5),
-            Err(Error::NodeNotFound(_))
+            Err(Error::ChunkIndexOutOfRange {
+                chunk_index: 5,
+                chunk_count: 5
+            })
         ));
     }
 

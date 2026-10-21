@@ -343,8 +343,8 @@ async fn test_read_node_verified_checks_an_internal_node_by_its_children() {
         .await
         .unwrap();
 
-    // The root of a two-chunk file is an internal node; its data is the
-    // concatenation of its two child hashes.
+    // The root of a two-chunk file is an internal node; the provider serves
+    // its two child hashes.
     let node = client.read_node(&data_root).await.unwrap();
     assert!(
         matches!(node, Node::Internal { .. }),
