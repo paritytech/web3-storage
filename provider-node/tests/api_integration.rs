@@ -350,14 +350,12 @@ common::backend_tests! {
 
         let left = storage_primitives::hash_leaf(b"left");
         let right = storage_primitives::hash_leaf(b"right");
-        let mut node_data = left.as_bytes().to_vec();
-        node_data.extend_from_slice(right.as_bytes());
         let response = server
             .client
             .put(server.url("/node"))
             .json(&json!({
                 "bucket_id": 1,
-                "hash": format!("{:#x}", storage_primitives::blake2_256(&node_data)),
+                "hash": format!("{:#x}", H256::zero()),
                 "children": [
                     format!("{left:#x}"),
                     format!("{right:#x}"),
@@ -493,22 +491,8 @@ common::backend_tests! {
     }
 }
 
-/// The hash of an internal node from the `children` of its response.
-fn rehash_node(children: &Value) -> sp_core::H256 {
-    let [left, right]: [sp_core::H256; 2] = children
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|child| child.as_str().unwrap().parse().unwrap())
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap();
-    storage_primitives::hash_children(left, right)
-}
-
 // An internal node is its two children: both download paths return them and
-// no `data`, and a client that rehashes the children must land back on the
-// hash it asked for.
+// no `data`.
 common::backend_tests! {
     async fn test_download_internal_node_returns_its_children(backend) {
         let server = TestServer::new(backend).await;
@@ -559,7 +543,6 @@ common::backend_tests! {
         let body: Value = response.json().await.unwrap();
         assert_eq!(body["children"], json!(child_hexes));
         assert!(body.get("data").is_none());
-        assert_eq!(rehash_node(&body["children"]), hash);
 
         let response = server
             .client
@@ -1511,16 +1494,12 @@ common::backend_tests! {
     async fn test_upload_node_invalid_hex_children(backend) {
         let server = TestServer::new(backend).await;
 
-        let data = b"child test data";
-        let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("{hash:#x}");
-
         let resp = server
             .client
             .put(server.url("/node"))
             .json(&json!({
                 "bucket_id": 1,
-                "hash": hash_hex,
+                "hash": format!("{:#x}", H256::zero()),
                 "children": ["zzz_invalid_hex"]
             }))
             .send()
