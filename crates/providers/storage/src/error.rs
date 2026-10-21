@@ -25,8 +25,7 @@ pub enum Error {
     #[error("A node is either data (a chunk) or children (an internal node)")]
     InvalidNode,
 
-    /// No chunks to build a tree from. Send at least one byte. The fs and s3
-    /// PUT handlers reject an empty body before this, with `empty_body`.
+    /// No chunks to build a tree from. Send at least one byte.
     #[error("Empty data has no chunk tree")]
     EmptyData,
 
