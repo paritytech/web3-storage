@@ -21,7 +21,6 @@
 use crate::error::Error;
 use codec::{Decode, Encode};
 use sp_core::H256;
-use std::borrow::Cow;
 use storage_primitives::{hash_children, MmrLeaf, DEFAULT_CHUNK_SIZE};
 
 /// Version of the on-disk encoding of the records in this module.
@@ -67,9 +66,8 @@ impl BucketState {
 /// A node in a bucket's content-addressed chunk tree: a leaf chunk, or an
 /// internal node over exactly two children.
 ///
-/// An internal node's preimage (`concat(children)`) is derived rather than
-/// stored, so a node whose children disagree with its data is unrepresentable,
-/// it cannot be constructed, encoded, or decoded.
+/// A chunk carries its data and an internal node carries only its two child
+/// hashes, so a node is exactly one of the two.
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
 pub enum ChunkTreeNode {
     /// Leaf: hash = hash_leaf(data) = blake2_256(0x00 ++ data)
@@ -110,16 +108,12 @@ impl ChunkTreeNode {
         }
     }
 
-    /// The bytes this node serves as data: `data` for a chunk,
-    /// `concat(children)` for an internal node. The node's hash is taken over
-    /// these bytes behind a prefix that depends on the node kind, see
-    /// [`Self::hash`]. A chunk's bytes are borrowed, not copied.
-    pub fn preimage(&self) -> Cow<'_, [u8]> {
+    /// Bytes this node counts against the bucket quota: the data length for a
+    /// chunk, 64 (two child hashes) for an internal node.
+    pub fn size(&self) -> u64 {
         match self {
-            Self::Chunk(data) => Cow::Borrowed(data),
-            Self::Internal { left, right } => {
-                Cow::Owned([left.as_bytes(), right.as_bytes()].concat())
-            }
+            Self::Chunk(data) => data.len() as u64,
+            Self::Internal { .. } => 2 * H256::len_bytes() as u64,
         }
     }
 
@@ -326,21 +320,19 @@ mod tests {
     }
 
     #[test]
-    fn chunk_preimage_and_hash_are_its_data() {
+    fn chunk_size_and_hash_come_from_its_data() {
         let node = ChunkTreeNode::Chunk(vec![1, 2, 3]);
-        assert_eq!(*node.preimage(), [1, 2, 3]);
+        assert_eq!(node.size(), 3);
         assert_eq!(node.hash(), storage_primitives::hash_leaf(&[1, 2, 3]));
     }
 
     #[test]
-    fn internal_preimage_and_hash_are_derived_from_children() {
+    fn internal_size_and_hash_come_from_its_children() {
         let left = H256::repeat_byte(0x11);
         let right = H256::repeat_byte(0x22);
         let node = ChunkTreeNode::Internal { left, right };
 
-        let mut expected_preimage = left.as_bytes().to_vec();
-        expected_preimage.extend_from_slice(right.as_bytes());
-        assert_eq!(*node.preimage(), *expected_preimage);
+        assert_eq!(node.size(), 64);
         assert_eq!(node.hash(), hash_children(left, right));
     }
 }

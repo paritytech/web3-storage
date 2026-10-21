@@ -274,8 +274,7 @@ impl DiskStorage {
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        // A node costs its preimage length.
-        let charge = node.preimage().len() as u64;
+        let charge = node.size();
 
         let new_size = bucket.used_bytes.saturating_add(charge);
         if new_size > bucket.max_bytes {
@@ -668,8 +667,8 @@ mod tests {
         // variant 0 (Chunk), compact length 5, then the bytes
         assert_eq!(array_bytes::bytes2hex("", &raw), "00140102030405");
 
-        // CF_NODES: an internal node's value is 65 B - the variant tag plus
-        // the two child hashes, no stored preimage.
+        // CF_NODES: an internal node's value is 65 B: the variant tag plus
+        // the two child hashes.
         let other_hash = hash_leaf(&[9u8]);
         storage
             .store_node(bucket_id, other_hash, ChunkTreeNode::Chunk(vec![9]))
