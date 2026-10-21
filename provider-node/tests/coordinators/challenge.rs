@@ -9,8 +9,8 @@ use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::{
-    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponse,
-    ChallengeResponseResult, DetectedChallenge,
+    ChallengeChainClient, ChallengeProofSource, ChallengeResponder, ChallengeResponderConfig,
+    ChallengeResponse, ChallengeResponseResult, DetectedChallenge,
 };
 
 struct MockChallengeChainClient {
@@ -489,4 +489,85 @@ async fn test_resume_after_pause() {
     );
 
     handle.stop().await.unwrap();
+}
+
+/// Proof source that returns the real MMR proof with an unknown `leaf_version`.
+struct UnknownLeafVersion(Arc<dyn ChallengeProofSource>);
+
+impl ChallengeProofSource for UnknownLeafVersion {
+    fn get_mmr_proof_for_commitment(
+        &self,
+        bucket_id: BucketId,
+        commitment: &storage_primitives::Commitment,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, ChallengeError> {
+        let mut proof = self
+            .0
+            .get_mmr_proof_for_commitment(bucket_id, commitment, leaf_index)?;
+        proof.leaf.leaf_version = storage_primitives::LEAF_VERSION + 1;
+        Ok(proof)
+    }
+
+    fn get_chunk_at_index(
+        &self,
+        data_root: H256,
+        chunk_index: u64,
+    ) -> Result<(Vec<u8>, Vec<H256>), ChallengeError> {
+        self.0.get_chunk_at_index(data_root, chunk_index)
+    }
+}
+
+/// A leaf with an unknown `leaf_version` has no chunk count, so the responder
+/// reports `ProofGenerationFailed` and submits nothing.
+#[tokio::test(start_paused = true)]
+async fn test_unknown_leaf_version_fails_without_submission() {
+    let (state, challenge, _dir) = test_state_with_data();
+
+    let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
+    let result_clone = Arc::clone(&result);
+    let callback: Arc<dyn Fn(ChallengeResponseResult) + Send + Sync> = Arc::new(move |r| {
+        let mut guard = result_clone.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some(r);
+        }
+    });
+
+    let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
+    let config = ChallengeResponderConfig {
+        poll_interval: Duration::from_millis(50),
+        auto_respond: true,
+        ..ChallengeResponderConfig::new(alice_account())
+    };
+    let responder = ChallengeResponder::new(
+        config,
+        Arc::new(UnknownLeafVersion(state.challenge_proof_source())),
+        Box::new(Arc::clone(&mock)),
+    );
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
+        .await
+        .unwrap();
+
+    let result_ref = Arc::clone(&result);
+    assert!(
+        wait_for(5, 10, || {
+            let r = Arc::clone(&result_ref);
+            async move { r.lock().unwrap().is_some() }
+        })
+        .await,
+        "timed out waiting for callback"
+    );
+    handle.stop().await.unwrap();
+
+    let r = result.lock().unwrap();
+    assert!(
+        matches!(
+            &*r,
+            Some(ChallengeResponseResult::ProofGenerationFailed { error, .. })
+                if error.contains("unknown leaf version")
+        ),
+        "expected ProofGenerationFailed, got {:?}",
+        r
+    );
+    assert!(mock.submitted.lock().unwrap().is_empty());
 }
