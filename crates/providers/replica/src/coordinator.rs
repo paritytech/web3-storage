@@ -447,7 +447,7 @@ impl ReplicaSyncCoordinator {
                                 running: running.load(Ordering::SeqCst),
                                 paused,
                                 active_syncs: self.active_syncs.len(),
-                                tracked_buckets: self.get_tracked_buckets(),
+                                tracked_buckets: self.storage.bucket_ids(),
                             };
                             let _ = response_tx.send(status);
                         }
@@ -536,11 +536,6 @@ impl ReplicaSyncCoordinator {
     /// Clean up completed sync tasks.
     fn cleanup_completed_syncs(&mut self) {
         self.active_syncs.retain(|_, handle| !handle.is_finished());
-    }
-
-    /// Get list of bucket IDs we're tracking as replica.
-    fn get_tracked_buckets(&self) -> Vec<BucketId> {
-        self.storage.bucket_ids()
     }
 
     /// Get replica duties for buckets where this provider is a replica.
