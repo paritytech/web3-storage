@@ -208,9 +208,6 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
     })
 }
 
-/// Aggregate totals only: a per-bucket breakdown here would let anyone
-/// enumerate the buckets this node holds, sidestepping the per-bucket read
-/// gates.
 async fn stats(State(state): State<Arc<ProviderState>>) -> Json<StatsResponse> {
     Json(StatsResponse {
         provider_id: state.provider_id.clone(),

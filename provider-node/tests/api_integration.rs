@@ -1006,8 +1006,6 @@ common::backend_tests! {
         assert_eq!(body["total_buckets"], 0);
         assert_eq!(body["total_nodes"], 0);
         assert_eq!(body["total_bytes"], 0);
-        // No per-bucket breakdown: /stats is unauthenticated, and bucket ids
-        // would sidestep the per-bucket read gates.
         assert!(body.get("buckets").is_none());
     }
 }
@@ -1031,8 +1029,6 @@ common::backend_tests! {
         assert_eq!(body["total_buckets"], 1);
         assert!(body["total_nodes"].as_u64().unwrap() > 0);
         assert!(body["total_bytes"].as_u64().unwrap() > 0);
-        // No per-bucket breakdown: /stats is unauthenticated, and bucket ids
-        // would sidestep the per-bucket read gates.
         assert!(body.get("buckets").is_none());
     }
 }

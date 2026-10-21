@@ -261,11 +261,10 @@ pub struct HealthResponse {
     pub version: String,
 }
 
-/// Provider statistics response.
+/// Provider statistics: node-wide totals only. `GET /stats` is
+/// unauthenticated, so a per-bucket breakdown would list the bucket ids that
+/// the per-bucket read gates hide.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Aggregate node-wide totals. Deliberately carries no per-bucket breakdown:
-/// this endpoint is unauthenticated, and listing bucket ids would sidestep
-/// the per-bucket read gates.
 pub struct StatsResponse {
     pub provider_id: String,
     pub total_buckets: usize,
