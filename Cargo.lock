@@ -4968,7 +4968,6 @@ dependencies = [
  "sp-api",
  "sp-core",
  "sp-io",
- "sp-keyring",
  "sp-keystore",
  "sp-runtime",
  "storage-primitives",
@@ -8119,7 +8118,6 @@ dependencies = [
  "polkadot-parachain-primitives",
  "polkadot-runtime-common",
  "scale-info",
- "serde",
  "serde_json",
  "sp-api",
  "sp-block-builder",
@@ -8150,10 +8148,11 @@ name = "storage-primitives"
 version = "0.1.0"
 dependencies = [
  "parity-scale-codec",
+ "polkadot-ckb-merkle-mountain-range",
  "scale-info",
  "serde",
  "sp-core",
- "sp-crypto-hashing",
+ "sp-io",
 ]
 
 [[package]]
