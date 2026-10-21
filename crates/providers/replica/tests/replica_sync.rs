@@ -659,27 +659,32 @@ async fn test_duties_filter_already_synced() {
     assert!(duties.is_empty(), "already synced should be filtered");
 }
 
-#[tokio::test]
-async fn test_duties_happy_path_returns_duty() {
-    let agreement = ReplicaAgreementInfo {
-        bucket_id: 42,
-        sync_balance: 1000,
-        sync_price: 100,
-        min_sync_interval: 0,
-        last_sync: None,
-    };
-
-    let target_root = H256::repeat_byte(0xCC);
-    let mock = MockReplicaSyncChainClient::new()
-        .with_agreements(vec![agreement])
+/// A chain with one due replica duty: bucket 42, target root `0xCC..`, 10
+/// leaves, sync balance 1000 at price 100, one primary at
+/// `http://primary:3333`.
+fn mock_with_bucket_42_duty() -> MockReplicaSyncChainClient {
+    MockReplicaSyncChainClient::new()
+        .with_agreements(vec![ReplicaAgreementInfo {
+            bucket_id: 42,
+            sync_balance: 1000,
+            sync_price: 100,
+            min_sync_interval: 0,
+            last_sync: None,
+        }])
         .with_snapshot(
             42,
             BucketSnapshot {
-                mmr_root: target_root,
+                mmr_root: H256::repeat_byte(0xCC),
                 leaf_count: 10,
             },
         )
-        .with_endpoints(42, vec!["http://primary:3333".to_string()]);
+        .with_endpoints(42, vec!["http://primary:3333".to_string()])
+}
+
+#[tokio::test]
+async fn test_duties_happy_path_returns_duty() {
+    let target_root = H256::repeat_byte(0xCC);
+    let mock = mock_with_bucket_42_duty();
 
     let config = ReplicaSyncCoordinatorConfig::default();
     let (storage, _dir) = temp_rocksdb();
@@ -702,27 +707,10 @@ async fn test_duty_sources_append_replicas_after_primaries_deduped() {
     // Primaries come first (most current); the bucket's other replicas follow
     // as the fallback for private buckets, and an endpoint that is both never
     // appears twice.
-    let agreement = ReplicaAgreementInfo {
-        bucket_id: 42,
-        sync_balance: 1000,
-        sync_price: 100,
-        min_sync_interval: 0,
-        last_sync: None,
-    };
-    let mock = MockReplicaSyncChainClient::new()
-        .with_agreements(vec![agreement])
-        .with_snapshot(
-            42,
-            BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xCC),
-                leaf_count: 10,
-            },
-        )
-        .with_endpoints(42, vec!["http://primary:3333".to_string()])
-        .with_replica_endpoints(Ok(vec![
-            "http://primary:3333".to_string(),
-            "http://replica:3334".to_string(),
-        ]));
+    let mock = mock_with_bucket_42_duty().with_replica_endpoints(Ok(vec![
+        "http://primary:3333".to_string(),
+        "http://replica:3334".to_string(),
+    ]));
 
     let (storage, _dir) = temp_rocksdb();
     let coordinator = coordinator(ReplicaSyncCoordinatorConfig::default(), storage, mock);
@@ -738,27 +726,10 @@ async fn test_duty_sources_append_replicas_after_primaries_deduped() {
 async fn test_duty_sources_degrade_to_primaries_when_replica_listing_fails() {
     // Listing replicas is best-effort: a failure only shrinks the fallback
     // set, it must not sink the whole duty.
-    let agreement = ReplicaAgreementInfo {
-        bucket_id: 42,
-        sync_balance: 1000,
-        sync_price: 100,
-        min_sync_interval: 0,
-        last_sync: None,
-    };
-    let mock = MockReplicaSyncChainClient::new()
-        .with_agreements(vec![agreement])
-        .with_snapshot(
-            42,
-            BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xCC),
-                leaf_count: 10,
-            },
-        )
-        .with_endpoints(42, vec!["http://primary:3333".to_string()])
-        .with_replica_endpoints(Err(ChainClientError::query(
-            "bucket agreements",
-            "chain down",
-        )));
+    let mock = mock_with_bucket_42_duty().with_replica_endpoints(Err(ChainClientError::query(
+        "bucket agreements",
+        "chain down",
+    )));
 
     let (storage, _dir) = temp_rocksdb();
     let coordinator = coordinator(ReplicaSyncCoordinatorConfig::default(), storage, mock);
