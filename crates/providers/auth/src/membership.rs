@@ -414,14 +414,12 @@ impl MembershipCache {
         // Cache miss or stale — fetch from chain. Both halves resolve or the
         // entry does not: a failed standing lookup takes the same
         // stale-if-error path as a failed member lookup.
-        let fetched = match self.resolver.fetch_access(bucket_id).await {
-            Ok(access) => self
-                .resolver
-                .fetch_serves_as_replica(bucket_id)
-                .await
-                .map(|serves_as_replica| (access, serves_as_replica)),
-            Err(e) => Err(e),
-        };
+        let fetched = async {
+            let access = self.resolver.fetch_access(bucket_id).await?;
+            let serves_as_replica = self.resolver.fetch_serves_as_replica(bucket_id).await?;
+            Ok::<_, MembershipError>((access, serves_as_replica))
+        }
+        .await;
         match fetched {
             Ok((access, serves_as_replica)) => {
                 let entry = Arc::new(CachedMembership::new(access, serves_as_replica));
