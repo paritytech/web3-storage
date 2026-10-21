@@ -171,16 +171,6 @@ pub(crate) async fn check_role(
         .map_err(Into::into)
 }
 
-/// [`check_role`] at [`RequiredRole::Reader`].
-async fn require_reader(
-    state: &ProviderState,
-    headers: &axum::http::HeaderMap,
-    method: &str,
-    bucket_id: u64,
-) -> Result<(), Error> {
-    check_role(state, headers, method, bucket_id, RequiredRole::Reader).await
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Health and Info
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,7 +286,14 @@ async fn check_exists(
     headers: axum::http::HeaderMap,
     Json(request): Json<ExistsRequest>,
 ) -> Result<Json<ExistsResponse>, Error> {
-    require_reader(&state, &headers, "POST", request.bucket_id).await?;
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
 
     let hashes: Vec<H256> = request
         .hashes
@@ -389,7 +386,14 @@ async fn get_commitment(
     headers: axum::http::HeaderMap,
     Query(query): Query<CommitmentQuery>,
 ) -> Result<Json<CommitmentResponse>, Error> {
-    require_reader(&state, &headers, "GET", query.bucket_id).await?;
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
 
     let bucket = require_bucket(&state, query.bucket_id)?;
 
@@ -419,7 +423,14 @@ async fn get_checkpoint_signature(
     headers: axum::http::HeaderMap,
     Query(query): Query<CommitmentQuery>,
 ) -> Result<Json<CheckpointSignatureResponse>, Error> {
-    require_reader(&state, &headers, "GET", query.bucket_id).await?;
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
 
     let bucket = require_bucket(&state, query.bucket_id)?;
 
@@ -450,7 +461,14 @@ async fn get_mmr_proof(
     headers: axum::http::HeaderMap,
     Query(query): Query<MmrProofQuery>,
 ) -> Result<Json<storage_primitives::MmrProof>, Error> {
-    require_reader(&state, &headers, "GET", query.bucket_id).await?;
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
 
     Ok(Json(
         state
@@ -532,7 +550,14 @@ async fn get_mmr_peaks(
     headers: axum::http::HeaderMap,
     Query(query): Query<MmrPeaksQuery>,
 ) -> Result<Json<MmrPeaksResponse>, Error> {
-    require_reader(&state, &headers, "GET", query.bucket_id).await?;
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
 
     let (mmr_root, peaks) = state.storage.get_mmr_peaks(query.bucket_id)?;
 
@@ -574,7 +599,14 @@ async fn get_historical_roots(
     headers: axum::http::HeaderMap,
     Query(query): Query<HistoricalRootsQuery>,
 ) -> Result<Json<HistoricalRootsResponse>, Error> {
-    require_reader(&state, &headers, "GET", query.bucket_id).await?;
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
 
     let bucket = require_bucket(&state, query.bucket_id)?;
 
@@ -681,7 +713,14 @@ async fn get_replica_sync_status(
     headers: axum::http::HeaderMap,
     Query(query): Query<BucketSyncStatusQuery>,
 ) -> Result<Json<BucketSyncStatusResponse>, Error> {
-    require_reader(&state, &headers, "GET", query.bucket_id).await?;
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
 
     let bucket = require_bucket(&state, query.bucket_id)?;
 
