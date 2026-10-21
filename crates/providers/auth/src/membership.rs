@@ -151,11 +151,14 @@ impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
 /// bucket. Used by tests across crates; [`Self::private`] is the fail-safe
 /// member-only shape.
 pub struct StaticMembershipResolver {
+    /// Returned by `fetch_access` for every bucket.
     pub access: BucketAccess,
+    /// Returned by `fetch_serves_as_replica` for every bucket.
     pub serves_as_replica: bool,
 }
 
 impl StaticMembershipResolver {
+    /// Every bucket resolves to `access` and as not replica-held.
     pub fn new(access: BucketAccess) -> Self {
         Self {
             access,
