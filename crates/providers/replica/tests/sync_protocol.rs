@@ -194,7 +194,7 @@ async fn a_node_with_data_and_children_is_rejected() {
     );
     assert_err!(
         sync_serving_node(peak, reply).await,
-        Error::Backend(provider_storage::Error::InvalidNode)
+        Error::Decode { what: "node", .. }
     );
 }
 
@@ -203,7 +203,7 @@ async fn a_node_with_neither_data_nor_children_is_rejected() {
     let peak = H256::repeat_byte(0x11);
     assert_err!(
         sync_serving_node(peak, node_body(&hex_hash(peak), None, None)).await,
-        Error::Backend(provider_storage::Error::InvalidNode)
+        Error::Decode { what: "node", .. }
     );
 }
 

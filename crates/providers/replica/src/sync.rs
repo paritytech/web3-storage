@@ -159,7 +159,9 @@ impl ReplicaSync {
                 })
                 .transpose()?;
 
-            let node = ChunkTreeNode::from_wire(data, children)?;
+            // from_wire only checks the shape of the primary's reply.
+            let node =
+                ChunkTreeNode::from_wire(data, children).map_err(|e| Error::decode("node", e))?;
 
             // Verify the node before following its children, so a primary
             // cannot make this replica fetch subtrees under a wrong hash.
