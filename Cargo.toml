@@ -4,6 +4,19 @@ members = [
 	# Storage pallet
 	"crates/pallets/storage-provider",
 
+	# Provider Node crates
+	"crates/providers/auth",
+	"crates/providers/challenge",
+	"crates/providers/coordinator",
+	"crates/providers/events",
+	"crates/providers/negotiation",
+	"crates/providers/replica",
+	"crates/providers/storage",
+	"crates/providers/types",
+
+	"crates/storage-subxt",
+	"provider-node",
+
 	# Storage runtime
 	"runtimes/web3-storage-paseo",
 
@@ -20,7 +33,17 @@ repository = "https://github.com/paritytech/web3-storage"
 [workspace.dependencies]
 # Layer 0: Scalable Web3 Storage (Internal crates)
 pallet-storage-provider = { path = "crates/pallets/storage-provider", default-features = false }
+provider-auth = { path = "crates/providers/auth" }
+provider-challenge = { path = "crates/providers/challenge" }
+provider-coordinator = { path = "crates/providers/coordinator" }
+provider-events = { path = "crates/providers/events" }
+provider-negotiation = { path = "crates/providers/negotiation" }
+provider-replica = { path = "crates/providers/replica" }
+provider-storage = { path = "crates/providers/storage" }
+provider-types = { path = "crates/providers/types" }
 storage-primitives = { path = "crates/primitives/storage", default-features = false }
+storage-provider-node = { path = "provider-node" }
+storage-subxt = { path = "crates/storage-subxt" }
 
 # Substrate frame
 frame-benchmarking = { version = "49.0.0", default-features = false }
@@ -62,6 +85,9 @@ sp-session = { version = "45.0.0", default-features = false }
 sp-storage = { version = "25.0.0", default-features = false }
 sp-transaction-pool = { version = "43.0.0", default-features = false }
 sp-version = { version = "46.0.0", default-features = false }
+
+# Hex encoding, as used across the Polkadot SDK
+array-bytes = { version = "6.2.3", default-features = false }
 
 # Merkle Mountain Range
 polkadot-ckb-merkle-mountain-range = { version = "0.8.2", default-features = false }
