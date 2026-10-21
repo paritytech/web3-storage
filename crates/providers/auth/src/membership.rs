@@ -158,7 +158,7 @@ pub struct StaticMembershipResolver {
 }
 
 impl StaticMembershipResolver {
-    /// Every bucket resolves to `access` and as not replica-held.
+    /// Returns `access` for every bucket, with `serves_as_replica` false.
     pub fn new(access: BucketAccess) -> Self {
         Self {
             access,
