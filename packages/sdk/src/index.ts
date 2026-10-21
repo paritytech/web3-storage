@@ -31,6 +31,7 @@ export {
   metadataMerkleRoot,
   merkleRoot,
   leafChunkCount,
+  leafChunkSize,
   LEAF_VERSION,
   hashChildren,
   bagPeaks,

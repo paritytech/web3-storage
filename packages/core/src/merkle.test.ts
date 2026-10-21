@@ -144,6 +144,14 @@ describe("leafChunkCount", () => {
     expect(count(2 * chunk + 10)).toBe(3);
   });
 
+  it("counts a u64::MAX data size exactly", () => {
+    const max = (1n << 64n) - 1n;
+    const chunk = BigInt(DEFAULT_CHUNK_SIZE);
+    expect(leafChunkCount({ leaf_version: LEAF_VERSION, data_size: max })).toBe(
+      Number((max + chunk - 1n) / chunk),
+    );
+  });
+
   it("throws for an unknown leaf version", () => {
     expect(() => leafChunkCount({ leaf_version: LEAF_VERSION + 1, data_size: 1 })).toThrow(
       "unknown MMR leaf version",
