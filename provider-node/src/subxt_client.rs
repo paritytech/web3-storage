@@ -535,32 +535,34 @@ impl SubxtChainClient {
     ) -> Result<Vec<String>, ChainClientError> {
         use subxt::ext::scale_value::At;
 
+        let at = self.at_current_block().await?;
         let mut endpoints = Vec::new();
         for provider_bytes in provider_bytes_list {
             let provider_addr =
                 subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
-
-            let at = self.at_current_block().await?;
-
-            if let Ok(Some(value)) = at
+            let Ok(Some(value)) = at
                 .storage()
                 .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
                 .await
-            {
-                if let Ok(decoded) = value.decode() {
-                    if let Some(field0) = decoded.at(0) {
-                        let bytes = Self::extract_byte_vec(field0);
-                        if !bytes.is_empty() {
-                            let multiaddr_str = String::from_utf8_lossy(&bytes);
-                            endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
-                        }
-                    }
-                }
+            else {
+                continue;
+            };
+            let Ok(decoded) = value.decode() else {
+                continue;
+            };
+            let Some(field0) = decoded.at(0) else {
+                continue;
+            };
+            let bytes = Self::extract_byte_vec(field0);
+            if !bytes.is_empty() {
+                let multiaddr_str = String::from_utf8_lossy(&bytes);
+                endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
             }
         }
 
         Ok(endpoints)
     }
+
     /// Parse a BucketSnapshot value from scale_value.
     fn parse_bucket_snapshot_value<T>(value: &subxt::ext::scale_value::Value<T>) -> BucketSnapshot {
         use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
