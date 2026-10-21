@@ -66,18 +66,6 @@ impl AuthTestServer {
         Self::with_authenticator(Authenticator::new(resolver)).await
     }
 
-    /// Same, but the authenticator knows the node's own provider account
-    /// (operator self-auth).
-    async fn with_resolver_and_provider_account(
-        resolver: impl MembershipResolver + 'static,
-        provider_account: AccountId32,
-    ) -> Self {
-        Self::with_authenticator(
-            Authenticator::new(resolver).with_provider_account(provider_account),
-        )
-        .await
-    }
-
     async fn with_authenticator(authenticator: Authenticator) -> Self {
         // The 300s skew keeps the default the `*_expired_timestamp` tests assume.
         let (storage, dir) = temp_rocksdb();
@@ -760,21 +748,24 @@ async fn upload_and_commit_as(server: &AuthTestServer, keypair: &sr25519::Pair) 
     hash_hex
 }
 
+/// The bucket-bound L0 `GET` reads gated at Reader. Add a newly gated
+/// endpoint here; both tests below walk this list.
+const L0_GATED_GETS: &[&str] = &[
+    "/mmr_peaks?bucket_id=1",
+    "/commitment?bucket_id=1",
+    "/checkpoint-signature?bucket_id=1",
+    "/mmr_proof?bucket_id=1&leaf_index=0",
+    "/replica/historical_roots?bucket_id=1",
+    "/replica/sync_status?bucket_id=1",
+];
+
 /// Every bucket-bound L0 read answers 401 to an anonymous request on a
-/// private bucket. One test walks the whole surface so a newly added
-/// endpoint that forgets its gate is caught by extending this list.
+/// private bucket.
 #[tokio::test]
 async fn l0_reads_require_auth_on_private_bucket() {
     let server = AuthTestServer::with_role(Role::Admin).await;
 
-    for path in [
-        "/mmr_peaks?bucket_id=1",
-        "/commitment?bucket_id=1",
-        "/checkpoint-signature?bucket_id=1",
-        "/mmr_proof?bucket_id=1&leaf_index=0",
-        "/replica/historical_roots?bucket_id=1",
-        "/replica/sync_status?bucket_id=1",
-    ] {
+    for path in L0_GATED_GETS {
         let resp = server.client.get(server.url(path)).send().await.unwrap();
         assert_eq!(
             resp.status(),
@@ -805,13 +796,7 @@ async fn l0_member_reads_private_bucket() {
     let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
     upload_and_commit_as(&server, &alice).await;
 
-    for path in [
-        "/mmr_peaks?bucket_id=1",
-        "/commitment?bucket_id=1",
-        "/checkpoint-signature?bucket_id=1",
-        "/replica/historical_roots?bucket_id=1",
-        "/replica/sync_status?bucket_id=1",
-    ] {
+    for path in L0_GATED_GETS {
         let header = make_auth_header(&alice, "GET", 1, current_timestamp());
         let resp = server
             .client
@@ -822,6 +807,21 @@ async fn l0_member_reads_private_bucket() {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK, "signed GET {path} must pass");
     }
+
+    let header = make_auth_header(&alice, "POST", 1, current_timestamp());
+    let resp = server
+        .client
+        .post(server.url("/exists"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "hashes": [] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "signed POST /exists must pass"
+    );
 }
 
 /// Public buckets keep serving the bucket-bound reads anonymously.
@@ -885,11 +885,13 @@ async fn provider_account_reads_private_bucket_proofs() {
     // harness seeds ProviderState with it), and the authenticator is told so.
     let bob = sr25519::Pair::from_string("//Bob", None).unwrap();
     let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
-    let server = AuthTestServer::with_resolver_and_provider_account(
-        StaticMembershipResolver::private(vec![
-            (AccountId32::new(bob.public().0), Role::Admin).into()
-        ]),
-        AccountId32::new(alice.public().0),
+    let server = AuthTestServer::with_authenticator(
+        Authenticator::new(StaticMembershipResolver::private(vec![(
+            AccountId32::new(bob.public().0),
+            Role::Admin,
+        )
+            .into()]))
+        .with_provider_account(AccountId32::new(alice.public().0)),
     )
     .await;
     upload_and_commit_as(&server, &bob).await;
