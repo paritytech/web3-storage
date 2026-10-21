@@ -1,0 +1,196 @@
+{
+  "about": "Written by packages/layer1/src/fixtures.test.ts; read by clients/s3/src/fixtures.rs. Regenerate: UPDATE_FS_FIXTURES=1 npm run -s test:unit -- fixtures (in packages/layer1)",
+  "blobs": {
+    "0x03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314": "",
+    "0x0b945d2a01e5fe40e150e70023c497f87133200c6c33618050ee4915c7de01f2": "BwAAAAAAAAAEEGRvY3MB8BWKBxRJVdno9EDnv+A6FSfKcvFGGbBaEJSRdq81EqoAAAAAAAAAAADxU2UAAAAAAA==",
+    "0x14a9af6c85997179b0938b9f193ae945aca3d7105c7dd450c3bf73d456ea231a": "BwAAAAAAAAAMHGJpZy5iaW4AGh3aveBpdfKgZpIbJEku/F2MWOplErOOVZACIpl5qTpkAAwAAAAAAADxU2UAAAAAEGRvY3MB8BWKBxRJVdno9EDnv+A6FSfKcvFGGbBaEJSRdq81EqoAAAAAAAAAAADxU2UAAAAAFGVtcHR5AJ9WpTELFr92pQnaQgPWgVh+LBoa27HKbUv3IKs4B9XaAAAAAAAAAAAA8VNlAAAAAAA=",
+    "0x18f004e0003e4b900b2c65eeea388963df51c3cc4cec93a4a6e817044683ced9": "aGVsbG8gZnJvbSBhLnR4dAo=",
+    "0x1a1ddabde06975f2a066921b24492efc5d8c58ea6512b38e559002229979a93a": "BwAAAAAAAABgYXBwbGljYXRpb24vb2N0ZXQtc3RyZWFtZAAMAAAAAAAQcsTRpOnmGtDz1HYz0TZm0m7hhz/vv3jbNLdQSs2mDtMAAAAABg+2ril6BObm904gb+uKZW8DOx5rvXmoXkvQV2qfqa8BAAAAgpvtMWaF1Khh9GakXX8ei3fpGcmoYypkD/EdPj4s5BoCAAAAFyV6oXVKmEEu52MzmjPDAO6ZQEKmsbQg7xcSSJCFAhsDAAAAAAA=",
+    "0x3ef99eae15f6136e4c30731ce8954d2e113913fd11337d5023d752bb904ce419": "bWVvdw==",
+    "0x50d3d7945cb69cb56691bd1e85878626e0d35cfd61dcc9006f1be0ca37724ba3": "BwAAAAAAAAAoaW1hZ2UvanBlZwQAAAAAAAAABD75nq4V9hNuTDBzHOiVTS4RORP9ETN9UCPXUruQTOQZAAAAAAAMFGFscGhhFGZpcnN0MGNhbWVyYS1tb2RlbBBYMTAwEHpldGEQbGFzdA==",
+    "0x58e0538889eafef90772836f94dbc48c6016c751a31d35d8e7272fda287c0b7a": "ZGVsZXRlZCBsYXRlcg==",
+    "0x63628a8376d6529c7d5719fcfb11e4275eae34970a1beccd6858420bcca20067": "BwAAAAAAAAAEHGNhdC5qcGcAUNPXlFy2nLVmkb0ehYeGJuDTXP1h3MkAbxvgyjdyS6MEAAAAAAAAAADxU2UAAAAAAA==",
+    "0x67f949a5e0728278b007f248c77da3c31131eb058316469c6311ae801bdb921f": "BwAAAAAAAAAodGV4dC9wbGFpbhEAAAAAAAAABBjwBOAAPkuQCyxl7uo4iWPfUcPMTOyTpKboFwRGg87ZAAAAAAAA",
+    "0x6fe0db1dee23e35384a7a44ad00ac0f60264ecbbdbce217e3216427ffcd40bfe": "BwAAAAAAAAAEEGRvY3MB/needa9u7Q+QfJbgRqIuMLl0ho2VbuxHacU7bjzpMTMAAAAAAAAAAADxU2UAAAAAAA==",
+    "0x9639fa21e69c0a55d4967cff14943be0b755947e3f37e2731f1fe3528901c8fb": "BwAAAAAAAAAAAA==",
+    "0x9f56a5310b16bf76a509da4203d681587e2c1a1adbb1ca6d4bf720ab3807d5da": "BwAAAAAAAABgYXBwbGljYXRpb24vb2N0ZXQtc3RyZWFtAAAAAAAAAAAEAxcKLnWXt7fj2EwFOR0TmmKxV+eHhtjAgvKdz0wRExQAAAAAAAA=",
+    "0xa5473299de399b7c2258b627cf11b453554516979876dc91f68ed4def950ada2": "BwAAAAAAAAAodGV4dC9wbGFpbg0AAAAAAAAABFjgU4iJ6v75B3KDb5TbxIxgFsdRox012OcnL9oofAt6AAAAAAAA",
+    "0xbeba7c342a72ac803265e067734b6dab04d808f49bede192c92ba67dd7bc8810": "BwAAAAAAAAAIHGJpZy5iaW4AGh3aveBpdfKgZpIbJEku/F2MWOplErOOVZACIpl5qTpkAAwAAAAAAADxU2UAAAAAEGRvY3MB8BWKBxRJVdno9EDnv+A6FSfKcvFGGbBaEJSRdq81EqoAAAAAAAAAAADxU2UAAAAAAA==",
+    "0xc7d8ad086bb4edfb5fbaa2265e14271e074c799235b6475811bb22844a983013": "BwAAAAAAAAAQHGJpZy5iaW4AGh3aveBpdfKgZpIbJEku/F2MWOplErOOVZACIpl5qTpkAAwAAAAAAADxU2UAAAAAEGRvY3MB/needa9u7Q+QfJbgRqIuMLl0ho2VbuxHacU7bjzpMTMAAAAAAAAAAADxU2UAAAAAFGVtcHR5AJ9WpTELFr92pQnaQgPWgVh+LBoa27HKbUv3IKs4B9XaAAAAAAAAAAAA8VNlAAAAABhwaG90b3MBY2KKg3bWUpx9Vxn8+xHkJ16uNJcKG+zNaFhCC8yiAGcAAAAAAAAAAADxU2UAAAAAAA==",
+    "0xdafbe8f5e19b9870eefc1d538d1e604a33bd11df2abf913c09e415bfe7cdf2e0": "BwAAAAAAAAAEEGRvY3MBljn6IeacClXUlnz/FJQ74LdVlH4/N+JzHx/jUokByPsAAAAAAAAAAADxU2UAAAAAAA==",
+    "0xe595a1c614c1ebb47c62ffa1d0327712922e67495c31a4d16dec62edae297d49": "BwAAAAAAAAAQHGJpZy5iaW4AGh3aveBpdfKgZpIbJEku/F2MWOplErOOVZACIpl5qTpkAAwAAAAAAADxU2UAAAAAEGRvY3MB8BWKBxRJVdno9EDnv+A6FSfKcvFGGbBaEJSRdq81EqoAAAAAAAAAAADxU2UAAAAAFGVtcHR5AJ9WpTELFr92pQnaQgPWgVh+LBoa27HKbUv3IKs4B9XaAAAAAAAAAAAA8VNlAAAAABhwaG90b3MBY2KKg3bWUpx9Vxn8+xHkJ16uNJcKG+zNaFhCC8yiAGcAAAAAAAAAAADxU2UAAAAAAA==",
+    "0xf0158a07144955d9e8f440e7bfe03a1527ca72f14619b05a10949176af3512aa": "BwAAAAAAAAAIFGEudHh0AGf5SaXgcoJ4sAfySMd9o8MRMesFgxZGnGMRroAb25IfEQAAAAAAAAAA8VNlAAAAABxvbGQudHh0AKVHMpneOZt8Ili2J88RtFNVRRaXmHbckfaO1N75UK2iDQAAAAAAAAAA8VNlAAAAAAA=",
+    "0xfe779e75af6eed0f907c96e046a22e30b974868d956eec4769c53b6e3ce93133": "BwAAAAAAAAAEFGEudHh0AGf5SaXgcoJ4sAfySMd9o8MRMesFgxZGnGMRroAb25IfEQAAAAAAAAAA8VNlAAAAAAA="
+  },
+  "bucket_id": 7,
+  "commits": [
+    [
+      "0x9639fa21e69c0a55d4967cff14943be0b755947e3f37e2731f1fe3528901c8fb",
+      "0xdafbe8f5e19b9870eefc1d538d1e604a33bd11df2abf913c09e415bfe7cdf2e0"
+    ],
+    [
+      "0x18f004e0003e4b900b2c65eeea388963df51c3cc4cec93a4a6e817044683ced9",
+      "0x67f949a5e0728278b007f248c77da3c31131eb058316469c6311ae801bdb921f",
+      "0xfe779e75af6eed0f907c96e046a22e30b974868d956eec4769c53b6e3ce93133",
+      "0x6fe0db1dee23e35384a7a44ad00ac0f60264ecbbdbce217e3216427ffcd40bfe"
+    ],
+    [
+      "0x58e0538889eafef90772836f94dbc48c6016c751a31d35d8e7272fda287c0b7a",
+      "0xa5473299de399b7c2258b627cf11b453554516979876dc91f68ed4def950ada2",
+      "0xf0158a07144955d9e8f440e7bfe03a1527ca72f14619b05a10949176af3512aa",
+      "0x0b945d2a01e5fe40e150e70023c497f87133200c6c33618050ee4915c7de01f2"
+    ],
+    [
+      "0x8f564cbaec0e675a84ee5fa75aafc3f6162befa864bfeba4110aba07f928c1d2",
+      "0x1a1ddabde06975f2a066921b24492efc5d8c58ea6512b38e559002229979a93a",
+      "0xbeba7c342a72ac803265e067734b6dab04d808f49bede192c92ba67dd7bc8810"
+    ],
+    [
+      "0x03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314",
+      "0x9f56a5310b16bf76a509da4203d681587e2c1a1adbb1ca6d4bf720ab3807d5da",
+      "0x14a9af6c85997179b0938b9f193ae945aca3d7105c7dd450c3bf73d456ea231a"
+    ],
+    [
+      "0x3ef99eae15f6136e4c30731ce8954d2e113913fd11337d5023d752bb904ce419",
+      "0x50d3d7945cb69cb56691bd1e85878626e0d35cfd61dcc9006f1be0ca37724ba3",
+      "0x63628a8376d6529c7d5719fcfb11e4275eae34970a1beccd6858420bcca20067",
+      "0xe595a1c614c1ebb47c62ffa1d0327712922e67495c31a4d16dec62edae297d49"
+    ],
+    [
+      "0xfe779e75af6eed0f907c96e046a22e30b974868d956eec4769c53b6e3ce93133",
+      "0xc7d8ad086bb4edfb5fbaa2265e14271e074c799235b6475811bb22844a983013"
+    ]
+  ],
+  "expected": {
+    "files": {
+      "/big.bin": {
+        "content_root": "0x8f564cbaec0e675a84ee5fa75aafc3f6162befa864bfeba4110aba07f928c1d2",
+        "content_type": "application/octet-stream",
+        "leaf_hash": "0x34aea93e3376f7a6b3ffef657fe3c99dbfa06594c94f757425af43d04dafa747",
+        "manifest_cid": "0x1a1ddabde06975f2a066921b24492efc5d8c58ea6512b38e559002229979a93a",
+        "mtime": 1700000000,
+        "size": 786532,
+        "user_metadata": []
+      },
+      "/docs/a.txt": {
+        "content_root": "0x18f004e0003e4b900b2c65eeea388963df51c3cc4cec93a4a6e817044683ced9",
+        "content_type": "text/plain",
+        "leaf_hash": "0x18f004e0003e4b900b2c65eeea388963df51c3cc4cec93a4a6e817044683ced9",
+        "manifest_cid": "0x67f949a5e0728278b007f248c77da3c31131eb058316469c6311ae801bdb921f",
+        "mtime": 1700000000,
+        "size": 17,
+        "user_metadata": []
+      },
+      "/empty": {
+        "content_root": "0x03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314",
+        "content_type": "application/octet-stream",
+        "leaf_hash": "0x03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314",
+        "manifest_cid": "0x9f56a5310b16bf76a509da4203d681587e2c1a1adbb1ca6d4bf720ab3807d5da",
+        "mtime": 1700000000,
+        "size": 0,
+        "user_metadata": []
+      },
+      "/photos/cat.jpg": {
+        "content_root": "0x3ef99eae15f6136e4c30731ce8954d2e113913fd11337d5023d752bb904ce419",
+        "content_type": "image/jpeg",
+        "leaf_hash": "0x3ef99eae15f6136e4c30731ce8954d2e113913fd11337d5023d752bb904ce419",
+        "manifest_cid": "0x50d3d7945cb69cb56691bd1e85878626e0d35cfd61dcc9006f1be0ca37724ba3",
+        "mtime": 1700000000,
+        "size": 4,
+        "user_metadata": [
+          [
+            "alpha",
+            "first"
+          ],
+          [
+            "camera-model",
+            "X100"
+          ],
+          [
+            "zeta",
+            "last"
+          ]
+        ]
+      }
+    },
+    "listings": {
+      "/": [
+        {
+          "cid": "0x1a1ddabde06975f2a066921b24492efc5d8c58ea6512b38e559002229979a93a",
+          "entry_type": "file",
+          "mtime": 1700000000,
+          "name": "big.bin",
+          "size": 786532
+        },
+        {
+          "cid": "0xfe779e75af6eed0f907c96e046a22e30b974868d956eec4769c53b6e3ce93133",
+          "entry_type": "directory",
+          "mtime": 1700000000,
+          "name": "docs",
+          "size": 0
+        },
+        {
+          "cid": "0x9f56a5310b16bf76a509da4203d681587e2c1a1adbb1ca6d4bf720ab3807d5da",
+          "entry_type": "file",
+          "mtime": 1700000000,
+          "name": "empty",
+          "size": 0
+        },
+        {
+          "cid": "0x63628a8376d6529c7d5719fcfb11e4275eae34970a1beccd6858420bcca20067",
+          "entry_type": "directory",
+          "mtime": 1700000000,
+          "name": "photos",
+          "size": 0
+        }
+      ],
+      "/docs": [
+        {
+          "cid": "0x67f949a5e0728278b007f248c77da3c31131eb058316469c6311ae801bdb921f",
+          "entry_type": "file",
+          "mtime": 1700000000,
+          "name": "a.txt",
+          "size": 17
+        }
+      ],
+      "/photos": [
+        {
+          "cid": "0x50d3d7945cb69cb56691bd1e85878626e0d35cfd61dcc9006f1be0ca37724ba3",
+          "entry_type": "file",
+          "mtime": 1700000000,
+          "name": "cat.jpg",
+          "size": 4
+        }
+      ]
+    },
+    "objects": {
+      "photos/cat.jpg": {
+        "content_type": "image/jpeg",
+        "etag": "0x3ef99eae15f6136e4c30731ce8954d2e113913fd11337d5023d752bb904ce419",
+        "last_modified": 1700000000,
+        "leaf_hash": "0x3ef99eae15f6136e4c30731ce8954d2e113913fd11337d5023d752bb904ce419",
+        "metadata": {
+          "alpha": "first",
+          "camera-model": "X100",
+          "zeta": "last"
+        },
+        "size": 4
+      }
+    },
+    "root_cid": "0xc7d8ad086bb4edfb5fbaa2265e14271e074c799235b6475811bb22844a983013"
+  },
+  "generated_blobs": [
+    {
+      "chunk_hashes": [
+        "0x72c4d1a4e9e61ad0f3d47633d13666d26ee1873fefbf78db34b7504acda60ed3",
+        "0x060fb6ae297a04e6e6f74e206feb8a656f033b1e6bbd79a85e4bd0576a9fa9af",
+        "0x829bed316685d4a861f466a45d7f1e8b77e919c9a8632a640ff11d3e3e2ce41a",
+        "0x17257aa1754a98412ee763339a33c300ee994042a6b1b420ef1712489085021b"
+      ],
+      "cid": "0x8f564cbaec0e675a84ee5fa75aafc3f6162befa864bfeba4110aba07f928c1d2",
+      "generator": "byte i is i % 251",
+      "size": 786532
+    }
+  ],
+  "mtime": 1700000000
+}

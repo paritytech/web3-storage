@@ -507,4 +507,43 @@ mod tests {
             );
         }
     }
+
+    /// Proofs of every leaf of MMRs with 1, 2, 3, 7 and 11 leaves, as JSON.
+    /// `packages/core/src/merkle.test.ts` checks that the TypeScript
+    /// `verifyMmrProof` accepts each one. Set `MMR_PROOF_VECTORS` to a file
+    /// path to write them: `just mmr-proof-vectors` does that.
+    #[test]
+    fn proof_vectors() {
+        let mut vectors = Vec::new();
+        for leaf_count in [1u64, 2, 3, 7, 11] {
+            let leaves = leaves(leaf_count);
+            for leaf_index in 0..leaf_count {
+                let (root, proof) = proof(&leaves, leaf_index).unwrap().unwrap();
+                let commitment = Commitment {
+                    mmr_root: root,
+                    start_seq: 0,
+                    leaf_count,
+                };
+                assert!(verify_mmr_proof(proof.clone(), leaf_index, &commitment));
+                let items: Vec<String> =
+                    proof.items.iter().map(|h| format!("\"{h:#x}\"")).collect();
+                vectors.push(format!(
+                    "    {{ \"leaf_count\": {leaf_count}, \"leaf_index\": {leaf_index}, \"root\": \"{root:#x}\", \"items\": [{}] }}",
+                    items.join(", ")
+                ));
+            }
+        }
+        let Some(path) = std::env::var_os("MMR_PROOF_VECTORS") else {
+            return;
+        };
+        let json = format!(
+            "{{\n  \"about\": \"Written by crates/primitives/storage/src/mmr.rs; read by packages/core/src/merkle.test.ts. Leaf i: data_root = 32 bytes of i + 1, data_size = i, total_size = 2 * i.\",\n  \"vectors\": [\n{}\n  ]\n}}\n",
+            vectors.join(",\n")
+        );
+        let path = std::path::Path::new(&path);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(path, json).unwrap();
+    }
 }

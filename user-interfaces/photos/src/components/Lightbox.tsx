@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
 // M6 — full-resolution photo viewer. Shows the object URL produced by
-// `openPhoto` (a fresh `GET /fs/.../file?path=` download) in a modal overlay.
+// `openPhoto` (a fresh download of the file) in a modal overlay.
 // Closing releases the object URL (`closePhoto`).
 
 import { useEffect } from 'react'

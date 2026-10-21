@@ -11,22 +11,40 @@ its bucket id. The chain stores no bucket name and no object metadata.
 |-----------|---------------|
 | `create_bucket` | Chain: `StorageProvider::create_bucket_with_primary`; returns the id from `BucketCreated` |
 | `head_bucket`, `list_buckets` | Chain: `StorageProvider::Buckets`, `StorageProvider::MemberBuckets` |
-| `put_object` | Provider: `PUT /s3/{bucket_id}/object?key=...` |
-| `get_object` | Provider: `GET /s3/{bucket_id}/object?key=...` |
-| `head_object` | Provider: `HEAD /s3/{bucket_id}/object?key=...` |
-| `delete_object` | Provider: `DELETE /s3/{bucket_id}/object?key=...` |
-| `list_objects_v2` | Provider: `GET /s3/{bucket_id}/objects` |
+| `put_object`, `delete_object` | Provider, Layer 0: `PUT /node`, `POST /commit` |
+| `get_object`, `head_object`, `list_objects_v2` | Provider, Layer 0: `GET /commitment`, `GET /mmr_proof`, `GET /read`, `GET /node` |
 
-The provider chunks the uploaded bytes, commits them to the bucket, and keeps
-an S3 index that maps each key to the data root, content type and user
-metadata (`x-amz-meta-*` headers). Every provider request carries a signed
-`Authorization` header; the provider checks the signer's bucket role.
+Objects are files in the bucket's file tree, the same format the file system
+client uses (`file_system_client::tree`). Key `k` is the file at path `/k`;
+intermediate directories are created by `put_object` and removed by
+`delete_object` when they become empty. The content type and user metadata
+(keys lowercased) are stored in the file's manifest. The ETag is `0x` + hex of
+the object's content root. The tree's root is the bucket's last MMR leaf, so
+any client instance can read the bucket. `get_object` checks the data against
+the content root.
+
+`ObjectClient` contains the object operations and needs no chain connection;
+`S3Client` adds the chain bucket operations.
+
+Key rules: 1 to 1024 bytes, split on `/` into segments of 1 to 256 bytes, no
+empty segment (no leading, trailing or double `/`), no `.` or `..` segment.
 
 Limits:
 
-- **Downloads by key are unverified.** Nothing on chain commits to the
-  provider's key-to-content index, so the client cannot check that the
-  returned bytes belong to the key (#410).
+- **Single writer.** Two clients that write the same bucket at the same time
+  can lose a change: the last commit wins.
+- **Only the S3 and file system clients may write the bucket.** A raw Layer 0
+  commit becomes the last leaf and the client then rejects the bucket.
+- **Prefix deletes.** An Admin `POST /delete` with a new `start_seq` can let
+  the provider drop blobs the current tree still references.
+- **Reads are unauthenticated.** Layer 0 reads need no signature: anyone who
+  knows a CID can read the blob (#383, #396). Bucket visibility does not
+  protect object contents. Use client-side encryption for confidential data.
+- A key cannot also be a prefix directory of another key: `a` and `a/b`
+  cannot both exist (`KeyConflict`).
+- `list_objects_v2` reads every directory under the prefix's deepest
+  directory and no manifests, so listed objects have no ETag (`head_object`
+  returns it). Page with `next_start_after`.
 - **No bucket deletion.** Layer 0 has no bucket deletion.
 - `list_buckets` returns every bucket the account is a member of. The chain
   does not record which buckets contain S3 objects.

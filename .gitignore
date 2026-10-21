@@ -22,6 +22,7 @@ desktop.ini
 # Test artifacts
 *.log
 *.tmp
+.test-vectors/
 
 # Local config
 .env

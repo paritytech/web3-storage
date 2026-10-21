@@ -7,8 +7,8 @@
  * (see the single-leaf case of `merkle_root` in
  * crates/primitives/storage/src/merkle.rs), so whole payloads up to
  * DEFAULT_CHUNK_SIZE can be verified directly against an on-chain CID.
- * Multi-chunk payloads need a Merkle DAG walk (Rust-client parity) — not
- * implemented here; callers surface those as "unverified".
+ * Multi-chunk blobs are checked chunk by chunk against their Merkle tree
+ * (`readBlob` in @web3-storage/layer0).
  */
 
 import { asHex, bytesEq, concatBytes, hexToBytes, toHex } from "./bytes.js";

@@ -44,14 +44,18 @@ async fn test_upload_returns_nonzero_root() {
 }
 
 #[tokio::test]
-async fn test_upload_empty_data_returns_error() {
+async fn test_upload_empty_data_is_one_empty_chunk() {
     let url = start_test_provider().await;
     let client = make_client(url);
 
-    let result = client.upload(1, b"", ChunkingStrategy::default()).await;
+    let data_root = client
+        .upload(1, b"", ChunkingStrategy::default())
+        .await
+        .unwrap();
 
-    // Empty data has no Merkle leaves — the client should surface a clear error.
-    assert!(result.is_err(), "expected error for empty upload, got Ok");
+    // Same as the provider and the TS SDK: empty data is a single empty chunk.
+    assert_eq!(data_root, storage_primitives::hash_leaf(b""));
+    client.commit(1, vec![data_root]).await.unwrap();
 }
 
 #[tokio::test]
@@ -652,6 +656,50 @@ async fn test_different_buckets_are_independent() {
     assert_eq!(c1.bucket_id, 1);
     assert_eq!(c2.bucket_id, 2);
     assert_ne!(c1.mmr_root, c2.mmr_root);
+}
+
+// ============================================================================
+// Commitment and MMR proof
+// ============================================================================
+
+#[tokio::test]
+async fn test_commitment_if_exists_is_none_for_an_unknown_bucket() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+    assert!(client.get_commitment_if_exists(99).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn test_mmr_proof_of_last_leaf_verifies_against_commitment() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let first = client
+        .upload(1, b"first", ChunkingStrategy::default())
+        .await
+        .unwrap();
+    let second = client
+        .upload(1, b"second", ChunkingStrategy::default())
+        .await
+        .unwrap();
+    client.commit(1, vec![first, second]).await.unwrap();
+
+    let commitment = client.get_commitment_if_exists(1).await.unwrap().unwrap();
+    assert_eq!(commitment.leaf_count, 2);
+    let proof = client
+        .get_mmr_proof(1, commitment.leaf_count - 1)
+        .await
+        .unwrap();
+    assert_eq!(proof.leaf.data_root, second);
+    assert!(storage_primitives::verify_mmr_proof(
+        proof,
+        commitment.leaf_count - 1,
+        &storage_primitives::Commitment {
+            mmr_root: commitment.mmr_root,
+            start_seq: 0,
+            leaf_count: commitment.leaf_count,
+        }
+    ));
 }
 
 // ============================================================================

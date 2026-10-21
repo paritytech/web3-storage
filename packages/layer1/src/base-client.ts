@@ -2,11 +2,11 @@
 
 /**
  * Shared plumbing for the layer-1 clients (FileSystemClient, S3Client):
- * signer state, provider-URL resolution, fetch injection, and the chain
- * read/submit defaults. The subclasses add only their pallet + HTTP surface.
+ * signer state, provider-URL resolution, fetch injection, the chain
+ * read/submit defaults, and access to the bucket's file-system tree.
  */
 
-import { signProviderRequest, type HttpFetchOpts } from "@web3-storage/core";
+import type { HttpFetchOpts } from "@web3-storage/core";
 import type {
   ChainSigner,
   ParachainApi,
@@ -15,6 +15,7 @@ import type {
 } from "@web3-storage/layer0";
 
 import { ProviderUrlResolver } from "./provider-url.js";
+import { FsTree, providerBlobStore } from "./tree.js";
 
 export interface Layer1ClientOptions {
   api: ParachainApi;
@@ -72,7 +73,15 @@ export abstract class Layer1Client {
     return { mode: this.submitMode, retryStale: 0, onStatus: this.onStatus };
   }
 
-  protected authHeaders(method: string, bucketId: bigint): Promise<Record<string, string>> {
-    return signProviderRequest(this.requireSigner().signer, method, bucketId);
+  /**
+   * The bucket's file-system tree on its provider. Reads need no signer;
+   * `write` requires one.
+   */
+  protected async openTree(bucketId: bigint, opts: { write?: boolean; signal?: AbortSignal } = {}): Promise<FsTree> {
+    const signer = opts.write ? this.requireSigner() : null;
+    const providerUrl = await this.providers.get(bucketId);
+    return new FsTree(
+      providerBlobStore(providerUrl, bucketId, signer, { fetch: this.fetchOpts.fetchImpl, retries: this.fetchOpts.retries, signal: opts.signal }),
+    );
   }
 }
