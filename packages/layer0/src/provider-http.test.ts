@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bytesToBase64,
   CidMismatchError,
+  concatBytes,
   DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
@@ -44,7 +45,7 @@ describe("downloadChunk", () => {
     const right = hashLeaf(enc.encode("right"));
     stubFetch(() => ({ children: [toHex(left), toHex(right)] }));
     await expect(downloadChunk(PROVIDER, toHex(hashChildren(left, right)))).resolves.toEqual(
-      new Uint8Array([...left, ...right]),
+      concatBytes(left, right),
     );
   });
 
@@ -60,7 +61,7 @@ describe("downloadChunk", () => {
     const left = hashLeaf(enc.encode("left"));
     const right = hashLeaf(enc.encode("right"));
     stubFetch(() => ({
-      data: bytesToBase64(new Uint8Array([...left, ...right])),
+      data: bytesToBase64(concatBytes(left, right)),
       children: [toHex(left), toHex(right)],
     }));
     await expect(downloadChunk(PROVIDER, toHex(hashChildren(left, right)))).rejects.toBeInstanceOf(

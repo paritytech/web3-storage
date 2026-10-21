@@ -10,6 +10,7 @@ import {
   base64ToBytes,
   bytesToBase64,
   CidMismatchError,
+  concatBytes,
   DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
@@ -184,15 +185,15 @@ export async function downloadChunk(
   const downloaded = await providerFetch(providerUrl, "/node", {
     params: { hash: chunkHashHex },
   });
-  const children: string[] | null = downloaded.children ?? null;
+  const children = downloaded.children ?? null;
   const data = downloaded.data != null ? base64ToBytes(downloaded.data) : null;
   const expected = asHex(chunkHashHex).toLowerCase();
   const hash = nodeHash(data, children);
   if (!hash) throw new CidMismatchError(expected, "malformed node");
   const actual = toHex(hash);
   if (actual !== expected) throw new CidMismatchError(expected, actual);
-  if (data) return data;
-  return new Uint8Array((children ?? []).flatMap((child) => [...hexToBytes(child)]));
+  // nodeHash accepted the node, so it has data or children, not both.
+  return data ?? concatBytes(...children!.map(hexToBytes));
 }
 
 export async function fetchCheckpointSignature(
