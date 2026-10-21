@@ -8,7 +8,7 @@ use provider_auth::{
     MembershipResolver,
 };
 use provider_events::{BlockEvent, BlockEventRx};
-use sp_core::crypto::{AccountId32, Ss58Codec};
+use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;
@@ -28,16 +28,11 @@ pub struct ChainMembershipResolver {
 }
 
 impl ChainMembershipResolver {
-    pub fn new(chain_rx: ChainWatch, provider_id: &str) -> Self {
+    pub fn new(chain_rx: ChainWatch, provider_account: Option<AccountId32>) -> Self {
         Self {
             chain_rx,
-            provider_account: AccountId32::from_ss58check(provider_id).ok(),
+            provider_account,
         }
-    }
-
-    /// This node's account, when `provider_id` was one.
-    pub fn provider_account(&self) -> Option<&AccountId32> {
-        self.provider_account.as_ref()
     }
 
     /// Resolved per lookup so reconnects are picked up.
@@ -121,7 +116,7 @@ impl MembershipResolver for ChainMembershipResolver {
             .storage()
             .try_fetch(
                 storage_address,
-                (bucket_id, subxt::utils::AccountId32(own.clone().into())),
+                (bucket_id, crate::subxt_client::subxt_account(own)),
             )
             .await
             .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
@@ -232,7 +227,7 @@ mod tests {
         // Before the chain-state coordinator publishes a connection, auth
         // lookups must surface a retryable error rather than panic or hang.
         let (_tx, rx) = tokio::sync::watch::channel(None);
-        let resolver = ChainMembershipResolver::new(rx, "not-an-account");
+        let resolver = ChainMembershipResolver::new(rx, None);
         let err = resolver
             .fetch_access(1)
             .await

@@ -17,6 +17,7 @@ use crate::{
 use clap::Parser;
 use provider_auth::Authenticator;
 use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
+use sp_core::crypto::{AccountId32, Ss58Codec};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -76,11 +77,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // through the shared watch connection. Subscribed here rather than after
     // the chain-state coordinator starts, so the cache cannot miss the
     // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
-    // The resolver parses the provider id into the node's account (replica
-    // lookups); the authenticator reuses it for operator self-auth. Both stay
-    // off when the id is not an SS58 account (the placeholder default).
-    let resolver = ChainMembershipResolver::new(chain_rx.clone(), &provider_id);
-    let provider_account = resolver.provider_account().cloned();
+    // The node's account serves the resolver's replica lookups and the
+    // authenticator's operator self-auth. Both stay off when the provider id
+    // is not an SS58 account (the placeholder default).
+    let provider_account = AccountId32::from_ss58check(&provider_id).ok();
+    let resolver = ChainMembershipResolver::new(chain_rx.clone(), provider_account.clone());
     // Incoherent, not unsafe - warn rather than clamp an explicit choice.
     if cli.auth.auth_max_stale <= cli.auth.auth_cache_ttl {
         tracing::warn!(
