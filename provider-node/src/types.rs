@@ -35,10 +35,10 @@ pub struct UploadNodeRequest {
     /// the two children for an internal node
     pub hash: String,
     /// Base64-encoded chunk bytes
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
     /// Left and right child hashes of an internal node
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<String>>,
 }
 
@@ -53,9 +53,9 @@ pub struct UploadNodeResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadNodeResponse {
     pub hash: H256,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<H256>>,
 }
 
