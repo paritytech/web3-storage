@@ -5,7 +5,7 @@
 //! Every internal node is `hash_children(left, right)`. An odd last node of a
 //! level moves up to the next level unchanged.
 
-use crate::{hash_children, DEFAULT_CHUNK_SIZE};
+use crate::hash_children;
 use alloc::vec::Vec;
 use core::ops::Range;
 use sp_core::H256;
@@ -21,12 +21,14 @@ pub struct MerkleNode {
     pub right: H256,
 }
 
-/// Number of chunks (tree leaves) of data with `data_size` bytes.
+/// Number of chunks (tree leaves) of data with `data_size` bytes split into
+/// `chunk_size` byte chunks.
 ///
-/// Every chunk is `DEFAULT_CHUNK_SIZE` bytes except the last, and empty data is
-/// one empty chunk.
-pub fn chunk_count(data_size: u64) -> u64 {
-    data_size.div_ceil(DEFAULT_CHUNK_SIZE as u64).max(1)
+/// Every chunk is `chunk_size` bytes except the last, and empty data is one
+/// empty chunk. The chunk size belongs to the leaf version, so for a committed
+/// leaf use [`crate::MmrLeaf::chunk_count`].
+pub fn chunk_count(data_size: u64, chunk_size: u32) -> u64 {
+    data_size.div_ceil(u64::from(chunk_size)).max(1)
 }
 
 /// Every level of the tree, from the leaves (first) to the root (last, one
@@ -165,7 +167,7 @@ pub fn verify_merkle_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blake2_256;
+    use crate::{blake2_256, DEFAULT_CHUNK_SIZE};
 
     fn leaves(n: usize) -> Vec<H256> {
         (1..=n).map(|i| H256::from_low_u64_be(i as u64)).collect()
@@ -388,12 +390,14 @@ mod tests {
 
     #[test]
     fn chunk_count_rounds_up_and_has_a_minimum_of_one() {
-        let chunk = DEFAULT_CHUNK_SIZE as u64;
-        assert_eq!(chunk_count(0), 1);
-        assert_eq!(chunk_count(1), 1);
-        assert_eq!(chunk_count(chunk), 1);
-        assert_eq!(chunk_count(chunk + 1), 2);
-        assert_eq!(chunk_count(2 * chunk), 2);
-        assert_eq!(chunk_count(2 * chunk + 10), 3);
+        let size = DEFAULT_CHUNK_SIZE;
+        let chunk = u64::from(size);
+        assert_eq!(chunk_count(0, size), 1);
+        assert_eq!(chunk_count(1, size), 1);
+        assert_eq!(chunk_count(chunk, size), 1);
+        assert_eq!(chunk_count(chunk + 1, size), 2);
+        assert_eq!(chunk_count(2 * chunk, size), 2);
+        assert_eq!(chunk_count(2 * chunk + 10, size), 3);
+        assert_eq!(chunk_count(10, 4), 3);
     }
 }

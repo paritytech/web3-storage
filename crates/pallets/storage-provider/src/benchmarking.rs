@@ -982,21 +982,21 @@ mod benchmarks {
             BoundedVec::try_from(chunk_bytes.clone()).unwrap();
 
         let data_size = u64::MAX;
-        let depth = storage_primitives::chunk_count(data_size).ilog2();
-        let siblings: alloc::vec::Vec<H256> = (0..depth)
-            .map(|level| H256::from_low_u64_be(u64::from(level) + 1))
-            .collect();
-        let data_root = siblings.iter().fold(
-            storage_primitives::hash_leaf(&chunk_bytes),
-            |node, sibling| storage_primitives::hash_children(node, *sibling),
-        );
-
-        let mmr_leaf = storage_primitives::MmrLeaf {
+        let mut mmr_leaf = storage_primitives::MmrLeaf {
             leaf_version: storage_primitives::LEAF_VERSION,
-            data_root,
+            data_root: H256::zero(),
             data_size,
             total_size: data_size,
         };
+        // The chunk count the pallet derives from the leaf, as in `respond_to_challenge`.
+        let depth = mmr_leaf.chunk_count().unwrap().ilog2();
+        let siblings: alloc::vec::Vec<H256> = (0..depth)
+            .map(|level| H256::from_low_u64_be(u64::from(level) + 1))
+            .collect();
+        mmr_leaf.data_root = siblings.iter().fold(
+            storage_primitives::hash_leaf(&chunk_bytes),
+            |node, sibling| storage_primitives::hash_children(node, *sibling),
+        );
         let leaf_hash = storage_primitives::hash_leaf(&codec::Encode::encode(&mmr_leaf));
 
         let leaf_count = u64::MAX / 2; // 63 peaks; challenged leaf 0 is in the height-62 peak
