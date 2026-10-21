@@ -300,12 +300,14 @@ impl StorageUserClient {
             .await
             .map_err(|e| ClientError::Serialization(e.to_string()))?;
 
-        // Decode base64 data
-        let data = BASE64
-            .decode(&node_response.data)
-            .map_err(|e| ClientError::Serialization(format!("Invalid base64: {e}")))?;
-
-        // Parse children hashes if present
+        let data = node_response
+            .data
+            .map(|data| {
+                BASE64
+                    .decode(data)
+                    .map_err(|e| ClientError::Serialization(format!("Invalid base64: {e}")))
+            })
+            .transpose()?;
         let children = node_response
             .children
             .map(|c| {
@@ -501,9 +503,9 @@ impl StorageUserClient {
         node: &Node,
     ) -> ClientResult<H256> {
         let (data, children) = match node {
-            Node::Chunk(data) => (BASE64.encode(data), None),
+            Node::Chunk(data) => (Some(BASE64.encode(data)), None),
             Node::Internal { left, right } => (
-                BASE64.encode([left.as_bytes(), right.as_bytes()].concat()),
+                None,
                 Some(vec![format!("{:#x}", left), format!("{:#x}", right)]),
             ),
         };
@@ -677,21 +679,20 @@ impl Node {
         }
     }
 
-    /// Build a node from the `data` and `children` of a `/node` response.
-    /// `VerificationFailed` if an internal node does not have exactly two
-    /// children or its `data` is not the left child hash followed by the right
-    /// child hash.
-    fn from_wire(data: Vec<u8>, children: Option<Vec<H256>>) -> ClientResult<Self> {
-        let Some(children) = children else {
-            return Ok(Self::Chunk(data));
-        };
-        let [left, right]: [H256; 2] = children
-            .try_into()
-            .map_err(|_| ClientError::VerificationFailed)?;
-        if data != [left.as_bytes(), right.as_bytes()].concat() {
-            return Err(ClientError::VerificationFailed);
+    /// Build a node from the `data` or the `children` of a `/node` response.
+    /// `VerificationFailed` if the response has both or neither, or an
+    /// internal node does not have exactly two children.
+    fn from_wire(data: Option<Vec<u8>>, children: Option<Vec<H256>>) -> ClientResult<Self> {
+        match (data, children) {
+            (Some(data), None) => Ok(Self::Chunk(data)),
+            (None, Some(children)) => {
+                let [left, right]: [H256; 2] = children
+                    .try_into()
+                    .map_err(|_| ClientError::VerificationFailed)?;
+                Ok(Self::Internal { left, right })
+            }
+            _ => Err(ClientError::VerificationFailed),
         }
-        Ok(Self::Internal { left, right })
     }
 }
 
@@ -699,7 +700,9 @@ impl Node {
 struct UploadNodeRequest {
     bucket_id: u64,
     hash: String,
-    data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<String>>,
 }
 
@@ -761,7 +764,7 @@ struct ChunkWithProof {
 #[allow(dead_code)]
 struct NodeResponse {
     hash: String,
-    data: String,
+    data: Option<String>,
     children: Option<Vec<String>>,
 }
 
@@ -817,25 +820,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn node_from_wire_checks_child_count_and_data() {
+    fn node_from_wire_takes_data_or_exactly_two_children() {
         let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
-        let data = [left.as_bytes(), right.as_bytes()].concat();
 
         assert_eq!(
-            Node::from_wire(vec![1, 2, 3], None).unwrap(),
+            Node::from_wire(Some(vec![1, 2, 3]), None).unwrap(),
             Node::Chunk(vec![1, 2, 3])
         );
         assert_eq!(
-            Node::from_wire(data.clone(), Some(vec![left, right])).unwrap(),
+            Node::from_wire(None, Some(vec![left, right])).unwrap(),
             Node::Internal { left, right }
         );
         for (data, children) in [
-            (data.clone(), vec![left]),
-            (data, vec![left, right, left]),
-            (Vec::new(), vec![left, right]),
+            (None, Some(vec![left])),
+            (None, Some(vec![left, right, left])),
+            (Some(vec![1, 2, 3]), Some(vec![left, right])),
+            (None, None),
         ] {
             assert!(matches!(
-                Node::from_wire(data, Some(children)),
+                Node::from_wire(data, children),
                 Err(ClientError::VerificationFailed)
             ));
         }

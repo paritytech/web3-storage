@@ -14,8 +14,10 @@ import {
   hashChildren,
   hashLeaf,
   nodeHash,
+  parseNode,
   signProviderRequest,
   type ProviderRequestSigner,
+  type TreeNode,
 } from "@web3-storage/core";
 
 import { asHex, toHex, type ParachainApi } from "./address.js";
@@ -111,38 +113,52 @@ export interface PutChunkResult {
  * `signer` authenticates the `PUT /node` request; it must hold a Writer/Admin
  * role on `bucketId` (the provider always enforces this).
  *
- * Pass `children` to store an internal node instead of a leaf chunk. The
- * provider requires every child to exist already.
- *
- * Throws `RangeError` for a leaf above `DEFAULT_CHUNK_SIZE`, before any request.
+ * Throws `RangeError` for a chunk above `DEFAULT_CHUNK_SIZE`, before any request.
  */
 export async function putChunk(
   providerUrl: string,
   bucketId: bigint | number,
   data: Uint8Array | string,
   signer: ChainSigner,
-  children: [Uint8Array, Uint8Array] | null = null,
 ): Promise<PutChunkResult> {
-  const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
-  if (!children && bytes.length > DEFAULT_CHUNK_SIZE) {
+  if (bytes.length > DEFAULT_CHUNK_SIZE) {
     throw new RangeError(
       `chunk is ${bytes.length} bytes, above the ${DEFAULT_CHUNK_SIZE} byte maximum; split the data into ${DEFAULT_CHUNK_SIZE} byte chunks`,
     );
   }
-  const cid = children ? hashChildren(children[0], children[1]) : hashLeaf(bytes);
+  const cid = hashLeaf(bytes);
   const hash = toHex(cid);
   await providerFetch(providerUrl, "/node", {
     method: "PUT",
-    body: {
-      bucket_id: Number(bucketId),
-      hash,
-      data: bytesToBase64(bytes),
-      children: children ? children.map((c) => toHex(c)) : null,
-    },
-    sign,
+    body: { bucket_id: Number(bucketId), hash, data: bytesToBase64(bytes) },
+    sign: { signer: signer.signer, bucketId },
   });
   return { hash, cid, size: BigInt(bytes.length), data: bytes };
+}
+
+/**
+ * PUT the internal node over the child hashes `left` and `right`. Both
+ * children must already exist on the provider. Returns the node hash.
+ *
+ * `signer` authenticates the `PUT /node` request; it must hold a Writer/Admin
+ * role on `bucketId`.
+ */
+export async function putInternalNode(
+  providerUrl: string,
+  bucketId: bigint | number,
+  left: Uint8Array,
+  right: Uint8Array,
+  signer: ChainSigner,
+): Promise<{ hash: string; cid: Uint8Array }> {
+  const cid = hashChildren(left, right);
+  const hash = toHex(cid);
+  await providerFetch(providerUrl, "/node", {
+    method: "PUT",
+    body: { bucket_id: Number(bucketId), hash, children: [toHex(left), toHex(right)] },
+    sign: { signer: signer.signer, bucketId },
+  });
+  return { hash, cid };
 }
 
 /**
@@ -171,24 +187,32 @@ export async function uploadChunk(
 }
 
 /**
- * Download a node by hash and verify it: bytes without children must hash as
- * a leaf, and a node with two children must hold exactly their concatenation
- * and hash as a node over them. Throws {@link CidMismatchError} otherwise.
+ * Download a node by hash and verify it: a chunk's bytes must hash as a leaf,
+ * and an internal node's two children must hash as a node over them. Returns
+ * `{ data }` for a chunk or `{ children: [left, right] }` for an internal node.
+ * Throws {@link CidMismatchError} otherwise.
  */
-export async function downloadChunk(
-  providerUrl: string,
-  chunkHashHex: string,
-): Promise<Uint8Array> {
-  const downloaded = await providerFetch(providerUrl, "/node", {
-    params: { hash: chunkHashHex },
-  });
-  const data = base64ToBytes(downloaded.data);
-  const expected = asHex(chunkHashHex).toLowerCase();
-  const hash = nodeHash(data, downloaded.children ?? null);
-  if (!hash) throw new CidMismatchError(expected, "malformed internal node");
-  const actual = toHex(hash);
+export async function downloadNode(providerUrl: string, hashHex: string): Promise<TreeNode> {
+  const body = await providerFetch(providerUrl, "/node", { params: { hash: hashHex } });
+  const expected = asHex(hashHex).toLowerCase();
+  const node = parseNode(body);
+  if (!node) throw new CidMismatchError(expected, "malformed node");
+  const actual = toHex(nodeHash(node));
   if (actual !== expected) throw new CidMismatchError(expected, actual);
-  return data;
+  return node;
+}
+
+/**
+ * Download a chunk by hash and verify it. Throws {@link CidMismatchError} when
+ * the bytes do not hash to `chunkHashHex`, and `Error` when the hash names an
+ * internal node; use {@link downloadNode} for those.
+ */
+export async function downloadChunk(providerUrl: string, chunkHashHex: string): Promise<Uint8Array> {
+  const node = await downloadNode(providerUrl, chunkHashHex);
+  if (!("data" in node)) {
+    throw new Error(`${chunkHashHex} is an internal node, not a chunk; use downloadNode`);
+  }
+  return node.data;
 }
 
 export async function fetchCheckpointSignature(

@@ -350,15 +350,12 @@ common::backend_tests! {
 
         let left = storage_primitives::hash_leaf(b"left");
         let right = storage_primitives::hash_leaf(b"right");
-        let mut node_data = left.as_bytes().to_vec();
-        node_data.extend_from_slice(right.as_bytes());
         let response = server
             .client
             .put(server.url("/node"))
             .json(&json!({
                 "bucket_id": 1,
-                "hash": format!("{:#x}", storage_primitives::blake2_256(&node_data)),
-                "data": BASE64.encode(&node_data),
+                "hash": format!("{:#x}", H256::zero()),
                 "children": [
                     format!("{left:#x}"),
                     format!("{right:#x}"),
@@ -380,11 +377,6 @@ common::backend_tests! {
         let child1 = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let child2 = "0x0000000000000000000000000000000000000000000000000000000000000002";
 
-        // Create internal node data (child hashes concatenated)
-        let mut node_data = Vec::new();
-        node_data.extend_from_slice(&array_bytes::hex2bytes(child1).unwrap());
-        node_data.extend_from_slice(&array_bytes::hex2bytes(child2).unwrap());
-
         let hash = storage_primitives::hash_children(
             child1.parse::<sp_core::H256>().unwrap(),
             child2.parse::<sp_core::H256>().unwrap(),
@@ -397,7 +389,6 @@ common::backend_tests! {
             .json(&json!({
                 "bucket_id": 1,
                 "hash": hash_hex,
-                "data": BASE64.encode(&node_data),
                 "children": [child1, child2]
             }))
             .send()
@@ -427,7 +418,6 @@ common::backend_tests! {
             .json(&json!({
                 "bucket_id": 1,
                 "hash": format!("{hash:#x}"),
-                "data": BASE64.encode(child_hash.as_bytes()),
                 "children": [child_hex],
             }))
             .send()
@@ -473,57 +463,44 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_internal_node_rejects_data_that_is_not_its_children(backend) {
+    async fn test_upload_node_rejects_both_or_neither_of_data_and_children(backend) {
         let server = TestServer::new(backend).await;
 
         let (left, right) = (H256::from_low_u64_be(1), H256::from_low_u64_be(2));
         let hash = storage_primitives::hash_children(left, right);
-
-        let response = server
-            .client
-            .put(server.url("/node"))
-            .json(&json!({
+        for request in [
+            json!({
                 "bucket_id": 1,
                 "hash": format!("{hash:#x}"),
                 "data": BASE64.encode(b"unrelated bytes"),
-                "children": [
-                    format!("{left:#x}"),
-                    format!("{right:#x}"),
-                ],
-            }))
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-        let body: Value = response.json().await.unwrap();
-        assert_eq!(body["error"], "invalid_internal_node_data");
+                "children": [format!("{left:#x}"), format!("{right:#x}")],
+            }),
+            json!({ "bucket_id": 1, "hash": format!("{hash:#x}") }),
+        ] {
+            let response = server
+                .client
+                .put(server.url("/node"))
+                .json(&request)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body: Value = response.json().await.unwrap();
+            assert_eq!(body["error"], "invalid_node");
+        }
     }
 }
 
-/// The hash of an internal node from its data (`left ++ right`).
-fn rehash_node(data: &[u8]) -> sp_core::H256 {
-    storage_primitives::hash_children(
-        sp_core::H256::from_slice(&data[..32]),
-        sp_core::H256::from_slice(&data[32..]),
-    )
-}
-
-// An internal node's data is derived from its children rather than kept on
-// disk, so both download paths have to rebuild it - a client that rehashes what
-// it downloaded must land back on the hash it asked for.
+// An internal node is its two children: both download paths return them and
+// no `data`.
 common::backend_tests! {
-    async fn test_download_internal_node_returns_rehashable_data(backend) {
+    async fn test_download_internal_node_returns_its_children(backend) {
         let server = TestServer::new(backend).await;
 
         let mut child_hexes = Vec::new();
-        let mut node_data = Vec::new();
         for chunk in [b"left-chunk".as_slice(), b"right-chunk".as_slice()] {
             let chunk_hash = storage_primitives::hash_leaf(chunk);
             child_hexes.push(format!("{chunk_hash:#x}"));
-            node_data.extend_from_slice(chunk_hash.as_bytes());
-
             server
                 .client
                 .put(server.url("/node"))
@@ -531,7 +508,6 @@ common::backend_tests! {
                     "bucket_id": 1,
                     "hash": format!("{chunk_hash:#x}"),
                     "data": BASE64.encode(chunk),
-                    "children": null,
                 }))
                 .send()
                 .await
@@ -550,7 +526,6 @@ common::backend_tests! {
             .json(&json!({
                 "bucket_id": 1,
                 "hash": hash_hex,
-                "data": BASE64.encode(&node_data),
                 "children": child_hexes,
             }))
             .send()
@@ -558,7 +533,6 @@ common::backend_tests! {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        // GET /node
         let response = server
             .client
             .get(server.url(&format!("/node?hash={hash_hex}")))
@@ -566,14 +540,10 @@ common::backend_tests! {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-
         let body: Value = response.json().await.unwrap();
-        let downloaded = BASE64.decode(body["data"].as_str().unwrap()).unwrap();
-        assert_eq!(downloaded, node_data);
-        assert_eq!(rehash_node(&downloaded), hash);
         assert_eq!(body["children"], json!(child_hexes));
+        assert!(body.get("data").is_none());
 
-        // /fetch_nodes must rebuild the same bytes.
         let response = server
             .client
             .post(server.url("/fetch_nodes"))
@@ -585,12 +555,10 @@ common::backend_tests! {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-
         let body: Value = response.json().await.unwrap();
         let node = &body["nodes"].as_array().unwrap()[0];
-        let fetched = BASE64.decode(node["data"].as_str().unwrap()).unwrap();
-        assert_eq!(rehash_node(&fetched), hash);
         assert_eq!(node["children"], json!(child_hexes));
+        assert!(node.get("data").is_none());
     }
 }
 
@@ -1526,17 +1494,12 @@ common::backend_tests! {
     async fn test_upload_node_invalid_hex_children(backend) {
         let server = TestServer::new(backend).await;
 
-        let data = b"child test data";
-        let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("{hash:#x}");
-
         let resp = server
             .client
             .put(server.url("/node"))
             .json(&json!({
                 "bucket_id": 1,
-                "hash": hash_hex,
-                "data": BASE64.encode(data),
+                "hash": format!("{:#x}", H256::zero()),
                 "children": ["zzz_invalid_hex"]
             }))
             .send()
