@@ -192,6 +192,13 @@ impl IntoResponse for Error {
                         details: None,
                     },
                 ),
+                StorageError::EmptyData => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "empty_data".to_string(),
+                        details: None,
+                    },
+                ),
                 StorageError::QuotaExceeded { used, max } => (
                     StatusCode::INSUFFICIENT_STORAGE,
                     ErrorResponse {
@@ -533,6 +540,10 @@ mod tests {
             status_of(Error::from(provider_storage::Error::ChildrenMissing(
                 vec![]
             ))),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::EmptyData)),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(

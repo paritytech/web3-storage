@@ -293,12 +293,16 @@ fn proven_chunks<B: StorageBackend + ?Sized>(
 }
 
 /// Store the internal nodes of `storage_primitives::merkle_tree` over `leaves`
-/// and return the root. Returns the first `store_node` error.
+/// and return the root. Fails with `EmptyData` for no leaves, and otherwise
+/// returns the first `store_node` error.
 pub fn build_merkle_tree(
     storage: &dyn StorageBackend,
     bucket_id: BucketId,
     leaves: &[H256],
 ) -> Result<H256, Error> {
+    if leaves.is_empty() {
+        return Err(Error::EmptyData);
+    }
     let (root, nodes) = merkle_tree(leaves);
     for node in nodes {
         storage.store_node(
@@ -344,7 +348,7 @@ mod tests {
 
     #[test]
     fn stored_tree_root_matches_merkle_root() {
-        for n in [0, 1, 2, 3, 5, 8] {
+        for n in [1, 2, 3, 5, 8] {
             let (_dir, storage, leaves) = storage_with_chunks(1024 * 1024, &chunks(n));
             assert_eq!(
                 build_merkle_tree(&storage, 1, &leaves).unwrap(),
@@ -393,6 +397,13 @@ mod tests {
                 chunk_count: 5
             })
         ));
+    }
+
+    #[test]
+    fn build_merkle_tree_rejects_no_leaves() {
+        let (_dir, storage, _) = storage_with_chunks(1024, &[]);
+        let err = build_merkle_tree(&storage, 1, &[]).unwrap_err();
+        assert!(matches!(err, Error::EmptyData), "got {err:?}");
     }
 
     #[test]
