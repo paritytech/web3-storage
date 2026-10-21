@@ -27,10 +27,9 @@ pub use mmr::{bag_peaks, verify_mmr_proof, MmrLeaf, MmrProof, StorageMerge, LEAF
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
 pub type BucketId = u64;
 
-/// Chunk size, 256 KiB. Every chunk of a committed data root has this size,
-/// except the last, which can be shorter. The runtime uses it as
-/// `MaxChunkSize`. The provider rejects a larger chunk on upload and replica
-/// sync.
+/// Chunk size of leaf version 1, 256 KiB (see `MmrLeaf::chunk_size`). Every
+/// chunk of a version 1 data root has this size, except the last, which can be
+/// shorter. The provider rejects a larger chunk on upload and replica sync.
 pub const DEFAULT_CHUNK_SIZE: u32 = 256 * 1024;
 
 /// Prime numbers used for historical root bucketing.
@@ -648,7 +647,7 @@ mod tests {
         #[test]
         fn mmr_leaf_hash_covers_the_encoded_leaf() {
             let leaf = MmrLeaf {
-                leaf_version: mmr::LEAF_VERSION,
+                leaf_version: LEAF_VERSION,
                 data_root: H256::repeat_byte(0x11),
                 data_size: 1,
                 total_size: 2,
