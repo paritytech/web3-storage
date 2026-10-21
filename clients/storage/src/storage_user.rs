@@ -546,11 +546,6 @@ impl StorageUserClient {
         bucket_id: BucketId,
         leaf_hashes: &[H256],
     ) -> ClientResult<H256> {
-        if leaf_hashes.is_empty() {
-            return Err(ClientError::Api(
-                "Cannot build Merkle tree with no leaves".to_string(),
-            ));
-        }
         let (root, nodes) = storage_primitives::merkle_tree(leaf_hashes);
         for node in nodes {
             self.upload_node(
