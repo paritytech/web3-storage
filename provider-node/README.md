@@ -39,8 +39,8 @@ challenges for buckets it still has agreements for.
 ## Authentication
 
 Authentication is always enforced: every mutating Layer-0 endpoint (`PUT
-/node`, `POST /commit`, `POST /delete`) and all fs/s3 endpoints require a
-signed `Authorization` header, and there is no way to turn enforcement off.
+/node`, `POST /commit`, `POST /delete`) requires a signed `Authorization`
+header, and there is no way to turn enforcement off.
 Layer-0 content-addressed reads (`GET /node`, `GET /read`, `POST
 /fetch_nodes`, the commitment/proof endpoints) are currently unauthenticated;
 whether they should require the `Reader` role is tracked in
@@ -58,14 +58,14 @@ header:          Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<timest
 
 | Field          | Meaning                                                                 |
 | -------------- | ----------------------------------------------------------------------- |
-| `METHOD`       | Upper-case HTTP verb of the request (`GET`, `PUT`, `POST`, `DELETE`).   |
+| `METHOD`       | Upper-case HTTP verb of the request (`PUT`, `POST`).                    |
 | `bucket_id`    | Decimal id of the bucket the request targets.                           |
 | `timestamp`    | Client Unix time in **seconds**; identical in the message and header.   |
 | `pubkey_hex`   | 32-byte sr25519 public key, hex (optional `0x` prefix).                 |
 | `signature_hex`| 64-byte signature over the message, hex (optional `0x` prefix).         |
 
 The recovered public key is mapped to the bucket's on-chain role
-(`Reader` / `Writer` / `Admin`); reads need `Reader`, writes and deletes need
+(`Reader` / `Writer` / `Admin`); writes (`PUT /node`, `POST /commit`) need
 `Writer`, and pruning (`POST /delete`) needs `Admin`. The `timestamp` must be
 within the configured skew window of the provider's clock or the request is
 rejected as expired.

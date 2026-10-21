@@ -73,6 +73,6 @@ encryption.
 `photos-flow` asserts the contract account is the bucket admin, the user holds a Writer role on the
 bucket, and `libraryOf(user)` reports the new bucket. It then uses the SDK's `FileSystemClient` (mkdir an album,
 PUT a multi-MB photo + a thumbnail), computes the bucket's metadata Merkle root **client-side**
-(`merkle.ts`, a byte-exact port of `crates/providers/storage/src/index/fs.rs`), anchors it via `setRoot`, and
+(`metadataMerkleRoot` in `packages/core/src/merkle.ts`), anchors it via `setRoot`, and
 verifies the locally recomputed root equals the on-chain anchor and that the bucket's file-system
 root is the one the last write returned (plus a tamper check) — proving the control plane and the integrity anchor before any UI exists.
