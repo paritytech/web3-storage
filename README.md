@@ -95,7 +95,7 @@ just fs-demo-ci             # Terminal 3
 ### File System Commands
 
 ```bash
-just fs-test-all            # Run all unit tests across primitives, pallet, client
+just fs-test-all            # Run all unit tests across primitives, client
 just fs-demo-ci             # Integration example against a running chain + provider
 ```
 

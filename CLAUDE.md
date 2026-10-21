@@ -249,7 +249,7 @@ strings) are documented in [`packages/sdk/README.md`](packages/sdk/README.md).
 just setup           # one-time: download binaries, build
 just build           # cargo build --release
 cargo test           # all tests (or -p <crate> for one)
-just fs-test-all     # Layer 1: primitives + pallet + client tests
+just fs-test-all     # Layer 1: primitives + client tests
 cargo clippy --all-targets --all-features --workspace -- -D warnings
 ```
 
