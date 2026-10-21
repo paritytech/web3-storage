@@ -470,7 +470,14 @@ impl ChallengeResponder {
         // Step 2: a chunk index at or past the leaf's chunk count has no chunk
         // to prove, so the leaf's MMR proof alone answers it. Otherwise fetch
         // the chunk and its Merkle proof under the leaf's data_root.
-        let chunk_count = storage_primitives::chunk_count(mmr_proof.leaf.data_size);
+        let Some(chunk_count) = mmr_proof.leaf.chunk_count() else {
+            let error = format!("unknown leaf version {}", mmr_proof.leaf.leaf_version);
+            tracing::error!("Failed to answer challenge: {}", error);
+            return ChallengeResponseResult::ProofGenerationFailed {
+                challenge_id,
+                error,
+            };
+        };
         let submitted = if challenge.target.chunk_index >= chunk_count {
             self.chain_client
                 .submit_chunk_out_of_range(challenge_id, mmr_proof)

@@ -4,13 +4,14 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.5 |
+| **Version** | 2.6 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.6 | Chunk tree fixed: a binary RFC 9162 Merkle tree over 256 KiB chunks (only the last chunk is shorter), chunk and node hashes with different prefixes, no padding, chunk count derived from the leaf's `data_size`, empty data rejected, a `chunk_index` at or beyond the chunk count answered with the leaf alone. `MmrLeaf` starts with `leaf_version`, which defines the leaf's fields, `CHUNK_SIZE` and the tree shape. Proofs carry only hashes: `MmrProof { leaf, items }` with `polkadot-ckb-merkle-mountain-range` as the reference implementation and the leaf position taken from the challenge, a chunk proof is the sibling list, `GET /mmr_proof` returns `items` and `GET /chunk_proof` a sibling list. **Read**: "Content-Addressed Chunks", "MMR Commitments"; "Hash Prefixes", "Chunk Tree", "MMR Leaf", "MMR Proof", `POST /commit`, `GET /mmr_proof`, `GET /chunk_proof` and `verify_challenge_response` in [Implementation Details](./scalable-web3-storage-implementation.md). |
 | 2.5 | Challenge resolution and slashing are lazy: an unanswered challenge is slashed by the permissionless `resolve_expired_challenge` call (no per-block sweep). A timeout is the only slash reason. **Read**: "The Challenge Game", Resolution; `resolve_expired_challenge` in [Implementation Details](./scalable-web3-storage-implementation.md). |
 | 2.4 | Bucket creation and provider assignment are separate on-chain operations: `create_bucket`, `create_bucket_with_primary`, `add_primary_provider`, `add_replica_provider`. Provider-signed quotes name the bucket they are for. A bucket remains after its last agreement ends and can get new providers later; the client moves the data when a provider is added. **Read**: "Buckets: Stable Identity in a Fluid Provider Market"; "Two Classes of Providers"; "Provider Lifecycle in Bucket" in [Implementation Details](./scalable-web3-storage-implementation.md) for the four calls. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
@@ -619,6 +620,9 @@ below):
    - Valid proof: Challenge rejected. The provider's response fee is reimbursed
      from the challenger's deposit (in full, or only a fraction—see below).
      Any excess deposit is returned to the challenger.
+   - `chunk_index` at or beyond the leaf's chunk count: the provider answers
+     with the MMR proof of the leaf alone; the chain derives the chunk count
+     from the leaf's `data_size` and resolves the challenge as a valid proof
    - Cancelled by challenger: Deposit returned (challenger paid only tx fees)
    - Invalid proof: Response rejected (provider pays the tx fee); the
      challenge stays open until the deadline
@@ -927,23 +931,32 @@ provider has broken the social contract.
 
 ### Content-Addressed Chunks
 
-All data is broken into fixed-size chunks (e.g., 256KB), each identified by its hash:
+All data is broken into chunks of `CHUNK_SIZE` = 256 KiB. Every chunk has exactly `CHUNK_SIZE` bytes except the last, which has 1 to `CHUNK_SIZE` bytes. Each chunk is identified by its hash:
 
 ```
 Chunk
-├── hash: H256 = blake2_256(data)
-├── data: bytes (up to 256KB)
+├── hash: H256 = blake2_256(0x00 ++ data)
+├── data: bytes
 ```
 
-Internal nodes in Merkle trees are also chunks—their content is child hashes:
+The chunks are the leaves of a binary Merkle tree with the shape defined in RFC 9162 (Merkle Tree Hash, section 2.1.1), with blake2_256 in place of SHA-256. An internal node has exactly two children:
 
 ```
 Internal Node
-├── hash: H256 = blake2_256(child_hashes)
-├── children: [H256, H256]
+├── hash: H256 = blake2_256(0x01 ++ left ++ right)
+├── children: [left: H256, right: H256]
 ```
 
-In a committed tree, an internal node has exactly two children.
+A tree over `n > 1` chunks splits at `k`, the largest power of two smaller than `n`: the left subtree covers chunks `0..k`, the right subtree covers chunks `k..n`. Pairing adjacent nodes left to right at each level and moving an unpaired last node up unchanged builds the same tree. There is no padding: every position in the tree is a chunk or a node over chunks. A tree over one chunk is that chunk's hash. Empty data has no tree and cannot be committed.
+
+The chunk count is not part of the commitment. It follows from the data size recorded in the MMR leaf: `n = ceil(data_size / CHUNK_SIZE)`. Chunk `i` covers bytes `[i * CHUNK_SIZE, min((i + 1) * CHUNK_SIZE, data_size))`.
+
+**Why this shape?**
+- Binary: inclusion proofs are shortest for a given chunk count (a tree of arity `a` needs `(a - 1) * log_a(n)` sibling hashes, which grows with `a`), and binary trees match RFC 9162 and the available libraries.
+- Fixed-size chunks: simple, and private (chunk boundaries reveal nothing about the content). Upper layers may use content-defined chunking.
+- No padding: every `chunk_index < n` addresses a real chunk, and the verifier derives `n` from `data_size` instead of trusting a chunk count.
+- Prefixes: a node's bytes never hash as a chunk, so a provider cannot answer a chunk challenge with an internal node instead of the chunk. "Hash Prefixes" in [Implementation Details](./scalable-web3-storage-implementation.md) lists every prefix.
+- `CHUNK_SIZE` is defined per `leaf_version` (256 KiB for version 1): `n` is derived from it for every leaf of that version, so changing it means a new leaf version, and existing leaves keep theirs.
 
 **Why content-addressed?**
 - Deduplication: Identical chunks stored once
@@ -968,10 +981,15 @@ BucketSnapshot
 **MMR leaves** contain:
 ```
 MmrLeaf
+├── leaf_version: u8     // leaf format version; defines CHUNK_SIZE and the chunk tree
 ├── data_root: H256      // Merkle root of chunk tree
-├── data_size: u64       // logical size of this data
+├── data_size: u64       // byte length of the data under data_root
 ├── total_size: u64      // cumulative unique bytes in bucket
 ```
+
+The MMR hashes its leaves and nodes with the same `0x00` and `0x01` prefixes: a leaf hash is `blake2_256(0x00 ++ leaf.encode())`, and `leaf_version` is the first field, so a verifier reads the version before anything else. It bags its peaks right to left with `blake2_256(0x02 ++ peak ++ rest)`; a single peak is the root, and an empty MMR has a zero root.
+
+`leaf_version` defines everything a verifier needs to check a leaf: its fields, its `CHUNK_SIZE`, the chunk tree shape and the hash prefixes. Version 1 is the format in this document. A new version can change any of them; leaves of different versions share one MMR, and each leaf verifies under its own version.
 
 **Append**: Add new leaf with new data_root
 **Delete**: Increase start_seq (old leaves no longer in range)
@@ -996,7 +1014,7 @@ Chunk 11-15: [encrypted file: document.pdf]
 ...
 ```
 
-The client reserves the first chunks for directory structure. With large chunk sizes (e.g., 256KB), multiple directory
+The client reserves the first chunks for directory structure. With 256 KiB chunks, multiple directory
 levels fit in a single chunk. The client fetches chunk 0, decrypts directory entries, learns where files live (by byte
 offset + length), and fetches. The provider sees only "client requested chunks 0, 3-10"—no semantic meaning.
 

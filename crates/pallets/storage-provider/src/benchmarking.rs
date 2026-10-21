@@ -1000,7 +1000,15 @@ mod benchmarks {
             BoundedVec::try_from(chunk_bytes.clone()).unwrap();
 
         let data_size = u64::MAX;
-        let depth = storage_primitives::chunk_count(data_size).ilog2();
+        // The chunk count comes from the leaf, as in `respond_to_challenge`;
+        // it does not depend on `data_root`.
+        let size_only = storage_primitives::MmrLeaf {
+            leaf_version: storage_primitives::LEAF_VERSION,
+            data_root: H256::zero(),
+            data_size,
+            total_size: data_size,
+        };
+        let depth = size_only.chunk_count().unwrap().ilog2();
         let siblings: alloc::vec::Vec<H256> = (0..depth)
             .map(|level| H256::from_low_u64_be(u64::from(level) + 1))
             .collect();
@@ -1008,11 +1016,9 @@ mod benchmarks {
             storage_primitives::hash_leaf(&chunk_bytes),
             |node, sibling| storage_primitives::hash_children(node, *sibling),
         );
-
         let (commitment, mmr_proof) = worst_case_mmr_proof(storage_primitives::MmrLeaf {
             data_root,
-            data_size,
-            total_size: data_size,
+            ..size_only
         });
         let chunk_proof = siblings;
 
@@ -1045,12 +1051,14 @@ mod benchmarks {
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        let data_size = 1u64;
-        let (commitment, mmr_proof) = worst_case_mmr_proof(storage_primitives::MmrLeaf {
+        let leaf = storage_primitives::MmrLeaf {
+            leaf_version: storage_primitives::LEAF_VERSION,
             data_root: H256::repeat_byte(0xAA),
-            data_size,
-            total_size: data_size,
-        });
+            data_size: 1,
+            total_size: 1,
+        };
+        let chunk_index = leaf.chunk_count().unwrap();
+        let (commitment, mmr_proof) = worst_case_mmr_proof(leaf);
         let challenge_id = insert_challenge::<T>(
             bucket_id,
             &provider,
@@ -1058,7 +1066,7 @@ mod benchmarks {
             commitment,
             ChunkLocation {
                 leaf_index: 0,
-                chunk_index: storage_primitives::chunk_count(data_size),
+                chunk_index,
             },
         );
         let response: pallet::ChallengeResponse<T> =

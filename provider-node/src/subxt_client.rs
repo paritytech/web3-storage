@@ -818,6 +818,7 @@ fn to_runtime_hash(hash: H256) -> subxt::utils::H256 {
 fn to_runtime_mmr_proof(mmr_proof: storage_primitives::MmrProof) -> RuntimeMmrProof {
     RuntimeMmrProof {
         leaf: RuntimeMmrLeaf {
+            leaf_version: mmr_proof.leaf.leaf_version,
             data_root: to_runtime_hash(mmr_proof.leaf.data_root),
             data_size: mmr_proof.leaf.data_size,
             total_size: mmr_proof.leaf.total_size,

@@ -252,13 +252,14 @@ async fn upload_node(
     .await?;
 
     let hash = decode_hash(&request.hash)?;
-
-    // Decode data
-    let data = BASE64
-        .decode(&request.data)
-        .map_err(|e| Error::decode("node data", e))?;
-
-    // Decode children
+    let data = request
+        .data
+        .map(|data| {
+            BASE64
+                .decode(data)
+                .map_err(|e| Error::decode("node data", e))
+        })
+        .transpose()?;
     let children = request
         .children
         .map(|c| {
@@ -267,7 +268,6 @@ async fn upload_node(
                 .collect::<Result<Vec<_>, Error>>()
         })
         .transpose()?;
-
     let node = ChunkTreeNode::from_wire(data, children)?;
 
     // Initialize bucket if needed

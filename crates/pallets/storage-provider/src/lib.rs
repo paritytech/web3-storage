@@ -133,9 +133,9 @@ pub mod pallet {
                 provider is still slashable"
             );
             assert!(
-                T::MaxChunkSize::get() == storage_primitives::DEFAULT_CHUNK_SIZE,
-                "MaxChunkSize must equal DEFAULT_CHUNK_SIZE; the pallet derives \
-                the chunk count of a data root from its size with that chunk size"
+                T::MaxChunkSize::get() >= storage_primitives::DEFAULT_CHUNK_SIZE,
+                "MaxChunkSize must be at least DEFAULT_CHUNK_SIZE, the chunk size \
+                of leaf version 1, so every chunk of an accepted leaf fits a response"
             );
             assert!(
                 T::AnchorBlockTimeMillis::get() > 0,
@@ -200,9 +200,11 @@ pub mod pallet {
         #[pallet::constant]
         type MinProviderStake: Get<BalanceOf<Self>>;
 
-        /// Maximum chunk size for challenge responses. Must equal
-        /// `storage_primitives::DEFAULT_CHUNK_SIZE`, which `respond_to_challenge`
-        /// uses to derive the chunk count from `data_size`.
+        /// Upper bound of `chunk_data` in a challenge response: at least the
+        /// chunk size of every leaf version the pallet accepts
+        /// (`storage_primitives::DEFAULT_CHUNK_SIZE` for version 1). A leaf's
+        /// chunk count comes from its own version's chunk size, not from this
+        /// value.
         #[pallet::constant]
         type MaxChunkSize: Get<u32>;
 
@@ -1213,9 +1215,9 @@ pub mod pallet {
         ChallengeNotExpired,
         /// Only the challenged provider may respond.
         NotChallengeProvider,
-        /// The chunk or MMR proof does not verify, or a `ChunkOutOfRange`
-        /// response names a chunk the leaf has. The challenge stays open;
-        /// respond again before the deadline.
+        /// The chunk or MMR proof does not verify, the leaf's `leaf_version` is
+        /// unknown, or a `ChunkOutOfRange` response names a chunk the leaf has.
+        /// The challenge stays open; respond again before the deadline.
         InvalidProof,
         /// `new_start_seq` does not cover the challenged leaf, or the admin
         /// signature does not verify. The challenge stays open.
@@ -2728,11 +2730,15 @@ pub mod pallet {
                     mmr_proof,
                     chunk_proof,
                 } => {
+                    let chunk_count = mmr_proof
+                        .leaf
+                        .chunk_count()
+                        .ok_or(Error::<T>::InvalidProof)?;
                     let chunk_hash = storage_primitives::hash_leaf(&chunk_data);
                     let chunk_ok = storage_primitives::verify_merkle_proof(
                         chunk_hash,
                         challenge.target.chunk_index,
-                        storage_primitives::chunk_count(mmr_proof.leaf.data_size),
+                        chunk_count,
                         &chunk_proof,
                         &mmr_proof.leaf.data_root,
                     );
@@ -2744,8 +2750,11 @@ pub mod pallet {
                     ensure!(chunk_ok && mmr_ok, Error::<T>::InvalidProof);
                 }
                 ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
-                    let out_of_range = challenge.target.chunk_index
-                        >= storage_primitives::chunk_count(mmr_proof.leaf.data_size);
+                    let chunk_count = mmr_proof
+                        .leaf
+                        .chunk_count()
+                        .ok_or(Error::<T>::InvalidProof)?;
+                    let out_of_range = challenge.target.chunk_index >= chunk_count;
                     let mmr_ok = storage_primitives::verify_mmr_proof(
                         mmr_proof,
                         challenge.target.leaf_index,

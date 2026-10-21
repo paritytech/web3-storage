@@ -191,8 +191,10 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     //   (now `create_bucket_with_primary`),
     //   `create_drive` and `create_s3_bucket` (#330);
     // * 5 for the `MmrProof` argument of `respond_to_challenge`, which now
-    //   contains library proof `items` instead of `peaks` and `leaf_proof` (#517).
-    transaction_version: 5,
+    //   contains library proof `items` instead of `peaks` and `leaf_proof` (#517);
+    // * 6 for `leaf_version`, the new first field of the `MmrLeaf` inside that
+    //   `MmrProof`.
+    transaction_version: 6,
     system_version: 1,
 };
 

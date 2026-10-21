@@ -16,18 +16,47 @@ use sp_core::H256;
 /// Error of the MMR library.
 pub use mmr_lib::Error;
 
+/// The `MmrLeaf` format this build writes into every leaf it commits.
+///
+/// A verifier reads `leaf_version` first and checks the rest of the leaf under
+/// that version's rules: its fields, its chunk size and the chunk tree shape.
+/// A format change bumps this constant; leaves of different versions share one
+/// MMR and each verifies under its own version.
+pub const LEAF_VERSION: u8 = 1;
+
 /// MMR leaf containing data root and size information.
 #[derive(
     Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MmrLeaf {
+    /// Leaf format version, see [`LEAF_VERSION`]. First field, so the leaf
+    /// hash preimage is `0x00 ++ leaf_version ++ ...`.
+    pub leaf_version: u8,
     /// Merkle root of chunk tree
     pub data_root: H256,
     /// Size of content under this data_root
     pub data_size: u64,
     /// Cumulative unique bytes in MMR at this point
     pub total_size: u64,
+}
+
+impl MmrLeaf {
+    /// Chunk size of this leaf's version. `None` for an unknown version.
+    pub fn chunk_size(&self) -> Option<u32> {
+        match self.leaf_version {
+            1 => Some(crate::DEFAULT_CHUNK_SIZE),
+            _ => None,
+        }
+    }
+
+    /// Number of chunks under `data_root`: every chunk has this leaf's chunk
+    /// size except the last, and empty data is one empty chunk. `None` for an
+    /// unknown version.
+    pub fn chunk_count(&self) -> Option<u64> {
+        let chunk_size = u64::from(self.chunk_size()?);
+        Some(self.data_size.div_ceil(chunk_size).max(1))
+    }
 }
 
 /// MMR proof for verifying leaf inclusion.
@@ -184,6 +213,7 @@ mod tests {
 
     fn leaf(i: u64) -> MmrLeaf {
         MmrLeaf {
+            leaf_version: LEAF_VERSION,
             data_root: H256::repeat_byte(i as u8 + 1),
             data_size: i,
             total_size: 2 * i,
@@ -198,6 +228,29 @@ mod tests {
         hex.parse().unwrap()
     }
 
+    #[test]
+    fn chunk_count_uses_the_chunk_size_of_the_leaf_version() {
+        let chunk = crate::DEFAULT_CHUNK_SIZE as u64;
+        let with_size = |data_size| MmrLeaf {
+            data_size,
+            ..leaf(0)
+        };
+        assert_eq!(with_size(0).chunk_size(), Some(crate::DEFAULT_CHUNK_SIZE));
+        assert_eq!(with_size(0).chunk_count(), Some(1));
+        assert_eq!(with_size(1).chunk_count(), Some(1));
+        assert_eq!(with_size(chunk).chunk_count(), Some(1));
+        assert_eq!(with_size(chunk + 1).chunk_count(), Some(2));
+        assert_eq!(with_size(2 * chunk).chunk_count(), Some(2));
+        assert_eq!(with_size(2 * chunk + 10).chunk_count(), Some(3));
+
+        let unknown = MmrLeaf {
+            leaf_version: LEAF_VERSION + 1,
+            ..with_size(chunk)
+        };
+        assert_eq!(unknown.chunk_size(), None);
+        assert_eq!(unknown.chunk_count(), None);
+    }
+
     /// Roots of the same leaves computed independently of both the library
     /// and `bag_peaks`: blake2b-256 over `0x00 ++ SCALE(leaf)` for leaves,
     /// `0x01 ++ left ++ right` for nodes and `0x02 ++ peak ++ rest` when
@@ -207,27 +260,27 @@ mod tests {
         let expected = [
             (
                 1,
-                "0x492a3842089489aa28f0fe1588d7650b853cdb731be096d851211f084c8194db",
+                "0xb8313af17d8c37fcd9be77773ae701b0804a13ef03f07275fc17177a515e814c",
             ),
             (
                 2,
-                "0x9e3fe480f4f2facf999ab0642e8fb29eecfb559fac575bd3ade8ada6d78a5e9d",
+                "0xd96aa7a3e6a79256d673d1edb6ad575027fe10a5198315890f4c080f071bf061",
             ),
             (
                 3,
-                "0x8b526e54af4123d6109cc800d29933849860c451cc3864afae832cd5b656bb51",
+                "0xb03e69026d561142a025323fc22412b887c55bd33aa2a00df1f45158573c20bc",
             ),
             (
                 5,
-                "0x43e36aab7e51c967b222311383bab2932a2342afa1888d839584f79ccfc5ebab",
+                "0x392587284baaec20f8b5341c1313e5ee1f48e802dc65c7e480dca35d063abf86",
             ),
             (
                 8,
-                "0x11be9655168f9f2ed092b07a70d75446b2443eea897a4fc8092294d9af4212e3",
+                "0xbb5a199cf97a8c7baea198b4ec4436e1d2fb9e346603ae9dcc367639932f388e",
             ),
             (
                 33,
-                "0xf2a0ab0144b76bfa739a49df9f07c5f6d31e06d1faa5f8b3e2ac160e374a6a78",
+                "0x38e22e5fd9000bbf2bc63d7d3e6b687d662e59d95190377088426f85833ce0f8",
             ),
         ];
         for (count, expected_root) in expected {
