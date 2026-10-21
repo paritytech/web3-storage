@@ -28,7 +28,7 @@ use storage_primitives::{hash_children, MmrLeaf, DEFAULT_CHUNK_SIZE};
 /// Bump it whenever a change alters what [`ChunkTreeNode`] or [`BucketState`]
 /// encode to, so a build fails on a database in another format instead of
 /// misreading its bytes.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 1;
 
 /// Per-bucket state a backend persists: the bucket's MMR and its quota usage.
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
