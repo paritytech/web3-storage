@@ -124,7 +124,7 @@ export function leafChunkCount(leaf: { leaf_version: number; data_size: number |
 /**
  * A file's `data_root`: chunk the bytes at `DEFAULT_CHUNK_SIZE`, leaf-hash each
  * chunk, then `merkleRoot` over the chunk hashes. A single chunk yields its own
- * hash. Empty data has no chunk tree and throws. Mirrors `fs_put_file`.
+ * hash. Empty data has no chunk tree and throws.
  */
 export function computeDataRoot(bytes: Uint8Array): Uint8Array {
   if (bytes.length === 0) throw new Error("empty data has no chunk tree");
