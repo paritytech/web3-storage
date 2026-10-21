@@ -147,19 +147,23 @@ pub trait ChallengeChainClient: Send + Sync {
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
+        response: ChallengeResponse,
+    ) -> Result<H256, ChallengeError>;
+}
+
+/// A response the responder submits for a challenge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChallengeResponse {
+    /// The challenged chunk, the leaf's MMR proof and the chunk's Merkle proof
+    /// under the leaf's `data_root`.
+    Proof {
         chunk_data: Vec<u8>,
         mmr_proof: MmrProof,
         chunk_proof: Vec<H256>,
-    ) -> Result<H256, ChallengeError>;
-
-    /// Submit a `ChunkOutOfRange` response: the challenged `chunk_index` is at
-    /// or beyond the leaf's chunk count, so only the leaf's MMR proof goes on
-    /// chain.
-    async fn submit_chunk_out_of_range(
-        &self,
-        challenge_id: (u32, u16),
-        mmr_proof: MmrProof,
-    ) -> Result<H256, ChallengeError>;
+    },
+    /// The challenged `chunk_index` is at or beyond the leaf's chunk count, so
+    /// only the leaf's MMR proof goes on chain.
+    ChunkOutOfRange { mmr_proof: MmrProof },
 }
 
 #[async_trait::async_trait]
@@ -179,23 +183,9 @@ impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
-        chunk_data: Vec<u8>,
-        mmr_proof: MmrProof,
-        chunk_proof: Vec<H256>,
+        response: ChallengeResponse,
     ) -> Result<H256, ChallengeError> {
-        self.as_ref()
-            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
-            .await
-    }
-
-    async fn submit_chunk_out_of_range(
-        &self,
-        challenge_id: (u32, u16),
-        mmr_proof: MmrProof,
-    ) -> Result<H256, ChallengeError> {
-        self.as_ref()
-            .submit_chunk_out_of_range(challenge_id, mmr_proof)
-            .await
+        self.as_ref().submit_response(challenge_id, response).await
     }
 }
 
@@ -478,10 +468,8 @@ impl ChallengeResponder {
                 error,
             };
         };
-        let submitted = if challenge.target.chunk_index >= chunk_count {
-            self.chain_client
-                .submit_chunk_out_of_range(challenge_id, mmr_proof)
-                .await
+        let response = if challenge.target.chunk_index >= chunk_count {
+            ChallengeResponse::ChunkOutOfRange { mmr_proof }
         } else {
             let (chunk_data, chunk_proof) = match self
                 .proof_source
@@ -497,13 +485,19 @@ impl ChallengeResponder {
                     };
                 }
             };
-            self.chain_client
-                .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
-                .await
+            ChallengeResponse::Proof {
+                chunk_data,
+                mmr_proof,
+                chunk_proof,
+            }
         };
 
-        // Step 3: report the submission outcome
-        match submitted {
+        // Step 3: submit and report the outcome
+        match self
+            .chain_client
+            .submit_response(challenge_id, response)
+            .await
+        {
             Ok(block_hash) => {
                 tracing::info!(
                     "Successfully responded to challenge {:?} in block {:?}",

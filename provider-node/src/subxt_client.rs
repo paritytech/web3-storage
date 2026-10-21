@@ -11,7 +11,9 @@
 //! connection).
 
 use crate::chain_connection::{self, ChainWatch};
-use crate::challenge_responder::{ChallengeChainClient, ChallengeError, DetectedChallenge};
+use crate::challenge_responder::{
+    ChallengeChainClient, ChallengeError, ChallengeResponse, DetectedChallenge,
+};
 use crate::Error;
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
@@ -989,52 +991,37 @@ impl ChallengeChainClient for SubxtChainClient {
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
-        chunk_data: Vec<u8>,
-        mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: Vec<H256>,
+        response: ChallengeResponse,
     ) -> Result<H256, ChallengeError> {
         let (deadline, index) = challenge_id;
-
-        let response = RuntimeChallengeResponse::Proof {
-            chunk_data: BoundedVec(chunk_data),
-            mmr_proof: to_runtime_mmr_proof(mmr_proof),
-            chunk_proof: chunk_proof.into_iter().map(to_runtime_hash).collect(),
+        let response = match response {
+            ChallengeResponse::Proof {
+                chunk_data,
+                mmr_proof,
+                chunk_proof,
+            } => RuntimeChallengeResponse::Proof {
+                chunk_data: BoundedVec(chunk_data),
+                mmr_proof: to_runtime_mmr_proof(mmr_proof),
+                chunk_proof: chunk_proof.into_iter().map(to_runtime_hash).collect(),
+            },
+            ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
+                RuntimeChallengeResponse::ChunkOutOfRange {
+                    mmr_proof: to_runtime_mmr_proof(mmr_proof),
+                }
+            }
         };
-        self.submit_challenge_response(deadline, index, response)
-            .await
-    }
 
-    async fn submit_chunk_out_of_range(
-        &self,
-        challenge_id: (u32, u16),
-        mmr_proof: storage_primitives::MmrProof,
-    ) -> Result<H256, ChallengeError> {
-        let (deadline, index) = challenge_id;
-        let response = RuntimeChallengeResponse::ChunkOutOfRange {
-            mmr_proof: to_runtime_mmr_proof(mmr_proof),
-        };
-        self.submit_challenge_response(deadline, index, response)
-            .await
-    }
-}
-
-impl SubxtChainClient {
-    /// Submit `response` for the challenge `(deadline, index)` and return the
-    /// block that took it. Zero only when success was inferred from a
-    /// duplicate rejection, where that block is unknown.
-    async fn submit_challenge_response(
-        &self,
-        deadline: u32,
-        index: u16,
-        response: RuntimeChallengeResponse,
-    ) -> Result<H256, ChallengeError> {
         let tx = storage_subxt::api::tx()
             .storage_provider()
             .respond_to_challenge(RuntimeChallengeId { deadline, index }, response);
+
+        // Zero only when success was inferred from a duplicate rejection, where
+        // the block that took the response is genuinely unknown.
         let block_hash = self
             .submit_and_finalize(&tx, "respond_to_challenge")
             .await
             .map_err(|e| ChallengeError::Chain(e.to_string()))?;
+
         Ok(block_hash.unwrap_or_default())
     }
 }

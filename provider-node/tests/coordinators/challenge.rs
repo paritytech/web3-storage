@@ -9,14 +9,13 @@ use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::{
-    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponseResult,
-    DetectedChallenge,
+    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponse,
+    ChallengeResponseResult, DetectedChallenge,
 };
 
 struct MockChallengeChainClient {
     challenges: Mutex<Vec<DetectedChallenge>>,
-    submitted: Mutex<Vec<(u32, u16)>>,
-    submitted_out_of_range: Mutex<Vec<(u32, u16)>>,
+    submitted: Mutex<Vec<((u32, u16), ChallengeResponse)>>,
     submit_error: Mutex<Option<String>>,
 }
 
@@ -25,7 +24,6 @@ impl MockChallengeChainClient {
         Self {
             challenges: Mutex::new(Vec::new()),
             submitted: Mutex::new(Vec::new()),
-            submitted_out_of_range: Mutex::new(Vec::new()),
             submit_error: Mutex::new(None),
         }
     }
@@ -68,26 +66,12 @@ impl ChallengeChainClient for MockChallengeChainClient {
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
-        _chunk_data: Vec<u8>,
-        _mmr_proof: storage_primitives::MmrProof,
-        _chunk_proof: Vec<H256>,
+        response: ChallengeResponse,
     ) -> Result<H256, ChallengeError> {
-        self.submitted.lock().unwrap().push(challenge_id);
-        if let Some(err) = self.submit_error.lock().unwrap().as_ref() {
-            return Err(ChallengeError::Internal(err.clone()));
-        }
-        Ok(H256::zero())
-    }
-
-    async fn submit_chunk_out_of_range(
-        &self,
-        challenge_id: (u32, u16),
-        _mmr_proof: storage_primitives::MmrProof,
-    ) -> Result<H256, ChallengeError> {
-        self.submitted_out_of_range
+        self.submitted
             .lock()
             .unwrap()
-            .push(challenge_id);
+            .push((challenge_id, response));
         if let Some(err) = self.submit_error.lock().unwrap().as_ref() {
             return Err(ChallengeError::Internal(err.clone()));
         }
@@ -233,7 +217,10 @@ async fn test_successful_challenge_response() {
 
     {
         let submitted = mock.submitted.lock().unwrap();
-        assert_eq!(submitted[0], (1000, 0));
+        assert!(matches!(
+            submitted.first(),
+            Some(((1000, 0), ChallengeResponse::Proof { .. }))
+        ));
     }
 
     handle.stop().await.unwrap();
@@ -355,11 +342,10 @@ async fn test_chunk_index_past_the_leaf_is_answered_as_out_of_range() {
         "expected Success, got {:?}",
         r
     );
-    assert_eq!(
-        *mock.submitted_out_of_range.lock().unwrap(),
-        vec![(1000, 0)]
-    );
-    assert!(mock.submitted.lock().unwrap().is_empty());
+    assert!(matches!(
+        mock.submitted.lock().unwrap().as_slice(),
+        [((1000, 0), ChallengeResponse::ChunkOutOfRange { .. })]
+    ));
 }
 
 #[tokio::test(start_paused = true)]
