@@ -3060,13 +3060,17 @@ mod challenge_tests {
         (root, [(chunk0, leaf0), (chunk1, leaf1)])
     }
 
+    /// MMR proof of leaf `index` of `two_leaf_mmr`.
+    fn two_leaf_mmr_proof(leaves: &[(Vec<u8>, MmrLeaf); 2], index: usize) -> MmrProof {
+        let mmr_leaves: Vec<MmrLeaf> = leaves.iter().map(|(_, leaf)| leaf.clone()).collect();
+        mmr::proof(&mmr_leaves, index as u64).unwrap().unwrap().1
+    }
+
     /// `Proof` response for leaf `index` of `two_leaf_mmr`.
     fn two_leaf_proof(leaves: &[(Vec<u8>, MmrLeaf); 2], index: usize) -> ChallengeResponse<Test> {
-        let mmr_leaves: Vec<MmrLeaf> = leaves.iter().map(|(_, leaf)| leaf.clone()).collect();
-        let (_, mmr_proof) = mmr::proof(&mmr_leaves, index as u64).unwrap().unwrap();
         ChallengeResponse::Proof {
             chunk_data: make_chunk_bv(&leaves[index].0),
-            mmr_proof,
+            mmr_proof: two_leaf_mmr_proof(leaves, index),
             chunk_proof: vec![],
         }
     }
@@ -3163,15 +3167,12 @@ mod challenge_tests {
                 deadline: 101u64,
                 index: 0u16,
             };
-            let mmr_leaves: Vec<MmrLeaf> = leaves.iter().map(|(_, leaf)| leaf.clone()).collect();
-            let proof_of_leaf = |index: u64| mmr::proof(&mmr_leaves, index).unwrap().unwrap().1;
-
             assert_noop!(
                 StorageProvider::respond_to_challenge(
                     RuntimeOrigin::signed(2),
                     challenge_id,
                     ChallengeResponse::ChunkOutOfRange {
-                        mmr_proof: proof_of_leaf(1),
+                        mmr_proof: two_leaf_mmr_proof(&leaves, 1),
                     },
                 ),
                 Error::<Test>::InvalidProof
@@ -3180,7 +3181,7 @@ mod challenge_tests {
                 RuntimeOrigin::signed(2),
                 challenge_id,
                 ChallengeResponse::ChunkOutOfRange {
-                    mmr_proof: proof_of_leaf(0),
+                    mmr_proof: two_leaf_mmr_proof(&leaves, 0),
                 },
             ));
         });
