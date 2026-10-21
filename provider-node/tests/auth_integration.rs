@@ -421,7 +421,7 @@ async fn fs_reader_blocked_from_mkdir() {
 }
 
 #[tokio::test]
-async fn fs_unknprovider_account_returns_forbidden() {
+async fn fs_unknown_account_returns_forbidden() {
     // Server only knows Alice as Admin; Bob is not a member at all
     let server = AuthTestServer::with_role(Role::Admin).await;
     let bob = sr25519::Pair::from_string("//Bob", None).unwrap();
@@ -700,7 +700,7 @@ async fn commit_reader_blocked() {
 
 /// A validly-signed request from an account that is not a member of the bucket
 /// must be rejected on the L0 write path — a correct signature only proves
-/// identity, not authorization. (The FS path has `fs_unknprovider_account_*`; this
+/// identity, not authorization. (The FS path has `fs_unknown_account_*`; this
 /// closes the same gap for `/node`.)
 #[tokio::test]
 async fn node_non_member_returns_forbidden() {
