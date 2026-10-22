@@ -82,7 +82,8 @@ impl StorageUserClient {
     /// 4. Return the data root hash
     ///
     /// Returns [`ClientError::Config`] before any request if a
-    /// [`ChunkingStrategy::Fixed`] size is 0 or above `DEFAULT_CHUNK_SIZE`.
+    /// [`ChunkingStrategy::Fixed`] size is 0 or above `DEFAULT_CHUNK_SIZE`,
+    /// or if the data to upload is empty: empty data has no chunk tree.
     ///
     /// # Example
     /// ```no_run
@@ -121,6 +122,11 @@ impl StorageUserClient {
         } else {
             data
         };
+        if upload_data.is_empty() {
+            return Err(ClientError::Config(
+                "empty data has no chunk tree".to_string(),
+            ));
+        }
 
         // Chunk the data
         let chunks = Self::chunk_data(upload_data, strategy);
@@ -187,13 +193,14 @@ impl StorageUserClient {
     /// # use sp_core::H256;
     /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
-    /// let data = client.download(&data_root, 0, 1024).await?;
+    /// let data = client.download(1, &data_root, 0, 1024).await?;
     /// println!("Downloaded {} bytes", data.len());
     /// # Ok(())
     /// # }
     /// ```
     pub async fn download(
         &self,
+        bucket_id: BucketId,
         data_root: &H256,
         offset: u64,
         length: u64,
@@ -205,6 +212,7 @@ impl StorageUserClient {
             .http
             .get(format!("{provider_url}/read"))
             .query(&[
+                ("bucket_id", bucket_id.to_string()),
                 ("data_root", format!("{:#x}", data_root)),
                 ("offset", offset.to_string()),
                 ("length", length.to_string()),
@@ -255,8 +263,13 @@ impl StorageUserClient {
     }
 
     /// Download entire file by data root.
-    pub async fn download_full(&self, data_root: &H256, total_size: u64) -> ClientResult<Vec<u8>> {
-        self.download(data_root, 0, total_size).await
+    pub async fn download_full(
+        &self,
+        bucket_id: BucketId,
+        data_root: &H256,
+        total_size: u64,
+    ) -> ClientResult<Vec<u8>> {
+        self.download(bucket_id, data_root, 0, total_size).await
     }
 
     /// Read a single node by its hash.
@@ -270,13 +283,13 @@ impl StorageUserClient {
     /// # use sp_core::H256;
     /// # async fn example(hash: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
-    /// if let storage_client::Node::Chunk(data) = client.read_node(&hash).await? {
+    /// if let storage_client::Node::Chunk(data) = client.read_node(1, &hash).await? {
     ///     println!("Read {} bytes", data.len());
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn read_node(&self, hash: &H256) -> ClientResult<Node> {
+    pub async fn read_node(&self, bucket_id: BucketId, hash: &H256) -> ClientResult<Node> {
         let provider_url = self.base.get_provider_url()?;
         let hash_hex = format!("{:#x}", hash);
 
@@ -284,7 +297,7 @@ impl StorageUserClient {
             .base
             .http
             .get(format!("{provider_url}/node"))
-            .query(&[("hash", &hash_hex)])
+            .query(&[("bucket_id", bucket_id.to_string()), ("hash", hash_hex)])
             .send()
             .await?;
 
@@ -300,12 +313,14 @@ impl StorageUserClient {
             .await
             .map_err(|e| ClientError::Serialization(e.to_string()))?;
 
-        // Decode base64 data
-        let data = BASE64
-            .decode(&node_response.data)
-            .map_err(|e| ClientError::Serialization(format!("Invalid base64: {e}")))?;
-
-        // Parse children hashes if present
+        let data = node_response
+            .data
+            .map(|data| {
+                BASE64
+                    .decode(data)
+                    .map_err(|e| ClientError::Serialization(format!("Invalid base64: {e}")))
+            })
+            .transpose()?;
         let children = node_response
             .children
             .map(|c| {
@@ -319,8 +334,8 @@ impl StorageUserClient {
     }
 
     /// Read a node and verify that it hashes to `hash`.
-    pub async fn read_node_verified(&self, hash: &H256) -> ClientResult<Node> {
-        let node = self.read_node(hash).await?;
+    pub async fn read_node_verified(&self, bucket_id: BucketId, hash: &H256) -> ClientResult<Node> {
+        let node = self.read_node(bucket_id, hash).await?;
         if &node.hash() != hash {
             return Err(ClientError::VerificationFailed);
         }
@@ -389,13 +404,12 @@ impl StorageUserClient {
     ) -> ClientResult<CheckpointSignatureResponse> {
         let provider_url = self.base.get_provider_url()?;
 
-        let response = self
+        let req = self
             .base
             .http
             .get(format!("{provider_url}/checkpoint-signature"))
-            .query(&[("bucket_id", bucket_id.to_string())])
-            .send()
-            .await?;
+            .query(&[("bucket_id", bucket_id.to_string())]);
+        let response = self.sign(req, "GET", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
@@ -417,7 +431,12 @@ impl StorageUserClient {
     /// Perform a spot-check on a provider to verify data integrity.
     ///
     /// Returns true if the check passed.
-    pub async fn spot_check(&mut self, data_root: &H256, chunk_index: u64) -> ClientResult<bool> {
+    pub async fn spot_check(
+        &mut self,
+        bucket_id: BucketId,
+        data_root: &H256,
+        chunk_index: u64,
+    ) -> ClientResult<bool> {
         use std::time::Instant;
 
         let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
@@ -425,7 +444,9 @@ impl StorageUserClient {
         let provider_url = self.base.get_provider_url()?.to_string();
 
         let start = Instant::now();
-        let result = self.download(data_root, offset, chunk_size).await;
+        let result = self
+            .download(bucket_id, data_root, offset, chunk_size)
+            .await;
         let duration = start.elapsed();
 
         match result {
@@ -447,6 +468,7 @@ impl StorageUserClient {
     /// Returns (passed_count, failed_count).
     pub async fn spot_check_batch(
         &mut self,
+        bucket_id: BucketId,
         data_root: &H256,
         num_checks: usize,
         total_chunks: u64,
@@ -459,7 +481,7 @@ impl StorageUserClient {
 
         for _ in 0..num_checks {
             let chunk_index = rng.gen_range(0..total_chunks);
-            if self.spot_check(data_root, chunk_index).await? {
+            if self.spot_check(bucket_id, data_root, chunk_index).await? {
                 passed += 1;
             } else {
                 failed += 1;
@@ -501,9 +523,9 @@ impl StorageUserClient {
         node: &Node,
     ) -> ClientResult<H256> {
         let (data, children) = match node {
-            Node::Chunk(data) => (BASE64.encode(data), None),
+            Node::Chunk(data) => (Some(BASE64.encode(data)), None),
             Node::Internal { left, right } => (
-                BASE64.encode([left.as_bytes(), right.as_bytes()].concat()),
+                None,
                 Some(vec![format!("{:#x}", left), format!("{:#x}", right)]),
             ),
         };
@@ -538,11 +560,6 @@ impl StorageUserClient {
         bucket_id: BucketId,
         leaf_hashes: &[H256],
     ) -> ClientResult<H256> {
-        if leaf_hashes.is_empty() {
-            return Err(ClientError::Api(
-                "Cannot build Merkle tree with no leaves".to_string(),
-            ));
-        }
         let (root, nodes) = storage_primitives::merkle_tree(leaf_hashes);
         for node in nodes {
             self.upload_node(
@@ -581,13 +598,12 @@ impl StorageUserClient {
     /// Get the current MMR commitment for a bucket from the provider.
     pub async fn get_commitment(&self, bucket_id: BucketId) -> ClientResult<CommitmentResponse> {
         let provider_url = self.base.get_provider_url()?;
-        let response = self
+        let req = self
             .base
             .http
             .get(format!("{provider_url}/commitment"))
-            .query(&[("bucket_id", bucket_id.to_string())])
-            .send()
-            .await?;
+            .query(&[("bucket_id", bucket_id.to_string())]);
+        let response = self.sign(req, "GET", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
@@ -612,13 +628,12 @@ impl StorageUserClient {
             bucket_id,
             hashes: hashes.iter().map(|h| format!("{:#x}", h)).collect(),
         };
-        let response = self
+        let req = self
             .base
             .http
             .post(format!("{provider_url}/exists"))
-            .json(&request)
-            .send()
-            .await?;
+            .json(&request);
+        let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
@@ -638,11 +653,12 @@ impl StorageUserClient {
 impl crate::verification::ProviderReadAccess for StorageUserClient {
     async fn read_data(
         &self,
+        bucket_id: BucketId,
         data_root: &H256,
         offset: u64,
         length: u64,
     ) -> Result<Vec<u8>, crate::ClientError> {
-        self.download(data_root, offset, length).await
+        self.download(bucket_id, data_root, offset, length).await
     }
 
     fn provider_url(&self) -> &str {
@@ -677,21 +693,20 @@ impl Node {
         }
     }
 
-    /// Build a node from the `data` and `children` of a `/node` response.
-    /// `VerificationFailed` if an internal node does not have exactly two
-    /// children or its `data` is not the left child hash followed by the right
-    /// child hash.
-    fn from_wire(data: Vec<u8>, children: Option<Vec<H256>>) -> ClientResult<Self> {
-        let Some(children) = children else {
-            return Ok(Self::Chunk(data));
-        };
-        let [left, right]: [H256; 2] = children
-            .try_into()
-            .map_err(|_| ClientError::VerificationFailed)?;
-        if data != [left.as_bytes(), right.as_bytes()].concat() {
-            return Err(ClientError::VerificationFailed);
+    /// Build a node from the `data` or the `children` of a `/node` response.
+    /// `VerificationFailed` if the response has both or neither, or an
+    /// internal node does not have exactly two children.
+    fn from_wire(data: Option<Vec<u8>>, children: Option<Vec<H256>>) -> ClientResult<Self> {
+        match (data, children) {
+            (Some(data), None) => Ok(Self::Chunk(data)),
+            (None, Some(children)) => {
+                let [left, right]: [H256; 2] = children
+                    .try_into()
+                    .map_err(|_| ClientError::VerificationFailed)?;
+                Ok(Self::Internal { left, right })
+            }
+            _ => Err(ClientError::VerificationFailed),
         }
-        Ok(Self::Internal { left, right })
     }
 }
 
@@ -699,7 +714,9 @@ impl Node {
 struct UploadNodeRequest {
     bucket_id: u64,
     hash: String,
-    data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<String>>,
 }
 
@@ -761,7 +778,7 @@ struct ChunkWithProof {
 #[allow(dead_code)]
 struct NodeResponse {
     hash: String,
-    data: String,
+    data: Option<String>,
     children: Option<Vec<String>>,
 }
 
@@ -817,25 +834,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn node_from_wire_checks_child_count_and_data() {
+    fn node_from_wire_takes_data_or_exactly_two_children() {
         let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
-        let data = [left.as_bytes(), right.as_bytes()].concat();
 
         assert_eq!(
-            Node::from_wire(vec![1, 2, 3], None).unwrap(),
+            Node::from_wire(Some(vec![1, 2, 3]), None).unwrap(),
             Node::Chunk(vec![1, 2, 3])
         );
         assert_eq!(
-            Node::from_wire(data.clone(), Some(vec![left, right])).unwrap(),
+            Node::from_wire(None, Some(vec![left, right])).unwrap(),
             Node::Internal { left, right }
         );
         for (data, children) in [
-            (data.clone(), vec![left]),
-            (data, vec![left, right, left]),
-            (Vec::new(), vec![left, right]),
+            (None, Some(vec![left])),
+            (None, Some(vec![left, right, left])),
+            (Some(vec![1, 2, 3]), Some(vec![left, right])),
+            (None, None),
         ] {
             assert!(matches!(
-                Node::from_wire(data, Some(children)),
+                Node::from_wire(data, children),
                 Err(ClientError::VerificationFailed)
             ));
         }

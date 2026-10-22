@@ -2,12 +2,37 @@
 
 use crate::*;
 use frame_support::pallet_prelude::*;
+use sp_core::H256;
 use sp_runtime::traits::Saturating;
 use storage_primitives::{
-    BucketId, ChallengeId, ChunkLocation, Commitment, ProviderRole, Visibility,
+    BucketId, ChallengeId, ChunkLocation, Commitment, MmrProof, ProviderRole, Visibility,
 };
 
 impl<T: Config> Pallet<T> {
+    /// Check that `mmr_proof` proves the challenged leaf under the challenged
+    /// commitment, and return the leaf's `data_root` and chunk count.
+    /// `InvalidProof` when the proof does not verify or the leaf's
+    /// `leaf_version` is unknown.
+    pub(crate) fn verify_challenged_leaf(
+        challenge: &Challenge<T>,
+        mmr_proof: MmrProof,
+    ) -> Result<(H256, u64), Error<T>> {
+        let data_root = mmr_proof.leaf.data_root;
+        let chunk_count = mmr_proof
+            .leaf
+            .chunk_count()
+            .ok_or(Error::<T>::InvalidProof)?;
+        ensure!(
+            storage_primitives::verify_mmr_proof(
+                mmr_proof,
+                challenge.target.leaf_index,
+                &challenge.commitment,
+            ),
+            Error::<T>::InvalidProof
+        );
+        Ok((data_root, chunk_count))
+    }
+
     /// Open a challenge against `provider`'s signature on the bucket's current
     /// snapshot and return the new challenge's id. Shared by the
     /// `challenge_checkpoint` call and the precompile, which hands the id back
@@ -110,6 +135,7 @@ impl<T: Config> Pallet<T> {
             target,
             deposit,
             authorized,
+            created_at: anchor_block,
         };
 
         // Cap the number of challenges that can share this deadline.

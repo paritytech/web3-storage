@@ -6,9 +6,9 @@
 //
 // Mirrors, byte for byte:
 //   - `crates/providers/storage/src/index/fs.rs`     → `metadata_merkle_root`
-//   - `crates/primitives/storage/src/merkle.rs`      → `merkle_root`, `chunk_count`
+//   - `crates/primitives/storage/src/merkle.rs`      → `merkle_root`
 //   - `crates/primitives/storage/src/lib.rs`         → `hash_leaf`, `hash_children`, `DEFAULT_CHUNK_SIZE`
-//   - `crates/primitives/storage/src/mmr.rs`         → `bag_peaks`
+//   - `crates/primitives/storage/src/mmr.rs`         → `bag_peaks`, `LEAF_VERSION`, `MmrLeaf::chunk_count`
 //
 // This is the multi-chunk Merkle DAG walk that `verify.ts` documents as the
 // missing "Rust-client parity" piece. Pure functions, no I/O — browser-safe.
@@ -19,7 +19,7 @@ import { concatBytes } from "./bytes.js";
 
 /**
  * Mirror of DEFAULT_CHUNK_SIZE in crates/primitives/storage/src/lib.rs: the
- * chunk size, and the largest leaf a challenge response can contain.
+ * chunk size of leaf version 1 (see {@link leafChunkSize}).
  */
 export const DEFAULT_CHUNK_SIZE = 256 * 1024;
 
@@ -89,27 +89,48 @@ export function merkleRoot(leaves: Uint8Array[]): Uint8Array {
   return level[0];
 }
 
+/** Mirror of `LEAF_VERSION` in `crates/primitives/storage/src/mmr.rs`. */
+export const LEAF_VERSION = 1;
+
 /**
- * Number of chunks (tree leaves) of data with `dataSize` bytes; empty data is
- * one chunk. Mirrors `chunk_count` in `crates/primitives/storage/src/merkle.rs`.
+ * Chunk size of MMR leaf version `version`, or undefined for an unknown
+ * version. Mirrors `MmrLeaf::chunk_size`.
  */
-export function chunkCount(dataSize: number): number {
-  return Math.max(1, Math.ceil(dataSize / DEFAULT_CHUNK_SIZE));
+export function leafChunkSize(version: number): number | undefined {
+  switch (version) {
+    case 1:
+      return DEFAULT_CHUNK_SIZE;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Number of chunks under a committed MMR leaf: every chunk has the chunk size
+ * of the leaf's `leaf_version` except the last, which has 1 to chunk size
+ * bytes. Empty data has no chunks. Mirrors `MmrLeaf::chunk_count`. Throws for
+ * an unknown version.
+ */
+export function leafChunkCount(leaf: { leaf_version: number; data_size: number | bigint }): number {
+  const chunkSize = leafChunkSize(leaf.leaf_version);
+  if (chunkSize === undefined) {
+    throw new Error(`unknown MMR leaf version ${leaf.leaf_version}`);
+  }
+  const size = BigInt(leaf.data_size);
+  const count = (size + BigInt(chunkSize) - 1n) / BigInt(chunkSize);
+  return Number(count);
 }
 
 /**
  * A file's `data_root`: chunk the bytes at `DEFAULT_CHUNK_SIZE`, leaf-hash each
- * chunk, then `merkleRoot` over the chunk hashes. An empty file hashes a
- * single empty chunk; a single chunk yields its own hash. Mirrors `fs_put_file`.
+ * chunk, then `merkleRoot` over the chunk hashes. A single chunk yields its own
+ * hash. Empty data has no chunk tree and throws.
  */
 export function computeDataRoot(bytes: Uint8Array): Uint8Array {
+  if (bytes.length === 0) throw new Error("empty data has no chunk tree");
   const chunkHashes: Uint8Array[] = [];
-  if (bytes.length === 0) {
-    chunkHashes.push(hashLeaf(new Uint8Array(0)));
-  } else {
-    for (let off = 0; off < bytes.length; off += DEFAULT_CHUNK_SIZE) {
-      chunkHashes.push(hashLeaf(bytes.subarray(off, Math.min(off + DEFAULT_CHUNK_SIZE, bytes.length))));
-    }
+  for (let off = 0; off < bytes.length; off += DEFAULT_CHUNK_SIZE) {
+    chunkHashes.push(hashLeaf(bytes.subarray(off, Math.min(off + DEFAULT_CHUNK_SIZE, bytes.length))));
   }
   return merkleRoot(chunkHashes);
 }

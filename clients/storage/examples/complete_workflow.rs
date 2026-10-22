@@ -110,7 +110,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_root = user
         .upload(bucket_id, &data, ChunkingStrategy::default())
         .await?;
-    let downloaded = user.download(&data_root, 0, data.len() as u64).await?;
+    let downloaded = user
+        .download(bucket_id, &data_root, 0, data.len() as u64)
+        .await?;
     assert_eq!(downloaded, data, "downloaded bytes must match upload");
     println!("  Uploaded {} bytes and verified download", data.len());
 

@@ -4,14 +4,23 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bytesToBase64,
   CidMismatchError,
+  concatBytes,
   DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
+  LEAF_VERSION,
   toHex,
 } from "@web3-storage/core";
 import type { ParachainApi } from "./address.js";
 import type { ChainSigner } from "./signers.js";
-import { downloadChunk, fetchChallengeProof, putChunk, uploadChunk } from "./provider-http.js";
+import {
+  downloadChunk,
+  downloadNode,
+  fetchChallengeProof,
+  putChunk,
+  putInternalNode,
+  uploadChunk,
+} from "./provider-http.js";
 
 const PROVIDER = "http://provider.test";
 const enc = new TextEncoder();
@@ -36,41 +45,51 @@ describe("downloadChunk", () => {
   it("returns a chunk that hashes as a leaf", async () => {
     const chunk = enc.encode("a chunk");
     stubFetch(() => ({ data: bytesToBase64(chunk), children: null }));
-    await expect(downloadChunk(PROVIDER, toHex(hashLeaf(chunk)))).resolves.toEqual(chunk);
+    await expect(downloadChunk(PROVIDER, 1n, toHex(hashLeaf(chunk)))).resolves.toEqual(chunk);
   });
 
-  it("returns an internal node that hashes over its two children", async () => {
+  it("names the bucket in the request, which the provider requires", async () => {
+    const chunk = enc.encode("a chunk");
+    const fetchMock = stubFetch(() => ({ data: bytesToBase64(chunk), children: null }));
+    await downloadChunk(PROVIDER, 7n, toHex(hashLeaf(chunk)));
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.searchParams.get("bucket_id")).toBe("7");
+    expect(url.searchParams.get("hash")).toBe(toHex(hashLeaf(chunk)));
+  });
+
+  it("throws for an internal node", async () => {
     const left = hashLeaf(enc.encode("left"));
     const right = hashLeaf(enc.encode("right"));
-    const data = new Uint8Array([...left, ...right]);
-    stubFetch(() => ({ data: bytesToBase64(data), children: [toHex(left), toHex(right)] }));
-    await expect(downloadChunk(PROVIDER, toHex(hashChildren(left, right)))).resolves.toEqual(data);
+    stubFetch(() => ({ children: [toHex(left), toHex(right)] }));
+    await expect(downloadChunk(PROVIDER, 1n, toHex(hashChildren(left, right)))).rejects.toThrow(
+      "is an internal node, not a chunk",
+    );
   });
 
   it("throws CidMismatchError for tampered chunk bytes", async () => {
     const chunk = enc.encode("a chunk");
     stubFetch(() => ({ data: bytesToBase64(enc.encode("another")), children: null }));
-    await expect(downloadChunk(PROVIDER, toHex(hashLeaf(chunk)))).rejects.toBeInstanceOf(
+    await expect(downloadChunk(PROVIDER, 1n, toHex(hashLeaf(chunk)))).rejects.toBeInstanceOf(
       CidMismatchError,
     );
   });
 
-  it("throws CidMismatchError when a node's data is not its children", async () => {
+  it("throws CidMismatchError when a node has both data and children", async () => {
     const left = hashLeaf(enc.encode("left"));
     const right = hashLeaf(enc.encode("right"));
     stubFetch(() => ({
-      data: bytesToBase64(enc.encode("something else")),
+      data: bytesToBase64(concatBytes(left, right)),
       children: [toHex(left), toHex(right)],
     }));
-    await expect(downloadChunk(PROVIDER, toHex(hashChildren(left, right)))).rejects.toBeInstanceOf(
+    await expect(downloadChunk(PROVIDER, 1n, toHex(hashChildren(left, right)))).rejects.toBeInstanceOf(
       CidMismatchError,
     );
   });
 
   it("throws CidMismatchError when a node does not have exactly two children", async () => {
     const left = hashLeaf(enc.encode("left"));
-    stubFetch(() => ({ data: bytesToBase64(left), children: [toHex(left)] }));
-    await expect(downloadChunk(PROVIDER, toHex(hashLeaf(left)))).rejects.toBeInstanceOf(CidMismatchError);
+    stubFetch(() => ({ children: [toHex(left)] }));
+    await expect(downloadChunk(PROVIDER, 1n, toHex(hashLeaf(left)))).rejects.toBeInstanceOf(CidMismatchError);
   });
 
   it("does not accept a node's bytes served as a chunk", async () => {
@@ -78,7 +97,33 @@ describe("downloadChunk", () => {
     const right = hashLeaf(enc.encode("right"));
     const data = new Uint8Array([...left, ...right]);
     stubFetch(() => ({ data: bytesToBase64(data), children: null }));
-    await expect(downloadChunk(PROVIDER, toHex(hashChildren(left, right)))).rejects.toBeInstanceOf(
+    await expect(downloadChunk(PROVIDER, 1n, toHex(hashChildren(left, right)))).rejects.toBeInstanceOf(
+      CidMismatchError,
+    );
+  });
+});
+
+describe("downloadNode", () => {
+  it("returns a chunk's bytes", async () => {
+    const chunk = enc.encode("a chunk");
+    stubFetch(() => ({ data: bytesToBase64(chunk) }));
+    await expect(downloadNode(PROVIDER, 1n, toHex(hashLeaf(chunk)))).resolves.toEqual({ data: chunk });
+  });
+
+  it("returns an internal node's two child hashes", async () => {
+    const left = hashLeaf(enc.encode("left"));
+    const right = hashLeaf(enc.encode("right"));
+    stubFetch(() => ({ children: [toHex(left), toHex(right)] }));
+    await expect(downloadNode(PROVIDER, 1n, toHex(hashChildren(left, right)))).resolves.toEqual({
+      children: [left, right],
+    });
+  });
+
+  it("throws CidMismatchError for children that do not hash to the requested hash", async () => {
+    const left = hashLeaf(enc.encode("left"));
+    const right = hashLeaf(enc.encode("right"));
+    stubFetch(() => ({ children: [toHex(right), toHex(left)] }));
+    await expect(downloadNode(PROVIDER, 1n, toHex(hashChildren(left, right)))).rejects.toBeInstanceOf(
       CidMismatchError,
     );
   });
@@ -96,20 +141,21 @@ describe("chunk uploads", () => {
     expect(result.hash).toBe(expected);
     const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
     expect(body.hash).toBe(expected);
-    expect(body.children).toBeNull();
+    expect(body.data).toBe(bytesToBase64(enc.encode("payload")));
+    expect(body.children).toBeUndefined();
   });
 
-  it("putChunk with children sends the node hash and the child hashes", async () => {
+  it("putInternalNode sends the node hash and the child hashes", async () => {
     const fetchMock = stubFetch(() => ({}));
     const left = hashLeaf(enc.encode("left"));
     const right = hashLeaf(enc.encode("right"));
-    const data = new Uint8Array([...left, ...right]);
-    const result = await putChunk(PROVIDER, 1n, data, signer, [left, right]);
+    const result = await putInternalNode(PROVIDER, 1n, left, right, signer);
     const expected = toHex(hashChildren(left, right));
     expect(result.hash).toBe(expected);
     const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
     expect(body.hash).toBe(expected);
     expect(body.children).toEqual([toHex(left), toHex(right)]);
+    expect(body.data).toBeUndefined();
   });
 
   it("uploadChunk sends the leaf hash and commits it as the data root", async () => {
@@ -144,12 +190,17 @@ describe("fetchChallengeProof", () => {
   const challengeId = { deadline: 10, index: 0 };
   const getValue = vi.fn(async () => ({
     bucket_id: 1n,
-    target: { leaf_index: 2n, chunk_index: 3n },
+    target: { leaf_index: 2n, chunk_index: 0n },
   }));
   const api = {
     query: { StorageProvider: { Challenges: { getValue } } },
   } as unknown as ParachainApi;
-  const leaf = { data_root: toHex(new Uint8Array(32).fill(1)), data_size: 5, total_size: 5 };
+  const leaf = {
+    leaf_version: LEAF_VERSION,
+    data_root: toHex(new Uint8Array(32).fill(1)),
+    data_size: 5,
+    total_size: 5,
+  };
   const item = toHex(new Uint8Array(32).fill(2));
   const chunkProof = {
     chunk_data: bytesToBase64(enc.encode("chunk")),
@@ -160,11 +211,17 @@ describe("fetchChallengeProof", () => {
     const fetchMock = stubFetch((url) =>
       url.pathname === "/mmr_proof" ? { leaf, items: [item] } : chunkProof,
     );
-    const proof = await fetchChallengeProof(api, PROVIDER, challengeId);
-    expect(proof).toEqual({
-      chunk_data: enc.encode("chunk"),
-      mmr_proof: { leaf: { data_root: leaf.data_root, data_size: 5n, total_size: 5n }, items: [item] },
-      chunk_proof: [item],
+    const response = await fetchChallengeProof(api, PROVIDER, challengeId);
+    expect(response).toEqual({
+      type: "Proof",
+      value: {
+        chunk_data: enc.encode("chunk"),
+        mmr_proof: {
+          leaf: { ...leaf, data_size: 5n, total_size: 5n },
+          items: [item],
+        },
+        chunk_proof: [item],
+      },
     });
     expect(getValue).toHaveBeenCalledWith(10, 0, expect.anything());
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -174,13 +231,51 @@ describe("fetchChallengeProof", () => {
     expect(mmrUrl.searchParams.get("leaf_index")).toBe("2");
     expect(chunkUrl.pathname).toBe("/chunk_proof");
     expect(chunkUrl.searchParams.get("data_root")).toBe(leaf.data_root);
-    expect(chunkUrl.searchParams.get("chunk_index")).toBe("3");
+    expect(chunkUrl.searchParams.get("chunk_index")).toBe("0");
+  });
+
+  it("answers a chunk index past the leaf's last chunk with ChunkOutOfRange, without /chunk_proof", async () => {
+    getValue.mockResolvedValueOnce({ bucket_id: 1n, target: { leaf_index: 2n, chunk_index: 1n } });
+    const fetchMock = stubFetch(() => ({ leaf, items: [item] }));
+    const response = await fetchChallengeProof(api, PROVIDER, challengeId);
+    expect(response).toEqual({
+      type: "ChunkOutOfRange",
+      value: {
+        mmr_proof: {
+          leaf: { ...leaf, data_size: 5n, total_size: 5n },
+          items: [item],
+        },
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers chunk index 0 of an empty leaf with ChunkOutOfRange", async () => {
+    const empty = { ...leaf, data_size: 0, total_size: 0 };
+    const fetchMock = stubFetch(() => ({ leaf: empty, items: [item] }));
+    const response = await fetchChallengeProof(api, PROVIDER, challengeId);
+    expect(response).toEqual({
+      type: "ChunkOutOfRange",
+      value: {
+        mmr_proof: { leaf: { ...empty, data_size: 0n, total_size: 0n }, items: [item] },
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("throws for an /mmr_proof response without items, before /chunk_proof", async () => {
     const fetchMock = stubFetch(() => ({ leaf, peaks: [item], leaf_proof: { siblings: [] } }));
     await expect(fetchChallengeProof(api, PROVIDER, challengeId)).rejects.toThrow(
       "the provider node is older than this client",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws for an /mmr_proof leaf without leaf_version, before /chunk_proof", async () => {
+    const { leaf_version: _, ...oldLeaf } = leaf;
+    const fetchMock = stubFetch(() => ({ leaf: oldLeaf, items: [item] }));
+    await expect(fetchChallengeProof(api, PROVIDER, challengeId)).rejects.toThrow(
+      "leaf has no `leaf_version`",
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

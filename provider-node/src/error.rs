@@ -111,6 +111,9 @@ pub enum Error {
 
     #[error("Too many requests")]
     RateLimited,
+
+    #[error("Empty request body: empty data has no chunk tree")]
+    EmptyBody,
 }
 
 impl Error {
@@ -169,10 +172,30 @@ impl IntoResponse for Error {
                         })),
                     },
                 ),
-                StorageError::InvalidInternalNodeData => (
+                StorageError::ChunkIndexOutOfRange {
+                    chunk_index,
+                    chunk_count,
+                } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
-                        error: "invalid_internal_node_data".to_string(),
+                        error: "chunk_index_out_of_range".to_string(),
+                        details: Some(serde_json::json!({
+                            "chunk_index": chunk_index,
+                            "chunk_count": chunk_count,
+                        })),
+                    },
+                ),
+                StorageError::InvalidNode => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_node".to_string(),
+                        details: None,
+                    },
+                ),
+                StorageError::EmptyData => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "empty_data".to_string(),
                         details: None,
                     },
                 ),
@@ -320,6 +343,13 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "invalid_path".to_string(),
                     details: Some(serde_json::json!({ "message": msg })),
+                },
+            ),
+            Error::EmptyBody => (
+                StatusCode::BAD_REQUEST,
+                ErrorResponse {
+                    error: "empty_body".to_string(),
+                    details: None,
                 },
             ),
             Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
@@ -513,6 +543,10 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
+            status_of(Error::from(provider_storage::Error::EmptyData)),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
             status_of(Error::from(provider_storage::Error::NonCanonicalTree(
                 "x".into()
             ))),
@@ -521,6 +555,13 @@ mod tests {
         assert_eq!(
             status_of(Error::from(provider_storage::Error::ChunkTooLarge {
                 size: 2
+            })),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::ChunkIndexOutOfRange {
+                chunk_index: 1,
+                chunk_count: 1
             })),
             StatusCode::BAD_REQUEST
         );
@@ -598,6 +639,7 @@ mod tests {
             status_of(Error::InvalidObjectKey("k".into())),
             StatusCode::BAD_REQUEST
         );
+        assert_eq!(status_of(Error::EmptyBody), StatusCode::BAD_REQUEST);
         assert_eq!(
             status_of(Error::FileNotFound {
                 bucket_id: 1,
