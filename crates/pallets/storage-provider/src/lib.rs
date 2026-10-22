@@ -2917,7 +2917,8 @@ pub mod pallet {
         /// the replica holds the bucket at one of them. If a root matches the
         /// current snapshot or recent history, the replica is paid
         /// `sync_price` from its sync balance. Rate-limited by
-        /// `min_sync_interval`.
+        /// `min_sync_interval`. Fails with `AgreementExpired` once the anchor
+        /// block reaches the agreement's `expires_at`.
         #[pallet::call_index(50)]
         #[pallet::weight(T::WeightInfo::confirm_replica_sync())]
         pub fn confirm_replica_sync(
@@ -2957,6 +2958,14 @@ pub mod pallet {
                         };
 
                     let anchor_block = Self::current_anchor_block();
+
+                    // `challenge_replica` rejects an expired agreement, so a
+                    // sync confirmed after expiry would be paid with no
+                    // liability behind it.
+                    ensure!(
+                        anchor_block < agreement.expires_at,
+                        Error::<T>::AgreementExpired
+                    );
 
                     // Check sync interval
                     if let Some(record) = last_sync {

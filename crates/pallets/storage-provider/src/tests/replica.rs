@@ -639,6 +639,44 @@ fn confirm_replica_sync_fails_sync_too_frequent() {
 }
 
 #[test]
+fn confirm_replica_sync_fails_after_expiry() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+        let expires_at = StorageAgreements::<Test>::get(bucket_id, 2)
+            .unwrap()
+            .expires_at;
+
+        let mut roots = [None; 7];
+        roots[0] = Some(sp_core::H256::repeat_byte(0xAB));
+
+        // At `expires_at` the replica is no longer challengeable, so it is
+        // not paid for a sync either.
+        frame_system::Pallet::<Test>::set_block_number(expires_at);
+        assert_noop!(
+            StorageProvider::confirm_replica_sync(
+                RuntimeOrigin::signed(2),
+                bucket_id,
+                roots,
+                sign_sync_roots(2, &roots),
+            ),
+            Error::<Test>::AgreementExpired
+        );
+
+        // One block earlier the agreement is live and the sync is paid.
+        frame_system::Pallet::<Test>::set_block_number(expires_at - 1);
+        let balance_before = Balances::free_balance(2);
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+        assert_eq!(Balances::free_balance(2), balance_before + 10);
+    });
+}
+
+#[test]
 fn confirm_replica_sync_fails_insufficient_balance() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
