@@ -75,6 +75,8 @@ pub fn internal_body(hash: H256, left: H256, right: H256) -> Reply {
 
 #[derive(serde::Deserialize)]
 struct NodeQuery {
+    #[serde(rename = "bucket_id")]
+    _bucket_id: u64,
     hash: String,
 }
 

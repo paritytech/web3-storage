@@ -60,7 +60,7 @@ fn unheld_root() -> H256 {
 async fn sync_serving_peaks(peaks: Reply) -> Result<H256, Error> {
     let f = fixture();
     let url = spawn_primary(peaks).await;
-    f.sync.sync_from_primary(BUCKET, &url).await
+    f.sync.sync_from_source(BUCKET, &url).await
 }
 
 /// Sync against a primary offering one peak, whose `/node` answers `reply`.
@@ -72,7 +72,7 @@ async fn sync_serving_node(peak: H256, reply: Reply) -> Result<H256, Error> {
         nodes,
     )
     .await;
-    f.sync.sync_from_primary(BUCKET, &url).await
+    f.sync.sync_from_source(BUCKET, &url).await
 }
 
 #[tokio::test]
@@ -81,8 +81,8 @@ async fn unreachable_primary_is_a_transport_error() {
     let url = dead_address().await;
 
     assert_err!(
-        f.sync.sync_from_primary(BUCKET, &url).await,
-        Error::PrimaryRequest {
+        f.sync.sync_from_source(BUCKET, &url).await,
+        Error::SourceRequest {
             what: "mmr peaks",
             ..
         }
@@ -93,7 +93,7 @@ async fn unreachable_primary_is_a_transport_error() {
 async fn peaks_error_status_is_reported_with_the_status_code() {
     assert_err!(
         sync_serving_peaks(status(StatusCode::SERVICE_UNAVAILABLE)).await,
-        Error::PrimaryUnavailable {
+        Error::SourceUnavailable {
             what: "mmr peaks",
             status: 503
         }
@@ -145,7 +145,7 @@ async fn node_error_status_is_reported_with_the_status_code() {
             status(StatusCode::INTERNAL_SERVER_ERROR)
         )
         .await,
-        Error::PrimaryUnavailable {
+        Error::SourceUnavailable {
             what: "node",
             status: 500
         }
@@ -272,7 +272,7 @@ async fn an_internal_node_with_the_wrong_hash_is_rejected_before_its_children_ar
     .await;
 
     assert_err!(
-        f.sync.sync_from_primary(BUCKET, &url).await,
+        f.sync.sync_from_source(BUCKET, &url).await,
         Error::NodeHashMismatch { expected, actual }
             if expected == requested && actual == hash_children(left, right)
     );
@@ -311,8 +311,8 @@ async fn peak_hashes_are_not_node_keys_so_every_real_sync_404s() {
     let url = spawn_primary(peaks_body(&hex_hash(unheld_root()), &[hex_hash(peak)])).await;
 
     assert_err!(
-        f.sync.sync_from_primary(BUCKET, &url).await,
-        Error::PrimaryUnavailable {
+        f.sync.sync_from_source(BUCKET, &url).await,
+        Error::SourceUnavailable {
             what: "node",
             status: 404
         }
@@ -340,10 +340,7 @@ async fn an_internal_peak_is_stored_after_the_children_beneath_it() {
     let url =
         spawn_primary_with_nodes(peaks_body(&hex_hash(target), &[hex_hash(parent)]), nodes).await;
 
-    assert_eq!(
-        f.sync.sync_from_primary(BUCKET, &url).await.unwrap(),
-        target
-    );
+    assert_eq!(f.sync.sync_from_source(BUCKET, &url).await.unwrap(), target);
     assert_eq!(
         f.storage.get_node(&parent),
         Some(ChunkTreeNode::Internal { left, right }),
@@ -376,7 +373,7 @@ async fn a_root_we_already_hold_returns_without_fetching_any_node() {
         spawn_primary_with_nodes(peaks_body(&hex_hash(local_root), &[hex_hash(leaf)]), nodes).await;
 
     assert_eq!(
-        f.sync.sync_from_primary(BUCKET, &url).await.unwrap(),
+        f.sync.sync_from_source(BUCKET, &url).await.unwrap(),
         local_root
     );
 }
@@ -396,10 +393,7 @@ async fn a_node_we_already_hold_is_not_refetched() {
     let url =
         spawn_primary_with_nodes(peaks_body(&hex_hash(target), &[hex_hash(leaf)]), nodes).await;
 
-    assert_eq!(
-        f.sync.sync_from_primary(BUCKET, &url).await.unwrap(),
-        target
-    );
+    assert_eq!(f.sync.sync_from_source(BUCKET, &url).await.unwrap(), target);
 }
 
 /// Covers `fetch_subtree`'s fetch-decode-store path. The mock serves a peak
@@ -416,12 +410,9 @@ async fn a_peak_naming_a_stored_node_is_fetched_and_stored() {
     let url =
         spawn_primary_with_nodes(peaks_body(&hex_hash(target), &[hex_hash(leaf)]), nodes).await;
 
-    // `sync_from_primary` reports the root the primary claims; it never
+    // `sync_from_source` reports the root the primary claims; it never
     // recomputes one, which is why the coordinator verifies afterwards.
-    assert_eq!(
-        f.sync.sync_from_primary(BUCKET, &url).await.unwrap(),
-        target
-    );
+    assert_eq!(f.sync.sync_from_source(BUCKET, &url).await.unwrap(), target);
     assert_eq!(
         f.storage.get_node(&leaf),
         Some(ChunkTreeNode::Chunk(b"leaf payload".to_vec()))
