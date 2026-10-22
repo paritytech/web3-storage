@@ -135,6 +135,7 @@ impl<T: Config> Pallet<T> {
             target,
             deposit,
             authorized,
+            created_at: anchor_block,
         };
 
         // Cap the number of challenges that can share this deadline.

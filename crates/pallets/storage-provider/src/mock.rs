@@ -76,6 +76,11 @@ impl frame_support::traits::Get<u64> for TestTreasury {
     }
 }
 
+frame_support::parameter_types! {
+    /// A static so a test can change it while a challenge is open.
+    pub static ChallengeTimeout: u64 = 100;
+}
+
 impl pallet_storage_provider::Config for Test {
     type Currency = Balances;
     type RuntimeHoldReason = RuntimeHoldReason;
@@ -86,7 +91,7 @@ impl pallet_storage_provider::Config for Test {
     type MaxPrimaryProviders = ConstU32<5>;
     type MinProviderStake = ConstU64<100>;
     type MaxChunkSize = ConstU32<{ storage_primitives::DEFAULT_CHUNK_SIZE }>;
-    type ChallengeTimeout = ConstU64<100>;
+    type ChallengeTimeout = ChallengeTimeout;
     type ChallengeDeposit = ConstU64<100>; // same value as pre-fix hardcoded constant — keeps existing tests' math intact
     type SettlementTimeout = ConstU64<50>;
     type RequestTimeout = ConstU64<50>;
