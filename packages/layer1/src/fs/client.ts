@@ -227,8 +227,8 @@ export class FileSystemClient extends Layer1Client {
   }
 
   /** Download a single chunk by CID — VERIFIED (throws CidMismatchError). */
-  async downloadByCid(providerUrl: string, cid: string): Promise<Uint8Array> {
-    return downloadChunk(providerUrl, cid);
+  async downloadByCid(providerUrl: string, bucketId: bigint, cid: string): Promise<Uint8Array> {
+    return downloadChunk(providerUrl, bucketId, cid);
   }
 
   async deleteFile(bucketId: bigint, path: string): Promise<void> {

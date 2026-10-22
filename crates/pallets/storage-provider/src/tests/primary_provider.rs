@@ -52,11 +52,22 @@ fn create_bucket_rejects_min_providers_above_the_cap() {
 }
 
 #[test]
+fn create_bucket_rejects_zero_min_providers() {
+    new_test_ext().execute_with(|| {
+        // Zero would let `checkpoint` accept a commitment no provider signed.
+        assert_noop!(
+            StorageProvider::create_bucket(RuntimeOrigin::signed(1), 0, Visibility::Private),
+            Error::<Test>::InvalidMinProviders
+        );
+    });
+}
+
+#[test]
 fn add_primary_provider_works() {
     new_test_ext().execute_with(|| {
         run_to_block(1);
         register_provider(2, 200);
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
 
         setup_added_primary(2, 1, bucket_id, 50, 100);
 
@@ -134,8 +145,8 @@ fn add_primary_provider_rejects_unknown_bucket() {
 fn add_primary_provider_rejects_quote_for_another_bucket() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        let bucket_id = create_bucket(1, 0);
-        let other = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
+        let other = create_bucket(1, 1);
 
         let quote = quote_for(2, 1, other);
 
@@ -150,7 +161,7 @@ fn add_primary_provider_rejects_quote_for_another_bucket() {
 fn add_primary_provider_rejects_new_bucket_quote() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
 
         let quote = signed_primary_terms(2, 1, BucketTarget::New, 50, 100);
         assert_noop!(
@@ -164,7 +175,7 @@ fn add_primary_provider_rejects_new_bucket_quote() {
 fn add_primary_provider_rejects_replica_quote() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
 
         let quote = signed_replica_terms(2, 1, bucket_id, 50, 100, replica_params());
         assert_noop!(
@@ -216,7 +227,7 @@ fn add_primary_provider_rejects_duplicate_agreement() {
 #[test]
 fn add_primary_provider_rejects_full_primary_set() {
     new_test_ext().execute_with(|| {
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
         let cap = u64::from(<<Test as Config>::MaxPrimaryProviders as Get<u32>>::get());
         for provider in 2..2 + cap {
             register_provider(provider, 200);
@@ -237,7 +248,7 @@ fn add_primary_provider_rejects_full_primary_set() {
 fn add_primary_provider_rejects_replayed_quote() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
 
         let (terms, sig) = quote_for(2, 1, bucket_id);
         assert_ok!(add_primary(1, bucket_id, 2, (terms.clone(), sig)));
@@ -245,7 +256,7 @@ fn add_primary_provider_rejects_replayed_quote() {
         // Same nonce: the owner's nonce has advanced past it, so it is
         // rejected even though the agreement slot is free on a different
         // bucket.
-        let other = create_bucket(1, 0);
+        let other = create_bucket(1, 1);
         let mut replay = terms;
         replay.bucket = BucketTarget::Existing(other);
         let replay_sig = sign_terms(&provider_signer(2), &replay);

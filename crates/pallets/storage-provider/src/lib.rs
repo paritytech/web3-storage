@@ -725,6 +725,10 @@ pub mod pallet {
         /// membership/agreement changes between creation and response cannot
         /// alter the fee split applied in `respond_to_challenge`.
         pub authorized: bool,
+        /// Anchor block at which the challenge was created.
+        /// `respond_to_challenge` computes the response time for the fee
+        /// split from it.
+        pub created_at: BlockNumberFor<T>,
     }
 
     /// Challenge response from provider.
@@ -1147,12 +1151,13 @@ pub mod pallet {
         /// The bucket already has `MaxPrimaryProviders` primary providers.
         MaxPrimaryProvidersReached,
         /// The current snapshot carries fewer provider signatures than the
-        /// bucket's `min_providers`.
+        /// bucket's `min_providers`, or none.
         MinProvidersNotMet,
-        /// A `min_providers` value the bucket cannot satisfy: above
+        /// A `min_providers` value the pallet does not accept: zero, above
         /// `MaxPrimaryProviders` at creation, or above the bucket's current
-        /// primary count in `set_min_providers`. Pass a smaller number, or
-        /// add primaries first.
+        /// primary count in `set_min_providers`. Pass a value from 1 to the
+        /// current primary count; to require more signatures, add primaries
+        /// first.
         InvalidMinProviders,
         /// Only members and primary-agreement owners may challenge a primary
         /// provider of a private bucket.
@@ -1252,7 +1257,8 @@ pub mod pallet {
         /// A frozen bucket only accepts checkpoints that keep its
         /// `frozen_start_seq`.
         SnapshotViolatesFrozen,
-        /// Fewer valid provider signatures than the bucket's `min_providers`.
+        /// Fewer valid provider signatures than the bucket's `min_providers`,
+        /// or none.
         InsufficientSignatures,
 
         // General errors
@@ -1622,7 +1628,8 @@ pub mod pallet {
         ///
         /// Parameters:
         /// - `min_providers`: primary-provider signatures each checkpoint
-        ///   needs. At most `MaxPrimaryProviders` (`InvalidMinProviders`).
+        ///   needs. At least 1 and at most `MaxPrimaryProviders`
+        ///   (`InvalidMinProviders`).
         ///   Changeable later with [`Pallet::set_min_providers`].
         /// - `visibility`: who may read the bucket (see [`Visibility`]).
         #[pallet::call_index(10)]
@@ -1684,7 +1691,8 @@ pub mod pallet {
         }
 
         /// Admin only. Set how many primary-provider signatures a checkpoint
-        /// needs. Cannot exceed the bucket's primary provider count.
+        /// needs. At least 1 and at most the bucket's primary provider count,
+        /// so a bucket with no primaries needs one added first.
         #[pallet::call_index(11)]
         #[pallet::weight(T::WeightInfo::set_bucket_min_providers())]
         pub fn set_min_providers(
@@ -1699,9 +1707,8 @@ pub mod pallet {
 
                 Self::ensure_admin(&who, bucket)?;
 
-                // Cannot exceed current primary provider count
                 ensure!(
-                    min_providers <= bucket.primary_providers.len() as u32,
+                    min_providers >= 1 && min_providers <= bucket.primary_providers.len() as u32,
                     Error::<T>::InvalidMinProviders
                 );
 
@@ -1712,7 +1719,7 @@ pub mod pallet {
 
         /// Admin only. Make the bucket append-only from its current snapshot
         /// on. Irreversible; the snapshot must already carry `min_providers`
-        /// signatures.
+        /// signatures, and at least one.
         #[pallet::call_index(12)]
         #[pallet::weight(T::WeightInfo::freeze_bucket())]
         pub fn freeze_bucket(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult {
@@ -1728,10 +1735,11 @@ pub mod pallet {
                 // Require snapshot with min_providers
                 let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
 
-                // Count set bits in the bitfield
+                // Count set bits in the bitfield. At least one, as in
+                // `checkpoint`.
                 let signer_count = snapshot.count_signers();
                 ensure!(
-                    signer_count >= bucket.min_providers as usize,
+                    signer_count >= bucket.min_providers.max(1) as usize,
                     Error::<T>::MinProvidersNotMet
                 );
 
@@ -2377,7 +2385,8 @@ pub mod pallet {
 
         /// Writer or admin. Make a provider-signed commitment the bucket's
         /// canonical state. Needs valid signatures from at least
-        /// `min_providers` of the bucket's primary providers; a frozen bucket
+        /// `min_providers` of the bucket's primary providers, and at least
+        /// one; a frozen bucket
         /// only accepts commitments that keep its `frozen_start_seq`.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
@@ -2442,9 +2451,11 @@ pub mod pallet {
                     signing_providers.push(signer.clone());
                 }
 
-                // Check min_providers
+                // At least one signature even if `min_providers` is 0 in
+                // state written before the bound existed: a snapshot no
+                // provider signed is a snapshot no provider is liable for.
                 ensure!(
-                    signing_count >= bucket.min_providers as usize,
+                    signing_count >= bucket.min_providers.max(1) as usize,
                     Error::<T>::InsufficientSignatures
                 );
 
@@ -2804,11 +2815,8 @@ pub mod pallet {
                 }
             }
 
-            // Calculate response time (blocks since challenge was created)
-            let challenge_created_at = challenge_id
-                .deadline
-                .saturating_sub(T::ChallengeTimeout::get());
-            let response_time = anchor_block.saturating_sub(challenge_created_at);
+            // Response time: blocks since the challenge was created.
+            let response_time = anchor_block.saturating_sub(challenge.created_at);
 
             // A valid response never touches the provider's stake — only the
             // response cost (proxied by the deposit) is at issue, and the
@@ -2917,7 +2925,8 @@ pub mod pallet {
         /// the replica holds the bucket at one of them. If a root matches the
         /// current snapshot or recent history, the replica is paid
         /// `sync_price` from its sync balance. Rate-limited by
-        /// `min_sync_interval`.
+        /// `min_sync_interval`. Fails with `AgreementExpired` once the anchor
+        /// block reaches the agreement's `expires_at`.
         #[pallet::call_index(50)]
         #[pallet::weight(T::WeightInfo::confirm_replica_sync())]
         pub fn confirm_replica_sync(
@@ -2957,6 +2966,14 @@ pub mod pallet {
                         };
 
                     let anchor_block = Self::current_anchor_block();
+
+                    // `challenge_replica` rejects an expired agreement, so a
+                    // sync confirmed after expiry would be paid with no
+                    // liability behind it.
+                    ensure!(
+                        anchor_block < agreement.expires_at,
+                        Error::<T>::AgreementExpired
+                    );
 
                     // Check sync interval
                     if let Some(record) = last_sync {

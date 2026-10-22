@@ -258,7 +258,7 @@ async fn test_upload_commit_download_roundtrip() {
     client.commit(1, vec![data_root]).await.unwrap();
 
     let retrieved = client
-        .download(&data_root, 0, original.len() as u64)
+        .download(1, &data_root, 0, original.len() as u64)
         .await
         .unwrap();
 
@@ -278,7 +278,7 @@ async fn test_download_full_roundtrip() {
     client.commit(1, vec![data_root]).await.unwrap();
 
     let retrieved = client
-        .download_full(&data_root, original.len() as u64)
+        .download_full(1, &data_root, original.len() as u64)
         .await
         .unwrap();
 
@@ -300,7 +300,7 @@ async fn test_download_partial_offset() {
 
     // Download chunk 0
     let chunk0 = client
-        .download(&data_root, 0, chunk_size as u64)
+        .download(1, &data_root, 0, chunk_size as u64)
         .await
         .unwrap();
     assert_eq!(chunk0, &data[..chunk_size]);
@@ -322,7 +322,7 @@ async fn test_read_node_returns_leaf_data() {
         .await
         .unwrap();
 
-    let node = client.read_node(&data_root).await.unwrap();
+    let node = client.read_node(1, &data_root).await.unwrap();
 
     assert_eq!(node, Node::Chunk(data.to_vec()));
 }
@@ -338,7 +338,7 @@ async fn test_read_node_verified_passes_for_valid_hash() {
         .await
         .unwrap();
 
-    let verified = client.read_node_verified(&data_root).await.unwrap();
+    let verified = client.read_node_verified(1, &data_root).await.unwrap();
 
     assert_eq!(verified, Node::Chunk(data.to_vec()));
 }
@@ -357,12 +357,15 @@ async fn test_read_node_verified_checks_an_internal_node_by_its_children() {
 
     // The root of a two-chunk file is an internal node; the provider serves
     // its two child hashes.
-    let node = client.read_node(&data_root).await.unwrap();
+    let node = client.read_node(1, &data_root).await.unwrap();
     assert!(
         matches!(node, Node::Internal { .. }),
         "a two-chunk root is an internal node"
     );
-    assert_eq!(client.read_node_verified(&data_root).await.unwrap(), node);
+    assert_eq!(
+        client.read_node_verified(1, &data_root).await.unwrap(),
+        node
+    );
 }
 
 #[tokio::test]
@@ -371,7 +374,7 @@ async fn test_read_node_fails_for_unknown_hash() {
     let client = make_client(url);
 
     let phantom = H256::from_slice(&[0xFF; 32]);
-    let result = client.read_node(&phantom).await;
+    let result = client.read_node(1, &phantom).await;
 
     assert!(result.is_err(), "reading a non-existent node should fail");
 }
@@ -389,13 +392,16 @@ async fn test_read_internal_node_has_children() {
         .await
         .unwrap();
 
-    let node = client.read_node(&data_root).await.unwrap();
+    let node = client.read_node(1, &data_root).await.unwrap();
 
     assert!(
         matches!(node, Node::Internal { .. }),
         "two-chunk upload should produce a root with two children"
     );
-    assert_eq!(client.read_node_verified(&data_root).await.unwrap(), node);
+    assert_eq!(
+        client.read_node_verified(1, &data_root).await.unwrap(),
+        node
+    );
 }
 
 // ============================================================================
@@ -421,7 +427,7 @@ async fn test_encryption_roundtrip() {
     // ENCRYPTION_OVERHEAD bytes.  We must fetch the full ciphertext so the
     // cipher can verify the authentication tag before decrypting.
     let enc_len = (original.len() + ENCRYPTION_OVERHEAD) as u64;
-    let retrieved = client.download(&data_root, 0, enc_len).await.unwrap();
+    let retrieved = client.download(1, &data_root, 0, enc_len).await.unwrap();
 
     assert_eq!(retrieved, original);
 }
@@ -475,7 +481,7 @@ async fn test_decryption_with_wrong_key_fails() {
     let client2 = make_client(url).with_encryption_key(&key2);
     let enc_len = (data.len() + ENCRYPTION_OVERHEAD) as u64;
 
-    let result = client2.download(&data_root, 0, enc_len).await;
+    let result = client2.download(1, &data_root, 0, enc_len).await;
 
     assert!(
         result.is_err(),
@@ -618,7 +624,7 @@ async fn test_spot_check_passes_for_valid_data() {
         .unwrap();
     client.commit(1, vec![data_root]).await.unwrap();
 
-    let passed = client.spot_check(&data_root, 0).await.unwrap();
+    let passed = client.spot_check(1, &data_root, 0).await.unwrap();
 
     assert!(passed, "spot check on valid data should pass");
 }
@@ -629,7 +635,7 @@ async fn test_spot_check_returns_false_for_missing_data() {
     let mut client = make_client(url);
 
     let phantom = H256::from_slice(&[0xCC; 32]);
-    let passed = client.spot_check(&phantom, 0).await.unwrap();
+    let passed = client.spot_check(1, &phantom, 0).await.unwrap();
 
     assert!(
         !passed,
@@ -704,7 +710,7 @@ async fn test_non_power_of_two_upload_matches_provider_root_and_verifies() {
     let mut stack = vec![data_root];
     let mut internal_count = 0;
     while let Some(hash) = stack.pop() {
-        if let Node::Internal { left, right } = client.read_node(&hash).await.unwrap() {
+        if let Node::Internal { left, right } = client.read_node(1, &hash).await.unwrap() {
             internal_count += 1;
             stack.extend([left, right]);
         }
@@ -716,6 +722,7 @@ async fn test_non_power_of_two_upload_matches_provider_root_and_verifies() {
         let proof_response: serde_json::Value = http
             .get(format!("{url}/chunk_proof"))
             .query(&[
+                ("bucket_id", "1".to_string()),
                 ("data_root", format!("{data_root:#x}")),
                 ("chunk_index", chunk_index.to_string()),
             ])

@@ -127,7 +127,7 @@ common::backend_tests! {
         // Download node
         let download_response = server
             .client
-            .get(server.url(&format!("/node?hash={hash_hex}")))
+            .get(server.url(&format!("/node?bucket_id=1&hash={hash_hex}")))
             .send()
             .await
             .unwrap();
@@ -143,7 +143,7 @@ common::backend_tests! {
         // A bare hex request gets the `0x`-prefixed hash back.
         let body: Value = server
             .client
-            .get(server.url(&format!("/node?hash={}", &hash_hex[2..])))
+            .get(server.url(&format!("/node?bucket_id=1&hash={}", &hash_hex[2..])))
             .send()
             .await
             .unwrap()
@@ -258,43 +258,6 @@ common::backend_tests! {
         let body: Value = commitment_response.json().await.unwrap();
         assert_eq!(body["bucket_id"], 1);
         assert_eq!(body["leaf_count"], 1);
-    }
-}
-
-common::backend_tests! {
-    async fn test_list_buckets(backend) {
-        let server = TestServer::new(backend).await;
-
-        // Upload to bucket 1 to create it
-        let data = b"Data for bucket 1";
-        let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("{hash:#x}");
-
-        server
-            .client
-            .put(server.url("/node"))
-            .json(&json!({
-                "bucket_id": 1,
-                "hash": hash_hex,
-                "data": BASE64.encode(data),
-                "children": null
-            }))
-            .send()
-            .await
-            .unwrap();
-
-        // List buckets
-        let response = server
-            .client
-            .get(server.url("/buckets"))
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body: Value = response.json().await.unwrap();
-        assert!(body["buckets"].is_array());
     }
 }
 
@@ -535,7 +498,7 @@ common::backend_tests! {
 
         let response = server
             .client
-            .get(server.url(&format!("/node?hash={hash_hex}")))
+            .get(server.url(&format!("/node?bucket_id=1&hash={hash_hex}")))
             .send()
             .await
             .unwrap();
@@ -614,7 +577,7 @@ common::backend_tests! {
         // Step 4: Read back
         let read_response = server
             .client
-            .get(server.url(&format!("/read?data_root={data_root}&offset=0&length=100")))
+            .get(server.url(&format!("/read?bucket_id=1&data_root={data_root}&offset=0&length=100")))
             .send()
             .await
             .unwrap();
@@ -1043,7 +1006,7 @@ common::backend_tests! {
         assert_eq!(body["total_buckets"], 0);
         assert_eq!(body["total_nodes"], 0);
         assert_eq!(body["total_bytes"], 0);
-        assert!(body["buckets"].as_array().unwrap().is_empty());
+        assert!(body.get("buckets").is_none());
     }
 }
 
@@ -1066,9 +1029,7 @@ common::backend_tests! {
         assert_eq!(body["total_buckets"], 1);
         assert!(body["total_nodes"].as_u64().unwrap() > 0);
         assert!(body["total_bytes"].as_u64().unwrap() > 0);
-        let buckets = body["buckets"].as_array().unwrap();
-        assert_eq!(buckets.len(), 1);
-        assert_eq!(buckets[0]["bucket_id"], 1);
+        assert!(body.get("buckets").is_none());
     }
 }
 
@@ -1083,7 +1044,7 @@ common::backend_tests! {
 
         let resp = server
             .client
-            .get(server.url(&format!("/chunk_proof?data_root={hash_hex}&chunk_index=0")))
+            .get(server.url(&format!("/chunk_proof?bucket_id=1&data_root={hash_hex}&chunk_index=0")))
             .send()
             .await
             .unwrap();
@@ -1103,7 +1064,7 @@ common::backend_tests! {
 
         let resp = server
             .client
-            .get(server.url(&format!("/chunk_proof?data_root={hash_hex}&chunk_index=1")))
+            .get(server.url(&format!("/chunk_proof?bucket_id=1&data_root={hash_hex}&chunk_index=1")))
             .send()
             .await
             .unwrap();
@@ -1123,7 +1084,7 @@ common::backend_tests! {
         let fake_root = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let resp = server
             .client
-            .get(server.url(&format!("/chunk_proof?data_root={fake_root}&chunk_index=0")))
+            .get(server.url(&format!("/chunk_proof?bucket_id=1&data_root={fake_root}&chunk_index=0")))
             .send()
             .await
             .unwrap();
@@ -1199,28 +1160,6 @@ common::backend_tests! {
     }
 }
 
-common::backend_tests! {
-    async fn test_mmr_subtree_endpoint(backend) {
-        let server = TestServer::new(backend).await;
-        upload_and_commit(&server, 1).await;
-
-        let resp = server
-            .client
-            .get(server.url("/mmr_subtree?bucket_id=1&peak_index=0&depth=1"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-
-        let body: Value = resp.json().await.unwrap();
-        let nodes = body["nodes"].as_array().unwrap();
-        assert!(!nodes.is_empty());
-        assert!(nodes[0]["hash"].is_string());
-        // position is a number
-        assert!(nodes[0]["position"].is_number());
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Fetch nodes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1271,6 +1210,7 @@ common::backend_tests! {
 common::backend_tests! {
     async fn test_fetch_nodes_unknown_hashes(backend) {
         let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
 
         let fake = "0x0000000000000000000000000000000000000000000000000000000000000042";
         let resp = server
@@ -1288,6 +1228,38 @@ common::backend_tests! {
         let body: Value = resp.json().await.unwrap();
         let nodes = body["nodes"].as_array().unwrap();
         assert!(nodes.is_empty());
+    }
+}
+
+common::backend_tests! {
+    async fn test_hash_keyed_reads_reject_a_bucket_the_provider_does_not_store(backend) {
+        let server = TestServer::new(backend).await;
+        let (hash_hex, _body) = upload_and_commit(&server, 1).await;
+
+        for request in [
+            server
+                .client
+                .get(server.url(&format!("/node?bucket_id=2&hash={hash_hex}"))),
+            server.client.get(server.url(&format!(
+                "/read?bucket_id=2&data_root={hash_hex}&offset=0&length=100"
+            ))),
+            server.client.get(server.url(&format!(
+                "/chunk_proof?bucket_id=2&data_root={hash_hex}&chunk_index=0"
+            ))),
+            server
+                .client
+                .post(server.url("/fetch_nodes"))
+                .json(&json!({ "bucket_id": 2, "hashes": [hash_hex] })),
+        ] {
+            let resp = request.send().await.unwrap();
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+            let body: Value = resp.json().await.unwrap();
+            assert_eq!(
+                body["error"], "bucket_not_found",
+                "the provider stores this hash only under bucket 1, so a read that names \
+                 bucket 2 must fail before backends store buckets separately"
+            );
+        }
     }
 }
 
@@ -1440,7 +1412,7 @@ common::backend_tests! {
 
         let resp = server
             .client
-            .get(server.url("/node?hash=not_hex_at_all"))
+            .get(server.url("/node?bucket_id=1&hash=not_hex_at_all"))
             .send()
             .await
             .unwrap();
@@ -1457,7 +1429,7 @@ common::backend_tests! {
 
         let resp = server
             .client
-            .get(server.url("/node?hash=0x01"))
+            .get(server.url("/node?bucket_id=1&hash=0x01"))
             .send()
             .await
             .unwrap();
@@ -1471,11 +1443,12 @@ common::backend_tests! {
 common::backend_tests! {
     async fn test_get_node_not_found(backend) {
         let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
 
         let valid_but_absent = "0x0000000000000000000000000000000000000000000000000000000000000099";
         let resp = server
             .client
-            .get(server.url(&format!("/node?hash={valid_but_absent}")))
+            .get(server.url(&format!("/node?bucket_id=1&hash={valid_but_absent}")))
             .send()
             .await
             .unwrap();
@@ -1598,7 +1571,7 @@ common::backend_tests! {
 
         let resp = server
             .client
-            .get(server.url("/read?data_root=not_hex&offset=0&length=100"))
+            .get(server.url("/read?bucket_id=1&data_root=not_hex&offset=0&length=100"))
             .send()
             .await
             .unwrap();
@@ -1612,11 +1585,12 @@ common::backend_tests! {
 common::backend_tests! {
     async fn test_read_chunks_nonexistent_root(backend) {
         let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
 
         let valid_hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let resp = server
             .client
-            .get(server.url(&format!("/read?data_root={valid_hex}&offset=0&length=100")))
+            .get(server.url(&format!("/read?bucket_id=1&data_root={valid_hex}&offset=0&length=100")))
             .send()
             .await
             .unwrap();
@@ -1635,7 +1609,7 @@ common::backend_tests! {
 
         let resp = server
             .client
-            .get(server.url("/chunk_proof?data_root=not_hex&chunk_index=0"))
+            .get(server.url("/chunk_proof?bucket_id=1&data_root=not_hex&chunk_index=0"))
             .send()
             .await
             .unwrap();

@@ -76,6 +76,11 @@ impl frame_support::traits::Get<u64> for TestTreasury {
     }
 }
 
+frame_support::parameter_types! {
+    /// A static so a test can change it while a challenge is open.
+    pub static ChallengeTimeout: u64 = 100;
+}
+
 impl pallet_storage_provider::Config for Test {
     type Currency = Balances;
     type RuntimeHoldReason = RuntimeHoldReason;
@@ -86,7 +91,7 @@ impl pallet_storage_provider::Config for Test {
     type MaxPrimaryProviders = ConstU32<5>;
     type MinProviderStake = ConstU64<100>;
     type MaxChunkSize = ConstU32<{ storage_primitives::DEFAULT_CHUNK_SIZE }>;
-    type ChallengeTimeout = ConstU64<100>;
+    type ChallengeTimeout = ChallengeTimeout;
     type ChallengeDeposit = ConstU64<100>; // same value as pre-fix hardcoded constant — keeps existing tests' math intact
     type SettlementTimeout = ConstU64<50>;
     type RequestTimeout = ConstU64<50>;
@@ -373,6 +378,31 @@ pub fn create_bucket(admin: u64, min_providers: u32) -> u64 {
         storage_primitives::Visibility::Public,
     ));
     last_created_bucket_id()
+}
+
+/// Helper: signatures of `providers` over `commitment` for `bucket_id`, in
+/// the form `checkpoint` and `extend_checkpoint` take. Stamps each
+/// provider's [`provider_signer`] key on chain.
+#[allow(dead_code)]
+pub fn sign_commitment(
+    bucket_id: u64,
+    commitment: storage_primitives::Commitment,
+    providers: &[u64],
+) -> frame_support::BoundedVec<(u64, sp_runtime::MultiSignature), ConstU32<5>> {
+    use codec::Encode;
+    use sp_core::Pair;
+    let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment).encode();
+    providers
+        .iter()
+        .map(|&p| {
+            (
+                p,
+                sp_runtime::MultiSignature::Sr25519(provider_signer(p).sign(&payload)),
+            )
+        })
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("at most MaxPrimaryProviders signers")
 }
 
 /// Id of the bucket the previous call created.

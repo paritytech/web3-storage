@@ -100,7 +100,7 @@ async function main() {
         name: "13.1 The provider answers a challenge on chunk 0 with the real chunk",
         fn: async () => {
           const challengeId = await challengeChunk0();
-          const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
+          const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId, provider);
           const result = await respondToChallenge(api, provider, challengeId, proof);
           const defended = api.event.StorageProvider.ChallengeDefended.filter(
             result.events as never,
@@ -114,7 +114,7 @@ async function main() {
           const challengeId = await challengeChunk0();
           // Keep the real MMR proof; replace the chunk with the bytes of `L`
           // and the 2-step chunk proof with the 1-step proof `[R]`.
-          const real = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
+          const real = await fetchChallengeProof(api, PROVIDER_URL, challengeId, provider);
           assert.strictEqual(real.type, "Proof");
           const nodeBytes = new Uint8Array(64);
           nodeBytes.set(leaves[0], 0);

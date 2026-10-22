@@ -12,7 +12,6 @@ pub use rocksdb::DiskStorage;
 pub use types::{BucketState, ChunkTreeNode};
 
 use crate::error::Error;
-use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::fmt;
 use std::ops::Range;
@@ -82,24 +81,6 @@ pub struct BucketInfo {
     pub leaf_count: u64,
 }
 
-/// Bucket summary info.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BucketSummary {
-    pub bucket_id: BucketId,
-    pub mmr_root: String,
-    pub start_seq: u64,
-    pub leaf_count: u64,
-}
-
-/// Per-bucket statistics.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BucketStats {
-    pub bucket_id: BucketId,
-    pub leaf_count: u64,
-    pub node_count: u64,
-    pub bytes_stored: u64,
-}
-
 /// Storage engine interface. Callers hold an `Arc<dyn StorageBackend>` rather
 /// than a concrete engine.
 pub trait StorageBackend: Send + Sync {
@@ -109,11 +90,8 @@ pub trait StorageBackend: Send + Sync {
     /// Get bucket information.
     fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo>;
 
-    /// List all buckets.
-    fn list_buckets(&self) -> Vec<BucketSummary>;
-
-    /// Get per-bucket storage statistics.
-    fn get_bucket_stats(&self) -> Vec<BucketStats>;
+    /// Ids of every locally-held bucket.
+    fn bucket_ids(&self) -> Vec<BucketId>;
 
     /// Get total node count across all buckets.
     fn total_nodes(&self) -> u64;

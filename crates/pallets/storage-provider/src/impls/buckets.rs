@@ -149,7 +149,7 @@ impl<T: Config> Pallet<T> {
         visibility: Visibility,
     ) -> Result<BucketId, DispatchError> {
         ensure!(
-            min_providers <= T::MaxPrimaryProviders::get(),
+            min_providers >= 1 && min_providers <= T::MaxPrimaryProviders::get(),
             Error::<T>::InvalidMinProviders
         );
 
