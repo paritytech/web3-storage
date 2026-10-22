@@ -4,13 +4,14 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.6 |
+| **Version** | 2.7 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.7 | Layer-0 read access spelled out: bucket-bound reads gate at Reader on primaries; hash-keyed lookups (`/node`, `/read`, `/chunk_proof`, `/fetch_nodes`) take a bucket id but are **capability reads** — possession of the hash grants the bytes, with the enumeration surfaces gated; operator self-read allowance. **Read**: "Read access at Layer 0" under Bucket Visibility & Access. |
 | 2.6 | Chunk tree fixed: a binary RFC 9162 Merkle tree over 256 KiB chunks (only the last chunk is shorter), chunk and node hashes with different prefixes, no padding, chunk count derived from the leaf's `data_size`, empty data rejected, a `chunk_index` at or beyond the chunk count answered with the leaf alone. `MmrLeaf` starts with `leaf_version`, which defines the leaf's fields, `CHUNK_SIZE` and the tree shape. Proofs carry only hashes: `MmrProof { leaf, items }` with `polkadot-ckb-merkle-mountain-range` as the reference implementation and the leaf position taken from the challenge, a chunk proof is the sibling list, `GET /mmr_proof` returns `items` and `GET /chunk_proof` a sibling list. **Read**: "Content-Addressed Chunks", "MMR Commitments"; "Hash Prefixes", "Chunk Tree", "MMR Leaf", "MMR Proof", `POST /commit`, `GET /mmr_proof`, `GET /chunk_proof` and `verify_challenge_response` in [Implementation Details](./scalable-web3-storage-implementation.md). |
 | 2.5 | Challenge resolution and slashing are lazy: an unanswered challenge is slashed by the permissionless `resolve_expired_challenge` call (no per-block sweep). A timeout is the only slash reason. **Read**: "The Challenge Game", Resolution; `resolve_expired_challenge` in [Implementation Details](./scalable-web3-storage-implementation.md). |
 | 2.4 | Bucket creation and provider assignment are separate on-chain operations: `create_bucket`, `create_bucket_with_primary`, `add_primary_provider`, `add_replica_provider`. Provider-signed quotes name the bucket they are for. A bucket remains after its last agreement ends and can get new providers later; the client moves the data when a provider is added. **Read**: "Buckets: Stable Identity in a Fluid Provider Market"; "Two Classes of Providers"; "Provider Lifecycle in Bucket" in [Implementation Details](./scalable-web3-storage-implementation.md) for the four calls. |
@@ -437,6 +438,38 @@ publicly, forever. Strangers cannot trigger that—private-bucket primary
 challenges are restricted to members and primary-agreement owners (see
 [The Challenge Game](#the-challenge-game))—but a member challenging leaks the
 chunk by choice. Encryption makes the leak worthless.
+
+#### Read access at Layer 0
+
+The visibility rule — "primaries serve reads only to members" — names the
+surfaces it can bind to. A primary's **bucket-bound reads** — the MMR shape (`/mmr_peaks`), commitments and checkpoint signatures,
+per-leaf proofs, existence probes, per-bucket listings — take a bucket id and
+gate at Reader: members only when `private`, anyone when `public`. The
+**hash-keyed lookups** (`GET /node`, `GET /read`, `GET /chunk_proof`,
+`POST /fetch_nodes`) also take a bucket id: a provider may store each bucket
+separately, and who reads can matter (under load a provider may serve the
+bucket owner first, to avoid costly challenges). They do not gate at Reader. A
+provider that keeps one content-addressed store, deduplicated across buckets,
+cannot tell whether a hash belongs to the bucket a request names. These are
+**capability reads** — possession of a blake2-256 hash *is* the read
+capability, the way possession of an unguessable URL is.
+
+Hashes of private content are unguessable, and every surface that would
+*reveal* them — walking the MMR from its peaks, listing a node's buckets — is
+gated. The accepted limits: anyone a hash was ever shared with keeps byte
+access for as long as the data is hosted (revocation means re-encrypting),
+and an on-chain challenge response publishes the challenged leaf's `data_root`
+in its MMR proof, which opens the whole upload behind that leaf. With
+client-side encryption, those bytes are ciphertext. Gating hash-keyed reads at
+Reader needs the provider to check that a hash belongs to the named bucket:
+per-bucket storage, or an index of each node's buckets over a shared store.
+
+Two serving allowances follow from roles, not membership: a **replica** serves
+every read to everyone (the rule above — visibility binds primaries only), and
+a provider's **own account** passes any Reader check on its own node — the
+operator already has the disk, and provider accounts are never members, so its
+tooling (fetching its own proofs to answer a challenge) has no other identity.
+Neither grants writes.
 
 **Freeloading is hardened a bit for private buckets.** Provider
 accounts are not members, so on a private bucket a freeloader's only honest
