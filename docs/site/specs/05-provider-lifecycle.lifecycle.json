@@ -236,7 +236,7 @@
       "items": [
         "An unanswered challenge slashes the entire stake",
         "Exit Announced is still slashable",
-        "remove_slashed returns payment to owner"
+        "remove_slashed returns payment to owner once no challenge is open"
       ]
     }
   ]

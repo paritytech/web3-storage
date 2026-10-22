@@ -39,7 +39,7 @@
 <section id="guarantees">
 <h2>What you can rely on</h2>
 <ul>
-  <li><strong>After commit</strong>: the provider returns a signature over the new bucket state (MMR root) that includes your data. With this signature you can challenge the provider on-chain (<code>challenge_offchain</code>). You get this guarantee without a transaction.</li>
+  <li><strong>After commit</strong>: the provider returns a signature over the new bucket state (MMR root) that includes your data. With this signature you can challenge the provider on-chain (<code>challenge_offchain</code>). You get this guarantee without a transaction. A checkpoint to a different root voids shorter off-chain commitments for the leaves it covers: a primary challenged on such a commitment answers with <code>Superseded</code>, whether or not it signed the checkpoint.</li>
   <li><strong>After checkpoint</strong>: the MMR root is on-chain. Anyone can challenge the providers that signed it (on a private bucket: members and primary-agreement owners), and the commitment remains in chain history if you lose the signature.</li>
   <li><strong>Stake</strong>: a provider that does not answer a challenge by the deadline loses its entire stake, which covers all of its agreements. An invalid answer is rejected and the challenge stays open.</li>
   <li><strong>Duration</strong>: agreements bind both sides until expiry. The provider cannot leave early. You cannot cancel and reclaim the payment.</li>
@@ -124,7 +124,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
       <li><code>challenge_replica</code>: against the commitment a replica confirmed on-chain, current or historical.</li>
     </ul>
     <p>A challenge names one leaf of a commitment (<code>target.leaf_index</code>, <code>chunk_index</code>). The leaf must exist: <code>leaf_index</code> below the commitment's <code>leaf_count</code>, else <code>LeafNotInCommitment</code> at creation. The response must prove that leaf; a proof for another leaf is <code>InvalidProof</code>.</p>
-    <p>You lock a deposit that covers the provider's response cost. The provider has <code>ChallengeTimeout</code> (48 hours) to respond. If it does not, anyone can call <code>resolve_expired_challenge</code> (free on success) to slash it. An invalid response is rejected and the challenge stays open. See <a href="#costs">Costs</a> for who pays.</p>
+    <p>You lock a deposit that covers the provider's response cost. The provider has <code>ChallengeTimeout</code> (48 hours) to respond. If it does not, anyone can call <code>resolve_expired_challenge</code> (free on success) to slash it. An invalid response is rejected and the challenge stays open. <code>Superseded</code> and <code>Deleted</code> are defenses for primary providers only; a replica answers with <code>Proof</code> or <code>ChunkOutOfRange</code>. See <a href="#costs">Costs</a> for who pays.</p>
     <p class="see">Diagrams: <a href="12-challenge-protocol.html">12 Challenge protocol</a>, <a href="13-challenge-sequence.html">13 Challenge, response and slash</a></p>
   </li>
   <li>

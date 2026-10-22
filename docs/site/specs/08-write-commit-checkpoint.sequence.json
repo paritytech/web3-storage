@@ -224,7 +224,8 @@
       "items": [
         "Signature only: challenge_offchain",
         "After checkpoint: challenge_checkpoint",
-        "Snapshot liability: primary_signers only"
+        "Snapshot liability: primary_signers only",
+        "A checkpoint voids shorter off-chain commitments to a different root for the leaves it covers (Superseded)"
       ]
     },
     {
