@@ -360,6 +360,62 @@ fn challenge_slashes_provider_on_timeout() {
     });
 }
 
+/// The fee split measures the response time from the stored creation block,
+/// so changing `ChallengeTimeout` while a challenge is open does not change
+/// its split.
+#[test]
+fn cost_split_ignores_challenge_timeout_change() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
+        let challenger_balance_before = Balances::free_balance(3);
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        ));
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+        assert_eq!(Challenges::<Test>::get(101, 0).unwrap().created_at, 1);
+
+        // Respond five blocks later: response time 5, challenger pays 80%.
+        // Deriving the creation block as `deadline - ChallengeTimeout` would
+        // give 101 - 50 = 51, a response time of 0 and a 90% split.
+        crate::mock::ChallengeTimeout::set(50);
+        run_to_block(6);
+        advance_snapshot_root(bucket_id);
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            challenge_id,
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        assert_eq!(Balances::free_balance(3), challenger_balance_before - 80);
+        assert!(frame_system::Pallet::<Test>::events()
+            .iter()
+            .any(|r| matches!(
+                r.event,
+                RuntimeEvent::StorageProvider(crate::Event::ChallengeDefended {
+                    response_time_blocks: 5,
+                    ..
+                })
+            )));
+    });
+}
+
 // An out-of-range `Superseded` claim is covered by
 // `challenge_tests::respond_with_bogus_superseded_claim_is_rejected`.
 
