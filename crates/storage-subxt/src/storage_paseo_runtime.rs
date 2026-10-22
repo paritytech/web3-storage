@@ -3467,9 +3467,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                105u8, 84u8, 242u8, 153u8, 182u8, 88u8, 232u8, 65u8, 8u8, 173u8, 29u8, 45u8, 215u8,
-                209u8, 80u8, 155u8, 125u8, 38u8, 97u8, 223u8, 207u8, 204u8, 14u8, 38u8, 160u8,
-                130u8, 92u8, 159u8, 100u8, 133u8, 194u8, 43u8,
+                8u8, 176u8, 191u8, 64u8, 229u8, 93u8, 91u8, 58u8, 39u8, 251u8, 47u8, 115u8, 173u8,
+                57u8, 79u8, 155u8, 144u8, 188u8, 126u8, 213u8, 98u8, 101u8, 195u8, 1u8, 254u8,
+                175u8, 47u8, 212u8, 44u8, 16u8, 42u8, 17u8,
             ]
     }
     pub mod system {
@@ -18266,10 +18266,10 @@ pub mod api {
                         "StorageProvider",
                         "Challenges",
                         [
-                            247u8, 153u8, 80u8, 143u8, 1u8, 170u8, 103u8, 202u8, 136u8, 103u8,
-                            216u8, 92u8, 69u8, 146u8, 183u8, 236u8, 45u8, 155u8, 61u8, 5u8, 15u8,
-                            182u8, 12u8, 243u8, 195u8, 40u8, 151u8, 182u8, 225u8, 33u8, 246u8,
-                            97u8,
+                            37u8, 105u8, 216u8, 252u8, 113u8, 67u8, 226u8, 250u8, 20u8, 9u8, 153u8,
+                            224u8, 236u8, 154u8, 173u8, 85u8, 68u8, 254u8, 24u8, 169u8, 205u8,
+                            172u8, 143u8, 63u8, 222u8, 169u8, 104u8, 144u8, 167u8, 142u8, 164u8,
+                            200u8,
                         ],
                     )
                 }
@@ -26548,6 +26548,7 @@ pub mod api {
                     pub target: runtime_types::storage_primitives::ChunkLocation,
                     pub deposit: ::core::primitive::u128,
                     pub authorized: ::core::primitive::bool,
+                    pub created_at: ::core::primitive::u32,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
