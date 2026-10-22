@@ -2,7 +2,7 @@ name: Basic checks
 
 on:
   push:
-    branches: [main, dev, staging]
+    branches: [main, dev, staging, staging-provider]
   # No base-branch filter: stacked PRs (base = another feature branch)
   # must get the same CI as dev-targeted PRs.
   pull_request:
@@ -146,7 +146,7 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "web3-storage-cache-check"
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/staging-provider' }}
 
       - name: Cargo check
         run: |
@@ -173,7 +173,7 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "web3-storage-cache-clippy"
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/staging-provider' }}
 
       - name: Cargo clippy
         run: |
@@ -199,7 +199,7 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "web3-storage-cache-tests"
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/staging-provider' }}
 
       - name: Run tests
         run: |
@@ -224,7 +224,7 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: "web3-storage-cache-benchmarks"
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/staging-provider' }}
 
       - name: Run test pallet-storage-provider
         run: |

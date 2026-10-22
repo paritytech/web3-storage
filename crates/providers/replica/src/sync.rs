@@ -1,0 +1,221 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! Replica synchronization protocol.
+//!
+//! Replicas autonomously sync data from other providers using:
+//! 1. MMR diff detection (compare peaks)
+//! 2. Top-down chunk fetching
+//!
+//! A source can be a primary or another replica: primaries gate reads on
+//! private buckets (a replica is not a bucket member, so an honest primary
+//! refuses it — the design's "primary gate"), while replicas serve everyone,
+//! so a private bucket's replicas seed further replicas.
+//!
+//! On-chain confirmation of what was synced is the coordinator's
+//! (`coordinator::ReplicaSyncCoordinator::confirm_on_chain`).
+
+use crate::Error;
+use base64::Engine;
+use provider_storage::{ChunkTreeNode, StorageBackend};
+use reqwest::Client;
+use sp_core::H256;
+use std::sync::Arc;
+use storage_primitives::BucketId;
+
+/// Replica synchronization manager.
+pub struct ReplicaSync {
+    storage: Arc<dyn StorageBackend>,
+    http: Client,
+}
+
+impl ReplicaSync {
+    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
+        Self {
+            storage,
+            http: Client::new(),
+        }
+    }
+
+    /// Sync a bucket from another provider (a primary, or another replica).
+    ///
+    /// This implements the top-down sync algorithm:
+    /// 1. Fetch MMR peaks from the source
+    /// 2. Compare with local state
+    /// 3. Fetch missing MMR subtrees
+    /// 4. Fetch missing chunks
+    ///
+    /// Returns the synced MMR root. A 401 from a source (a private bucket's
+    /// primary) is just an error here — the caller tries the next source.
+    pub async fn sync_from_source(
+        &self,
+        bucket_id: BucketId,
+        source_url: &str,
+    ) -> Result<H256, Error> {
+        // TODO: (we need to put node's RPC to separate crate,
+        //               something like provider's versioned protocol)
+        // Get the source's current MMR state
+        let response = self
+            .http
+            .get(format!("{source_url}/mmr_peaks"))
+            .query(&[("bucket_id", bucket_id.to_string())])
+            .send()
+            .await
+            .map_err(|e| Error::source_request("mmr peaks", e))?;
+
+        if !response.status().is_success() {
+            return Err(Error::SourceUnavailable {
+                what: "mmr peaks",
+                status: response.status().as_u16(),
+            });
+        }
+
+        let peaks_response: MmrPeaksResponse = response
+            .json()
+            .await
+            .map_err(|e| Error::decode("mmr peaks response", e))?;
+
+        // Initialize bucket if needed
+        self.storage.init_bucket(bucket_id, u64::MAX)?;
+
+        // Get local state
+        let local_bucket = self.storage.get_bucket(bucket_id);
+
+        // Determine what we need to fetch
+        let target_root = hash_decode("mmr_root", &peaks_response.mmr_root)?;
+
+        // If we already have this root, we're done
+        if let Some(bucket) = local_bucket {
+            if bucket.mmr_root == target_root {
+                return Ok(target_root);
+            }
+        }
+
+        // Fetch missing nodes
+        // In a full implementation, we would:
+        // 1. Walk the MMR tree from peaks down
+        // 2. Identify missing subtrees
+        // 3. Batch fetch missing nodes
+        // 4. Verify each node against its hash
+        //
+        // For now, we'll fetch all hashes from the source
+
+        let peaks: Vec<H256> = peaks_response
+            .peaks
+            .iter()
+            .map(|h| hash_decode("peak hash", h))
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        // Fetch nodes for each peak
+        for peak in peaks {
+            self.fetch_subtree(bucket_id, peak, source_url).await?;
+        }
+
+        Ok(target_root)
+    }
+
+    /// Recursively fetch a subtree from a source provider.
+    fn fetch_subtree<'a>(
+        &'a self,
+        bucket_id: BucketId,
+        root_hash: H256,
+        source_url: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Error>> + Send + 'a>> {
+        Box::pin(async move {
+            // Check if we already have this node
+            if self.storage.get_node(&root_hash).is_some() {
+                return Ok(());
+            }
+
+            // Fetch the node from the source
+            let response = self
+                .http
+                .get(format!("{source_url}/node"))
+                .query(&[
+                    ("bucket_id", bucket_id.to_string()),
+                    ("hash", format!("{root_hash:#x}")),
+                ])
+                .send()
+                .await
+                .map_err(|e| Error::source_request("node", e))?;
+
+            if !response.status().is_success() {
+                return Err(Error::SourceUnavailable {
+                    what: "node",
+                    status: response.status().as_u16(),
+                });
+            }
+
+            let node_response: DownloadNodeResponse = response
+                .json()
+                .await
+                .map_err(|e| Error::decode("node response", e))?;
+
+            let data = node_response
+                .data
+                .map(|data| {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(data)
+                        .map_err(|e| Error::decode("node data", e))
+                })
+                .transpose()?;
+            let children = node_response
+                .children
+                .map(|c| {
+                    c.iter()
+                        .map(|h| hash_decode("child hash", h))
+                        .collect::<Result<Vec<_>, Error>>()
+                })
+                .transpose()?;
+
+            // from_wire only checks the shape of the primary's reply.
+            let node =
+                ChunkTreeNode::from_wire(data, children).map_err(|e| Error::decode("node", e))?;
+
+            // Verify the node before following its children, so a sync source
+            // cannot make this replica fetch subtrees under a wrong hash.
+            let actual = node.hash();
+            if actual != root_hash {
+                return Err(Error::NodeHashMismatch {
+                    expected: root_hash,
+                    actual,
+                });
+            }
+
+            // Fetch children before storing the parent: store_node rejects an
+            // internal node whose children are not already present.
+            if let ChunkTreeNode::Internal { left, right } = &node {
+                for child in [left, right] {
+                    self.fetch_subtree(bucket_id, *child, source_url).await?;
+                }
+            }
+
+            self.storage.store_node(bucket_id, root_hash, node)?;
+
+            Ok(())
+        })
+    }
+}
+
+// Helper types matching the API responses
+
+#[derive(serde::Deserialize)]
+#[allow(dead_code)]
+struct MmrPeaksResponse {
+    bucket_id: u64,
+    mmr_root: String,
+    peaks: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[allow(dead_code)]
+struct DownloadNodeResponse {
+    hash: String,
+    data: Option<String>,
+    children: Option<Vec<String>>,
+}
+
+/// Decode a hex string (with or without 0x prefix) into a 32-byte hash.
+/// `what` names the value being decoded, for the error message.
+fn hash_decode(what: &'static str, s: &str) -> Result<H256, Error> {
+    s.parse().map_err(|e| Error::decode(what, e))
+}

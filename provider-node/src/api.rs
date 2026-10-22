@@ -1,0 +1,734 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! HTTP API handlers for the provider node.
+
+use crate::error::Error;
+use crate::fs_api;
+use crate::negotiate::{self, AgreementTermsOf, NegotiateRequest, SignedTerms};
+use crate::s3_api;
+use crate::types::*;
+use crate::ProviderState;
+use axum::{
+    extract::{ConnectInfo, DefaultBodyLimit, Query, Request, State},
+    middleware::{from_fn_with_state, Next},
+    response::Response,
+    routing::{get, post, put},
+    Json, Router,
+};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use codec::Encode;
+use provider_auth::RequiredRole;
+use provider_storage::{BucketInfo, ChunkTreeNode};
+use provider_types::SigningRefused;
+use sp_core::H256;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use storage_primitives::{AgreementTerms, BucketId};
+use storage_primitives::{Commitment, CommitmentPayload};
+use tokio_rate_limit::RateLimiter;
+use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
+
+/// Sustained `/negotiate` requests allowed per-IP / second (token refill rate).
+const NEGOTIATE_RATE_LIMIT_PER_SEC: u64 = 5;
+/// Per-IP token-bucket capacity: a single client may burst up to this many
+/// `/negotiate` requests before being throttled to the refill rate.
+const NEGOTIATE_RATE_LIMIT_BURST: u64 = 16;
+
+/// Create the API router with all endpoints.
+pub fn create_router(state: Arc<ProviderState>) -> Router {
+    // Per-IP token-bucket limiter for `/negotiate`.
+    let negotiate_limiter = Arc::new(
+        RateLimiter::builder()
+            .requests_per_second(NEGOTIATE_RATE_LIMIT_PER_SEC)
+            .burst(NEGOTIATE_RATE_LIMIT_BURST)
+            .build()
+            .expect("static `/negotiate` rate-limit config is valid"),
+    );
+
+    // Restrict CORS to the configured origins, or stay permissive when unset.
+    let cors = match &state.cors_allowed_origins {
+        Some(origins) if !origins.is_empty() => {
+            let allowed: Vec<axum::http::HeaderValue> =
+                origins.iter().filter_map(|o| o.parse().ok()).collect();
+            CorsLayer::new()
+                .allow_origin(allowed)
+                // Only the verbs and request headers the API actually serves.
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::PUT,
+                    axum::http::Method::POST,
+                    axum::http::Method::DELETE,
+                    axum::http::Method::HEAD,
+                ])
+                .allow_headers([
+                    axum::http::header::AUTHORIZATION,
+                    axum::http::header::CONTENT_TYPE,
+                ])
+        }
+        _ => CorsLayer::permissive(),
+    };
+
+    Router::new()
+        // Health and info
+        .route("/health", get(health))
+        .route("/info", get(info))
+        .route("/stats", get(stats))
+        // Node operations
+        .route("/node", get(get_node).put(upload_node))
+        .route("/exists", post(check_exists))
+        // Commit and read
+        .route("/commit", post(commit))
+        .route("/read", get(read_chunks))
+        // Commitment and proofs
+        .route("/commitment", get(get_commitment))
+        .route("/checkpoint-signature", get(get_checkpoint_signature))
+        .route("/mmr_proof", get(get_mmr_proof))
+        .route("/chunk_proof", get(get_chunk_proof))
+        // Bucket operations
+        .route("/delete", post(delete_data))
+        // Replica sync
+        .route("/mmr_peaks", get(get_mmr_peaks))
+        .route("/fetch_nodes", post(fetch_nodes))
+        // Off-chain term negotiation: signed AgreementTerms the caller redeems
+        // on-chain (create_bucket_with_primary / add_primary_provider /
+        // add_replica_provider).
+        .route(
+            "/negotiate",
+            post(negotiate_terms).layer(from_fn_with_state(
+                negotiate_limiter,
+                rate_limit_by_ip_middleware,
+            )),
+        )
+        // Replica sync status
+        .route("/replica/historical_roots", get(get_historical_roots))
+        .route("/replica/sync_status", get(get_replica_sync_status))
+        // S3-compatible object storage (key passed as ?key= query param)
+        .route(
+            "/s3/:bucket_id/object",
+            put(s3_api::s3_put_object)
+                .get(s3_api::s3_get_object)
+                .head(s3_api::s3_head_object)
+                .delete(s3_api::s3_delete_object),
+        )
+        .route("/s3/:bucket_id/objects", get(s3_api::s3_list_objects))
+        .route("/s3/:bucket_id/index_root", get(s3_api::s3_index_root))
+        // File system endpoints (path passed as ?path= query param)
+        .route(
+            "/fs/:bucket_id/file",
+            put(fs_api::fs_put_file)
+                .get(fs_api::fs_get_file)
+                .delete(fs_api::fs_delete_file),
+        )
+        .route("/fs/:bucket_id/mkdir", post(fs_api::fs_mkdir))
+        .route("/fs/:bucket_id/ls", get(fs_api::fs_list_dir))
+        .route("/fs/:bucket_id/index_root", get(fs_api::fs_index_root))
+        .layer(DefaultBodyLimit::max(256 * 1024 * 1024)) // 256 MB
+        .layer(TraceLayer::new_for_http())
+        .layer(cors)
+        .with_state(state)
+}
+
+async fn rate_limit_by_ip_middleware(
+    State(limiter): State<Arc<RateLimiter>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request,
+    next: Next,
+) -> Result<Response, Error> {
+    let ip = addr.ip().to_string();
+    match limiter.check(&ip).await {
+        Ok(decision) if decision.permitted => Ok(next.run(request).await),
+        Ok(_) => Err(Error::RateLimited),
+        // Fail closed: a limiter-internal error rejects the request rather than
+        // letting unbounded traffic through, which could overwhelm the node and
+        // hide detail error from client.
+        Err(err) => {
+            tracing::warn!("rate limiter error for {ip}: {err}; rejecting request");
+            Err(Error::RateLimiterFailed(err.to_string()))
+        }
+    }
+}
+
+/// Extract the Authorization header value from a header map.
+pub(crate) fn auth_header(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+}
+
+/// Convenience wrapper around `provider_auth::require_role` using request headers.
+pub(crate) async fn check_role(
+    state: &ProviderState,
+    headers: &axum::http::HeaderMap,
+    method: &str,
+    bucket_id: u64,
+    required: RequiredRole,
+) -> Result<(), Error> {
+    state
+        .auth
+        .require_role(auth_header(headers), method, bucket_id, required)
+        .await
+        .map_err(Into::into)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Health and Info
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn health() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "healthy".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
+async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
+    let provider_registration_info = state.chain_state.provider_info.read().clone();
+
+    Json(InfoResponse {
+        provider_id: state.provider_id.clone(),
+        readiness: ProviderReadiness {
+            signing_configured: state.keypair.is_some(),
+            provider_info_loaded: provider_registration_info.is_some(),
+            deregistering: provider_registration_info
+                .as_ref()
+                .is_some_and(|info| info.deregister_at.is_some()),
+        },
+        provider_registration_info,
+    })
+}
+
+async fn stats(State(state): State<Arc<ProviderState>>) -> Json<StatsResponse> {
+    Json(StatsResponse {
+        provider_id: state.provider_id.clone(),
+        total_buckets: state.storage.bucket_ids().len(),
+        total_nodes: state.storage.total_nodes(),
+        total_bytes: state.storage.total_bytes(),
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Node Operations
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct GetNodeQuery {
+    bucket_id: BucketId,
+    hash: String,
+}
+
+fn require_bucket(state: &ProviderState, bucket_id: BucketId) -> Result<BucketInfo, Error> {
+    Ok(state
+        .storage
+        .get_bucket(bucket_id)
+        .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?)
+}
+
+async fn get_node(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<GetNodeQuery>,
+) -> Result<Json<DownloadNodeResponse>, Error> {
+    let hash = decode_hash(&query.hash)?;
+    require_bucket(&state, query.bucket_id)?;
+
+    let node = state
+        .storage
+        .get_node(&hash)
+        .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
+
+    Ok(Json(DownloadNodeResponse::new(hash, &node)))
+}
+
+async fn upload_node(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<UploadNodeRequest>,
+) -> Result<Json<UploadNodeResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "PUT",
+        request.bucket_id,
+        RequiredRole::Writer,
+    )
+    .await?;
+
+    let hash = decode_hash(&request.hash)?;
+    let data = request
+        .data
+        .map(|data| {
+            BASE64
+                .decode(data)
+                .map_err(|e| Error::decode("node data", e))
+        })
+        .transpose()?;
+    let children = request
+        .children
+        .map(|c| {
+            c.iter()
+                .map(|h| decode_hash(h))
+                .collect::<Result<Vec<_>, Error>>()
+        })
+        .transpose()?;
+    let node = ChunkTreeNode::from_wire(data, children)?;
+
+    // Initialize bucket if needed
+    state.storage.init_bucket(request.bucket_id, u64::MAX)?;
+
+    // Store node
+    state.storage.store_node(request.bucket_id, hash, node)?;
+
+    Ok(Json(UploadNodeResponse { stored: true }))
+}
+
+async fn check_exists(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<ExistsRequest>,
+) -> Result<Json<ExistsResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let hashes: Vec<H256> = request
+        .hashes
+        .iter()
+        .map(|h| decode_hash(h))
+        .collect::<Result<Vec<_>, Error>>()?;
+
+    let (exists, missing) = state.storage.check_exists(request.bucket_id, &hashes);
+
+    Ok(Json(ExistsResponse { exists, missing }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Commit and Read
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn commit(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<CommitRequest>,
+) -> Result<Json<CommitResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Writer,
+    )
+    .await?;
+
+    let data_roots: Vec<H256> = request
+        .data_roots
+        .iter()
+        .map(|h| decode_hash(h))
+        .collect::<Result<Vec<_>, Error>>()?;
+
+    let outcome = state.storage.commit(request.bucket_id, data_roots)?;
+
+    let payload = CommitmentPayload::new(
+        request.bucket_id,
+        Commitment {
+            mmr_root: outcome.mmr_root,
+            start_seq: outcome.start_seq,
+            leaf_count: outcome.leaf_count,
+        },
+    );
+    let signature = state.sign(&payload.encode())?;
+
+    Ok(Json(CommitResponse {
+        mmr_root: outcome.mmr_root,
+        start_seq: outcome.start_seq,
+        leaf_count: outcome.leaf_count,
+        leaf_indices: outcome.leaf_indices,
+        provider_signature: signature,
+    }))
+}
+
+async fn read_chunks(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<ReadQuery>,
+) -> Result<Json<ReadResponse>, Error> {
+    let data_root = decode_hash(&query.data_root)?;
+    require_bucket(&state, query.bucket_id)?;
+
+    // Calculate chunk indices
+    let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
+    let start_chunk = query.offset / chunk_size;
+    let end_chunk = (query.offset + query.length).div_ceil(chunk_size);
+
+    let chunks = state
+        .storage
+        .get_chunks_in_range(data_root, start_chunk..end_chunk)?
+        .into_iter()
+        .map(|(hash, data, proof)| ChunkWithProof {
+            hash,
+            data: BASE64.encode(&data),
+            proof,
+        })
+        .collect();
+
+    Ok(Json(ReadResponse { chunks }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Commitment and Proofs
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn get_commitment(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<CommitmentQuery>,
+) -> Result<Json<CommitmentResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let bucket = require_bucket(&state, query.bucket_id)?;
+
+    let payload = CommitmentPayload::new(
+        query.bucket_id,
+        Commitment {
+            mmr_root: bucket.mmr_root,
+            start_seq: bucket.start_seq,
+            leaf_count: bucket.leaf_count,
+        },
+    );
+    let signature = state.sign(&payload.encode())?;
+
+    Ok(Json(CommitmentResponse {
+        bucket_id: query.bucket_id,
+        mmr_root: bucket.mmr_root,
+        start_seq: bucket.start_seq,
+        leaf_count: bucket.leaf_count,
+        provider_signature: signature,
+    }))
+}
+
+/// Return a signature over the bucket's current commitment, for the on-chain
+/// `checkpoint` extrinsic.
+async fn get_checkpoint_signature(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<CommitmentQuery>,
+) -> Result<Json<CheckpointSignatureResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let bucket = require_bucket(&state, query.bucket_id)?;
+
+    let leaf_count = bucket.leaf_count;
+
+    // Sign with real leaf_count for on-chain checkpoint verification.
+    let payload = CommitmentPayload::new(
+        query.bucket_id,
+        Commitment {
+            mmr_root: bucket.mmr_root,
+            start_seq: bucket.start_seq,
+            leaf_count,
+        },
+    );
+    let signature = state.sign(&payload.encode())?;
+
+    Ok(Json(CheckpointSignatureResponse {
+        bucket_id: query.bucket_id,
+        mmr_root: bucket.mmr_root,
+        start_seq: bucket.start_seq,
+        leaf_count,
+        provider_signature: signature,
+    }))
+}
+
+async fn get_mmr_proof(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<MmrProofQuery>,
+) -> Result<Json<storage_primitives::MmrProof>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    Ok(Json(
+        state
+            .storage
+            .get_mmr_proof(query.bucket_id, query.leaf_index)?,
+    ))
+}
+
+async fn get_chunk_proof(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<ChunkProofQuery>,
+) -> Result<Json<ChunkProofResponse>, Error> {
+    let data_root = decode_hash(&query.data_root)?;
+    require_bucket(&state, query.bucket_id)?;
+
+    let (chunk_data, proof) = state
+        .storage
+        .get_chunk_at_index(data_root, query.chunk_index)?;
+    let chunk_hash = storage_primitives::hash_leaf(&chunk_data);
+
+    Ok(Json(ChunkProofResponse {
+        chunk_hash,
+        chunk_data: Some(BASE64.encode(&chunk_data)),
+        proof,
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bucket Operations
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn delete_data(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<DeleteRequest>,
+) -> Result<Json<DeleteResponse>, Error> {
+    // Admin-only, unlike the Writer-level deletes in the S3/FS layers: this L0
+    // prune rewrites the underlying MMR (dropping every leaf below
+    // `new_start_seq`), whereas the L1 deletes only drop an index entry and
+    // leave the tree intact. Rewriting the commitment is strictly more
+    // destructive, so it warrants the highest role.
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Admin,
+    )
+    .await?;
+
+    let (mmr_root, start_seq, leaf_count) = state
+        .storage
+        .delete_before(request.bucket_id, request.new_start_seq)?;
+
+    let payload = CommitmentPayload::new(
+        request.bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+    );
+    let signature = state.sign(&payload.encode())?;
+
+    Ok(Json(DeleteResponse {
+        mmr_root,
+        start_seq,
+        leaf_count,
+        provider_signature: signature,
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Replica Sync
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn get_mmr_peaks(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<MmrPeaksQuery>,
+) -> Result<Json<MmrPeaksResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let (mmr_root, peaks) = state.storage.get_mmr_peaks(query.bucket_id)?;
+
+    Ok(Json(MmrPeaksResponse {
+        bucket_id: query.bucket_id,
+        mmr_root,
+        peaks,
+    }))
+}
+
+async fn fetch_nodes(
+    State(state): State<Arc<ProviderState>>,
+    Json(request): Json<FetchNodesRequest>,
+) -> Result<Json<FetchNodesResponse>, Error> {
+    require_bucket(&state, request.bucket_id)?;
+    let mut nodes = Vec::new();
+
+    for hash_str in &request.hashes {
+        let hash = decode_hash(hash_str)?;
+
+        if let Some(node) = state.storage.get_node(&hash) {
+            nodes.push(DownloadNodeResponse::new(hash, &node));
+        }
+    }
+
+    Ok(Json(FetchNodesResponse { nodes }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Replica Sync Endpoints
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Get historical roots for a bucket.
+///
+/// Returns the current root (position 0) and historical roots (positions 1-6).
+/// Note: Provider nodes don't track historical roots; only the chain does.
+async fn get_historical_roots(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<HistoricalRootsQuery>,
+) -> Result<Json<HistoricalRootsResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let bucket = require_bucket(&state, query.bucket_id)?;
+
+    Ok(Json(HistoricalRootsResponse {
+        bucket_id: query.bucket_id,
+        current_root: bucket.mmr_root,
+        // Provider node doesn't track historical roots - chain does
+        historical_roots: [
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ],
+        snapshot_block: 0, // Would need chain query for actual block
+    }))
+}
+
+/// Sign [`AgreementTerms`] for a bucket owner, echoing the request but pinning
+/// `price_per_byte` to the provider's own listed price (the client may have
+/// proposed more).
+///
+/// TODO: requests are accepted automatically; let providers vet them later.
+///
+/// Returns one of several `503`s when a prerequisite is missing:
+/// - `signing_unavailable` — no `--keyfile`.
+/// - `chain_state_not_ready` — `current_anchor_block` and `request_timeout` are
+///   not both known from the chain yet.
+/// - `provider_info_unavailable` — provider not registered on chain yet; the
+///   chain-state coordinator clears this automatically once registration lands, no
+///   restart needed.
+/// - `provider_key_mismatch` — the local signing key differs from the registered
+///   on-chain `public_key`; signed terms would never verify. Clears on the next
+///   provider-info refresh once the keys agree. Not specific to this endpoint:
+///   the guard sits in [`ProviderState::sign`], so `/commit`, `/commitment`,
+///   `/checkpoint-signature` and deletion proofs return it too.
+/// - `provider_deregistering` — provider has announced deregistration and no longer
+///   signs new terms.
+async fn negotiate_terms(
+    State(state): State<Arc<ProviderState>>,
+    Json(req): Json<NegotiateRequest>,
+) -> Result<Json<SignedTerms>, Error> {
+    let keypair = state.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
+
+    // Both the anchor block and RequestTimeout must be known before we can sign
+    // — otherwise we'd emit unbounded or already-expired terms.
+    let anchor_block = state
+        .chain_state
+        .current_anchor_block
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let request_timeout = state
+        .chain_state
+        .constants
+        .read()
+        .as_ref()
+        .map(|c| c.request_timeout)
+        .unwrap_or(0);
+    if anchor_block == 0 || request_timeout == 0 {
+        return Err(Error::ChainStateNotReady);
+    }
+
+    // Validate against the provider's on-chain settings. `None` means not
+    // registered yet; the coordinator populates it once registration lands.
+    let info = state
+        .chain_state
+        .provider_info
+        .read()
+        .clone()
+        .ok_or(SigningRefused::Unregistered)?;
+
+    // A provider that has announced deregistration is winding down and must not
+    // sign new terms — the on-chain pallet rejects them too once deregistering.
+    if info.deregister_at.is_some() {
+        return Err(Error::ProviderDeregistering);
+    }
+
+    // Signing with a key the chain doesn't know about produces terms that can
+    // never be redeemed — fail fast instead. Checked against the snapshot this
+    // request is already using, so a re-registration heals it on the next
+    // refresh without a restart.
+    state.ensure_signing_key_matches(&info)?;
+
+    negotiate::validate_request(&req, &info)?;
+
+    let terms: AgreementTermsOf = AgreementTerms {
+        owner: req.owner,
+        max_bytes: req.max_bytes,
+        duration: req.duration,
+        price_per_byte: info.settings.price_per_byte,
+        valid_until: anchor_block.saturating_add(request_timeout),
+        nonce: req.nonce,
+        bucket: req.bucket.into(),
+        replica_params: req.replica_params,
+    };
+    Ok(Json(keypair.sign_terms(terms)))
+}
+
+/// Get replica sync status for a bucket.
+///
+/// Returns the local MMR state and sync status.
+async fn get_replica_sync_status(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<BucketSyncStatusQuery>,
+) -> Result<Json<BucketSyncStatusResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let bucket = require_bucket(&state, query.bucket_id)?;
+
+    Ok(Json(BucketSyncStatusResponse {
+        bucket_id: query.bucket_id,
+        local_mmr_root: bucket.mmr_root,
+        local_leaf_count: bucket.leaf_count,
+        last_sync_block: None, // Would be tracked by coordinator
+        syncing: false,        // Would check coordinator state
+    }))
+}
