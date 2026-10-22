@@ -251,6 +251,7 @@ fn insert_challenge<T: Config>(
         target,
         deposit: 100u32.into(),
         authorized: true,
+        created_at: deadline.saturating_sub(T::ChallengeTimeout::get()),
     };
     Challenges::<T>::insert(deadline, 0u16, challenge);
     storage_primitives::ChallengeId { deadline, index: 0 }
@@ -1282,6 +1283,7 @@ mod benchmarks {
             },
             deposit,
             authorized: false,
+            created_at: deadline.saturating_sub(T::ChallengeTimeout::get()),
         };
         Challenges::<T>::insert(deadline, 0u16, challenge);
         PendingChallenges::<T>::insert(&provider, 1u32);

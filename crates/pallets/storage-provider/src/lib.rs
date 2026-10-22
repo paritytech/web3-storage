@@ -725,6 +725,10 @@ pub mod pallet {
         /// membership/agreement changes between creation and response cannot
         /// alter the fee split applied in `respond_to_challenge`.
         pub authorized: bool,
+        /// Anchor block at which the challenge was created.
+        /// `respond_to_challenge` computes the response time for the fee
+        /// split from it.
+        pub created_at: BlockNumberFor<T>,
     }
 
     /// Challenge response from provider.
@@ -2804,11 +2808,8 @@ pub mod pallet {
                 }
             }
 
-            // Calculate response time (blocks since challenge was created)
-            let challenge_created_at = challenge_id
-                .deadline
-                .saturating_sub(T::ChallengeTimeout::get());
-            let response_time = anchor_block.saturating_sub(challenge_created_at);
+            // Response time: blocks since the challenge was created.
+            let response_time = anchor_block.saturating_sub(challenge.created_at);
 
             // A valid response never touches the provider's stake — only the
             // response cost (proxied by the deposit) is at issue, and the
