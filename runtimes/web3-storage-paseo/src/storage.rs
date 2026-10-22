@@ -14,7 +14,7 @@ use crate::{
     paseo_constants::{
         consensus::RELAY_CHAIN_SLOT_DURATION_MILLIS, currency::UNIT, relay_time::RC_HOURS,
     },
-    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent, RuntimeHoldReason,
+    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeHoldReason,
 };
 
 // Storage-backed parameters: each value below is the default, but can be
@@ -62,27 +62,6 @@ impl Get<AccountId> for TreasuryAccount {
     fn get() -> AccountId {
         AccountIdConversion::<AccountId>::into_account_truncating(&PalletId(*b"py/trsry"))
     }
-}
-
-// --------------------------------
-// Drive Registry Pallet Config
-// --------------------------------
-
-impl pallet_drive_registry::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-    type MaxDriveNameLength = ConstU32<128>;
-    type MaxDrivesPerUser = ConstU32<100>;
-    type WeightInfo = crate::weights::pallet_drive_registry::WeightInfo<Runtime>;
-}
-
-// --------------------------------
-// S3 Registry Pallet Config
-// --------------------------------
-
-impl pallet_s3_registry::Config for Runtime {
-    type MaxBucketsPerUser = ConstU32<100>;
-    type MaxObjectsPerBucket = ConstU32<100000>;
-    type WeightInfo = crate::weights::pallet_s3_registry::WeightInfo<Runtime>;
 }
 
 // --------------------------------

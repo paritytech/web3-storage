@@ -1,6 +1,6 @@
 # Smart Contracts
 
-Web3-storage exposes its client-side surface to Solidity / PolkaVM contracts via `pallet_revive` and two custom precompiles. A dApp can buy storage on behalf of its users, end agreements, or stitch the storage pallets into larger on-chain workflows — without ever signing a substrate-native extrinsic.
+Web3-storage exposes its client-side surface to Solidity / PolkaVM contracts via `pallet_revive` and one custom precompile. A dApp can buy storage on behalf of its users, end agreements, or stitch the storage pallets into larger on-chain workflows — without ever signing a substrate-native extrinsic.
 
 This document covers the **on-chain shape** of that integration. For the example dApp, see [`examples/contracts/`](../../examples/contracts/README.md); for the test driver, see [`examples/papi/sc-flow.ts`](../../examples/papi/sc-flow.ts).
 
@@ -25,10 +25,8 @@ The contract's caller is computed by `AccountId32Mapper` (substrate-native, iden
 | Address                                       | Matcher           | Crate                                                                                                 | Pallet                       |
 | --------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------- |
 | `0x0000000000000000000000000000000009010000`  | `Fixed(0x0901)`   | [`pallet-storage-provider-precompile`](../../crates/pallets/storage-provider/precompiles)                     | `pallet_storage_provider`    |
-| `0x0000000000000000000000000000000009020000`  | `Fixed(0x0902)`   | [`pallet-drive-registry-precompile`](../../crates/pallets/drive-registry/precompiles)                         | `pallet_drive_registry`      |
-| `0x0000000000000000000000000000000009030000`  | `Fixed(0x0903)`   | [`pallet-s3-registry-precompile`](../../crates/pallets/s3-registry/precompiles)                               | `pallet_s3_registry`         |
 
-Both use `HAS_CONTRACT_INFO = false` (no storage deposits or contract metadata; pure stateless dispatch).
+It uses `HAS_CONTRACT_INFO = false` (no storage deposits or contract metadata; pure stateless dispatch).
 
 ## ABI surface
 
@@ -49,37 +47,16 @@ Both use `HAS_CONTRACT_INFO = false` (no storage deposits or contract metadata; 
 | `challengeCheckpoint(uint64 bucketId, bytes32 provider, uint64 leafIndex, uint64 chunkIndex) → (uint32 deadline, uint16 index)` | `challenge_checkpoint`                 |
 | `resolveExpiredChallenge(uint32 deadline, uint16 index)`                                                            | `resolve_expired_challenge` (permissionless; gas is charged even though the native call is free) |
 
-### `IDriveRegistry` (drive-registry, `0x…09020000`)
-
-| Selector                                                                                                              | Underlying extrinsic |
-| --------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| `createDrive(string name, uint64 maxCapacity, uint32 storagePeriod, uint128 payment, uint8 minProviders) → uint64`    | `create_drive`       |
-| `deleteDrive(uint64 driveId)`                                                                                         | `delete_drive`       |
-| `shareDrive(uint64 driveId, bytes32 member, uint8 role)`                                                              | `share_drive`        |
-| `unshareDrive(uint64 driveId, bytes32 member)`                                                                        | `unshare_drive`      |
-
-### `IS3Registry` (s3-registry, `0x…09030000`)
-
-| Selector                                                                                                                                 | Underlying extrinsic                |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| `createS3Bucket(string name, uint32 minProviders) → uint64`                                                                              | `create_s3_bucket`                  |
-| `createS3BucketWithStorage(string name, uint64 maxCapacity, uint32 duration, uint128 maxPayment) → uint64`                               | `create_s3_bucket_with_storage`     |
-| `deleteS3Bucket(uint64 s3BucketId)`                                                                                                      | `delete_s3_bucket`                  |
-| `putObjectMetadata(uint64 s3BucketId, string key, bytes32 cid, uint64 size, string contentType)`                                         | `put_object_metadata` (no user metadata in v1) |
-| `deleteObjectMetadata(uint64 s3BucketId, string key)`                                                                                    | `delete_object_metadata`            |
-| `copyObjectMetadata(uint64 srcBucketId, string srcKey, uint64 dstBucketId, string dstKey)`                                               | `copy_object_metadata`              |
-
 ### Type encoding rules
 
 | Substrate          | Solidity   | Notes                                                                                                                              |
 | ------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `BucketId` / `DriveId` (`u64`) | `uint64`   | Synthesized pre-dispatch from `NextBucketId` / `NextDriveId` so the contract gets back the id assigned to *this* call.            |
+| `BucketId` (`u64`)             | `uint64`   | Synthesized pre-dispatch from `NextBucketId` so the contract gets back the id assigned to *this* call.                            |
 | `BlockNumberFor<T>` (`u32`)    | `uint32`   |                                                                                                                                    |
 | `BalanceOf<T>` (`u128`)        | `uint128`  | Substrate atomic units — not eth wei.                                                                                              |
 | `AccountId` (`AccountId32`)    | `bytes32`  | Raw 32-byte `AccountId32` (the account id, not a public key). Substrate-only providers can't be safely round-tripped through `AccountId32Mapper.to_address()`. |
 | `Role`             | `uint8`    | 0 = Admin, 1 = Writer, 2 = Reader.                                                                                                 |
 | `EndAction`        | (split)    | `endAgreementPay` / `endAgreementBurn(uint8 burnPercent)` — cleaner Solidity than encoding the Rust enum directly.                 |
-| `Option<Vec<u8>>` (drive name) | `string`   | Empty string ⇒ `None`.                                                                                                             |
 | `Option<u8>` (`min_providers`) | `uint8`    | `0` ⇒ `None` (use runtime default); `1..=255` ⇒ `Some(n)`.                                                                          |
 
 ## Payment flow
@@ -108,7 +85,7 @@ For extrinsics with parameterized weights (e.g. `end_agreement(a: u32)`), we pas
 
 ## Adding a new selector
 
-1. Add the function to `src/IWeb3Storage.sol` (or `src/IDriveRegistry.sol`) in the precompile crate.
+1. Add the function to `src/interface/IWeb3Storage.sol` in the precompile crate.
 2. Add a `match` arm in `src/lib.rs` for the new variant:
    - `env.charge(WeightInfo::extrinsic_name())?`,
    - decode args, mapping `bytes32` to `AccountId` via `decode_account::<Runtime>`,
@@ -122,9 +99,9 @@ For extrinsics with parameterized weights (e.g. `end_agreement(a: u32)`), we pas
 Four scripts cover the surface end-to-end:
 
 - **`just sc-demo`** (`examples/papi/sc-flow.ts`) — full marketplace dApp story via `StorageMarketplace.sol`: deploy, `buyStorage` with `msg.value`, off-chain upload/challenge round-trip, `endMyAgreement`. Asserts provider earned tokens + contract events fired.
-- **`just sc-coverage`** (`examples/papi/sc-coverage.ts`) — direct precompile invocations (no intermediate contract) for every selector across all three precompiles. Each call submits as a signed substrate tx whose `dest` is the precompile address; on success, the script asserts the underlying pallet's storage / event was updated.
-- **`just sc-team-drive`** (`examples/papi/sc-team-drive.ts`) — drive-registry dApp via `SharedTeamDrive.sol`: deploy, `createTeam`, `invite` / `kick`, `disband`.
-- **`just sc-token-gated`** (`examples/papi/sc-token-gated.ts`) — s3-registry dApp via `TokenGatedDrive.sol`: deploy, `initialize`, `mint` an NFT-shaped access token per S3 object, `transfer`, `burn` (deletes object metadata), `shutdown`.
+- **`just sc-coverage`** (`examples/papi/sc-coverage.ts`) — direct precompile invocations (no intermediate contract) for every selector of the storage-provider precompile. Each call submits as a signed substrate tx whose `dest` is the precompile address; on success, the script asserts the underlying pallet's storage / event was updated.
+- **`just sc-team-drive`** (`examples/papi/sc-team-drive.ts`) — shared bucket via `SharedTeamDrive.sol`: deploy, `createTeam`, `invite` / `kick` (bucket members).
+- **`just sc-token-gated`** (`examples/papi/sc-token-gated.ts`) — token-gated bucket via `TokenGatedDrive.sol`: deploy, `initialize`, `mint` (holder becomes a bucket Reader), `transfer`, `burn` (holder loses the role with their last token).
 
 All four run in CI under `.github/workflows/integration-tests.yml` against both runtime matrix entries.
 
@@ -135,6 +112,5 @@ In v1:
 - **Provider-side selectors are not exposed.** `register_provider`, `add_stake`, `accept_agreement`, `respond_to_challenge`, `confirm_replica_sync`, `deregister_*` all stay native — a dApp is a *user* of storage, not a provider.
 - **Checkpoint extrinsics are not exposed.** `checkpoint` takes `BucketSnapshot` + `MmrProof` + `Vec<Signature>` — the ABI design needs a follow-up.
 - **`challenge_offchain` is not exposed** (its `MerkleProof` argument needs the same treatment).
-- **S3 `put_object_metadata` drops user metadata in v1.** The Rust extrinsic takes `Vec<(Vec<u8>, Vec<u8>)>`; the Solidity ABI for nested dynamic-bytes tuples is awkward, so the precompile selector accepts no user metadata and always passes an empty vector. Use the substrate extrinsic directly if you need it.
 - **No `pallet_revive_eth_rpc` server.** PAPI drives revive directly via the substrate-native dispatchables (`call`, `instantiate_with_code`). A separate "real dApp UX" follow-up can ship the JSON-RPC node for MetaMask / viem / hardhat compatibility.
-- **No benchmarks for the precompile crates.** Weights borrow the underlying extrinsic's weight info.
+- **No benchmarks for the precompile crate.** Weights borrow the underlying extrinsic's weight info.
