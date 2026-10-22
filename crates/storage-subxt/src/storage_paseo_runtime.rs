@@ -15195,12 +15195,15 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Register as a storage provider."]
+            #[doc = "Register the caller as a storage provider, with default settings."]
+            #[doc = "Change them with `update_provider_settings`."]
             #[doc = ""]
             #[doc = "Parameters:"]
             #[doc = "- `multiaddr`: Network address for clients to connect"]
-            #[doc = "- `public_key`: Public key for signature verification (raw bytes, 32-64 bytes)"]
-            #[doc = "- `stake`: Initial stake to lock"]
+            #[doc = "- `public_key`: Raw public key the pallet verifies the provider's"]
+            #[doc = "  signatures against: 32 bytes (Sr25519/Ed25519) or 33 bytes"]
+            #[doc = "  (compressed Ecdsa/Eth). Other lengths fail with `InvalidPublicKey`."]
+            #[doc = "- `stake`: Initial stake to hold; at least `MinProviderStake`"]
             pub struct RegisterProvider {
                 pub multiaddr: register_provider::Multiaddr,
                 pub public_key: register_provider::PublicKey,
@@ -15815,14 +15818,14 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            #[doc = "Owner only. Settle and close an agreement, choosing whether the"]
-            #[doc = "remaining escrow goes to the provider or is (partly) burned."]
+            #[doc = "Settle and close an agreement, choosing whether the remaining"]
+            #[doc = "escrow goes to the provider or is (partly) burned."]
             #[doc = ""]
-            #[doc = "Before expiry the owner must also be a bucket admin, and only"]
-            #[doc = "primary agreements can be ended early. After expiry the owner has"]
-            #[doc = "`SettlementTimeout` to call this; then only the provider can"]
-            #[doc = "settle, via `claim_expired_agreement`. Blocked while a challenge"]
-            #[doc = "against the agreement is pending."]
+            #[doc = "Before expiry, any bucket admin may call this, for primary"]
+            #[doc = "agreements only. After expiry, only the agreement owner may call"]
+            #[doc = "it, within `SettlementTimeout`; after that window only the provider"]
+            #[doc = "can settle, via `claim_expired_agreement`. Blocked while a"]
+            #[doc = "challenge against the agreement is pending."]
             pub struct EndAgreement {
                 pub bucket_id: end_agreement::BucketId,
                 pub provider: end_agreement::Provider,
@@ -16329,12 +16332,15 @@ pub mod api {
             pub mod api {
                 pub struct TransactionApi;
                 impl TransactionApi {
-                    #[doc = "Register as a storage provider."]
+                    #[doc = "Register the caller as a storage provider, with default settings."]
+                    #[doc = "Change them with `update_provider_settings`."]
                     #[doc = ""]
                     #[doc = "Parameters:"]
                     #[doc = "- `multiaddr`: Network address for clients to connect"]
-                    #[doc = "- `public_key`: Public key for signature verification (raw bytes, 32-64 bytes)"]
-                    #[doc = "- `stake`: Initial stake to lock"]
+                    #[doc = "- `public_key`: Raw public key the pallet verifies the provider's"]
+                    #[doc = "  signatures against: 32 bytes (Sr25519/Ed25519) or 33 bytes"]
+                    #[doc = "  (compressed Ecdsa/Eth). Other lengths fail with `InvalidPublicKey`."]
+                    #[doc = "- `stake`: Initial stake to hold; at least `MinProviderStake`"]
                     pub fn register_provider(
                         &self,
                         multiaddr: super::register_provider::Multiaddr,
@@ -16798,14 +16804,14 @@ pub mod api {
                             ],
                         )
                     }
-                    #[doc = "Owner only. Settle and close an agreement, choosing whether the"]
-                    #[doc = "remaining escrow goes to the provider or is (partly) burned."]
+                    #[doc = "Settle and close an agreement, choosing whether the remaining"]
+                    #[doc = "escrow goes to the provider or is (partly) burned."]
                     #[doc = ""]
-                    #[doc = "Before expiry the owner must also be a bucket admin, and only"]
-                    #[doc = "primary agreements can be ended early. After expiry the owner has"]
-                    #[doc = "`SettlementTimeout` to call this; then only the provider can"]
-                    #[doc = "settle, via `claim_expired_agreement`. Blocked while a challenge"]
-                    #[doc = "against the agreement is pending."]
+                    #[doc = "Before expiry, any bucket admin may call this, for primary"]
+                    #[doc = "agreements only. After expiry, only the agreement owner may call"]
+                    #[doc = "it, within `SettlementTimeout`; after that window only the provider"]
+                    #[doc = "can settle, via `claim_expired_agreement`. Blocked while a"]
+                    #[doc = "challenge against the agreement is pending."]
                     pub fn end_agreement(
                         &self,
                         bucket_id: super::end_agreement::BucketId,
@@ -26135,12 +26141,15 @@ pub mod api {
                 #[doc = "Contains a variant per dispatchable extrinsic that this pallet has."]
                 pub enum Call {
                     #[codec(index = 0)]
-                    #[doc = "Register as a storage provider."]
+                    #[doc = "Register the caller as a storage provider, with default settings."]
+                    #[doc = "Change them with `update_provider_settings`."]
                     #[doc = ""]
                     #[doc = "Parameters:"]
                     #[doc = "- `multiaddr`: Network address for clients to connect"]
-                    #[doc = "- `public_key`: Public key for signature verification (raw bytes, 32-64 bytes)"]
-                    #[doc = "- `stake`: Initial stake to lock"]
+                    #[doc = "- `public_key`: Raw public key the pallet verifies the provider's"]
+                    #[doc = "  signatures against: 32 bytes (Sr25519/Ed25519) or 33 bytes"]
+                    #[doc = "  (compressed Ecdsa/Eth). Other lengths fail with `InvalidPublicKey`."]
+                    #[doc = "- `stake`: Initial stake to hold; at least `MinProviderStake`"]
                     register_provider {
                         multiaddr: runtime_types::bounded_collections::bounded_vec::BoundedVec<
                             ::core::primitive::u8,
@@ -26347,14 +26356,14 @@ pub mod api {
                         sig: runtime_types::sp_runtime::MultiSignature,
                     },
                     #[codec(index = 25)]
-                    #[doc = "Owner only. Settle and close an agreement, choosing whether the"]
-                    #[doc = "remaining escrow goes to the provider or is (partly) burned."]
+                    #[doc = "Settle and close an agreement, choosing whether the remaining"]
+                    #[doc = "escrow goes to the provider or is (partly) burned."]
                     #[doc = ""]
-                    #[doc = "Before expiry the owner must also be a bucket admin, and only"]
-                    #[doc = "primary agreements can be ended early. After expiry the owner has"]
-                    #[doc = "`SettlementTimeout` to call this; then only the provider can"]
-                    #[doc = "settle, via `claim_expired_agreement`. Blocked while a challenge"]
-                    #[doc = "against the agreement is pending."]
+                    #[doc = "Before expiry, any bucket admin may call this, for primary"]
+                    #[doc = "agreements only. After expiry, only the agreement owner may call"]
+                    #[doc = "it, within `SettlementTimeout`; after that window only the provider"]
+                    #[doc = "can settle, via `claim_expired_agreement`. Blocked while a"]
+                    #[doc = "challenge against the agreement is pending."]
                     end_agreement {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
