@@ -51,7 +51,7 @@
     { "id": "checkpoint", "from": "admin", "to": "pallet", "y": 615, "label": "checkpoint or extend_checkpoint with new signature", "variant": "emphasis" },
     { "id": "signer", "from": "pallet", "to": "admin", "y": 652, "label": "new primary in snapshot.primary_signers", "variant": "return" },
     { "id": "end", "from": "admin", "to": "pallet", "y": 700, "label": "end_agreement(old): early, or after expires_at", "variant": "security" },
-    { "id": "removed", "from": "pallet", "to": "old", "y": 740, "label": "AgreementEnded or PrimaryAgreementEndedEarly", "variant": "return" }
+    { "id": "removed", "from": "pallet", "to": "old", "y": 740, "label": "PrimaryProviderRemoved, AgreementEnded", "variant": "return" }
   ],
   "activations": [
     { "participant": "new", "from": 180, "to": 227, "type": "backend" },

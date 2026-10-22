@@ -402,7 +402,7 @@ pub mod pallet {
         /// ("0x..."); must fit `T::MaxMultiaddrLength`.
         #[serde(with = "sp_core::bytes")]
         pub multiaddr: Vec<u8>,
-        /// Raw public key bytes (32, 33 or 64), hex-encoded in JSON.
+        /// Raw public key bytes (32 or 33), hex-encoded in JSON.
         #[serde(with = "sp_core::bytes")]
         pub public_key: Vec<u8>,
         /// Stake to hold; must be at least `T::MinProviderStake`.
@@ -1306,12 +1306,15 @@ pub mod pallet {
         // Provider Management
         // ─────────────────────────────────────────────────────────────────────
 
-        /// Register as a storage provider.
+        /// Register the caller as a storage provider, with default settings.
+        /// Change them with `update_provider_settings`.
         ///
         /// Parameters:
         /// - `multiaddr`: Network address for clients to connect
-        /// - `public_key`: Public key for signature verification (raw bytes, 32-64 bytes)
-        /// - `stake`: Initial stake to lock
+        /// - `public_key`: Raw public key the pallet verifies the provider's
+        ///   signatures against: 32 bytes (Sr25519/Ed25519) or 33 bytes
+        ///   (compressed Ecdsa/Eth). Other lengths fail with `InvalidPublicKey`.
+        /// - `stake`: Initial stake to hold; at least `MinProviderStake`
         #[pallet::call_index(0)]
         #[pallet::weight(T::WeightInfo::register_provider())]
         pub fn register_provider(
@@ -1971,14 +1974,14 @@ pub mod pallet {
             Self::add_replica_provider_internal(&who, bucket_id, &provider, terms, &sig)
         }
 
-        /// Owner only. Settle and close an agreement, choosing whether the
-        /// remaining escrow goes to the provider or is (partly) burned.
+        /// Settle and close an agreement, choosing whether the remaining
+        /// escrow goes to the provider or is (partly) burned.
         ///
-        /// Before expiry the owner must also be a bucket admin, and only
-        /// primary agreements can be ended early. After expiry the owner has
-        /// `SettlementTimeout` to call this; then only the provider can
-        /// settle, via `claim_expired_agreement`. Blocked while a challenge
-        /// against the agreement is pending.
+        /// Before expiry, any bucket admin may call this, for primary
+        /// agreements only. After expiry, only the agreement owner may call
+        /// it, within `SettlementTimeout`; after that window only the provider
+        /// can settle, via `claim_expired_agreement`. Blocked while a
+        /// challenge against the agreement is pending.
         #[pallet::call_index(25)]
         #[pallet::weight(match action {
             EndAction::Pay => T::WeightInfo::end_agreement(0),
