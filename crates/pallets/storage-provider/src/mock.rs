@@ -380,6 +380,31 @@ pub fn create_bucket(admin: u64, min_providers: u32) -> u64 {
     last_created_bucket_id()
 }
 
+/// Helper: signatures of `providers` over `commitment` for `bucket_id`, in
+/// the form `checkpoint` and `extend_checkpoint` take. Stamps each
+/// provider's [`provider_signer`] key on chain.
+#[allow(dead_code)]
+pub fn sign_commitment(
+    bucket_id: u64,
+    commitment: storage_primitives::Commitment,
+    providers: &[u64],
+) -> frame_support::BoundedVec<(u64, sp_runtime::MultiSignature), ConstU32<5>> {
+    use codec::Encode;
+    use sp_core::Pair;
+    let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment).encode();
+    providers
+        .iter()
+        .map(|&p| {
+            (
+                p,
+                sp_runtime::MultiSignature::Sr25519(provider_signer(p).sign(&payload)),
+            )
+        })
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("at most MaxPrimaryProviders signers")
+}
+
 /// Id of the bucket the previous call created.
 fn last_created_bucket_id() -> u64 {
     crate::NextBucketId::<Test>::get() - 1

@@ -19,7 +19,7 @@ fn setup_provider_with_replicas(provider: u64, stake: u64) {
 fn add_replica_provider_works() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
 
         let balance_before = Balances::free_balance(1);
 
@@ -51,7 +51,7 @@ fn add_replica_provider_fails_no_replica_sync_price() {
     new_test_ext().execute_with(|| {
         // Provider without replica_sync_price
         register_provider(2, 200);
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
 
         // The sync-price check runs after the owner's nonce counter
         // advances, so storage is mutated even on failure — assert the
@@ -85,7 +85,7 @@ fn add_replica_provider_fails_no_replica_sync_price() {
 fn add_replica_provider_fails_deregister_announced() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
 
         // Announce deregistration
         assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
@@ -121,7 +121,7 @@ fn add_replica_provider_fails_deregister_announced() {
 fn add_replica_provider_fails_duplicate() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
 
         setup_replica_agreement(
             2,
@@ -191,8 +191,8 @@ fn add_replica_provider_fails_bucket_not_found() {
 fn add_replica_provider_fails_terms_bucket_mismatch() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
-        let bucket_id = create_bucket(1, 0);
-        let other_bucket = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
+        let other_bucket = create_bucket(1, 1);
 
         // Quote bound to a different bucket than the extrinsic targets.
         let (terms, sig) = signed_replica_terms(
@@ -224,7 +224,7 @@ fn add_replica_provider_fails_terms_bucket_mismatch() {
 fn add_replica_provider_fails_missing_replica_terms() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
 
         // Bucket-bound terms without replica params.
         let pair = provider_signer(2);
@@ -328,7 +328,7 @@ fn top_up_replica_sync_balance_works() {
 #[test]
 fn top_up_replica_sync_balance_fails_no_agreement() {
     new_test_ext().execute_with(|| {
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::top_up_replica_sync_balance(
@@ -635,6 +635,44 @@ fn confirm_replica_sync_fails_sync_too_frequent() {
             ),
             Error::<Test>::SyncTooFrequent
         );
+    });
+}
+
+#[test]
+fn confirm_replica_sync_fails_after_expiry() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+        let expires_at = StorageAgreements::<Test>::get(bucket_id, 2)
+            .unwrap()
+            .expires_at;
+
+        let mut roots = [None; 7];
+        roots[0] = Some(sp_core::H256::repeat_byte(0xAB));
+
+        // At `expires_at` the replica is no longer challengeable, so it is
+        // not paid for a sync either.
+        frame_system::Pallet::<Test>::set_block_number(expires_at);
+        assert_noop!(
+            StorageProvider::confirm_replica_sync(
+                RuntimeOrigin::signed(2),
+                bucket_id,
+                roots,
+                sign_sync_roots(2, &roots),
+            ),
+            Error::<Test>::AgreementExpired
+        );
+
+        // One block earlier the agreement is live and the sync is paid.
+        frame_system::Pallet::<Test>::set_block_number(expires_at - 1);
+        let balance_before = Balances::free_balance(2);
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+        assert_eq!(Balances::free_balance(2), balance_before + 10);
     });
 }
 
