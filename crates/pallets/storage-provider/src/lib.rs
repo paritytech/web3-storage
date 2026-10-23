@@ -1257,6 +1257,12 @@ pub mod pallet {
         /// A frozen bucket only accepts checkpoints that keep its
         /// `frozen_start_seq`.
         SnapshotViolatesFrozen,
+        /// The checkpoint moves the bucket backwards. Its start is before the
+        /// current start, or, with the same start, its end is not past the
+        /// current end, or, with a later start, its end is before the current
+        /// end. Submit a commitment that covers new or deleted leaves; to add
+        /// signers to the current commitment, use `extend_checkpoint`.
+        SnapshotNotForward,
         /// Fewer valid provider signatures than the bucket's `min_providers`,
         /// or none.
         InsufficientSignatures,
@@ -2388,6 +2394,11 @@ pub mod pallet {
         /// `min_providers` of the bucket's primary providers, and at least
         /// one; a frozen bucket
         /// only accepts commitments that keep its `frozen_start_seq`.
+        ///
+        /// A checkpoint never moves the bucket backwards. With the same start
+        /// as the current snapshot, its end must be past the current end. A
+        /// deletion moves the start forward and keeps the end, so with a later
+        /// start the end must not be before the current end.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
         pub fn checkpoint(
@@ -2410,9 +2421,20 @@ pub mod pallet {
                 // Check frozen constraint
                 if let Some(frozen_start) = bucket.frozen_start_seq {
                     ensure!(
-                        commitment.start_seq >= frozen_start,
+                        commitment.start_seq == frozen_start,
                         Error::<T>::SnapshotViolatesFrozen
                     );
+                }
+
+                if let Some(current) = bucket.snapshot.as_ref() {
+                    let current = current.commitment;
+                    let forward = if commitment.start_seq == current.start_seq {
+                        commitment.range_end() > current.range_end()
+                    } else {
+                        commitment.start_seq > current.start_seq
+                            && commitment.range_end() >= current.range_end()
+                    };
+                    ensure!(forward, Error::<T>::SnapshotNotForward);
                 }
 
                 // Verify signatures and build signer bitfield
