@@ -135,7 +135,7 @@
       "id": "ended-early",
       "type": "neutral",
       "label": "Ended Early",
-      "sublabel": "PrimaryAgreementEndedEarly",
+      "sublabel": "AgreementEnded",
       "lane": "terminal",
       "col": 0
     },
@@ -143,7 +143,7 @@
       "id": "claimed",
       "type": "neutral",
       "label": "Claimed By Provider",
-      "sublabel": "AgreementExpiredClaimed",
+      "sublabel": "AgreementEnded",
       "lane": "terminal",
       "col": 1
     }

@@ -240,6 +240,14 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     #[pallet::constant]
     type ChallengeTimeout: Get<BlockNumberFor<Self>>;
 
+    /// Deposit the pallet holds from the challenger when they open a
+    /// challenge. On a valid response, part or all of it pays the provider's response cost
+    /// (the split depends on the challenger tier and the response time) and
+    /// the rest returns to the challenger. On a slash, the challenger gets
+    /// it back in full. Sets the cost of challenge spam.
+    #[pallet::constant]
+    type ChallengeDeposit: Get<BalanceOf<Self>>;
+
     /// Settlement window after agreement expiry for owner to call end_agreement.
     #[pallet::constant]
     type SettlementTimeout: Get<BlockNumberFor<Self>>;
@@ -294,6 +302,7 @@ parachain `HOURS`:
 | `MaxPrimaryProviders` | `5` |
 | `MaxChunkSize` | `262_144` (256 KiB, the `CHUNK_SIZE` of leaf version 1) |
 | `ChallengeTimeout` | `48 * RC_HOURS` |
+| `ChallengeDeposit` | `UNIT` (1 token) |
 | `SettlementTimeout` | `24 * RC_HOURS` |
 | `RequestTimeout` | `6 * RC_HOURS` |
 | `MaxBucketsPerMember` | `1_000` |
@@ -886,12 +895,6 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         reason: RemovalReason,
     },
-    PrimaryAgreementEndedEarly {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_to_provider: BalanceOf<T>,
-        burned: BalanceOf<T>,
-    },
     SlashedProviderRemoved {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -925,29 +928,6 @@ pub enum Event<T: Config> {
     // Agreement events
     // ─────────────────────────────────────────────────────────────
     
-    AgreementRequested {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        requester: T::AccountId,
-        max_bytes: u64,
-        payment_locked: BalanceOf<T>,
-        duration: BlockNumberFor<T>,
-    },
-    AgreementAccepted {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        expires_at: BlockNumberFor<T>,
-    },
-    AgreementRejected {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned: BalanceOf<T>,
-    },
-    AgreementRequestWithdrawn {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_returned: BalanceOf<T>,
-    },
     AgreementToppedUp {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -972,11 +952,6 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         payment_to_provider: BalanceOf<T>,
         burned: BalanceOf<T>,
-    },
-    AgreementExpiredClaimed {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        payment_to_provider: BalanceOf<T>,
     },
     /// A primary agreement was opened by `create_bucket_with_primary`,
     /// `add_primary_provider`, or another call that creates a bucket with a
@@ -1087,6 +1062,12 @@ sp_api::decl_runtime_apis! {
         fn provider_challenges(provider: AccountId) -> Vec<ChallengeResponse>;
         fn challenger_challenges(challenger: AccountId) -> Vec<ChallengeResponse>;
         fn challenge_candidates(max_reputation: u8, limit: u32) -> Vec<ChallengeCandidate>;
+
+        // ── Anchor clock ──────────────────────────────────────────────────
+        /// The anchor block every on-chain duration is measured against.
+        fn current_anchor_block() -> BlockNumber;
+        /// Milliseconds per anchor block.
+        fn anchor_block_time_millis() -> u64;
     }
 }
 ```
