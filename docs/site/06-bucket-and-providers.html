@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"empty-bucket","label":"Empty bucket","focus":["admin","pallet"],"note":"create_bucket takes no provider and no terms. The caller becomes sole admin."},{"id":"new-with-primary","label":"New bucket with primary","focus":["admin","primary","pallet","holds"],"note":"Terms with BucketTarget::New create the bucket and its first primary in one call."},{"id":"add-primary","label":"Primary on existing bucket","focus":["admin","primary","pallet","holds"],"note":"Only a bucket admin can redeem primary terms for BucketTarget::Existing(id)."},{"id":"add-replica","label":"Replica on existing bucket","focus":["funder","replica","pallet","holds"],"note":"Any account the replica provider quoted as terms.owner can redeem."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"empty-bucket","label":"Empty bucket","focus":["admin","pallet","holds"],"note":"create_bucket takes no provider and no terms. The caller becomes sole admin and creator and pays the storage deposit."},{"id":"new-with-primary","label":"New bucket with primary","focus":["admin","primary","pallet","holds"],"note":"Terms with BucketTarget::New create the bucket and its first primary in one call."},{"id":"add-primary","label":"Primary on existing bucket","focus":["admin","primary","pallet","holds"],"note":"Only a bucket admin can redeem primary terms for BucketTarget::Existing(id)."},{"id":"add-replica","label":"Replica on existing bucket","focus":["funder","replica","pallet","holds"],"note":"Any account the replica provider quoted as terms.owner can redeem."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -217,8 +217,8 @@
         <path d="M 935.5 142 L 935.5 935" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
 
         <!-- Activations -->
-        <rect x="768.7" y="180" width="10" height="50" rx="3" class="c-mask"/>
-        <rect x="768.7" y="180" width="10" height="50" rx="3" class="c-backend" stroke-width="1"/>
+        <rect x="768.7" y="180" width="10" height="57" rx="3" class="c-mask"/>
+        <rect x="768.7" y="180" width="10" height="57" rx="3" class="c-backend" stroke-width="1"/>
         <rect x="445.1" y="295" width="10" height="50" rx="3" class="c-mask"/>
         <rect x="445.1" y="295" width="10" height="50" rx="3" class="c-backend" stroke-width="1"/>
         <rect x="768.7" y="375" width="10" height="85" rx="3" class="c-mask"/>
@@ -241,15 +241,23 @@
         </g>
         </g>
 
-        <g data-edge-from="pallet" data-edge-to="admin" data-edge-label="BucketCreated" data-edge-key="1" data-edge-id="created">
-          <path data-composition-edge-from="pallet" data-composition-edge-to="admin" data-composition-edge-id="created" data-composition-points="766.7,225;133.5,225" d="M 766.7 225 L 133.5 225" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="pallet" data-edge-to="holds" data-edge-label="hold StorageDeposit" data-edge-key="1" data-edge-id="hold-create">
+          <path data-composition-edge-from="pallet" data-composition-edge-to="holds" data-composition-edge-id="hold-create" data-composition-points="780.7,208;928.5,208" d="M 780.7 208 L 928.5 208" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
         <g data-detail="context">
-          <rect x="410.3" y="205" width="79.60000000000001" height="16" rx="3" class="c-mask"/>
-          <text x="450.1" y="215" class="t-muted" font-size="9" text-anchor="middle">BucketCreated</text>
+          <rect x="799.2" y="188" width="110.8" height="16" rx="3" class="c-mask"/>
+          <text x="854.6" y="198" class="t-security" font-size="9" text-anchor="middle">hold StorageDeposit</text>
         </g>
         </g>
 
-        <g data-edge-from="admin" data-edge-to="primary" data-edge-label="POST /negotiate, bucket: null, nonce" data-edge-key="2" data-edge-id="neg-new">
+        <g data-edge-from="pallet" data-edge-to="admin" data-edge-label="BucketCreated" data-edge-key="2" data-edge-id="created">
+          <path data-composition-edge-from="pallet" data-composition-edge-to="admin" data-composition-edge-id="created" data-composition-points="766.7,232;133.5,232" d="M 766.7 232 L 133.5 232" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-detail="context">
+          <rect x="410.3" y="212" width="79.60000000000001" height="16" rx="3" class="c-mask"/>
+          <text x="450.1" y="222" class="t-muted" font-size="9" text-anchor="middle">BucketCreated</text>
+        </g>
+        </g>
+
+        <g data-edge-from="admin" data-edge-to="primary" data-edge-label="POST /negotiate, bucket: null, nonce" data-edge-key="3" data-edge-id="neg-new">
           <path data-composition-edge-from="admin" data-composition-edge-to="primary" data-composition-edge-id="neg-new" data-composition-points="133.5,300;443.1,300" d="M 133.5 300 L 443.1 300" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
           <rect x="188.7" y="280" width="199.20000000000002" height="16" rx="3" class="c-mask"/>
@@ -257,7 +265,7 @@
         </g>
         </g>
 
-        <g data-edge-from="primary" data-edge-to="admin" data-edge-label="signed AgreementTerms, BucketTarget::New" data-edge-key="3" data-edge-id="terms-new">
+        <g data-edge-from="primary" data-edge-to="admin" data-edge-label="signed AgreementTerms, BucketTarget::New" data-edge-key="4" data-edge-id="terms-new">
           <path data-composition-edge-from="primary" data-composition-edge-to="admin" data-composition-edge-id="terms-new" data-composition-points="443.1,340;133.5,340" d="M 443.1 340 L 133.5 340" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
           <rect x="178.3" y="320" width="220" height="16" rx="3" class="c-mask"/>
@@ -265,7 +273,7 @@
         </g>
         </g>
 
-        <g data-edge-from="admin" data-edge-to="pallet" data-edge-label="create_bucket_with_primary(provider, terms, sig, visibility)" data-edge-key="4" data-edge-id="redeem-new">
+        <g data-edge-from="admin" data-edge-to="pallet" data-edge-label="create_bucket_with_primary(provider, terms, sig, visibility)" data-edge-key="5" data-edge-id="redeem-new">
           <path data-composition-edge-from="admin" data-composition-edge-to="pallet" data-composition-edge-id="redeem-new" data-composition-points="133.5,380;766.7,380" d="M 133.5 380 L 766.7 380" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g data-detail="context">
           <rect x="288.1" y="360" width="324" height="16" rx="3" class="c-mask"/>
@@ -273,7 +281,7 @@
         </g>
         </g>
 
-        <g data-edge-from="pallet" data-edge-to="holds" data-edge-label="hold AgreementPayment" data-edge-key="5" data-edge-id="hold-new">
+        <g data-edge-from="pallet" data-edge-to="holds" data-edge-label="hold AgreementPayment" data-edge-key="6" data-edge-id="hold-new">
           <path data-composition-edge-from="pallet" data-composition-edge-to="holds" data-composition-edge-id="hold-new" data-composition-points="780.7,420;928.5,420" d="M 780.7 420 L 928.5 420" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
         <g data-detail="context">
           <rect x="794" y="400" width="121.2" height="16" rx="3" class="c-mask"/>
@@ -281,7 +289,7 @@
         </g>
         </g>
 
-        <g data-edge-from="pallet" data-edge-to="admin" data-edge-label="BucketCreated, ProviderAddedToBucket, StorageAgreementEstablished" data-edge-key="6" data-edge-id="ev-new">
+        <g data-edge-from="pallet" data-edge-to="admin" data-edge-label="BucketCreated, ProviderAddedToBucket, StorageAgreementEstablished" data-edge-key="7" data-edge-id="ev-new">
           <path data-composition-edge-from="pallet" data-composition-edge-to="admin" data-composition-edge-id="ev-new" data-composition-points="766.7,455;133.5,455" d="M 766.7 455 L 133.5 455" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
           <rect x="275.1" y="435" width="350" height="16" rx="3" class="c-mask"/>
@@ -289,7 +297,7 @@
         </g>
         </g>
 
-        <g data-edge-from="admin" data-edge-to="primary" data-edge-label="POST /negotiate, bucket: id, nonce" data-edge-key="7" data-edge-id="neg-existing">
+        <g data-edge-from="admin" data-edge-to="primary" data-edge-label="POST /negotiate, bucket: id, nonce" data-edge-key="8" data-edge-id="neg-existing">
           <path data-composition-edge-from="admin" data-composition-edge-to="primary" data-composition-edge-id="neg-existing" data-composition-points="133.5,525;443.1,525" d="M 133.5 525 L 443.1 525" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
           <rect x="193.9" y="505" width="188.8" height="16" rx="3" class="c-mask"/>
@@ -297,7 +305,7 @@
         </g>
         </g>
 
-        <g data-edge-from="primary" data-edge-to="admin" data-edge-label="signed AgreementTerms, BucketTarget::Existing(id)" data-edge-key="8" data-edge-id="terms-existing">
+        <g data-edge-from="primary" data-edge-to="admin" data-edge-label="signed AgreementTerms, BucketTarget::Existing(id)" data-edge-key="9" data-edge-id="terms-existing">
           <path data-composition-edge-from="primary" data-composition-edge-to="admin" data-composition-edge-id="terms-existing" data-composition-points="443.1,565;133.5,565" d="M 443.1 565 L 133.5 565" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
           <rect x="154.9" y="545" width="266.8" height="16" rx="3" class="c-mask"/>
@@ -305,7 +313,7 @@
         </g>
         </g>
 
-        <g data-edge-from="admin" data-edge-to="pallet" data-edge-label="add_primary_provider(bucket_id, provider, terms, sig)" data-edge-key="9" data-edge-id="redeem-existing">
+        <g data-edge-from="admin" data-edge-to="pallet" data-edge-label="add_primary_provider(bucket_id, provider, terms, sig)" data-edge-key="10" data-edge-id="redeem-existing">
           <path data-composition-edge-from="admin" data-composition-edge-to="pallet" data-composition-edge-id="redeem-existing" data-composition-points="133.5,605;766.7,605" d="M 133.5 605 L 766.7 605" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g data-detail="context">
           <rect x="306.3" y="585" width="287.6" height="16" rx="3" class="c-mask"/>
@@ -313,7 +321,7 @@
         </g>
         </g>
 
-        <g data-edge-from="pallet" data-edge-to="holds" data-edge-label="hold AgreementPayment" data-edge-key="10" data-edge-id="hold-existing">
+        <g data-edge-from="pallet" data-edge-to="holds" data-edge-label="hold AgreementPayment" data-edge-key="11" data-edge-id="hold-existing">
           <path data-composition-edge-from="pallet" data-composition-edge-to="holds" data-composition-edge-id="hold-existing" data-composition-points="780.7,645;928.5,645" d="M 780.7 645 L 928.5 645" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
         <g data-detail="context">
           <rect x="794" y="625" width="121.2" height="16" rx="3" class="c-mask"/>
@@ -321,7 +329,7 @@
         </g>
         </g>
 
-        <g data-edge-from="pallet" data-edge-to="admin" data-edge-label="ProviderAddedToBucket, StorageAgreementEstablished" data-edge-key="11" data-edge-id="ev-existing">
+        <g data-edge-from="pallet" data-edge-to="admin" data-edge-label="ProviderAddedToBucket, StorageAgreementEstablished" data-edge-key="12" data-edge-id="ev-existing">
           <path data-composition-edge-from="pallet" data-composition-edge-to="admin" data-composition-edge-id="ev-existing" data-composition-points="766.7,680;133.5,680" d="M 766.7 680 L 133.5 680" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
           <rect x="314.1" y="660" width="272" height="16" rx="3" class="c-mask"/>
@@ -329,7 +337,7 @@
         </g>
         </g>
 
-        <g data-edge-from="funder" data-edge-to="replica" data-edge-label="POST /negotiate, bucket: id, nonce, replica_params" data-edge-key="12" data-edge-id="neg-replica">
+        <g data-edge-from="funder" data-edge-to="replica" data-edge-label="POST /negotiate, bucket: id, nonce, replica_params" data-edge-key="13" data-edge-id="neg-replica">
           <path data-composition-edge-from="funder" data-composition-edge-to="replica" data-composition-edge-id="neg-replica" data-composition-points="295.3,750;604.9000000000001,750" d="M 295.3 750 L 604.9000000000001 750" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
           <rect x="314.1" y="730" width="272" height="16" rx="3" class="c-mask"/>
@@ -337,7 +345,7 @@
         </g>
         </g>
 
-        <g data-edge-from="replica" data-edge-to="funder" data-edge-label="signed AgreementTerms, Existing(id) + replica_params" data-edge-key="13" data-edge-id="terms-replica">
+        <g data-edge-from="replica" data-edge-to="funder" data-edge-label="signed AgreementTerms, Existing(id) + replica_params" data-edge-key="14" data-edge-id="terms-replica">
           <path data-composition-edge-from="replica" data-composition-edge-to="funder" data-composition-edge-id="terms-replica" data-composition-points="604.9000000000001,790;295.3,790" d="M 604.9000000000001 790 L 295.3 790" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
           <rect x="308.9" y="770" width="282.40000000000003" height="16" rx="3" class="c-mask"/>
@@ -345,7 +353,7 @@
         </g>
         </g>
 
-        <g data-edge-from="funder" data-edge-to="pallet" data-edge-label="add_replica_provider(bucket_id, provider, terms, sig)" data-edge-key="14" data-edge-id="redeem-replica">
+        <g data-edge-from="funder" data-edge-to="pallet" data-edge-label="add_replica_provider(bucket_id, provider, terms, sig)" data-edge-key="15" data-edge-id="redeem-replica">
           <path data-composition-edge-from="funder" data-composition-edge-to="pallet" data-composition-edge-id="redeem-replica" data-composition-points="295.3,830;766.7,830" d="M 295.3 830 L 766.7 830" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g data-detail="context">
           <rect x="387.2" y="810" width="287.6" height="16" rx="3" class="c-mask"/>
@@ -353,7 +361,7 @@
         </g>
         </g>
 
-        <g data-edge-from="pallet" data-edge-to="holds" data-edge-label="hold AgreementPayment + sync_balance" data-edge-key="15" data-edge-id="hold-replica">
+        <g data-edge-from="pallet" data-edge-to="holds" data-edge-label="hold AgreementPayment + sync_balance" data-edge-key="16" data-edge-id="hold-replica">
           <path data-composition-edge-from="pallet" data-composition-edge-to="holds" data-composition-edge-id="hold-replica" data-composition-points="780.7,870;928.5,870" d="M 780.7 870 L 928.5 870" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
         <g data-detail="context">
           <rect x="755" y="850" width="199.20000000000002" height="16" rx="3" class="c-mask"/>
@@ -361,7 +369,7 @@
         </g>
         </g>
 
-        <g data-edge-from="pallet" data-edge-to="funder" data-edge-label="ReplicaAgreementEstablished" data-edge-key="16" data-edge-id="ev-replica">
+        <g data-edge-from="pallet" data-edge-to="funder" data-edge-label="ReplicaAgreementEstablished" data-edge-key="17" data-edge-id="ev-replica">
           <path data-composition-edge-from="pallet" data-composition-edge-to="funder" data-composition-edge-id="ev-replica" data-composition-points="766.7,905;295.3,905" d="M 766.7 905 L 295.3 905" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
           <rect x="454.8" y="885" width="152.4" height="16" rx="3" class="c-mask"/>
@@ -445,8 +453,8 @@
           <text data-detail="context" x="773.7" y="111" class="t-muted" font-size="7" text-anchor="middle">extrinsics</text>
         </g>
 
-        <g id="node-holds" data-node-id="holds" data-node-label="Holds" tabindex="0" role="button" aria-label="Focus Holds, on terms.owner, Sequence participant" aria-pressed="false" data-node-kind="security" data-node-sublabel="on terms.owner" data-node-context="Sequence participant">
-          <title>Holds · on terms.owner · Sequence participant</title>
+        <g id="node-holds" data-node-id="holds" data-node-label="Holds" tabindex="0" role="button" aria-label="Focus Holds, on terms.owner or the creator, Sequence participant" aria-pressed="false" data-node-kind="security" data-node-sublabel="on terms.owner or the creator" data-node-context="Sequence participant">
+          <title>Holds · on terms.owner or the creator · Sequence participant</title>
           <rect x="871" y="72" width="129" height="54" rx="6" class="c-mask"/>
           <rect x="871" y="72" width="129" height="54" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(877 78) scale(0.6875)">
@@ -454,7 +462,7 @@
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="935.5" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Holds</text>
-          <text data-detail="context" x="935.5" y="111" class="t-muted" font-size="7" text-anchor="middle">on terms.owner</text>
+          <text data-detail="context" x="935.5" y="111" class="t-muted" font-size="6.9" text-anchor="middle">on terms.owner or the creator</text>
         </g>
 
         <!-- Legend -->
@@ -669,7 +677,7 @@
           <h3>Who may call</h3>
         </div>
         <ul>
-          <li>&bull; create_bucket: anyone; the caller becomes sole admin</li>
+          <li>&bull; create_bucket: anyone; the caller becomes sole admin and creator, and pays the storage deposit</li>
           <li>&bull; create_bucket_with_primary: terms.owner; creates the bucket with min_providers = 1</li>
           <li>&bull; add_primary_provider: bucket admin (NotBucketAdmin)</li>
           <li>&bull; add_replica_provider: terms.owner, any account the provider quoted</li>

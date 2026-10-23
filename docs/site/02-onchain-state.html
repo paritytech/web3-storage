@@ -218,22 +218,22 @@
         <path data-edge-from="challenges" data-edge-to="pendingbybucket" data-edge-label="per bucket, provider" data-edge-key="6" data-edge-id="count-bucket" data-composition-points="1030,177;985,177;985,310;940,310" d="M 1030 177 L 993 177 Q 985 177 985 185 L 985 302 Q 985 310 977 310 L 940 310" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="anchor" data-edge-to="challenges" data-edge-label="deadline anchor block" data-edge-key="7" data-edge-id="deadline" data-composition-points="1115,490;1115,220" d="M 1115 490 L 1115 220" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="memberbuckets" data-edge-to="buckets" data-edge-label="reverse of members" data-edge-key="8" data-edge-id="member-index" data-composition-points="740,540;716,540;716,556;574,556;574,535;550,535" d="M 740 540 L 724 540 Q 716 540 716 548 L 716 548 Q 716 556 708 556 L 582 556 Q 574 556 574 548 L 574 543 Q 574 535 566 535 L 550 535" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="providers" data-edge-to="holds" data-edge-label="stake" data-edge-key="9" data-edge-id="stake-hold" data-composition-points="330,85;306,85;306,101;234,101;234,80;210,80" d="M 330 85 L 314 85 Q 306 85 306 93 L 306 93 Q 306 101 298 101 L 242 101 Q 234 101 234 93 L 234 88 Q 234 80 226 80 L 210 80" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="providers" data-edge-to="holds" data-edge-label="stake" data-edge-key="9" data-edge-id="stake-hold" data-composition-points="330,85;270,85" d="M 330 85 L 270 85" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
         <path data-edge-from="api" data-edge-to="agreements" data-edge-label="reads" data-edge-key="10" data-edge-id="api-agreements" data-composition-points="210,383;270,383;270,310;330,310" d="M 210 383 L 262 383 Q 270 383 270 375 L 270 318 Q 270 310 278 310 L 330 310" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="api" data-edge-to="buckets" data-edge-label="reads" data-edge-key="11" data-edge-id="api-buckets" data-composition-points="210,397;270,397;270,535;330,535" d="M 210 397 L 262 397 Q 270 397 270 405 L 270 527 Q 270 535 278 535 L 330 535" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
-        <g id="node-holds" data-node-id="holds" data-node-label="Fungible holds" tabindex="0" role="button" aria-label="Focus Fungible holds, HoldReason, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="HoldReason" data-node-tag="ProviderStake, AgreementPayment, ChallengeDeposit" data-node-context="Architecture component">
-          <title>Fungible holds · HoldReason · Architecture component · ProviderStake, AgreementPayment, ChallengeDeposit</title>
-          <rect x="20" y="30" width="190" height="100" rx="6" class="c-mask"/>
-          <rect x="20" y="30" width="190" height="100" rx="6" class="c-security" stroke-width="1.5"/>
+        <g id="node-holds" data-node-id="holds" data-node-label="Fungible holds" tabindex="0" role="button" aria-label="Focus Fungible holds, HoldReason, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="HoldReason" data-node-tag="ProviderStake, AgreementPayment, ChallengeDeposit, StorageDeposit" data-node-context="Architecture component">
+          <title>Fungible holds · HoldReason · Architecture component · ProviderStake, AgreementPayment, ChallengeDeposit, StorageDeposit</title>
+          <rect x="20" y="30" width="250" height="110" rx="6" class="c-mask"/>
+          <rect x="20" y="30" width="250" height="110" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(26 36) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="115" y="78" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Fungible holds</text>
-        <text data-detail="context" x="115" y="94" class="t-muted" font-size="9" text-anchor="middle">HoldReason</text>
-        <text data-detail="fine" x="115" y="122" class="t-security" font-size="6.1" text-anchor="middle">ProviderStake, AgreementPayment, ChallengeDeposit</text>
+          <text data-node-label="" data-detail-anchor="" x="145" y="83" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Fungible holds</text>
+        <text data-detail="context" x="145" y="99" class="t-muted" font-size="9" text-anchor="middle">HoldReason</text>
+        <text data-detail="fine" x="145" y="132" class="t-security" font-size="6.2" text-anchor="middle">ProviderStake, AgreementPayment, ChallengeDeposit, StorageDeposit</text>
         </g>
 
         <g id="node-api" data-node-id="api" data-node-label="StorageProviderApi" tabindex="0" role="button" aria-label="Focus StorageProviderApi, runtime API, read-only, Architecture component" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="runtime API, read-only" data-node-tag="providers, buckets, agreements, challenges" data-node-context="Architecture component">
@@ -390,8 +390,8 @@
           <text x="666" y="538" class="t-muted" font-size="8" text-anchor="middle">reverse of members</text>
         </g>
         <g data-detail="context" data-edge-from="providers" data-edge-to="holds" data-edge-label="stake" data-edge-key="9" data-edge-id="stake-hold">
-          <rect x="289" y="73" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="306" y="83" class="t-security" font-size="8" text-anchor="middle">stake</text>
+          <rect x="283" y="65" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="300" y="75" class="t-security" font-size="8" text-anchor="middle">stake</text>
         </g>
         <g data-detail="context" data-edge-from="api" data-edge-to="agreements" data-edge-label="reads" data-edge-key="10" data-edge-id="api-agreements">
           <rect x="253" y="326.5" width="34" height="14" rx="3" class="c-mask"/>
@@ -630,7 +630,8 @@
           <h3>Buckets</h3>
         </div>
         <ul>
-          <li>&bull; Bucket also has visibility, frozen_start_seq, min_providers, historical_roots</li>
+          <li>&bull; Bucket also has visibility, frozen_start_seq, min_providers, historical_roots, creator, deposit</li>
+          <li>&bull; creator pays the StorageDeposit hold at create_bucket; delete_bucket releases it to the creator</li>
           <li>&bull; snapshot.primary_signers: bit i set if primary_providers[i] signed</li>
           <li>&bull; NextBucketId allocates each BucketId</li>
         </ul>
@@ -644,6 +645,7 @@
         <ul>
           <li>&bull; Challenge includes bucket_id, provider, challenger, mmr_root, start_seq, target, deposit, authorized</li>
           <li>&bull; Hold: deposit as ChallengeDeposit</li>
+          <li>&bull; PendingChallengesByBucket removes an entry at 0; delete_bucket needs none under the bucket</li>
           <li>&bull; resolve_expired_challenge (anyone, free on success) slashes a provider whose challenge expired</li>
         </ul>
       </div>

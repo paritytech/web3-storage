@@ -28,9 +28,10 @@
           "checkpointed",
           "frozen",
           "unserved",
-          "assigned"
+          "assigned",
+          "absent"
         ],
-        "note": "Ending the last agreement keeps the bucket; the admin can add a new primary."
+        "note": "Ending the last agreement keeps the bucket; the admin can add a new primary or delete the bucket."
       },
       {
         "id": "visibility",
@@ -213,6 +214,26 @@
       "fromSide": "bottom",
       "toSide": "bottom",
       "route": "bottom-channel"
+    },
+    {
+      "id": "delete-empty",
+      "from": "empty",
+      "to": "absent",
+      "label": "delete_bucket",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "route": "bottom-channel"
+    },
+    {
+      "id": "delete-unserved",
+      "from": "unserved",
+      "to": "absent",
+      "label": "delete_bucket",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "bottom",
+      "labelDy": 18
     }
   ],
   "cards": [
@@ -220,7 +241,7 @@
       "dot": "emerald",
       "title": "Creation",
       "items": [
-        "create_bucket: anyone; caller is sole admin; bucket_id assigned and never changes",
+        "create_bucket: anyone; caller is sole admin and creator, pays the storage deposit; bucket_id assigned and never changes",
         "create_bucket_with_primary: bucket and first primary in one call, min_providers = 1",
         "add_primary_provider: bucket admin, below MaxPrimaryProviders"
       ]
@@ -240,7 +261,8 @@
       "items": [
         "Ending the last agreement deletes the agreement, not the bucket",
         "Members, snapshot and frozen_start_seq remain; a frozen bucket stays frozen",
-        "add_primary_provider works on a bucket with zero primaries and on a frozen bucket"
+        "add_primary_provider works on a bucket with zero primaries and on a frozen bucket",
+        "delete_bucket: admin only; zero agreements (BucketNotEmpty) and no open challenge (BucketHasPendingChallenge); the deposit returns to the creator even if no longer admin (BucketDeleted)"
       ]
     },
     {

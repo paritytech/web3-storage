@@ -40,11 +40,21 @@
           "challenger_out"
         ],
         "note": "The deposit reimburses the provider's response fee; the excess returns to the challenger."
+      },
+      {
+        "id": "storage",
+        "label": "Storage deposit",
+        "focus": [
+          "creator_acct",
+          "storage_deposit",
+          "creator_out"
+        ],
+        "note": "The bucket deposit is held on the creator until delete_bucket removes the bucket."
       }
     ],
     "viewBox": [
       1068,
-      604
+      740
     ],
     "legend": {
       "entries": {
@@ -176,6 +186,30 @@
       "sublabel": "burn and slash",
       "stage": 4,
       "row": 2
+    },
+    {
+      "id": "creator_acct",
+      "type": "external",
+      "label": "Bucket creator",
+      "sublabel": "free balance",
+      "stage": 0,
+      "row": 4
+    },
+    {
+      "id": "storage_deposit",
+      "type": "database",
+      "label": "StorageDeposit",
+      "sublabel": "held on creator",
+      "stage": 1,
+      "row": 4
+    },
+    {
+      "id": "creator_out",
+      "type": "external",
+      "label": "Bucket creator",
+      "sublabel": "free balance",
+      "stage": 3,
+      "row": 4
     }
   ],
   "flows": [
@@ -366,16 +400,36 @@
       "classification": "per confirm_replica_sync",
       "route": "straight",
       "variant": "emphasis"
+    },
+    {
+      "id": "storage-in",
+      "from": "creator_acct",
+      "to": "storage_deposit",
+      "label": "create_bucket",
+      "classification": "UNIT / 10 + MICROUNIT per byte",
+      "variant": "emphasis",
+      "labelAt": [
+        208,
+        656
+      ]
+    },
+    {
+      "id": "storage-refund",
+      "from": "storage_deposit",
+      "to": "creator_out",
+      "label": "delete_bucket",
+      "classification": "full deposit to the creator"
     }
   ],
   "cards": [
     {
       "dot": "cyan",
-      "title": "Three hold reasons",
+      "title": "Four hold reasons",
       "items": [
         "ProviderStake: provider collateral",
         "AgreementPayment: fee and sync_balance, on the owner; moves on transfer_agreement_ownership",
-        "ChallengeDeposit: challenger deposit"
+        "ChallengeDeposit: challenger deposit",
+        "StorageDeposit: bucket deposit on the creator, UNIT / 10 plus MICROUNIT per byte; delete_bucket releases it"
       ]
     },
     {

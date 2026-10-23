@@ -10,8 +10,8 @@
       {
         "id": "empty-bucket",
         "label": "Empty bucket",
-        "focus": ["admin", "pallet"],
-        "note": "create_bucket takes no provider and no terms. The caller becomes sole admin."
+        "focus": ["admin", "pallet", "holds"],
+        "note": "create_bucket takes no provider and no terms. The caller becomes sole admin and creator and pays the storage deposit."
       },
       {
         "id": "new-with-primary",
@@ -39,7 +39,7 @@
     { "id": "primary", "type": "backend", "label": "Primary Provider", "sublabel": "provider node" },
     { "id": "replica", "type": "backend", "label": "Replica Provider", "sublabel": "provider node" },
     { "id": "pallet", "type": "backend", "label": "Storage Pallet", "sublabel": "extrinsics" },
-    { "id": "holds", "type": "security", "label": "Holds", "sublabel": "on terms.owner" }
+    { "id": "holds", "type": "security", "label": "Holds", "sublabel": "on terms.owner or the creator" }
   ],
   "segments": [
     { "from": 150, "to": 250, "label": "create_bucket: empty bucket" },
@@ -49,7 +49,8 @@
   ],
   "messages": [
     { "id": "create", "from": "admin", "to": "pallet", "y": 185, "label": "create_bucket(min_providers, visibility)", "variant": "emphasis" },
-    { "id": "created", "from": "pallet", "to": "admin", "y": 225, "label": "BucketCreated", "variant": "return" },
+    { "id": "hold-create", "from": "pallet", "to": "holds", "y": 208, "label": "hold StorageDeposit", "variant": "security" },
+    { "id": "created", "from": "pallet", "to": "admin", "y": 232, "label": "BucketCreated", "variant": "return" },
 
     { "id": "neg-new", "from": "admin", "to": "primary", "y": 300, "label": "POST /negotiate, bucket: null, nonce", "variant": "default" },
     { "id": "terms-new", "from": "primary", "to": "admin", "y": 340, "label": "signed AgreementTerms, BucketTarget::New", "variant": "return" },
@@ -70,7 +71,7 @@
     { "id": "ev-replica", "from": "pallet", "to": "funder", "y": 905, "label": "ReplicaAgreementEstablished", "variant": "return" }
   ],
   "activations": [
-    { "participant": "pallet", "from": 180, "to": 230, "type": "backend" },
+    { "participant": "pallet", "from": 180, "to": 237, "type": "backend" },
     { "participant": "primary", "from": 295, "to": 345, "type": "backend" },
     { "participant": "pallet", "from": 375, "to": 460, "type": "backend" },
     { "participant": "primary", "from": 520, "to": 570, "type": "backend" },
@@ -83,7 +84,7 @@
       "dot": "cyan",
       "title": "Who may call",
       "items": [
-        "create_bucket: anyone; the caller becomes sole admin",
+        "create_bucket: anyone; the caller becomes sole admin and creator, and pays the storage deposit",
         "create_bucket_with_primary: terms.owner; creates the bucket with min_providers = 1",
         "add_primary_provider: bucket admin (NotBucketAdmin)",
         "add_replica_provider: terms.owner, any account the provider quoted"
