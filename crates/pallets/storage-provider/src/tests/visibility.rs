@@ -151,7 +151,7 @@ fn private_bucket_gates_offchain_challenges() {
             start_seq: 0,
             leaf_count: 10,
         };
-        let sig = sign_commitment(2, bucket_id, commitment);
+        let sig = sign_commitment_by(2, bucket_id, commitment);
 
         assert_noop!(
             StorageProvider::challenge_offchain(

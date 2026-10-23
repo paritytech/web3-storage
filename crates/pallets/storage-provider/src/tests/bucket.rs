@@ -208,17 +208,33 @@ fn remove_member_fails_for_non_existent() {
 #[test]
 fn set_min_providers_works() {
     new_test_ext().execute_with(|| {
-        create_bucket(1, 2);
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+        setup_added_primary(3, 1, bucket_id, 50, 200);
 
-        // Can set to 0 (no minimum)
         assert_ok!(StorageProvider::set_min_providers(
             RuntimeOrigin::signed(1),
-            0,
-            0
+            bucket_id,
+            2
         ));
 
-        let bucket = Buckets::<Test>::get(0).unwrap();
-        assert_eq!(bucket.min_providers, 0);
+        let bucket = Buckets::<Test>::get(bucket_id).unwrap();
+        assert_eq!(bucket.min_providers, 2);
+    });
+}
+
+#[test]
+fn set_min_providers_rejects_zero() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+
+        // Zero would let `checkpoint` accept a commitment no provider signed.
+        assert_noop!(
+            StorageProvider::set_min_providers(RuntimeOrigin::signed(1), bucket_id, 0),
+            Error::<Test>::InvalidMinProviders
+        );
     });
 }
 

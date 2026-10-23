@@ -81,8 +81,7 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
 }
 
 fn setup_bucket<T: Config>(admin: &T::AccountId) -> BucketId {
-    // Use min_providers=0 so benchmarks can create checkpoints with empty signatures
-    Pallet::<T>::create_bucket_internal(admin, 0, None, Visibility::Private)
+    Pallet::<T>::create_bucket_internal(admin, 1, None, Visibility::Private)
         .expect("create_bucket_internal succeeds")
 }
 
@@ -256,9 +255,34 @@ fn insert_challenge<T: Config>(
         target,
         deposit: 100u32.into(),
         authorized: true,
+        created_at: deadline.saturating_sub(T::ChallengeTimeout::get()),
     };
     Challenges::<T>::insert(deadline, 0u16, challenge);
     storage_primitives::ChallengeId { deadline, index: 0 }
+}
+
+/// The largest MMR proof `verify_mmr_proof` accepts, for `leaf` at index 0 of
+/// an MMR with `u64::MAX / 2` leaves: 63 peaks, the leaf in the height-62
+/// peak, so 62 siblings and one item for the bagged peaks to its right. The
+/// proof is synthetic: the returned commitment's root is computed from it, so
+/// verification succeeds without 2^63 leaves.
+fn worst_case_mmr_proof(
+    leaf: storage_primitives::MmrLeaf,
+) -> (Commitment, storage_primitives::MmrProof) {
+    let leaf_hash = storage_primitives::hash_leaf(&codec::Encode::encode(&leaf));
+    let mut items: alloc::vec::Vec<H256> = (1..=62u8).map(H256::repeat_byte).collect();
+    let mut peak = leaf_hash;
+    for sibling in &items {
+        peak = storage_primitives::hash_children(peak, *sibling);
+    }
+    let right_peaks = H256::repeat_byte(0xFF);
+    items.push(right_peaks);
+    let commitment = Commitment {
+        mmr_root: storage_primitives::bag_peaks(&[peak, right_peaks]),
+        start_seq: 0,
+        leaf_count: u64::MAX / 2,
+    };
+    (commitment, storage_primitives::MmrProof { leaf, items })
 }
 
 /// Register an sr25519 keypair for a provider and return the public key.
@@ -278,6 +302,32 @@ fn register_sr25519_key<T: Config>(
         }
     });
     public_key
+}
+
+/// Checkpoint `commitment` on `bucket_id`, signed by its primary `provider`,
+/// whose key [`setup_primary_agreement`] registered under `provider_index`.
+fn checkpoint_signed_by<T: Config>(
+    admin: &T::AccountId,
+    bucket_id: BucketId,
+    provider: &T::AccountId,
+    provider_index: u32,
+    commitment: Commitment,
+) {
+    let key = register_sr25519_key::<T>(provider, KEY_TYPE, provider_index);
+    let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment);
+    let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, &key, &codec::Encode::encode(&payload))
+        .expect("signing should work");
+    let signatures: BoundedVec<(T::AccountId, sp_runtime::MultiSignature), T::MaxPrimaryProviders> =
+        alloc::vec![(provider.clone(), sp_runtime::MultiSignature::Sr25519(sig))]
+            .try_into()
+            .expect("one signature fits MaxPrimaryProviders");
+    Pallet::<T>::checkpoint(
+        RawOrigin::Signed(admin.clone()).into(),
+        bucket_id,
+        commitment,
+        signatures,
+    )
+    .expect("checkpoint succeeds");
 }
 
 #[benchmarks]
@@ -403,10 +453,11 @@ mod benchmarks {
     #[benchmark]
     fn set_bucket_min_providers() {
         let admin = funded_account::<T>("admin", 0);
-        let bucket_id = setup_bucket::<T>(&admin);
+        let provider = create_provider::<T>(0);
+        let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
         #[extrinsic_call]
-        set_min_providers(RawOrigin::Signed(admin), bucket_id, 0);
+        set_min_providers(RawOrigin::Signed(admin), bucket_id, 1);
     }
 
     #[benchmark]
@@ -424,27 +475,18 @@ mod benchmarks {
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // `freeze_bucket` requires the `snapshot` to meet `min_providers`.
-        // Drop the floor to 0 first so both subsequent calls succeed.
-        let _ =
-            Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);
-
         // Need to create a checkpoint first
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
-
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
+        checkpoint_signed_by::<T>(
+            &admin,
             bucket_id,
+            &provider,
+            0,
             Commitment {
                 mmr_root,
                 start_seq: 0,
                 leaf_count: 10,
             },
-            signatures,
         );
 
         #[extrinsic_call]
@@ -770,24 +812,23 @@ mod benchmarks {
             provider_keys.push((provider, key));
         }
 
-        // Submit initial checkpoint with 0 signatures (min_providers=0).
-        // The snapshot bitfield has all bits unset, so every extend_checkpoint
-        // signature triggers a real verification + bit-set operation.
-        let empty_sigs: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
+        // Checkpoint signed by provider 0, then clear the signer bitfield so
+        // every extend_checkpoint signature triggers a real verification +
+        // bit-set. A chain reaches this state when the snapshot's only
+        // signer is removed from the primaries and a new primary is added.
         let commitment = Commitment {
             mmr_root,
             start_seq: 0,
             leaf_count: 10,
         };
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
-            bucket_id,
-            commitment,
-            empty_sigs,
-        );
+        checkpoint_signed_by::<T>(&admin, bucket_id, &provider_keys[0].0, 0, commitment);
+        Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
+            let snapshot = maybe_bucket
+                .as_mut()
+                .and_then(|b| b.snapshot.as_mut())
+                .expect("checkpoint created the snapshot");
+            snapshot.primary_signers.fill(false);
+        });
 
         let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment);
         let encoded_payload = codec::Encode::encode(&payload);
@@ -817,28 +858,18 @@ mod benchmarks {
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Drop min_providers to 0 so the bootstrapping checkpoint with
-        // empty signatures is accepted (create_bucket_with_primary_internal
-        // anchors the bucket at min_providers=1).
-        let _ =
-            Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);
-
         // Create checkpoint first
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
-
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
+        checkpoint_signed_by::<T>(
+            &admin,
             bucket_id,
+            &provider,
+            0,
             Commitment {
                 mmr_root,
                 start_seq: 0,
                 leaf_count: 10,
             },
-            signatures,
         );
 
         // Set provider's bit in snapshot bitfield (provider is at index 0)
@@ -913,26 +944,18 @@ mod benchmarks {
         let replica_provider = create_provider::<T>(1);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Drop min_providers to 0 so the bootstrapping checkpoint with
-        // empty signatures is accepted.
-        let _ =
-            Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);
-
         // Create checkpoint so bucket has a snapshot
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
+        checkpoint_signed_by::<T>(
+            &admin,
             bucket_id,
+            &provider,
+            0,
             Commitment {
                 mmr_root,
                 start_seq: 0,
                 leaf_count: 10,
             },
-            signatures,
         );
 
         // Open the replica agreement via the signed-terms helper.
@@ -972,19 +995,21 @@ mod benchmarks {
         // Chunk tree: the largest `data_size` gives the most chunks, and chunk 0
         // of that tree has a sibling at every level, so the chunk proof has the
         // most siblings the pallet accepts.
-        //
-        // MMR: leaf_count = u64::MAX / 2 is the largest `verify_mmr_proof`
-        // accepts. It has 63 peaks and leaf 0 is in the tallest peak (height
-        // 62), so the verifier climbs 62 siblings and then bags that peak with
-        // one item for the peaks to its right. The proof is synthetic: the root
-        // is computed so `verify_mmr_proof` returns true without 2^63 leaves.
         let chunk_size = T::MaxChunkSize::get() as usize;
         let chunk_bytes = alloc::vec![0xBEu8; chunk_size];
         let chunk_data: BoundedVec<u8, T::MaxChunkSize> =
             BoundedVec::try_from(chunk_bytes.clone()).unwrap();
 
         let data_size = u64::MAX;
-        let depth = storage_primitives::chunk_count(data_size).ilog2();
+        // The chunk count comes from the leaf, as in `respond_to_challenge`;
+        // it does not depend on `data_root`.
+        let size_only = storage_primitives::MmrLeaf {
+            leaf_version: storage_primitives::LEAF_VERSION,
+            data_root: H256::zero(),
+            data_size,
+            total_size: data_size,
+        };
+        let depth = size_only.chunk_count().unwrap().ilog2();
         let siblings: alloc::vec::Vec<H256> = (0..depth)
             .map(|level| H256::from_low_u64_be(u64::from(level) + 1))
             .collect();
@@ -992,46 +1017,19 @@ mod benchmarks {
             storage_primitives::hash_leaf(&chunk_bytes),
             |node, sibling| storage_primitives::hash_children(node, *sibling),
         );
-
-        let mmr_leaf = storage_primitives::MmrLeaf {
+        let (commitment, mmr_proof) = worst_case_mmr_proof(storage_primitives::MmrLeaf {
             data_root,
-            data_size,
-            total_size: data_size,
-        };
-        let leaf_hash = storage_primitives::hash_leaf(&codec::Encode::encode(&mmr_leaf));
-
-        let leaf_count = u64::MAX / 2; // 63 peaks; challenged leaf 0 is in the height-62 peak
-        let leaf_index = 0u64;
-        let height = 62u8;
-
-        // Proof items: the siblings from leaf 0 up to its peak (every step is a
-        // left child), then one item for the bagged peaks to the right.
-        let mut items: alloc::vec::Vec<H256> = (1..=height).map(H256::repeat_byte).collect();
-        let mut peak0 = leaf_hash;
-        for sibling in &items {
-            peak0 = storage_primitives::hash_children(peak0, *sibling);
-        }
-        let right_peaks = H256::repeat_byte(0xFF);
-        items.push(right_peaks);
-        let mmr_root = storage_primitives::bag_peaks(&[peak0, right_peaks]);
-
-        let mmr_proof = storage_primitives::MmrProof {
-            leaf: mmr_leaf,
-            items,
-        };
+            ..size_only
+        });
         let chunk_proof = siblings;
 
         let challenge_id = insert_challenge::<T>(
             bucket_id,
             &provider,
             &admin,
-            Commitment {
-                mmr_root,
-                start_seq: 0,
-                leaf_count,
-            },
+            commitment,
             ChunkLocation {
-                leaf_index,
+                leaf_index: 0,
                 chunk_index: 0,
             },
         );
@@ -1041,6 +1039,39 @@ mod benchmarks {
             mmr_proof,
             chunk_proof,
         };
+
+        #[extrinsic_call]
+        respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);
+    }
+
+    /// `ChunkOutOfRange` response — verifies the worst-case MMR proof for a
+    /// `chunk_index` at the leaf's chunk count.
+    #[benchmark]
+    fn respond_to_challenge_chunk_out_of_range() {
+        let admin = funded_account::<T>("admin", 0);
+        let provider = create_provider::<T>(0);
+        let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
+
+        let leaf = storage_primitives::MmrLeaf {
+            leaf_version: storage_primitives::LEAF_VERSION,
+            data_root: H256::repeat_byte(0xAA),
+            data_size: 1,
+            total_size: 1,
+        };
+        let chunk_index = leaf.chunk_count().unwrap();
+        let (commitment, mmr_proof) = worst_case_mmr_proof(leaf);
+        let challenge_id = insert_challenge::<T>(
+            bucket_id,
+            &provider,
+            &admin,
+            commitment,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index,
+            },
+        );
+        let response: pallet::ChallengeResponse<T> =
+            pallet::ChallengeResponse::ChunkOutOfRange { mmr_proof };
 
         #[extrinsic_call]
         respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);
@@ -1111,29 +1142,21 @@ mod benchmarks {
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Drop min_providers to 0 so the bootstrapping checkpoint below
-        // with empty signatures is accepted.
-        let _ =
-            Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);
-
         // `Superseded` requires the bucket to have a snapshot whose
         // (start_seq + leaf_count) exceeds the challenged sequence. A
         // checkpoint with leaf_count > 0 satisfies this for our challenge
         // at seq 0.
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
+        checkpoint_signed_by::<T>(
+            &admin,
             bucket_id,
+            &provider,
+            0,
             Commitment {
                 mmr_root,
                 start_seq: 0,
                 leaf_count: 10,
             },
-            signatures,
         );
 
         let challenge_id = insert_challenge::<T>(
@@ -1168,26 +1191,18 @@ mod benchmarks {
         let replica_provider = create_provider::<T>(1);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Drop min_providers to 0 so the bootstrapping checkpoint with
-        // empty signatures is accepted.
-        let _ =
-            Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);
-
         // Create checkpoint so bucket has a snapshot with known mmr_root
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
+        checkpoint_signed_by::<T>(
+            &admin,
             bucket_id,
+            &provider,
+            0,
             Commitment {
                 mmr_root,
                 start_seq: 0,
                 leaf_count: 10,
             },
-            signatures,
         );
 
         // Open the replica agreement via the signed-terms helper.
@@ -1252,6 +1267,7 @@ mod benchmarks {
             },
             deposit,
             authorized: false,
+            created_at: deadline.saturating_sub(T::ChallengeTimeout::get()),
         };
         Challenges::<T>::insert(deadline, 0u16, challenge);
         PendingChallenges::<T>::insert(&provider, 1u32);

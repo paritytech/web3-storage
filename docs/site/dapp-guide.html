@@ -56,12 +56,12 @@
   <tbody>
     <tr><td>Bucket</td><td>On-chain container with a permanent <code>bucket_id</code>. It lists members, providers and the current snapshot. Providers can change; the id does not.</td></tr>
     <tr><td>Roles</td><td><code>Admin</code> (members, settings, delete data), <code>Writer</code> (append), <code>Reader</code> (read, only meaningful on a private bucket). Each role includes the next.</td></tr>
-    <tr><td>Visibility</td><td><code>Public</code> or <code>Private</code>. On a private bucket, primaries serve reads only to members. See <a href="#private">Private buckets</a>.</td></tr>
+    <tr><td>Visibility</td><td><code>Public</code> or <code>Private</code>. On a private bucket, primaries serve the MMR shape, proofs, commitments and existence checks only to members; reads by hash or <code>data_root</code> need no role. See <a href="#private">Private buckets</a>.</td></tr>
     <tr><td>Primary provider</td><td>Added by the admin. Receives writes from clients and signs checkpoints. At most <code>MaxPrimaryProviders</code> (5) per bucket.</td></tr>
     <tr><td>Replica provider</td><td>Added by any account that gets a replica quote from the provider (the quote names that account). Syncs data from other providers, confirms sync on-chain, and receives a payment per confirmation. No limit per bucket.</td></tr>
     <tr><td>Storage agreement</td><td>One per provider per bucket: quota (<code>max_bytes</code>), locked price, expiry, role, and owner. The payment is held on the owner until settlement.</td></tr>
-    <tr><td><code>data_root</code></td><td>Merkle root of a chunk tree. Chunks are at most 256 KiB and addressed by <code>blake2_256</code> hash.</td></tr>
-    <tr><td>MMR and commitment</td><td>Each bucket has one Merkle Mountain Range. Each leaf holds a <code>data_root</code>. A <code>Commitment</code> is <code>(mmr_root, start_seq, leaf_count)</code>.</td></tr>
+    <tr><td><code>data_root</code></td><td>Root of the chunk tree: a binary RFC 9162 Merkle tree over 256 KiB chunks (only the last chunk is shorter), without padding. A chunk hashes as <code>blake2_256(0x00 ++ data)</code>, a node as <code>blake2_256(0x01 ++ left ++ right)</code>. The chunk count is <code>ceil(data_size / 256 KiB)</code>; it is not part of the commitment.</td></tr>
+    <tr><td>MMR and commitment</td><td>Each bucket has one Merkle Mountain Range. Each leaf starts with <code>leaf_version</code> (1 in this guide) and holds a <code>data_root</code> and its <code>data_size</code>. A <code>Commitment</code> is <code>(mmr_root, start_seq, leaf_count)</code>.</td></tr>
     <tr><td>Checkpoint</td><td>A commitment written on-chain with signatures from at least <code>min_providers</code> primaries.</td></tr>
     <tr><td>Challenge</td><td>An on-chain request that forces a provider to post one chunk with Merkle proofs, or lose its stake.</td></tr>
   </tbody>
@@ -97,7 +97,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   </li>
   <li>
     <h3>Upload</h3>
-    <p>Split data into chunks of at most 256 KiB and build the Merkle tree. Call <code>POST /exists</code> with hashes, top-down, to skip subtrees the provider already has. Upload missing nodes bottom-up with <code>PUT /node</code>: a parent is rejected (<code>children_missing</code>) until its children exist. Uploads above the agreement quota fail with <code>507 quota_exceeded</code>.</p>
+    <p>Split data into 256 KiB chunks (only the last chunk is shorter; empty data cannot be committed) and build the RFC 9162 Merkle tree. Call <code>POST /exists</code> with hashes, top-down, to skip subtrees the provider already has. Upload missing nodes bottom-up with <code>PUT /node</code>, a chunk as <code>data</code> and an internal node as <code>children</code>: a parent is rejected (<code>children_missing</code>) until its children exist, and a chunk above 256 KiB is rejected (<code>chunk_too_large</code>). Uploads above the agreement quota fail with <code>507 quota_exceeded</code>. <code>POST /commit</code> rejects a root with another tree shape or chunk size (<code>non_canonical_tree</code>).</p>
     <p>Primaries do not sync with each other. Upload to every primary that must store the data.</p>
   </li>
   <li>
@@ -112,7 +112,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   </li>
   <li>
     <h3>Read and verify</h3>
-    <p>Read with <code>GET /read?data_root=…&amp;offset=…&amp;length=…</code> or <code>GET /node?hash=…</code> from any primary or replica, and check each chunk against its hash. Every read is a storage check. In the background, fetch a few random chunks per week and record failures and latency per provider. Three random chunks per week detect a provider that deleted 10% of the data with 98% probability within 13 weeks.</p>
+    <p>Read with <code>GET /read?bucket_id=…&amp;data_root=…&amp;offset=…&amp;length=…</code> or <code>GET /node?bucket_id=…&amp;hash=…</code> from any primary or replica, and check each chunk against its hash. Every read is a storage check. In the background, fetch a few random chunks per week and record failures and latency per provider. Three random chunks per week detect a provider that deleted 10% of the data with 98% probability within 13 weeks.</p>
     <p class="see">Diagram: <a href="10-read-and-verify.html">10 Read and verify</a></p>
   </li>
   <li>
@@ -153,8 +153,9 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
 <section id="private">
 <h2>Private buckets</h2>
 <ul>
-  <li><code>Private</code> controls access only. Honest primaries serve reads only to members; the chain cannot enforce this. To keep data confidential, encrypt it on the client.</li>
-  <li>On-chain metadata is public on every bucket: MMR roots, sizes, leaf counts, checkpoints, challenge events. A challenge response posts the chunk on-chain.</li>
+  <li><code>Private</code> controls access only. Honest primaries serve MMR peaks, proofs, commitments and existence checks only to members; the chain cannot enforce this. To keep data confidential, encrypt it on the client.</li>
+  <li>Reads by hash (<code>GET /node</code>, <code>GET /read</code>, <code>GET /chunk_proof</code>, <code>POST /fetch_nodes</code>) take a <code>bucket_id</code> but need no role on any bucket: the hash is the read key. Anyone you give a hash or <code>data_root</code> to can read those bytes for as long as a provider stores them; to revoke access, re-encrypt.</li>
+  <li>On-chain metadata is public on every bucket: MMR roots, sizes, leaf counts, checkpoints, challenge events. A challenge response posts the chunk and the leaf's <code>data_root</code> on-chain, so anyone can read that whole upload.</li>
   <li>On a private bucket, only members and primary-agreement owners can challenge primaries.</li>
   <li>Replicas serve everyone and anyone can challenge them, on public and private buckets.</li>
   <li>Changing a bucket from public to private does not recall data that replicas already have. Changing it from private to public discloses data from then on.</li>
@@ -199,19 +200,20 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   <thead><tr><th>Endpoint</th><th>Role required</th><th>Use</th></tr></thead>
   <tbody>
     <tr><td><code>POST /negotiate</code></td><td>—</td><td>Get signed agreement terms</td></tr>
-    <tr><td><code>POST /exists</code></td><td>—</td><td>Find which hashes the provider is missing</td></tr>
+    <tr><td><code>POST /exists</code></td><td>Reader on a private bucket</td><td>Find which hashes the provider is missing</td></tr>
     <tr><td><code>PUT /node</code></td><td>Writer</td><td>Upload a chunk or internal node</td></tr>
     <tr><td><code>POST /commit</code></td><td>Writer</td><td>Append <code>data_roots</code> to the MMR; returns a signed commitment</td></tr>
-    <tr><td><code>GET /checkpoint-signature</code></td><td>—</td><td>Signature for the <code>checkpoint</code> call</td></tr>
-    <tr><td><code>GET /commitment</code></td><td>—</td><td>Signed commitment for <code>challenge_offchain</code></td></tr>
-    <tr><td><code>GET /read</code>, <code>GET /node</code></td><td>Reader on a private bucket</td><td>Read chunks</td></tr>
-    <tr><td><code>GET /mmr_proof</code>, <code>GET /chunk_proof</code></td><td>—</td><td>Proofs that a chunk is in a committed root</td></tr>
+    <tr><td><code>GET /checkpoint-signature</code></td><td>Reader on a private bucket</td><td>Signature for the <code>checkpoint</code> call</td></tr>
+    <tr><td><code>GET /commitment</code></td><td>Reader on a private bucket</td><td>Signed commitment for <code>challenge_offchain</code></td></tr>
+    <tr><td><code>GET /read</code>, <code>GET /node</code></td><td>— (the hash or <code>data_root</code> is the key)</td><td>Read chunks</td></tr>
+    <tr><td><code>GET /mmr_proof</code></td><td>Reader on a private bucket</td><td>Proof that a <code>data_root</code> is in a committed root</td></tr>
+    <tr><td><code>GET /chunk_proof</code></td><td>— (the <code>data_root</code> is the key)</td><td>Proof that a chunk is in a <code>data_root</code></td></tr>
     <tr><td><code>POST /delete</code></td><td>Admin</td><td>Delete leaves before <code>new_start_seq</code></td></tr>
     <tr><td><code>GET /health</code>, <code>GET /info</code></td><td>—</td><td>Status</td></tr>
   </tbody>
 </table>
 </div>
-<p class="muted">The design requires a signed header for <code>PUT /node</code>, <code>POST /commit</code>, <code>POST /delete</code> and reads of access-controlled data. A dash means the design does not list a role.</p>
+<p class="muted">Reads that take a <code>bucket_id</code> need a signed header from a member on a private bucket, and none on a public bucket or from a provider that serves the bucket as a replica. Reads keyed by a hash or <code>data_root</code> need none on any bucket. A dash means no role.</p>
 <h3>Authentication</h3>
 <pre><code>Authorization: Web3Storage &lt;pubkey_hex&gt;:&lt;signature_hex&gt;:&lt;unix_timestamp&gt;
 Signed message: "web3storage:&lt;METHOD&gt;:&lt;bucket_id&gt;:&lt;unix_timestamp&gt;"</code></pre>

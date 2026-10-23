@@ -17,12 +17,13 @@ import { parachain } from "@polkadot-api/descriptors";
 import { getSs58AddressInfo } from "@polkadot-api/substrate-bindings";
 import {
   buildSignedTermsArgs,
-  chunkCount,
   httpFetch,
+  leafChunkCount,
   negotiateTerms,
   parseMultiaddrToUrl,
   removeMember as removeMemberTx,
   requireOneEvent,
+  signProviderRequest,
   resolveExpiredChallenge as resolveExpiredChallengeTx,
   getBucketVisibility as getBucketVisibilityQuery,
   setBucketVisibility as setBucketVisibilityTx,
@@ -505,13 +506,15 @@ export class S3Client {
       bucket_id: Number(bucketId).toString(),
       leaf_index: leafIndex.toString(),
     });
-    const response = await httpFetch(`${providerUrl}/mmr_proof?${params.toString()}`);
+    // Reader-gated on private buckets — sign as the connected owner.
+    const headers = await signProviderRequest(this.requireOwner().signer, "GET", bucketId);
+    const response = await httpFetch(`${providerUrl}/mmr_proof?${params.toString()}`, { headers });
     if (!response.ok) {
       throw new Error(`MMR proof request failed: ${response.status}`);
     }
     const result = await response.json();
-    const dataSize: number = result.leaf?.data_size ?? 0;
-    return chunkCount(dataSize);
+    if (!result.leaf) throw new Error("MMR proof response has no leaf");
+    return leafChunkCount(result.leaf);
   }
 
   /** Slash the provider of a challenge that expired unanswered; anyone may call it. */
