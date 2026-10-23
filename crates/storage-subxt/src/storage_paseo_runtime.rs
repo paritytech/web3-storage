@@ -1338,9 +1338,9 @@ pub mod api {
                         "bucket_info",
                         (bucket_id,),
                         [
-                            144u8, 7u8, 105u8, 242u8, 113u8, 125u8, 110u8, 159u8, 92u8, 249u8,
-                            124u8, 10u8, 216u8, 9u8, 168u8, 4u8, 49u8, 28u8, 247u8, 196u8, 95u8,
-                            129u8, 60u8, 118u8, 192u8, 75u8, 119u8, 23u8, 104u8, 31u8, 13u8, 138u8,
+                            138u8, 167u8, 78u8, 223u8, 164u8, 214u8, 92u8, 21u8, 210u8, 210u8,
+                            102u8, 200u8, 2u8, 242u8, 194u8, 123u8, 23u8, 136u8, 165u8, 3u8, 13u8,
+                            52u8, 238u8, 55u8, 230u8, 100u8, 103u8, 193u8, 232u8, 5u8, 158u8, 68u8,
                         ],
                     )
                 }
@@ -3467,9 +3467,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                8u8, 176u8, 191u8, 64u8, 229u8, 93u8, 91u8, 58u8, 39u8, 251u8, 47u8, 115u8, 173u8,
-                57u8, 79u8, 155u8, 144u8, 188u8, 126u8, 213u8, 98u8, 101u8, 195u8, 1u8, 254u8,
-                175u8, 47u8, 212u8, 44u8, 16u8, 42u8, 17u8,
+                179u8, 6u8, 248u8, 2u8, 112u8, 203u8, 126u8, 88u8, 109u8, 54u8, 169u8, 113u8, 30u8,
+                97u8, 97u8, 234u8, 80u8, 11u8, 22u8, 236u8, 159u8, 19u8, 19u8, 131u8, 46u8, 91u8,
+                160u8, 72u8, 20u8, 65u8, 211u8, 246u8,
             ]
     }
     pub mod system {
@@ -15461,7 +15461,8 @@ pub mod api {
             #[doc = ""]
             #[doc = "Parameters:"]
             #[doc = "- `min_providers`: primary-provider signatures each checkpoint"]
-            #[doc = "  needs. At most `MaxPrimaryProviders` (`InvalidMinProviders`)."]
+            #[doc = "  needs. At least 1 and at most `MaxPrimaryProviders`"]
+            #[doc = "  (`InvalidMinProviders`)."]
             #[doc = "  Changeable later with [`Pallet::set_min_providers`]."]
             #[doc = "- `visibility`: who may read the bucket (see [`Visibility`])."]
             pub struct CreateBucket {
@@ -15584,7 +15585,8 @@ pub mod api {
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Admin only. Set how many primary-provider signatures a checkpoint"]
-            #[doc = "needs. Cannot exceed the bucket's primary provider count."]
+            #[doc = "needs. At least 1 and at most the bucket's primary provider count,"]
+            #[doc = "so a bucket with no primaries needs one added first."]
             pub struct SetMinProviders {
                 pub bucket_id: set_min_providers::BucketId,
                 pub min_providers: set_min_providers::MinProviders,
@@ -15615,7 +15617,7 @@ pub mod api {
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Admin only. Make the bucket append-only from its current snapshot"]
             #[doc = "on. Irreversible; the snapshot must already carry `min_providers`"]
-            #[doc = "signatures."]
+            #[doc = "signatures, and at least one."]
             pub struct FreezeBucket {
                 pub bucket_id: freeze_bucket::BucketId,
             }
@@ -16011,7 +16013,8 @@ pub mod api {
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Writer or admin. Make a provider-signed commitment the bucket's"]
             #[doc = "canonical state. Needs valid signatures from at least"]
-            #[doc = "`min_providers` of the bucket's primary providers; a frozen bucket"]
+            #[doc = "`min_providers` of the bucket's primary providers, and at least"]
+            #[doc = "one; a frozen bucket"]
             #[doc = "only accepts commitments that keep its `frozen_start_seq`."]
             pub struct Checkpoint {
                 pub bucket_id: checkpoint::BucketId,
@@ -16048,7 +16051,10 @@ pub mod api {
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Writer or admin. Add signatures from primary providers that signed"]
-            #[doc = "the current snapshot late."]
+            #[doc = "the current snapshot late. A primary added after the checkpoint"]
+            #[doc = "becomes challengeable for this snapshot once its signature is added"]
+            #[doc = "here. Signers already in the bitfield are skipped without"]
+            #[doc = "verification."]
             pub struct ExtendCheckpoint {
                 pub bucket_id: extend_checkpoint::BucketId,
                 pub additional_signatures: extend_checkpoint::AdditionalSignatures,
@@ -16273,7 +16279,8 @@ pub mod api {
             #[doc = "the replica holds the bucket at one of them. If a root matches the"]
             #[doc = "current snapshot or recent history, the replica is paid"]
             #[doc = "`sync_price` from its sync balance. Rate-limited by"]
-            #[doc = "`min_sync_interval`."]
+            #[doc = "`min_sync_interval`. Fails with `AgreementExpired` once the anchor"]
+            #[doc = "block reaches the agreement's `expires_at`."]
             pub struct ConfirmReplicaSync {
                 pub bucket_id: confirm_replica_sync::BucketId,
                 pub roots: confirm_replica_sync::Roots,
@@ -16531,7 +16538,8 @@ pub mod api {
                     #[doc = ""]
                     #[doc = "Parameters:"]
                     #[doc = "- `min_providers`: primary-provider signatures each checkpoint"]
-                    #[doc = "  needs. At most `MaxPrimaryProviders` (`InvalidMinProviders`)."]
+                    #[doc = "  needs. At least 1 and at most `MaxPrimaryProviders`"]
+                    #[doc = "  (`InvalidMinProviders`)."]
                     #[doc = "  Changeable later with [`Pallet::set_min_providers`]."]
                     #[doc = "- `visibility`: who may read the bucket (see [`Visibility`])."]
                     pub fn create_bucket(
@@ -16625,7 +16633,8 @@ pub mod api {
                         )
                     }
                     #[doc = "Admin only. Set how many primary-provider signatures a checkpoint"]
-                    #[doc = "needs. Cannot exceed the bucket's primary provider count."]
+                    #[doc = "needs. At least 1 and at most the bucket's primary provider count,"]
+                    #[doc = "so a bucket with no primaries needs one added first."]
                     pub fn set_min_providers(
                         &self,
                         bucket_id: super::set_min_providers::BucketId,
@@ -16649,7 +16658,7 @@ pub mod api {
                     }
                     #[doc = "Admin only. Make the bucket append-only from its current snapshot"]
                     #[doc = "on. Irreversible; the snapshot must already carry `min_providers`"]
-                    #[doc = "signatures."]
+                    #[doc = "signatures, and at least one."]
                     pub fn freeze_bucket(
                         &self,
                         bucket_id: super::freeze_bucket::BucketId,
@@ -16957,7 +16966,8 @@ pub mod api {
                     }
                     #[doc = "Writer or admin. Make a provider-signed commitment the bucket's"]
                     #[doc = "canonical state. Needs valid signatures from at least"]
-                    #[doc = "`min_providers` of the bucket's primary providers; a frozen bucket"]
+                    #[doc = "`min_providers` of the bucket's primary providers, and at least"]
+                    #[doc = "one; a frozen bucket"]
                     #[doc = "only accepts commitments that keep its `frozen_start_seq`."]
                     pub fn checkpoint(
                         &self,
@@ -16983,7 +16993,10 @@ pub mod api {
                         )
                     }
                     #[doc = "Writer or admin. Add signatures from primary providers that signed"]
-                    #[doc = "the current snapshot late."]
+                    #[doc = "the current snapshot late. A primary added after the checkpoint"]
+                    #[doc = "becomes challengeable for this snapshot once its signature is added"]
+                    #[doc = "here. Signers already in the bitfield are skipped without"]
+                    #[doc = "verification."]
                     pub fn extend_checkpoint(
                         &self,
                         bucket_id: super::extend_checkpoint::BucketId,
@@ -17157,7 +17170,8 @@ pub mod api {
                     #[doc = "the replica holds the bucket at one of them. If a root matches the"]
                     #[doc = "current snapshot or recent history, the replica is paid"]
                     #[doc = "`sync_price` from its sync balance. Rate-limited by"]
-                    #[doc = "`min_sync_interval`."]
+                    #[doc = "`min_sync_interval`. Fails with `AgreementExpired` once the anchor"]
+                    #[doc = "block reaches the agreement's `expires_at`."]
                     pub fn confirm_replica_sync(
                         &self,
                         bucket_id: super::confirm_replica_sync::BucketId,
@@ -18222,9 +18236,10 @@ pub mod api {
                         "StorageProvider",
                         "Buckets",
                         [
-                            94u8, 138u8, 17u8, 48u8, 152u8, 138u8, 24u8, 166u8, 111u8, 41u8, 175u8,
-                            237u8, 125u8, 13u8, 34u8, 213u8, 85u8, 89u8, 99u8, 167u8, 189u8, 94u8,
-                            29u8, 240u8, 145u8, 84u8, 239u8, 213u8, 195u8, 50u8, 11u8, 209u8,
+                            224u8, 214u8, 129u8, 182u8, 126u8, 87u8, 162u8, 49u8, 155u8, 160u8,
+                            1u8, 217u8, 242u8, 62u8, 100u8, 119u8, 162u8, 109u8, 18u8, 251u8,
+                            125u8, 181u8, 178u8, 133u8, 79u8, 121u8, 40u8, 33u8, 100u8, 178u8,
+                            110u8, 126u8,
                         ],
                     )
                 }
@@ -26231,7 +26246,8 @@ pub mod api {
                     #[doc = ""]
                     #[doc = "Parameters:"]
                     #[doc = "- `min_providers`: primary-provider signatures each checkpoint"]
-                    #[doc = "  needs. At most `MaxPrimaryProviders` (`InvalidMinProviders`)."]
+                    #[doc = "  needs. At least 1 and at most `MaxPrimaryProviders`"]
+                    #[doc = "  (`InvalidMinProviders`)."]
                     #[doc = "  Changeable later with [`Pallet::set_min_providers`]."]
                     #[doc = "- `visibility`: who may read the bucket (see [`Visibility`])."]
                     create_bucket {
@@ -26281,7 +26297,8 @@ pub mod api {
                     },
                     #[codec(index = 11)]
                     #[doc = "Admin only. Set how many primary-provider signatures a checkpoint"]
-                    #[doc = "needs. Cannot exceed the bucket's primary provider count."]
+                    #[doc = "needs. At least 1 and at most the bucket's primary provider count,"]
+                    #[doc = "so a bucket with no primaries needs one added first."]
                     set_min_providers {
                         bucket_id: ::core::primitive::u64,
                         min_providers: ::core::primitive::u32,
@@ -26289,7 +26306,7 @@ pub mod api {
                     #[codec(index = 12)]
                     #[doc = "Admin only. Make the bucket append-only from its current snapshot"]
                     #[doc = "on. Irreversible; the snapshot must already carry `min_providers`"]
-                    #[doc = "signatures."]
+                    #[doc = "signatures, and at least one."]
                     freeze_bucket { bucket_id: ::core::primitive::u64 },
                     #[codec(index = 16)]
                     #[doc = "Set bucket read visibility (admin only)."]
@@ -26421,7 +26438,8 @@ pub mod api {
                     #[codec(index = 30)]
                     #[doc = "Writer or admin. Make a provider-signed commitment the bucket's"]
                     #[doc = "canonical state. Needs valid signatures from at least"]
-                    #[doc = "`min_providers` of the bucket's primary providers; a frozen bucket"]
+                    #[doc = "`min_providers` of the bucket's primary providers, and at least"]
+                    #[doc = "one; a frozen bucket"]
                     #[doc = "only accepts commitments that keep its `frozen_start_seq`."]
                     checkpoint {
                         bucket_id: ::core::primitive::u64,
@@ -26433,7 +26451,10 @@ pub mod api {
                     },
                     #[codec(index = 31)]
                     #[doc = "Writer or admin. Add signatures from primary providers that signed"]
-                    #[doc = "the current snapshot late."]
+                    #[doc = "the current snapshot late. A primary added after the checkpoint"]
+                    #[doc = "becomes challengeable for this snapshot once its signature is added"]
+                    #[doc = "here. Signers already in the bitfield are skipped without"]
+                    #[doc = "verification."]
                     extend_checkpoint {
                         bucket_id: ::core::primitive::u64,
                         additional_signatures:
@@ -26515,7 +26536,8 @@ pub mod api {
                     #[doc = "the replica holds the bucket at one of them. If a root matches the"]
                     #[doc = "current snapshot or recent history, the replica is paid"]
                     #[doc = "`sync_price` from its sync balance. Rate-limited by"]
-                    #[doc = "`min_sync_interval`."]
+                    #[doc = "`min_sync_interval`. Fails with `AgreementExpired` once the anchor"]
+                    #[doc = "block reaches the agreement's `expires_at`."]
                     confirm_replica_sync {
                         bucket_id: ::core::primitive::u64,
                         roots: [::core::option::Option<::subxt::utils::H256>; 7usize],
@@ -26680,13 +26702,14 @@ pub mod api {
                     MaxPrimaryProvidersReached,
                     #[codec(index = 25)]
                     #[doc = "The current snapshot carries fewer provider signatures than the"]
-                    #[doc = "bucket's `min_providers`."]
+                    #[doc = "bucket's `min_providers`, or none."]
                     MinProvidersNotMet,
                     #[codec(index = 26)]
-                    #[doc = "A `min_providers` value the bucket cannot satisfy: above"]
+                    #[doc = "A `min_providers` value the pallet does not accept: zero, above"]
                     #[doc = "`MaxPrimaryProviders` at creation, or above the bucket's current"]
-                    #[doc = "primary count in `set_min_providers`. Pass a smaller number, or"]
-                    #[doc = "add primaries first."]
+                    #[doc = "primary count in `set_min_providers`. Pass a value from 1 to the"]
+                    #[doc = "current primary count; to require more signatures, add primaries"]
+                    #[doc = "first."]
                     InvalidMinProviders,
                     #[codec(index = 27)]
                     #[doc = "Only members and primary-agreement owners may challenge a primary"]
@@ -26781,7 +26804,9 @@ pub mod api {
                     #[codec(index = 52)]
                     #[doc = "The provider did not sign the bucket's current snapshot, so there"]
                     #[doc = "is no on-chain commitment to challenge; use `challenge_offchain`"]
-                    #[doc = "with a signed commitment instead."]
+                    #[doc = "with a signed commitment instead. `checkpoint` and"]
+                    #[doc = "`extend_checkpoint` return it when a signer is not a primary of"]
+                    #[doc = "the bucket."]
                     ProviderNotInSnapshot,
                     #[codec(index = 53)]
                     #[doc = "`target.leaf_index` is not below the commitment's `leaf_count`: the"]
@@ -26812,7 +26837,8 @@ pub mod api {
                     #[doc = "`frozen_start_seq`."]
                     SnapshotViolatesFrozen,
                     #[codec(index = 60)]
-                    #[doc = "Fewer valid provider signatures than the bucket's `min_providers`."]
+                    #[doc = "Fewer valid provider signatures than the bucket's `min_providers`,"]
+                    #[doc = "or none."]
                     InsufficientSignatures,
                     #[codec(index = 61)]
                     #[doc = "A balance or counter computation overflowed."]
@@ -31737,7 +31763,10 @@ pub mod api {
             pub struct BucketSnapshot<_0> {
                 pub commitment: runtime_types::storage_primitives::Commitment,
                 pub checkpoint_block: _0,
-                pub primary_signers: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
+                pub primary_signers: ::subxt::utils::bits::DecodedBits<
+                    ::core::primitive::u8,
+                    ::subxt::utils::bits::Lsb0,
+                >,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,

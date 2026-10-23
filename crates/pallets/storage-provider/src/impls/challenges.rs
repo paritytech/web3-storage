@@ -52,7 +52,10 @@ impl<T: Config> Pallet<T> {
             .position(|p| p == &provider)
             .ok_or(Error::<T>::ProviderNotInSnapshot)?;
         ensure!(
-            snapshot.has_provider_signed(provider_idx),
+            snapshot
+                .primary_signers
+                .get(provider_idx)
+                .is_some_and(|signed| *signed),
             Error::<T>::ProviderNotInSnapshot
         );
 

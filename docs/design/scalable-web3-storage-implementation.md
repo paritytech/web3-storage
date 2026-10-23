@@ -523,12 +523,13 @@ pub struct BucketSnapshot<BlockNumber> {
     pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
     /// Bit i (LSB0) is set if `primary_providers[i]` signed.
-    /// Stored as `Vec<u8>` with explicit `count_signers()` / `has_provider_signed()`
-    /// helpers rather than `BitVec` to keep encoding stable and `no_std`-friendly.
-    /// `primary_providers` is bounded by `T::MaxPrimaryProviders` (e.g., 5), so
-    /// indices are stable within a checkpoint; if it changes between checkpoints
-    /// the bitfield is regenerated at the next checkpoint.
-    pub primary_signers: Vec<u8>,
+    /// `BitVec<u8, Lsb0>` whose length always equals `primary_providers.len()`
+    /// (bounded by `T::MaxPrimaryProviders`, e.g., 5). `checkpoint` builds it
+    /// from the submitted signatures. Afterwards it changes in place: adding a
+    /// primary appends an unset bit; removing a primary removes its bit, which
+    /// shifts the later bits down one index; a primary added after the
+    /// checkpoint gets its bit set when it signs via `extend_checkpoint`.
+    pub primary_signers: BitVec<u8, Lsb0>,
 }
 // Canonical range is [start_seq, start_seq + leaf_count)
 // Destructive writes (new MMR that allows pruning old) must set start_seq >= old_start_seq + old_leaf_count
