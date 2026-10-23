@@ -18,9 +18,12 @@ import {
   useActiveChallenge,
   useChallengeStatus,
   useChallengeHistory,
+  cancelChallenge,
   resolveExpiredChallenge,
 } from "@/state/challenge.state";
+import { useSignerAddress } from "@/state/wallet.state";
 import { truncateHash } from "@web3-storage/format";
+import { isSameAddress } from "@web3-storage/sdk";
 import { getS3Client } from "@/state";
 import type { OpenChallenge } from "@/lib/s3-client";
 import ChallengeDialog from "./ChallengeDialog";
@@ -45,6 +48,9 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
 
   const [challengeOpen, setChallengeOpen] = useState(false);
   const [providers, setProviders] = useState<string[]>([]);
+  const signerAddress = useSignerAddress();
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<{ key: string; message: string } | null>(null);
 
   const bucketId = selectedBucket?.bucketId ?? null;
   const challengeBusy = challengeStatus !== "idle";
@@ -162,6 +168,9 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
                   activeChallenge?.status === "submitted" &&
                   activeChallenge.challengeId.deadline === c.deadline &&
                   activeChallenge.challengeId.index === c.index;
+                const isMine =
+                  signerAddress !== null && isSameAddress(c.challenger, signerAddress);
+                const cancelBucket = isMine && !isExpired && bucketId !== null ? bucketId : null;
                 return (
                   <div
                     key={rowKey}
@@ -209,6 +218,42 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
                     <div className="text-muted-foreground">
                       Challenger: {truncateHash(c.challenger, 6, 4)}
                     </div>
+                    {cancelBucket !== null && (
+                      <div className="pt-1 space-y-1">
+                        <Button
+                          data-testid="cancel-challenge"
+                          variant="outline"
+                          size="sm"
+                          disabled={cancelling !== null || challengeStatus === "submitting"}
+                          onClick={async () => {
+                            setCancelling(rowKey);
+                            setCancelError(null);
+                            try {
+                              await cancelChallenge(
+                                cancelBucket,
+                                { deadline: c.deadline, index: c.index },
+                                c.provider,
+                              );
+                            } catch (err) {
+                              setCancelError({
+                                key: rowKey,
+                                message: err instanceof Error ? err.message : String(err),
+                              });
+                            } finally {
+                              setCancelling(null);
+                            }
+                          }}
+                        >
+                          {cancelling === rowKey ? (
+                            <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                          ) : null}
+                          Cancel challenge
+                        </Button>
+                        {cancelError?.key === rowKey && (
+                          <p className="text-red-600 dark:text-red-400">{cancelError.message}</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -222,7 +267,7 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
             variant="outline"
             size="sm"
             onClick={() => setChallengeOpen(true)}
-            disabled={!info || challengeBusy || bucketId === null}
+            disabled={!info || challengeBusy || bucketId === null || cancelling !== null}
           >
             <Swords className="mr-2 h-3.5 w-3.5" />
             Challenge Provider
