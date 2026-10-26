@@ -14,10 +14,6 @@ pub enum Error {
     #[error("Leaf not found: index {leaf_index} in bucket {bucket_id}")]
     LeafNotFound { bucket_id: u64, leaf_index: u64 },
 
-    /// The MMR holds no proof for this leaf index.
-    #[error("MMR proof not found: leaf index {leaf_index} in bucket {bucket_id}")]
-    MmrProofNotFound { bucket_id: u64, leaf_index: u64 },
-
     #[error("Commitment not reproducible from local leaves: {0}")]
     CommitmentNotReproducible(String),
 

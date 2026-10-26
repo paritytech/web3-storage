@@ -160,18 +160,6 @@ impl IntoResponse for Error {
                         ),
                     },
                 ),
-                StorageError::MmrProofNotFound {
-                    bucket_id,
-                    leaf_index,
-                } => (
-                    StatusCode::NOT_FOUND,
-                    ErrorResponse {
-                        error: "not_found".to_string(),
-                        details: Some(
-                            serde_json::json!({ "bucket_id": bucket_id, "leaf_index": leaf_index }),
-                        ),
-                    },
-                ),
                 StorageError::ChildrenMissing(children) => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
