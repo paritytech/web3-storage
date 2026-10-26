@@ -10,13 +10,13 @@
 //! on a slow safety-net interval — a missed challenge means getting slashed,
 //! so the event path is backstopped rather than trusted blindly.
 
-use provider_chain::{BlockEvent, BlockEventRx};
+use provider_events::{BlockEvent, BlockEventRx};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::{BucketId, MerkleProof, MmrProof};
+use storage_primitives::{BucketId, ChunkLocation, Commitment, MmrProof};
 use tokio::sync::{broadcast, mpsc};
 
 /// What proof data a failure was about.
@@ -106,19 +106,22 @@ impl ChallengeError {
 /// Backed by the provider node's storage backend; kept narrow so this crate
 /// stays decoupled from the full storage engine.
 pub trait ChallengeProofSource: Send + Sync {
-    /// Generate an MMR proof for the given leaf of a bucket's commitment.
-    fn get_mmr_proof(
+    /// Generate an MMR proof for `leaf_index` against the exact cited
+    /// commitment state (which later commits or prunes may have moved past).
+    fn get_mmr_proof_for_commitment(
         &self,
         bucket_id: BucketId,
+        commitment: &Commitment,
         leaf_index: u64,
     ) -> Result<MmrProof, ChallengeError>;
 
-    /// Fetch a chunk and its Merkle proof under the given data root.
+    /// Fetch a chunk and its Merkle proof (sibling hashes up to the data root)
+    /// under the given data root.
     fn get_chunk_at_index(
         &self,
         data_root: H256,
         chunk_index: u64,
-    ) -> Result<(Vec<u8>, MerkleProof), ChallengeError>;
+    ) -> Result<(Vec<u8>, Vec<H256>), ChallengeError>;
 }
 
 /// Configuration for the challenge responder.
@@ -159,16 +162,11 @@ pub struct DetectedChallenge {
     pub deadline: u32,
     /// Challenge index within the deadline.
     pub index: u16,
-    /// MMR root being challenged.
-    pub mmr_root: H256,
-    /// Start sequence of the commitment.
-    pub start_seq: u64,
-    /// Leaf index in the MMR to prove.
-    pub leaf_index: u64,
-    /// Chunk index within the leaf to prove.
-    pub chunk_index: u64,
-    /// Challenger's account.
-    pub challenger: String,
+    /// The commitment being challenged; on-chain proof verification is bound
+    /// to the exact `(target.leaf_index, commitment.leaf_count)` position.
+    pub commitment: Commitment,
+    /// Leaf + chunk to prove.
+    pub target: ChunkLocation,
 }
 
 /// Result of responding to a challenge.
@@ -207,7 +205,7 @@ pub trait ChallengeChainClient: Send + Sync {
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError>;
 
     /// Point-read a single challenge by id, `None` if it is gone (already
-    /// responded / reaped) or targets another provider. Backs the
+    /// responded / resolved) or targets another provider. Backs the
     /// event-driven path, where `ChallengeCreated` carries the id but not
     /// the proof parameters.
     async fn fetch_challenge(
@@ -220,10 +218,23 @@ pub trait ChallengeChainClient: Send + Sync {
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
+        response: ChallengeResponse,
+    ) -> Result<H256, ChallengeError>;
+}
+
+/// A response the responder submits for a challenge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChallengeResponse {
+    /// The challenged chunk, the leaf's MMR proof and the chunk's Merkle proof
+    /// under the leaf's `data_root`.
+    Proof {
         chunk_data: Vec<u8>,
         mmr_proof: MmrProof,
-        chunk_proof: MerkleProof,
-    ) -> Result<H256, ChallengeError>;
+        chunk_proof: Vec<H256>,
+    },
+    /// The challenged `chunk_index` is at or beyond the leaf's chunk count, so
+    /// only the leaf's MMR proof goes on chain.
+    ChunkOutOfRange { mmr_proof: MmrProof },
 }
 
 #[async_trait::async_trait]
@@ -243,13 +254,9 @@ impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
-        chunk_data: Vec<u8>,
-        mmr_proof: MmrProof,
-        chunk_proof: MerkleProof,
+        response: ChallengeResponse,
     ) -> Result<H256, ChallengeError> {
-        self.as_ref()
-            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
-            .await
+        self.as_ref().submit_response(challenge_id, response).await
     }
 }
 
@@ -407,9 +414,10 @@ impl ChallengeResponder {
                 // While paused, stop consuming so events stay queued instead of
                 // being dropped. Replaying them on resume is safe: each one is
                 // point-read against live chain state, so anything already
-                // resolved is a no-op. A pause longer than the channel's
-                // capacity surfaces as `Lagged` below, which reconciles with a
-                // full scan.
+                // resolved is a no-op; an expired, unresolved one costs one
+                // rejected response (`ChallengeExpired`). A pause longer than
+                // the channel's capacity surfaces as `Lagged` below, which
+                // reconciles with a full scan.
                 event = events_rx.recv(), if events_open && !paused => {
                     if matches!(event, Err(broadcast::error::RecvError::Closed)) {
                         events_open = false;
@@ -501,11 +509,15 @@ impl ChallengeResponder {
             challenge.bucket_id
         );
 
-        // Step 1: Generate MMR proof (includes the leaf with data_root)
-        let mmr_proof = match self
-            .proof_source
-            .get_mmr_proof(challenge.bucket_id, challenge.leaf_index)
-        {
+        // Step 1: Generate MMR proof (includes the leaf with data_root).
+        // The challenged leaf_index is relative to the cited commitment's
+        // start_seq, and the cited root may predate later commits or prunes,
+        // so the proof is rebuilt for that exact commitment state.
+        let mmr_proof = match self.proof_source.get_mmr_proof_for_commitment(
+            challenge.bucket_id,
+            &challenge.commitment,
+            challenge.target.leaf_index,
+        ) {
             Ok(proof) => proof,
             Err(e) => {
                 log_proof_failure(challenge, "Failed to generate MMR proof", &e);
@@ -513,7 +525,7 @@ impl ChallengeResponder {
                     return ChallengeResponseResult::DataNotFound {
                         challenge_id,
                         bucket_id: challenge.bucket_id,
-                        leaf_index: challenge.leaf_index,
+                        leaf_index: challenge.target.leaf_index,
                     };
                 }
                 return ChallengeResponseResult::ProofGenerationFailed {
@@ -523,33 +535,51 @@ impl ChallengeResponder {
             }
         };
 
-        // Step 2: Get chunk data and Merkle proof using data_root from MMR leaf
-        let data_root = mmr_proof.leaf.data_root;
-        let (chunk_data, chunk_proof) = match self
-            .proof_source
-            .get_chunk_at_index(data_root, challenge.chunk_index)
-        {
-            Ok(data) => data,
-            Err(e) => {
-                log_proof_failure(challenge, "Failed to get chunk data", &e);
-                if e.risks_slashing() {
-                    return ChallengeResponseResult::DataNotFound {
+        // Step 2: a chunk index at or past the leaf's chunk count has no chunk
+        // to prove, so the leaf's MMR proof alone answers it. Otherwise fetch
+        // the chunk and its Merkle proof under the leaf's data_root.
+        let Some(chunk_count) = mmr_proof.leaf.chunk_count() else {
+            let error = format!("unknown leaf version {}", mmr_proof.leaf.leaf_version);
+            tracing::error!("Failed to answer challenge: {}", error);
+            return ChallengeResponseResult::ProofGenerationFailed {
+                challenge_id,
+                error,
+            };
+        };
+        let response = if challenge.target.chunk_index >= chunk_count {
+            ChallengeResponse::ChunkOutOfRange { mmr_proof }
+        } else {
+            let (chunk_data, chunk_proof) = match self
+                .proof_source
+                .get_chunk_at_index(mmr_proof.leaf.data_root, challenge.target.chunk_index)
+            {
+                Ok(data) => data,
+                Err(e) => {
+                    log_proof_failure(challenge, "Failed to get chunk data", &e);
+                    if e.risks_slashing() {
+                        return ChallengeResponseResult::DataNotFound {
+                            challenge_id,
+                            bucket_id: challenge.bucket_id,
+                            leaf_index: challenge.target.leaf_index,
+                        };
+                    }
+                    return ChallengeResponseResult::ProofGenerationFailed {
                         challenge_id,
-                        bucket_id: challenge.bucket_id,
-                        leaf_index: challenge.leaf_index,
+                        error: e.to_string(),
                     };
                 }
-                return ChallengeResponseResult::ProofGenerationFailed {
-                    challenge_id,
-                    error: e.to_string(),
-                };
+            };
+            ChallengeResponse::Proof {
+                chunk_data,
+                mmr_proof,
+                chunk_proof,
             }
         };
 
-        // Step 3: Submit response transaction
+        // Step 3: submit and report the outcome
         match self
             .chain_client
-            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
+            .submit_response(challenge_id, response)
             .await
         {
             Ok(block_hash) => {
@@ -583,16 +613,16 @@ fn log_proof_failure(challenge: &DetectedChallenge, what: &str, e: &ChallengeErr
     if e.risks_slashing() {
         tracing::error!(
             bucket_id = challenge.bucket_id,
-            leaf_index = challenge.leaf_index,
-            chunk_index = challenge.chunk_index,
+            leaf_index = challenge.target.leaf_index,
+            chunk_index = challenge.target.chunk_index,
             deadline = challenge.deadline,
             "{what}: {e}"
         );
     } else {
         tracing::warn!(
             bucket_id = challenge.bucket_id,
-            leaf_index = challenge.leaf_index,
-            chunk_index = challenge.chunk_index,
+            leaf_index = challenge.target.leaf_index,
+            chunk_index = challenge.target.chunk_index,
             deadline = challenge.deadline,
             "{what}: {e}"
         );
@@ -605,7 +635,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
-    use storage_primitives::MmrLeaf;
+    use storage_primitives::{MmrLeaf, DEFAULT_CHUNK_SIZE, LEAF_VERSION};
 
     const CHUNK: &[u8] = b"chunk bytes";
 
@@ -630,11 +660,15 @@ mod tests {
             bucket_id,
             deadline,
             index,
-            mmr_root: H256::repeat_byte(0x11),
-            start_seq: 0,
-            leaf_index: 7,
-            chunk_index: 3,
-            challenger: "challenger".to_string(),
+            commitment: Commitment {
+                mmr_root: H256::repeat_byte(0x11),
+                start_seq: 0,
+                leaf_count: 8,
+            },
+            target: ChunkLocation {
+                leaf_index: 7,
+                chunk_index: 3,
+            },
         }
     }
 
@@ -676,9 +710,10 @@ mod tests {
     }
 
     impl ChallengeProofSource for MockProofSource {
-        fn get_mmr_proof(
+        fn get_mmr_proof_for_commitment(
             &self,
             bucket_id: BucketId,
+            _commitment: &Commitment,
             leaf_index: u64,
         ) -> Result<MmrProof, ChallengeError> {
             self.mmr_calls
@@ -690,17 +725,15 @@ mod tests {
                 leaf_index,
             };
             match self.mmr {
+                // Four chunks, so the challenged chunk index 3 is in range.
                 Lookup::Found => Ok(MmrProof {
-                    peaks: vec![H256::repeat_byte(0x22)],
                     leaf: MmrLeaf {
+                        leaf_version: LEAF_VERSION,
                         data_root: data_root(),
-                        data_size: 1024,
-                        total_size: 1024,
+                        data_size: 4 * u64::from(DEFAULT_CHUNK_SIZE),
+                        total_size: 4 * u64::from(DEFAULT_CHUNK_SIZE),
                     },
-                    leaf_proof: MerkleProof {
-                        siblings: vec![],
-                        path: vec![],
-                    },
+                    items: vec![H256::repeat_byte(0x22)],
                 }),
                 Lookup::Missing => Err(ChallengeError::ProofDataMissing { target }),
                 Lookup::BackendFailed => Err(ChallengeError::StorageUnavailable {
@@ -714,7 +747,7 @@ mod tests {
             &self,
             data_root: H256,
             chunk_index: u64,
-        ) -> Result<(Vec<u8>, MerkleProof), ChallengeError> {
+        ) -> Result<(Vec<u8>, Vec<H256>), ChallengeError> {
             self.chunk_calls
                 .lock()
                 .expect("lock")
@@ -724,13 +757,7 @@ mod tests {
                 chunk_index,
             };
             match self.chunk {
-                Lookup::Found => Ok((
-                    CHUNK.to_vec(),
-                    MerkleProof {
-                        siblings: vec![H256::repeat_byte(0x33)],
-                        path: vec![true],
-                    },
-                )),
+                Lookup::Found => Ok((CHUNK.to_vec(), vec![H256::repeat_byte(0x33)])),
                 Lookup::Missing => Err(ChallengeError::ProofDataMissing { target }),
                 Lookup::BackendFailed => Err(ChallengeError::StorageUnavailable {
                     target,
@@ -825,10 +852,16 @@ mod tests {
         async fn submit_response(
             &self,
             challenge_id: (u32, u16),
-            chunk_data: Vec<u8>,
-            mmr_proof: MmrProof,
-            _chunk_proof: MerkleProof,
+            response: ChallengeResponse,
         ) -> Result<H256, ChallengeError> {
+            let (chunk_data, mmr_proof) = match response {
+                ChallengeResponse::Proof {
+                    chunk_data,
+                    mmr_proof,
+                    ..
+                } => (chunk_data, mmr_proof),
+                ChallengeResponse::ChunkOutOfRange { mmr_proof } => (Vec::new(), mmr_proof),
+            };
             self.submissions.lock().expect("lock").push(Submission {
                 challenge_id,
                 chunk_data,
@@ -954,7 +987,10 @@ mod tests {
         // The chunk lookup must use the data root the MMR leaf commits to -
         // proving a chunk under any other root answers a different question
         // than the one the chain asked.
-        assert_eq!(proofs.chunk_calls(), vec![(data_root(), c.chunk_index)]);
+        assert_eq!(
+            proofs.chunk_calls(),
+            vec![(data_root(), c.target.chunk_index)]
+        );
         assert_eq!(
             chain.submissions(),
             vec![Submission {
@@ -978,7 +1014,7 @@ mod tests {
             matches!(
                 result,
                 ChallengeResponseResult::DataNotFound { challenge_id, bucket_id, leaf_index }
-                    if challenge_id == (100, 1) && bucket_id == 5 && leaf_index == c.leaf_index
+                    if challenge_id == (100, 1) && bucket_id == 5 && leaf_index == c.target.leaf_index
             ),
             "unexpected result: {result:?}"
         );
@@ -1002,7 +1038,7 @@ mod tests {
             matches!(
                 result,
                 ChallengeResponseResult::DataNotFound { challenge_id, bucket_id, leaf_index }
-                    if challenge_id == (100, 2) && bucket_id == 5 && leaf_index == c.leaf_index
+                    if challenge_id == (100, 2) && bucket_id == 5 && leaf_index == c.target.leaf_index
             ),
             "unexpected result: {result:?}"
         );

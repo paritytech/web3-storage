@@ -116,7 +116,7 @@ fn replica_transfer_moves_the_sync_balance_too() {
     new_test_ext().execute_with(|| {
         const REPLICA: u64 = 3;
         replica_provider(REPLICA, 200);
-        let bucket_id = create_bucket(OWNER, 0);
+        let bucket_id = create_bucket(OWNER, 1);
         setup_replica_agreement(
             REPLICA,
             OWNER,

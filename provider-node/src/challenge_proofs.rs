@@ -18,9 +18,10 @@ impl StorageProofSource {
 }
 
 impl ChallengeProofSource for StorageProofSource {
-    fn get_mmr_proof(
+    fn get_mmr_proof_for_commitment(
         &self,
         bucket_id: storage_primitives::BucketId,
+        commitment: &storage_primitives::Commitment,
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, ChallengeError> {
         let target = ProofTarget::MmrLeaf {
@@ -28,7 +29,7 @@ impl ChallengeProofSource for StorageProofSource {
             leaf_index,
         };
         self.0
-            .get_mmr_proof(bucket_id, leaf_index)
+            .get_mmr_proof_for_commitment(bucket_id, commitment, leaf_index)
             .map_err(|e| classify(e, target))
     }
 
@@ -36,7 +37,7 @@ impl ChallengeProofSource for StorageProofSource {
         &self,
         data_root: sp_core::H256,
         chunk_index: u64,
-    ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), ChallengeError> {
+    ) -> Result<(Vec<u8>, Vec<sp_core::H256>), ChallengeError> {
         let target = ProofTarget::Chunk {
             data_root,
             chunk_index,
@@ -50,7 +51,7 @@ impl ChallengeProofSource for StorageProofSource {
 /// Translate a storage-layer failure into what the challenge responder needs
 /// to know: is the proof data provably gone, or did the backend itself fail?
 ///
-/// `NodeNotFound`, `BucketNotFound`, `ChunkNotFound` and `LeafNotFound` mean
+/// `NodeNotFound`, `BucketNotFound`, `ChunkIndexOutOfRange` and `LeafNotFound` mean
 /// the storage layer looked and found nothing there - genuine absence, once
 /// the reads underneath stopped collapsing a backend failure into the same
 /// signal (see `StorageBackend`). `MmrProofNotFound` is included for the same
@@ -74,7 +75,7 @@ fn classify(e: provider_storage::Error, target: ProofTarget) -> ChallengeError {
     match e {
         Error::NodeNotFound(_)
         | Error::BucketNotFound(_)
-        | Error::ChunkNotFound { .. }
+        | Error::ChunkIndexOutOfRange { .. }
         | Error::LeafNotFound { .. }
         | Error::MmrProofNotFound { .. } => ChallengeError::ProofDataMissing { target },
         other => ChallengeError::StorageUnavailable {
@@ -87,19 +88,28 @@ fn classify(e: provider_storage::Error, target: ProofTarget) -> ChallengeError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider_storage::temp_rocksdb;
-    use storage_primitives::blake2_256;
+    use provider_storage::{temp_rocksdb, ChunkTreeNode};
+    use storage_primitives::hash_leaf;
+
+    /// A commitment for tests that fail before the commitment is read.
+    fn any_commitment() -> storage_primitives::Commitment {
+        storage_primitives::Commitment {
+            mmr_root: sp_core::H256::zero(),
+            start_seq: 0,
+            leaf_count: 1,
+        }
+    }
 
     /// Constructing this from a bare `Arc<dyn StorageBackend>`, with no
     /// `ProviderState` in sight, is the point of the newtype.
     fn source_over_committed_chunk() -> (Arc<dyn ChallengeProofSource>, sp_core::H256, Vec<u8>) {
-        let (storage, _nonce_store, _dir) = temp_rocksdb();
+        let (storage, _dir) = temp_rocksdb();
         storage.init_bucket(1, 1024 * 1024).unwrap();
 
         let chunk_data = b"proof-source-test-chunk".to_vec();
-        let chunk_hash = blake2_256(&chunk_data);
+        let chunk_hash = hash_leaf(&chunk_data);
         storage
-            .store_node(1, chunk_hash, chunk_data.clone(), None)
+            .store_node(1, chunk_hash, ChunkTreeNode::Chunk(chunk_data.clone()))
             .unwrap();
         storage.commit(1, vec![chunk_hash]).unwrap();
 
@@ -110,18 +120,37 @@ mod tests {
 
     #[test]
     fn get_mmr_proof_matches_the_backend() {
-        let (storage, _nonce_store, _dir) = temp_rocksdb();
+        let (storage, _dir) = temp_rocksdb();
         storage.init_bucket(1, 1024 * 1024).unwrap();
-        let chunk_hash = blake2_256(b"mmr-proof-test-chunk");
+        let chunk_hash = hash_leaf(b"mmr-proof-test-chunk");
         storage
-            .store_node(1, chunk_hash, b"mmr-proof-test-chunk".to_vec(), None)
+            .store_node(
+                1,
+                chunk_hash,
+                ChunkTreeNode::Chunk(b"mmr-proof-test-chunk".to_vec()),
+            )
             .unwrap();
         storage.commit(1, vec![chunk_hash]).unwrap();
 
-        let expected = storage.get_mmr_proof(1, 0).unwrap();
+        let commitment = {
+            let info = storage.get_bucket(1).unwrap().unwrap();
+            storage_primitives::Commitment {
+                mmr_root: info.mmr_root,
+                start_seq: info.start_seq,
+                leaf_count: info.leaf_count,
+            }
+        };
+        let expected = storage
+            .get_mmr_proof_for_commitment(1, &commitment, 0)
+            .unwrap();
         let source = StorageProofSource::new(Arc::clone(&storage));
 
-        assert_eq!(source.get_mmr_proof(1, 0).unwrap(), expected);
+        assert_eq!(
+            source
+                .get_mmr_proof_for_commitment(1, &commitment, 0)
+                .unwrap(),
+            expected
+        );
     }
 
     #[test]
@@ -130,8 +159,7 @@ mod tests {
 
         let (data, proof) = source.get_chunk_at_index(chunk_hash, 0).unwrap();
         assert_eq!(data, chunk_data);
-        assert!(proof.siblings.is_empty());
-        assert!(proof.path.is_empty());
+        assert!(proof.is_empty());
     }
 
     /// A data root the backend has never seen (empty tree, nothing
@@ -139,7 +167,7 @@ mod tests {
     /// `ProofDataMissing` row of the mapping.
     #[test]
     fn missing_chunk_data_is_reported_as_provably_missing() {
-        let (storage, _nonce_store, _dir) = temp_rocksdb();
+        let (storage, _dir) = temp_rocksdb();
         storage.init_bucket(1, 1024 * 1024).unwrap();
 
         let source = StorageProofSource::new(storage);
@@ -165,10 +193,12 @@ mod tests {
     /// on the MMR-proof side of the mapping.
     #[test]
     fn missing_bucket_is_reported_as_provably_missing() {
-        let (storage, _nonce_store, _dir) = temp_rocksdb();
+        let (storage, _dir) = temp_rocksdb();
         let source = StorageProofSource::new(storage);
 
-        let err = source.get_mmr_proof(999, 0).unwrap_err();
+        let err = source
+            .get_mmr_proof_for_commitment(999, &any_commitment(), 0)
+            .unwrap_err();
 
         assert!(err.risks_slashing());
         match err {
@@ -205,10 +235,7 @@ mod tests {
         ) -> Result<Option<provider_storage::BucketInfo>, provider_storage::Error> {
             unimplemented!("not exercised by this test")
         }
-        fn list_buckets(&self) -> Vec<provider_storage::BucketSummary> {
-            unimplemented!("not exercised by this test")
-        }
-        fn get_bucket_stats(&self) -> Vec<provider_storage::BucketStats> {
+        fn bucket_ids(&self) -> Vec<storage_primitives::BucketId> {
             unimplemented!("not exercised by this test")
         }
         fn total_nodes(&self) -> u64 {
@@ -221,15 +248,14 @@ mod tests {
             &self,
             _: storage_primitives::BucketId,
             _: sp_core::H256,
-            _: Vec<u8>,
-            _: Option<Vec<sp_core::H256>>,
+            _: ChunkTreeNode,
         ) -> Result<(), provider_storage::Error> {
             unimplemented!("not exercised by this test")
         }
         fn get_node(
             &self,
             _: &sp_core::H256,
-        ) -> Result<Option<provider_storage::StoredNode>, provider_storage::Error> {
+        ) -> Result<Option<ChunkTreeNode>, provider_storage::Error> {
             unimplemented!("not exercised by this test")
         }
         fn check_exists(
@@ -243,7 +269,7 @@ mod tests {
             &self,
             _: storage_primitives::BucketId,
             _: Vec<sp_core::H256>,
-        ) -> Result<(sp_core::H256, u64, Vec<u64>), provider_storage::Error> {
+        ) -> Result<provider_storage::CommitOutcome, provider_storage::Error> {
             unimplemented!("not exercised by this test")
         }
         fn delete_before(
@@ -258,13 +284,21 @@ mod tests {
             _: storage_primitives::BucketId,
             _: u64,
         ) -> Result<storage_primitives::MmrProof, provider_storage::Error> {
+            unimplemented!("not exercised by this test")
+        }
+        fn get_mmr_proof_for_commitment(
+            &self,
+            _: storage_primitives::BucketId,
+            _: &storage_primitives::Commitment,
+            _: u64,
+        ) -> Result<storage_primitives::MmrProof, provider_storage::Error> {
             Err(provider_storage::Error::ColumnFamilyMissing("nodes"))
         }
         fn get_chunk_at_index(
             &self,
             _: sp_core::H256,
             _: u64,
-        ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), provider_storage::Error> {
+        ) -> Result<(Vec<u8>, Vec<sp_core::H256>), provider_storage::Error> {
             Err(provider_storage::Error::Serialization(
                 "simulated corrupt record".to_string(),
             ))
@@ -281,7 +315,9 @@ mod tests {
     fn mmr_proof_backend_failure_is_reported_as_storage_unavailable_not_missing() {
         let source = StorageProofSource::new(Arc::new(AlwaysFailingBackend));
 
-        let err = source.get_mmr_proof(1, 0).unwrap_err();
+        let err = source
+            .get_mmr_proof_for_commitment(1, &any_commitment(), 0)
+            .unwrap_err();
 
         assert!(err.is_retryable());
         assert!(!err.risks_slashing());

@@ -60,28 +60,61 @@ primaries (replicas stay challengeable by anyone).
 
 Users who create conflicts without checkpointing waste their quota—providers must keep all signed data.
 
-**Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. Internal nodes are data whose content is child hashes. Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete.
+**Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. An internal node is its two child hashes; chunks and nodes are hashed with different prefixes (`0x00` for a chunk, `0x01` for a node). Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete. The provider signs a commitment only over roots whose tree is the RFC 9162 tree over `CHUNK_SIZE` chunks (see "Chunk Tree"), and rejects other shapes and chunk sizes.
 
 ### Provider Lifecycle in Bucket
 
-Agreements are established by redeeming provider-signed terms: the provider
-quotes `AgreementTerms` off-chain (e.g. over HTTP), signs them, and the
-client submits the signed quote on-chain in a single call — there is no
-on-chain request/accept round-trip.
+Bucket creation and provider assignment are separate on-chain operations.
+Four calls cover them:
 
-**Adding a provider:**
-1. Provider quotes primary `AgreementTerms` off-chain and signs them
-2. Owner calls `establish_storage_agreement` with the signed terms → bucket
-   created with the owner as sole admin, `StorageAgreement` created, provider
-   added to `bucket.primary_providers`
-3. Client uploads data to provider
+| Call | Who | Effect |
+| --- | --- | --- |
+| `create_bucket` | anyone | Empty bucket, caller is sole admin |
+| `create_bucket_with_primary` | the quoted account (`terms.owner`) | `create_bucket` + `add_primary_provider` in one atomic call |
+| `add_primary_provider` | bucket admin | Primary agreement on an existing bucket |
+| `add_replica_provider` | the quoted account (`terms.owner`) | Replica agreement on an existing bucket |
+
+Every agreement is established by redeeming provider-signed terms: the
+provider quotes `AgreementTerms` off-chain (`POST /negotiate`), signs them,
+and the client submits the signed quote on-chain in a single call — there is
+no on-chain request/accept round-trip. `terms.bucket` names which bucket the
+quote is for: `BucketTarget::New` for `create_bucket_with_primary`, where the
+bucket does not exist yet, and `BucketTarget::Existing(id)` for
+`add_primary_provider` and `add_replica_provider`, which must target that
+same bucket. The provider signs the target, so
+it can decline one bucket without declining the account.
+
+**Creating a bucket:**
+1. Admin calls `create_bucket` → bucket created with the caller as sole
+   admin, no providers, no data. The `bucket_id` is assigned here and never
+   changes.
+2. Or: admin requests primary `AgreementTerms` with
+   `bucket: BucketTarget::New`, the provider signs them, admin calls
+   `create_bucket_with_primary` →
+   bucket created and the provider added as its first primary in the same
+   block. One transaction instead of two; a caller that needs bucket and
+   provider in the same block uses this path.
+
+**Adding a primary provider:**
+1. Admin requests primary `AgreementTerms` for the `bucket_id` from the
+   provider off-chain; the provider signs them
+2. Admin calls `add_primary_provider` with the signed terms →
+   `StorageAgreement` created, provider appended to
+   `bucket.primary_providers`, `ProviderAddedToBucket` emitted
+3. Client uploads data to the provider. For a bucket that already has data,
+   the client uploads the existing data too — primaries do not sync with
+   each other (see Multi-Provider Coordination)
 4. Client requests commit, provider signs → client has provider signature
 5. Client calls `checkpoint` with provider signature → provider added to `snapshot.primary_signers` bitfield
+
+Adding a second primary before the first agreement ends is how a client
+changes provider without downtime: the new primary receives the data and
+signs a checkpoint while the old one is still bound.
 
 **Adding a replica provider (optional, permissionless):**
 1. Provider quotes replica `AgreementTerms` (with `replica_params`: sync
    funding and interval) off-chain and signs them
-2. Anyone calls `establish_replica_agreement` with the signed terms on an
+2. Anyone calls `add_replica_provider` with the signed terms on an
    existing bucket → `StorageAgreement` created with `ProviderRole::Replica`
 3. Replica syncs data autonomously from primaries, other replicas, or any data
    holder willing to push it (everything is content-addressed and self-verifying)
@@ -103,6 +136,13 @@ When `expires_at` is reached:
 3. Provider is no longer bound to store data
 4. Provider won't be included in future checkpoints
 
+**Bucket without providers:** ending the last agreement removes the provider
+from `bucket.primary_providers` and deletes the agreement, not the bucket.
+The bucket, its members, `snapshot` and `frozen_start_seq` remain on-chain.
+The admin can add a new primary with `add_primary_provider` at any later
+time and re-upload the data; the `bucket_id` and every external reference to
+it stay valid.
+
 **Snapshot liability**: Providers remain liable for snapshots they signed until those snapshots are superseded by a new checkpoint that doesn't include them, or until the bucket's canonical depth grows past the data they signed for.
 
 ### Multi-Provider Coordination (Primary Providers)
@@ -115,6 +155,17 @@ Primary providers don't sync with each other. Clients are responsible for upload
 3. Client checkpoints on-chain with collected signatures
 4. Primaries not in the snapshot should sync (client re-uploads)
 5. After checkpoint, providers can prune non-canonical roots
+
+**The client moves the data**: a primary added to a bucket that already has
+data receives that data from the client, not from the chain and not from the
+other providers. The client uploads the data to the new primary and includes
+the new primary's signature in the next checkpoint. It first downloads the data
+from a provider that has it, unless it still keeps a local copy; changing
+provider then costs a full download and a full upload.
+
+A provider-to-provider fetch could remove that download, but it does not
+replace the client path: only the client sees which provider failed a transfer.
+See "Provider-to-Provider Fetch" in the design doc's Future Directions.
 
 **Liability**: A provider is only liable for MMR states they acknowledged (signed). Challenges against the canonical checkpoint only work for providers listed in the snapshot's provider bitfield.
 
@@ -177,7 +228,10 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     #[pallet::constant]
     type MinProviderStake: Get<BalanceOf<Self>>;
 
-    /// Maximum chunk size for challenge responses (e.g., 256 KiB).
+    /// Upper bound of `chunk_data` in a challenge response: at least the
+    /// `CHUNK_SIZE` of every leaf version the pallet accepts. A leaf's chunk
+    /// count comes from its own version's `CHUNK_SIZE`, not from this value,
+    /// so a runtime upgrade that changes it does not change `n` for any leaf.
     #[pallet::constant]
     type MaxChunkSize: Get<u32>;
 
@@ -203,13 +257,12 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     /// Minimum number of blocks between announcing a deregistration and
     /// being allowed to complete it. Must be strictly `> ChallengeTimeout`
     /// so any challenge created up to the announcement block matures while
-    /// the provider is still slashable, and `> RequestTimeout` so a
-    /// pre-deregistration agreement quote expires before re-registration.
+    /// the provider is still slashable.
     #[pallet::constant]
     type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
 
-    /// Caps the challenges sharing one deadline (anchor block) and the
-    /// `on_initialize` sweep's per-block slash budget.
+    /// Caps the challenges sharing one deadline (anchor block); bounds the
+    /// per-deadline index allocator.
     #[pallet::constant]
     type MaxChallengesPerDeadline: Get<u16>;
 
@@ -239,7 +292,7 @@ parachain `HOURS`:
 | `MaxMultiaddrLength` | `128` |
 | `MaxMembers` | `100` |
 | `MaxPrimaryProviders` | `5` |
-| `MaxChunkSize` | `262_144` (256 KiB) |
+| `MaxChunkSize` | `262_144` (256 KiB, the `CHUNK_SIZE` of leaf version 1) |
 | `ChallengeTimeout` | `48 * RC_HOURS` |
 | `SettlementTimeout` | `24 * RC_HOURS` |
 | `RequestTimeout` | `6 * RC_HOURS` |
@@ -451,14 +504,14 @@ pub struct Bucket<T: Config> {
     /// Position 4: updated every 47 blocks (prime = 47)
     /// Position 5: updated every 113 blocks (prime = 113)
     /// 
-    /// Each entry stores (quotient, mmr_root) where quotient = block_number / prime.
+    /// Each entry stores (quotient, commitment) where quotient = block_number / prime.
     /// On each checkpoint, if current_block / prime != stored quotient, the entry
-    /// is updated with (new_quotient, current_snapshot_root). This means each
-    /// position remembers the root from the last time its prime boundary was crossed.
+    /// is updated with (new_quotient, new_snapshot_commitment). This means each
+    /// position remembers the commitment from the last time its prime boundary was crossed.
     /// 
     /// Primes ensure positions don't align, maximizing coverage. A slow replica
     /// can match against older positions; `position_matched` in events tracks this.
-    pub historical_roots: [(u32, H256); 6],
+    pub historical_roots: [(u32, Commitment); 6],
     /// Total snapshots created for this bucket (for statistics)
     pub total_snapshots: u32,
 }
@@ -532,15 +585,14 @@ pub enum ProviderRole<T: Config> {
         /// Set at agreement creation based on expected bucket activity.
         /// 0 means no time-based limit (only "new root" check applies).
         min_sync_interval: BlockNumberFor<T>,
-        /// Last confirmed sync: (mmr_root, block_number).
-        /// None if replica hasn't confirmed sync yet.
-        last_sync: Option<(H256, BlockNumberFor<T>)>,
+        /// Last confirmed sync. None if the replica hasn't confirmed sync yet.
+        last_sync: Option<ReplicaSyncRecord<BlockNumberFor<T>>>,
     },
 }
 
 /// Defined in `storage_primitives`: the off-chain quote a provider signs and
-/// the owner redeems on-chain (see `establish_storage_agreement` /
-/// `establish_replica_agreement`). The provider signs
+/// the owner redeems on-chain (see `create_bucket_with_primary` /
+/// `add_primary_provider` / `add_replica_provider`). The provider signs
 /// `blake2_256(context | SCALE(terms))`, where `context` is
 /// `PRIMARY_TERM_CONTEXT` (`"primary-term-v1:"`) or `REPLICA_TERM_CONTEXT`
 /// (`"replica-term-v1:"`) — domain separation between the two flavours.
@@ -556,17 +608,26 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     pub price_per_byte: Balance,
     /// Block number after which the quote is no longer redeemable.
     pub valid_until: BlockNumber,
-    /// Provider-chosen replay-protection nonce: a signed quote is redeemable
-    /// at most once.
+    /// Owner-chosen replay-protection nonce: must equal the owner's next
+    /// expected value, so a signed quote is redeemable at most once.
     pub nonce: u64,
-    /// Bucket the quote is bound to:
-    /// - `None` for primary terms (the bucket is created at redemption)
-    /// - `Some(id)` for replica terms — must match the bucket targeted by
-    ///   the extrinsic.
-    pub bucket_id: Option<BucketId>,
+    /// Bucket the quote is for (see `BucketTarget` below).
+    pub bucket: BucketTarget,
     /// `None` for primary terms; `Some(_)` for replica terms, carrying the
     /// per-sync funding parameters.
     pub replica_params: Option<ReplicaTerms<Balance, BlockNumber>>,
+}
+
+/// Which bucket a quote is for. Signed as part of the terms, so a provider
+/// can decline one bucket without declining the account.
+pub enum BucketTarget {
+    /// A bucket created when the quote is redeemed. Only
+    /// `create_bucket_with_primary` accepts it.
+    New,
+    /// An existing bucket. Must equal the `bucket_id` the redeeming call
+    /// targets; only `add_primary_provider` and `add_replica_provider`
+    /// accept it.
+    Existing(BucketId),
 }
 
 /// Replica-specific parameters of a signed quote.
@@ -581,9 +642,17 @@ pub struct ReplicaTerms<Balance, BlockNumber> {
     pub sync_price: Balance,
 }
 
+/// Next expected `AgreementTerms.nonce` for this owner. Redemption
+/// requires an exact match and advances the counter by one, so a signed
+/// quote is redeemable at most once. See "Agreement Nonces" below for the
+/// entry's lifetime and the one-quote-at-a-time rule.
+#[pallet::storage]
+pub type AgreementNonces<T: Config> =
+    StorageMap<_, Blake2_128Concat, T::AccountId, u64, ValueQuery>;
+
 /// Pending challenges, keyed by (deadline anchor block, per-deadline index).
-/// At most `MaxChallengesPerDeadline` challenges share a deadline; expired
-/// deadlines are drained by the `on_initialize` slash sweep.
+/// At most `MaxChallengesPerDeadline` challenges share a deadline. An expired
+/// challenge stays here until `resolve_expired_challenge` slashes it.
 #[pallet::storage]
 pub type Challenges<T: Config> = StorageDoubleMap<
     _,
@@ -593,21 +662,13 @@ pub type Challenges<T: Config> = StorageDoubleMap<
 >;
 
 /// Per-deadline index allocator for `Challenges` (monotone; never reused
-/// within a deadline, cleared when the sweep drains the deadline).
+/// within a deadline, removed by `resolve_expired_challenge`).
 #[pallet::storage]
 pub type NextChallengeIndex<T: Config> =
     StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
 
-/// Cursor of the `on_initialize` slash sweep: every deadline up to and
-/// including this anchor block has been drained. Each block the sweep
-/// advances it toward the current anchor (exclusive), slashing expired
-/// challenges as it goes, capped per block by a span and slash budget.
-#[pallet::storage]
-pub type LastSweptChallengeBlock<T: Config> =
-    StorageValue<_, BlockNumberFor<T>, OptionQuery>;
-
 /// Challenge identifier combining deadline and index.
-/// Challenges are stored by deadline block for efficient expiry processing.
+/// Keyed by deadline so expiry is checkable from the id alone.
 /// Defined in `storage_primitives`, generic over `BlockNumber`.
 pub struct ChallengeId<BlockNumber> {
     /// Block by which provider must respond
@@ -623,10 +684,12 @@ pub struct Challenge<T: Config> {
     pub provider: T::AccountId,
     /// Account that issued the challenge
     pub challenger: T::AccountId,
-    /// MMR root the provider committed to
-    pub mmr_root: H256,
-    /// Start sequence of the commitment (needed to compute challenged_seq = start_seq + target.leaf_index)
-    pub start_seq: u64,
+    /// The commitment being challenged: the snapshot's (challenge_checkpoint),
+    /// the provider-signed one (challenge_offchain) or the replica's last synced
+    /// one (challenge_replica). `challenged_seq = commitment.start_seq +
+    /// target.leaf_index`; `leaf_count` binds the proof to `target.leaf_index`
+    /// in `respond_to_challenge`.
+    pub commitment: Commitment,
     /// Leaf + chunk being challenged (see `ChunkLocation`)
     pub target: ChunkLocation,
     /// Deposit locked by the challenger when the challenge was created.
@@ -643,8 +706,8 @@ pub struct Challenge<T: Config> {
 
 /// Number of unresolved challenges currently outstanding against a
 /// provider, summed across every bucket. Incremented in `create_challenge`
-/// and decremented exactly once per resolution (defended/invalid-response
-/// in `respond_to_challenge`, or timeout in the `on_initialize` sweep).
+/// and decremented exactly once per resolution (defended in
+/// `respond_to_challenge`, or timed out in `resolve_expired_challenge`).
 /// Gates `complete_deregister`: a provider cannot exit while still
 /// slashable for a pending challenge.
 #[pallet::storage]
@@ -675,6 +738,20 @@ pub type MemberBuckets<T: Config> = StorageMap<
     ValueQuery,
 >;
 ```
+
+### Agreement Nonces
+
+The client reads `AgreementNonces[owner]` from chain and sends it in
+`POST /negotiate`; the provider signs it unchanged and keeps no nonce state.
+
+- **Lifetime.** The pallet's `OnKilledAccount` impl removes the entry when the
+  account is reaped, so runtimes must set
+  `frame_system::Config::OnKilledAccount = StorageProvider`. A reaped owner
+  restarts at nonce 0.
+- **One quote at a time.** Only one quote per nonce can be redeemed. Others
+  fail with `NonceMismatch`; the client reads the nonce again and requests a
+  new quote. Users acting through one shared owner account, such as a
+  contract, share one counter.
 
 ### Provider Public Key & Signature Type
 
@@ -796,6 +873,10 @@ pub enum Event<T: Config> {
         commitment: Commitment,
         providers: Vec<T::AccountId>,
     },
+    /// A primary provider was added to the bucket's provider set, by
+    /// `create_bucket_with_primary`, `add_primary_provider`, or another
+    /// call that creates a bucket with a primary provider. Followed by
+    /// `StorageAgreementEstablished`.
     ProviderAddedToBucket {
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -897,6 +978,25 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         payment_to_provider: BalanceOf<T>,
     },
+    /// A primary agreement was opened by `create_bucket_with_primary`,
+    /// `add_primary_provider`, or another call that creates a bucket with a
+    /// primary provider. Always follows `ProviderAddedToBucket`.
+    StorageAgreementEstablished {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        owner: T::AccountId,
+        terms: AgreementTermsOf<T>,
+        expires_at: BlockNumberFor<T>,
+    },
+    /// Owner redeemed provider-signed replica terms; replica agreement
+    /// opened against an existing bucket.
+    ReplicaAgreementEstablished {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        owner: T::AccountId,
+        terms: AgreementTermsOf<T>,
+        expires_at: BlockNumberFor<T>,
+    },
 
     // ─────────────────────────────────────────────────────────────
     // Challenge events
@@ -924,13 +1024,12 @@ pub enum Event<T: Config> {
         challenger_cost: BalanceOf<T>,
         provider_cost: BalanceOf<T>,
     },
-    /// Provider failed to respond or provided invalid proof - slashed
+    /// Provider did not respond before the deadline; its whole stake went to
+    /// the Treasury and the challenger's deposit was refunded.
     ChallengeSlashed {
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         provider: T::AccountId,
         slashed_amount: BalanceOf<T>,
-        /// Timeout, or which response type failed verification (see `SlashReason`)
-        reason: SlashReason,
     },
 
 }
@@ -984,6 +1083,7 @@ sp_api::decl_runtime_apis! {
         // ── Challenges ────────────────────────────────────────────────────
         fn challenges_at(block: BlockNumber) -> Vec<ChallengeResponse>;
         fn bucket_challenges(bucket_id: BucketId) -> Vec<ChallengeResponse>;
+        /// Challenges the provider can still answer; expired ones are omitted.
         fn provider_challenges(provider: AccountId) -> Vec<ChallengeResponse>;
         fn challenger_challenges(challenger: AccountId) -> Vec<ChallengeResponse>;
         fn challenge_candidates(max_reputation: u8, limit: u32) -> Vec<ChallengeCandidate>;
@@ -1075,11 +1175,12 @@ impl<T: Config> Pallet<T> {
     /// `deregister_provider`. Releases the remaining stake hold and removes
     /// the provider record. Still requires `committed_bytes == 0`, and also
     /// `PendingChallenges == 0` (`ProviderHasPendingChallenges`): the stake
-    /// stays slashable until every open challenge matures, so a provider
+    /// stays slashable until every open challenge is resolved, so a provider
     /// cannot exit and release the hold while still slashable. The
     /// `DeregisterAnnouncementPeriod > ChallengeTimeout` invariant guarantees
-    /// any challenge created up to the announcement block resolves before the
-    /// wait window elapses, so this only blocks genuinely-live challenges.
+    /// any challenge created up to the announcement block has expired by the
+    /// time the window elapses; an unanswered one is resolved with
+    /// `resolve_expired_challenge`, which the provider may call itself.
     #[pallet::weight(...)]
     pub fn complete_deregister(origin: OriginFor<T>) -> DispatchResult;
 
@@ -1159,28 +1260,6 @@ impl<T: Config> Pallet<T> {
     pub fn create_bucket(
         origin: OriginFor<T>,
         min_providers: u32,
-        visibility: Visibility,
-    ) -> DispatchResult;
-
-    /// Create a bucket and an agreement with an auto-selected provider in one call.
-    ///
-    /// Convenience extrinsic that:
-    /// 1. Runs `find_matching_provider(max_bytes, duration, max_price_per_byte)`
-    ///    against on-chain provider settings.
-    /// 2. Creates a bucket with `min_providers = 1` and the matched provider
-    ///    pushed straight into `primary_providers` (no pending request flow).
-    /// 3. Holds `provider.price_per_byte * max_bytes * duration` from the
-    ///    caller as locked payment.
-    ///
-    /// Providers who set `accepting_primary: true` have pre-consented to
-    /// agreements within their advertised parameters, so no acceptance step
-    /// is needed. Fails with `NoMatchingProvider` if nothing fits.
-    #[pallet::weight(...)]
-    pub fn create_bucket_with_storage(
-        origin: OriginFor<T>,
-        max_bytes: u64,
-        duration: BlockNumberFor<T>,
-        max_price_per_byte: BalanceOf<T>,
         visibility: Visibility,
     ) -> DispatchResult;
 
@@ -1270,16 +1349,24 @@ impl<T: Config> Pallet<T> {
     // Agreements are established by redeeming provider-signed AgreementTerms
     // (see the storage section) — there is no on-chain request/accept
     // round-trip. The provider quotes and signs terms off-chain; the owner
-    // submits them in a single call. Both establish_* calls share the same
+    // submits them in a single call. `create_bucket_with_primary`,
+    // `add_primary_provider` and `add_replica_provider` share the same
     // validation skeleton:
+    // - `terms.bucket` must match the call (`TermsBucketMismatch`):
+    //   `BucketTarget::New` for `create_bucket_with_primary`,
+    //   `BucketTarget::Existing(bucket_id)` of the targeted bucket for
+    //   `add_primary_provider` and `add_replica_provider`
+    // - `add_primary_provider` and `add_replica_provider` also require that
+    //   the bucket exists (`BucketNotFound`) and that no agreement already
+    //   exists for this provider on it (`AgreementAlreadyExists`)
     // - `terms.owner` must match the origin (`TermsOwnerMismatch`)
     // - `terms.max_bytes > 0` (`InvalidMaxBytesRequest`)
     // - `now <= terms.valid_until <= now + T::RequestTimeout`
     //   (`TermsExpired` / `TermsValidityTooLong`)
     // - the signature must verify against the provider's registered key over
     //   `blake2_256(context | SCALE(terms))` with the flavour's context
-    // - `terms.nonce` must not replay an already-redeemed quote
-    //   (`NonceAlreadyUsed` / `NonceTooOld`)
+    // - `terms.nonce` must equal the owner's next expected agreement nonce
+    //   (`NonceMismatch`)
     // - the provider must be active (registered, not deregistering), within
     //   its duration bounds, and the added `terms.max_bytes` must fit its
     //   declared capacity (`CapacityExceeded`) and stake
@@ -1290,27 +1377,62 @@ impl<T: Config> Pallet<T> {
     // quote itself is the price protection; there is no `max_payment`
     // parameter.
 
-    /// Redeem provider-signed primary terms: create a bucket + primary
-    /// agreement in a single call.
+    /// Redeem provider-signed primary terms: create a bucket and its first
+    /// primary agreement in one atomic call. Equivalent to `create_bucket`
+    /// followed by `add_primary_provider`, and emits the same events
+    /// (`BucketCreated`, `ProviderAddedToBucket`,
+    /// `StorageAgreementEstablished`).
     ///
     /// In addition to the shared checks above:
-    /// - `terms.bucket_id` must be `None` — the bucket is created at
-    ///   redemption (`TermsBucketMismatch`)
+    /// - `terms.bucket` must be `BucketTarget::New` (`TermsBucketMismatch`).
+    ///   This is the only call that accepts it; a quote for an existing
+    ///   bucket cannot be redirected into a new one
     /// - `terms.replica_params` must be `None`
     /// - the provider must be accepting primaries
     ///   (`ProviderNotAcceptingPrimary`)
     ///
-    /// The bucket is created with the owner as sole admin and the provider
-    /// as its single primary. `visibility` sets the new bucket's read
-    /// visibility; it is the owner's choice and not part of the
+    /// The bucket is created with the owner as sole admin, `min_providers =
+    /// 1` and the provider as its single primary. `visibility` sets the new
+    /// bucket's read visibility; it is the owner's choice and not part of the
     /// provider-signed terms.
     #[pallet::weight(...)]
-    pub fn establish_storage_agreement(
+    pub fn create_bucket_with_primary(
         origin: OriginFor<T>,
         provider: T::AccountId,
         terms: AgreementTerms<T>,
         sig: MultiSignature,
         visibility: Visibility,
+    ) -> DispatchResult;
+
+    /// Redeem provider-signed primary terms: add a primary provider to an
+    /// existing bucket (admin only).
+    ///
+    /// In addition to the shared checks above:
+    /// - `terms.bucket` must be `BucketTarget::Existing(bucket_id)`
+    ///   (`TermsBucketMismatch`)
+    /// - the origin must be a bucket admin (`NotBucketAdmin`)
+    /// - `terms.replica_params` must be `None`
+    /// - the provider must be accepting primaries
+    ///   (`ProviderNotAcceptingPrimary`)
+    /// - `bucket.primary_providers` must have fewer than
+    ///   `T::MaxPrimaryProviders` entries (`MaxPrimaryProvidersReached`)
+    ///
+    /// Creates the `StorageAgreement` with `ProviderRole::Primary` and the
+    /// admin as agreement owner, appends the provider to
+    /// `bucket.primary_providers`, and emits `ProviderAddedToBucket` and
+    /// `StorageAgreementEstablished`. The new primary is not in the current
+    /// snapshot's signer bitfield until it signs a checkpoint; the client
+    /// uploads the bucket's data to it (see Multi-Provider Coordination).
+    ///
+    /// Works on a bucket with zero primaries (all earlier agreements ended)
+    /// and on a frozen bucket.
+    #[pallet::weight(...)]
+    pub fn add_primary_provider(
+        origin: OriginFor<T>,
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        terms: AgreementTerms<T>,
+        sig: MultiSignature,
     ) -> DispatchResult;
 
     /// Redeem provider-signed replica terms: open a replica agreement on an
@@ -1330,10 +1452,9 @@ impl<T: Config> Pallet<T> {
     /// ownership).
     ///
     /// In addition to the shared checks above:
-    /// - the bucket must exist (`BucketNotFound`) and carry no existing
-    ///   agreement for this provider (`AgreementAlreadyExists`)
-    /// - `terms.bucket_id` must be `Some(bucket_id)` — the quote is bound to
-    ///   the targeted bucket (`TermsBucketMismatch`)
+    /// - `terms.bucket` must be `BucketTarget::Existing(bucket_id)`
+    ///   (`TermsBucketMismatch`). The replica names the bucket it commits to
+    ///   sync, so a quote cannot be redirected to a bucket it cannot read
     /// - `terms.replica_params` must be `Some(_)` (`MissingReplicaTerms`):
     ///   - `sync_balance`: Held on the owner on top of the storage
     ///     payment to fund per-sync payments at the signed `sync_price`.
@@ -1344,7 +1465,7 @@ impl<T: Config> Pallet<T> {
     /// - the provider must be accepting replicas, i.e. have a
     ///   `replica_sync_price` set (`ProviderNotAcceptingReplicas`)
     #[pallet::weight(...)]
-    pub fn establish_replica_agreement(
+    pub fn add_replica_provider(
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -1453,7 +1574,8 @@ impl<T: Config> Pallet<T> {
     /// terminated agreements early. If unhappy with a provider, simply don't extend.
     /// 
     /// Note: For primary agreements, admin is the owner at creation (via
-    /// establish_storage_agreement); `transfer_agreement_ownership` can separate them.
+    /// `create_bucket_with_primary` / `add_primary_provider`);
+    /// `transfer_agreement_ownership` can separate them.
     /// Admin has no special privileges over replica agreements.
     ///
     /// Blocked while a challenge against `(bucket, provider)` is unresolved
@@ -1572,6 +1694,10 @@ impl<T: Config> Pallet<T> {
     // Game"). The gate reads the challenged provider's role from its *current*
     // agreement—the same lookup that yields `AgreementNotFound`—so an ended
     // agreement means no challenge, never a stale role.
+    // In all three modes the target leaf must exist: `target.leaf_index` must
+    // be below the commitment's `leaf_count`, else `LeafNotInCommitment`. A
+    // challenge on a leaf that does not exist has no valid response and
+    // would only resolve by timeout slash.
     // The challenger's deposit must cover the
     // provider's on-chain response cost (generously over-estimated; excess is
     // refunded on resolution). On a valid response the provider's stake is
@@ -1677,8 +1803,8 @@ impl<T: Config> Pallet<T> {
     /// 
     /// **Rate limiting:**
     /// Two checks prevent excessive sync confirmations:
-    /// 1. The matched root must differ from `last_sync.0` (must be new state)
-    /// 2. `current_block >= last_sync.1 + min_sync_interval` (per-agreement)
+    /// 1. The matched root must differ from `last_sync.commitment.mmr_root` (must be new state)
+    /// 2. `current_block >= last_sync.block + min_sync_interval` (per-agreement)
     /// 
     /// The first check ensures payment only for actual sync work. The second
     /// prevents hot buckets (writes every block) from causing excessive on-chain
@@ -1694,7 +1820,9 @@ impl<T: Config> Pallet<T> {
     /// failures) should be negligible if the replica syncs regularly.
     /// 
     /// On success (both checks pass):
-    /// - Updates replica's `last_sync` to `(matched_root, current_block)`
+    /// - Updates replica's `last_sync` to the matched commitment and `current_block`;
+    ///   a historical match records that entry's full commitment, so
+    ///   `challenge_replica` can bind a proof to it as well
     /// - Pays sync_price from replica's sync_balance
     /// - Emits ReplicaSynced event with position_matched for performance tracking
     ///   (position 0 = current snapshot, 1-6 = historical positions, higher = more lag)
@@ -1731,7 +1859,10 @@ impl<T: Config> Pallet<T> {
     /// 
     /// Must provide the challenged chunk with Merkle proofs, or prove the data
     /// was legitimately deleted (newer commitment with higher start_seq), or
-    /// show the challenged state has been superseded by canonical.
+    /// show the challenged state has been superseded by canonical. An invalid
+    /// response is rejected (`InvalidProof`, `InvalidDeletionClaim`,
+    /// `InvalidSupersededClaim`) and the challenge stays open until the
+    /// deadline.
     /// 
     /// Parameters:
     /// - `challenge_id`: The challenge to respond to (deadline + index)
@@ -1742,6 +1873,20 @@ impl<T: Config> Pallet<T> {
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         response: ChallengeResponse<T>,
     ) -> DispatchResult;
+
+    /// Slash a provider whose challenge expired without a response.
+    ///
+    /// Anyone may call this; it is free on success. Slashes the provider's
+    /// whole stake to the Treasury, refunds the challenger's deposit and
+    /// clears the pending-challenge counters that block the provider's exits.
+    /// A provider may call it against itself to unblock `complete_deregister`.
+    /// Fails with `ChallengeNotExpired` while the provider may still respond
+    /// (`anchor <= deadline`) and `ChallengeNotFound` once resolved.
+    #[pallet::weight(...)]
+    pub fn resolve_expired_challenge(
+        origin: OriginFor<T>,
+        challenge_id: ChallengeId<BlockNumberFor<T>>,
+    ) -> DispatchResultWithPostInfo;
 }
 
 pub enum EndAction {
@@ -1760,27 +1905,19 @@ pub enum RemovalReason {
     Expired,
 }
 
-/// Why a provider was slashed; reported in `ChallengeSlashed` and returned by
-/// `verify_challenge_response` (see "Verification").
-pub enum SlashReason {
-    /// No response before the challenge deadline
-    Timeout,
-    /// `Proof` response whose chunk or MMR proof did not verify
-    InvalidProof,
-    /// `Deleted` response whose `new_start_seq` does not cover the challenged
-    /// leaf or whose admin signature does not verify
-    InvalidDeletionClaim,
-    /// `Superseded` response without a canonical snapshot that replaces the
-    /// challenged root and covers the challenged leaf
-    InvalidSupersededClaim,
-}
-
 pub enum ChallengeResponse<T: Config> {
     /// Provide the chunk with proofs
     Proof {
         chunk_data: BoundedVec<u8, T::MaxChunkSize>,
         mmr_proof: MmrProof,
-        chunk_proof: MerkleProof,
+        /// RFC 9162 inclusion path: sibling hashes from the chunk to data_root
+        chunk_proof: Vec<H256>,
+    },
+    /// The challenged `chunk_index` is at or beyond the leaf's chunk count.
+    /// The MMR proof carries the leaf, so the chain derives the count from
+    /// `leaf.data_size` itself.
+    ChunkOutOfRange {
+        mmr_proof: MmrProof,
     },
     /// Data was deleted - show newer commitment without this seq.
     /// Admin signature proves the admin authorized the deletion (new MMR excludes the challenged data).
@@ -1819,9 +1956,39 @@ The provider node exposes a JSON-over-HTTP API (axum) on, by default,
 ### Authentication & RBAC
 
 Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`) and
-authenticated read endpoints require an `Authorization` header. The provider node verifies an sr25519 signature
-locally and resolves the caller's role via a TTL-cached query against the
-chain's `Buckets` storage (`bucket.members`).
+every **bucket-bound read** — Layer-0
+(`GET /commitment`, `GET /checkpoint-signature`, `GET /mmr_proof`,
+`GET /mmr_peaks`, `POST /exists`, `GET /replica/historical_roots`,
+`GET /replica/sync_status`) — require an `Authorization` header at Reader
+level. The provider node verifies an sr25519 signature locally and resolves
+the caller's role via a TTL-cached query against the chain's `Buckets`
+storage (`bucket.members`).
+
+Three Reader-level exemptions, all resolved from the same cached lookup:
+
+- **Public buckets** serve every bucket-bound read anonymously.
+- **Replica-held buckets**: when this node holds the bucket under a replica
+  agreement, reads are served to anyone regardless of visibility — replicas
+  serve everyone; visibility gates primaries only (design doc, "Bucket
+  Visibility & Access"). Resolved from the node's own `StorageAgreements`
+  entry, cached and invalidated alongside the member set.
+- **Operator self-auth**: a request signed by the node's *own* provider
+  account passes any Reader check. Provider accounts are never bucket
+  members, and the operator can read the node's disk anyway; this is what
+  lets the provider's own tooling (e.g. the dashboard building a challenge
+  response) fetch `/mmr_proof` on a private bucket. It never grants Writer
+  or Admin.
+
+**Hash-keyed reads are capability reads.** `GET /node`, `GET /read`,
+`GET /chunk_proof` and `POST /fetch_nodes` are keyed by a blake2-256 hash or
+data root and take a `bucket_id`. The node answers 404 `bucket_not_found` for
+a bucket it does not store, and serves the rest without authentication: the
+node store is a single content-addressed namespace with cross-bucket dedup, so
+the node cannot tell whether a hash belongs to the named bucket, and
+possession of the hash is the capability. Hashes of
+private data are unguessable and every enumeration surface that would reveal
+them (the MMR shape via `/mmr_peaks`, per-bucket listings) is gated; see the
+design doc's "Bucket Visibility & Access" for the rule and its limits.
 
 > **⚠️ Under-specified — [#304](https://github.com/paritytech/web3-storage/issues/304).**
 > This scheme grew organically across several crates and needs one source of
@@ -1861,13 +2028,21 @@ Upload Node (chunk or internal node)
 PUT /node
 Authorization: Web3Storage <...>       # Writer or Admin
 
-Request:
+Request (a chunk):
 {
   "bucket_id": 1234,                   // u64
-  "hash": "0xabc...",
-  "data": "<base64 encoded>",
-  "children": ["0xchild1...", "0xchild2..."] | null  // null for leaf chunks
+  "hash": "0xabc...",                  // hash_leaf(data)
+  "data": "<base64 encoded>"
 }
+
+Request (an internal node):
+{
+  "bucket_id": 1234,
+  "hash": "0xdef...",                  // hash_children(left, right)
+  "children": ["0xleft...", "0xright..."]
+}
+
+A request carries exactly one of `data` and `children`.
 
 Note: HTTP API is used for simplicity and firewall-friendliness. Binary protocols
 (e.g., libp2p streams) could be added later for efficiency. Base64 encoding adds
@@ -1879,6 +2054,9 @@ Response (200 OK):
 
 Response (400 Bad Request):
 { "error": "children_missing", "missing": ["0xchild2..."] }
+{ "error": "invalid_node" }               // both or neither of data and children
+{ "error": "invalid_child_count", "expected": 2, "actual": 3 }
+{ "error": "chunk_too_large", "size": 300000, "max": 262144 }
 
 Response (507 Insufficient Storage):
 { "error": "quota_exceeded", "used": 1000000, "max": 1000000 }
@@ -1892,6 +2070,7 @@ Client discovers which nodes are missing before uploading.
 Check Existence (batched)
 ─────────────────────────
 POST /exists
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Request:
 {
@@ -1912,6 +2091,14 @@ If a node exists, skip its subtree. Upload missing nodes bottom-up.
 ### Commit
 
 After uploading, client requests provider to add data_root(s) to MMR.
+
+Before it signs, the provider checks every `data_root` against the chunk tree
+rules (see "Chunk Tree"): the stored tree has the RFC 9162 shape over its
+chunks, every chunk except the last has exactly `CHUNK_SIZE` bytes, and the
+last has 1 to `CHUNK_SIZE` bytes. The provider sets the leaf's `data_size` to
+the sum of the chunk lengths. A root that fails a check is rejected with
+`non_canonical_tree`. The provider never signs a root it cannot prove every
+chunk of.
 
 ```
 Commit
@@ -1935,6 +2122,7 @@ Response (200 OK):
 
 Response (400 Bad Request):
 { "error": "root_not_found", "missing": ["0xroot2..."] }
+{ "error": "non_canonical_tree", "data_root": "0xroot1..." }
 ```
 
 ### Read
@@ -1942,7 +2130,10 @@ Response (400 Bad Request):
 ```
 Read Chunks
 ───────────
-GET /read?data_root=0x...&offset=0&length=2097152
+GET /read?bucket_id=1&data_root=0x...&offset=0&length=2097152
+
+Capability read: keyed by data root, unauthenticated; 404 for a bucket the
+node does not store (see Authentication & RBAC).
 
 Response:
 {
@@ -1970,16 +2161,47 @@ Note: Provider settings (prices, durations, accepting flags) are intentionally
 omitted — the chain is the source of truth. Clients should query the chain via
 runtime API for authoritative provider information.
 
+Negotiate Terms
+───────────────
+POST /negotiate
+
+Request:
+{
+  "owner": "<ss58 account that redeems the quote>",
+  "bucket": 1234 | null,
+  "max_bytes": "1073741824",
+  "duration": 201600,
+  "price_per_byte": "1000",
+  "nonce": "0",
+  "replica_params": null | { "sync_balance": 5000000000, "min_sync_interval": 0, "sync_price": 1000000 }
+}
+
+`bucket` is the bucket id the quote is for, or `null` for a bucket created at
+redemption; the node maps it to `BucketTarget`. `nonce` is the owner's
+current `AgreementNonces` value, which the client reads from chain at the best
+block (finalized can lag behind a just-redeemed quote); the node signs it
+as-is.
+
+Response (200 OK): the signed `AgreementTerms` plus the provider's signature,
+to pass to `create_bucket_with_primary` (`bucket: null`),
+`add_primary_provider` (`bucket` set, `replica_params: null`) or
+`add_replica_provider` (both set).
+
+The provider rejects requests below its listed price, outside its duration
+bounds, or beyond its capacity, and rejects requests while deregistering.
+
 Download Node
 ─────────────
-GET /node?hash=0x...
+GET /node?bucket_id=1&hash=0x...
 
-Response (200 OK):
-{
-  "hash": "0xabc...",
-  "data": "<base64 encoded>",
-  "children": ["0xchild1...", "0xchild2..."] | null
-}
+Capability read: keyed by hash, unauthenticated; 404 for a bucket the node
+does not store (see Authentication & RBAC).
+
+Response (200 OK), a chunk:
+{ "hash": "0xabc...", "data": "<base64 encoded>" }
+
+Response (200 OK), an internal node:
+{ "hash": "0xdef...", "children": ["0xleft...", "0xright..."] }
 
 Response (404 Not Found):
 { "error": "not_found" }
@@ -1987,6 +2209,7 @@ Response (404 Not Found):
 Get Commitment (for challenge_offchain)
 ───────────────────────────────────────
 GET /commitment?bucket_id=1234
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Response:
 {
@@ -1997,14 +2220,19 @@ Response:
   "provider_signature": "0x..."
 }
 
-Note: The returned signature covers a `CommitmentPayload` with the real
-`leaf_count`; `challenge_offchain` reconstructs the payload from the
-`commitment` the challenger passes, so the same values returned here must be
-passed on-chain unchanged.
+Note: The returned signature covers a `CommitmentPayload` with the **real**
+`leaf_count`, so it can back a bound `challenge_offchain` — the
+pallet reconstructs the payload from the `commitment` the challenger passes and
+verifies the signature over it, then uses that `leaf_count` to bind the proof to
+`leaf_index` in `respond_to_challenge`. The values returned here must therefore be
+passed on-chain unchanged. The `/commit` and `/delete` responses sign the same way
+and also return `leaf_count`; `/checkpoint-signature` is equivalent and is used for
+the on-chain `checkpoint` extrinsic.
 
 Get Checkpoint Signature (for checkpoint extrinsic)
 ───────────────────────────────────────────────────
 GET /checkpoint-signature?bucket_id=1234
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Response:
 {
@@ -2022,25 +2250,33 @@ for the checkpoint workflow, where the signature goes into the
 Get MMR Proof
 ─────────────
 GET /mmr_proof?bucket_id=0x...&leaf_index=5
+Authorization: Web3Storage <...>       # Reader; the provider's own account
+                                       # also passes (operator self-auth)
 
 Response:
 {
-  "leaf": { "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
-  "proof": { "peaks": [...], "siblings": [...] }
+  "leaf": { "leaf_version": 1, "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
+  "items": ["0x...", ...]
 }
 
 Get Chunk Proof
 ───────────────
-GET /chunk_proof?data_root=0x...&chunk_index=3
+GET /chunk_proof?bucket_id=1&data_root=0x...&chunk_index=3
+
+Capability read: keyed by data root, unauthenticated; 404 for a bucket the
+node does not store.
 
 Response:
 {
   "chunk_hash": "0xabc...",
-  "proof": { "siblings": [...], "path": [...] }
+  "proof": ["0xsibling1...", "0xsibling2..."]   // RFC 9162 inclusion path
 }
 
 Response (404 Not Found):
 { "error": "data_root_not_found" }
+
+Response (400 Bad Request):
+{ "error": "chunk_index_out_of_range" }   // chunk_index >= ceil(data_size / CHUNK_SIZE)
 
 Delete Data (admin only)
 ────────────────────────
@@ -2073,18 +2309,6 @@ Note: Only bucket admins can delete data. This triggers deletion of data before
 new_start_seq. Provider returns new commitment covering remaining data. Admin
 signature authorizes the deletion and serves as proof if challenged later.
 
-List Buckets
-────────────
-GET /buckets
-
-Response:
-{
-  "buckets": [
-    { "bucket_id": "0x1234...", "mmr_root": "0x...", "start_seq": 0, "leaf_count": 42 },
-    { "bucket_id": "0x5678...", "mmr_root": "0x...", "start_seq": 5, "leaf_count": 10 }
-  ]
-}
-
 Health Check
 ────────────
 GET /health
@@ -2101,15 +2325,12 @@ Response:
   "provider_id": "5G...",            // SS58 address
   "total_buckets": 3,
   "total_nodes": 1234,
-  "total_bytes": 42949672960,
-  "buckets": [
-    { "bucket_id": 1234, "nodes": 500, "bytes": 21474836480, ... },
-    ...
-  ]
+  "total_bytes": 42949672960
 }
 
-Note: Public observability endpoint. Useful for operators and the
-Prometheus/Grafana setup in `docs/`.
+Note: Public observability endpoint (operators, the Prometheus/Grafana setup
+in `docs/`). Aggregate totals only — a per-bucket breakdown would let anyone
+enumerate the node's buckets, sidestepping the per-bucket read gates.
 ```
 
 ### Replica Sync Status
@@ -2118,6 +2339,7 @@ Prometheus/Grafana setup in `docs/`.
 Get Historical Roots (informational)
 ────────────────────────────────────
 GET /replica/historical_roots?bucket_id=1234
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Response:
 {
@@ -2135,6 +2357,7 @@ and placeholder entries for the historical positions; clients building
 Get Replica Sync Status
 ───────────────────────
 GET /replica/sync_status?bucket_id=1234
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Response:
 {
@@ -2159,6 +2382,13 @@ top-down Merkle traversal. This section describes the sync protocol.
 4. Replica fetches missing nodes from providers, verifying hashes along the way
 5. Once fully synced, replica confirms on-chain to receive per-sync payment
 
+On a **private** bucket the primaries refuse step 2 (`/mmr_peaks` is
+Reader-gated and a replica is not a member — the design's primary gate), so
+the sync coordinator tries the bucket's *other replicas* after the primaries:
+replicas serve everyone, which is what lets a public→private bucket keep
+seeding new replicas. A born-private bucket has no honest source at all —
+by design.
+
 **Why chain-first?**
 
 The chain checkpoint is the source of truth. Fetching the root from a provider
@@ -2169,6 +2399,9 @@ the replica can verify all fetched data against a trusted commitment.
 Get MMR Peaks (given trusted root from chain)
 ─────────────────────────────────────────────
 GET /mmr_peaks?bucket_id=0x...
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets
+                                       # and on buckets the serving node
+                                       # holds as a replica)
 
 Response:
 {
@@ -2178,48 +2411,31 @@ Response:
 }
 
 Note: Replica already knows the trusted mmr_root from the chain. It fetches
-peaks from a provider and verifies: hash(peaks) == trusted_root. If verification
+peaks from a provider and verifies: bag_peaks(peaks) == trusted_root (peak bagging uses the `0x02` prefix). If verification
 fails, try another provider. Once verified, use peaks to start top-down traversal.
 
-Get MMR Subtree
-───────────────
-GET /mmr_subtree?bucket_id=0x...&peak_index=0&depth=2
-
-Request: Fetch nodes in an MMR subtree starting from a peak.
-- peak_index: which peak to start from (0 = leftmost)
-- depth: how many levels to fetch (0 = just the peak, 1 = peak + children, etc.)
-
-Response:
-{
-  "nodes": [
-    { "position": 0, "hash": "0xabc...", "children": [1, 2] },
-    { "position": 1, "hash": "0xdef...", "children": [3, 4] },
-    { "position": 2, "hash": "0x123...", "children": [5, 6] },
-    ...
-  ]
-}
-
-Note: Replica can batch requests by depth level. Check which hashes match
-locally stored nodes, then fetch children of missing nodes.
-
 Note: To check which nodes exist on a provider, use the existing POST /exists
-endpoint from the Sync Protocol section above.
+endpoint from the Sync Protocol section above. The traversal walks `GET /node`
+children links.
 
 Fetch Nodes (batched, for sync)
 ───────────────────────────────
 POST /fetch_nodes
 
+Capability read: keyed by hash, unauthenticated; 404 for a bucket the node
+does not store (see Authentication & RBAC).
+
 Request:
 {
-  "bucket_id": "0x1234...",
+  "bucket_id": 1,
   "hashes": ["0xdef...", "0x456...", ...]
 }
 
 Response:
 {
   "nodes": [
-    { "hash": "0xdef...", "data": "<base64>", "children": ["0xchild1...", "0xchild2..."] },
-    { "hash": "0x456...", "data": "<base64>", "children": null }  // leaf chunk
+    { "hash": "0xdef...", "children": ["0xleft...", "0xright..."] },  // internal node
+    { "hash": "0x456...", "data": "<base64>" }                        // chunk
   ]
 }
 
@@ -2233,14 +2449,15 @@ requests when syncing many nodes.
 1. Query chain for bucket's current snapshot (mmr_root, start_seq, leaf_count)
    Also note historical_roots for fallback positions
 2. Fetch mmr_peaks from any provider
-3. Verify: hash(peaks) == trusted mmr_root from chain
+3. Verify: bag_peaks(peaks) == trusted mmr_root from chain (bagging uses the `0x02` prefix)
    If mismatch, try another provider
 4. Compare verified peaks with locally stored peaks
 5. For each differing peak:
    a. Fetch subtree level by level (breadth-first)
    b. At each level, check which nodes exist locally
    c. Fetch missing nodes from any available provider
-   d. Verify fetched nodes: hash(data) == expected_hash
+   d. Verify fetched nodes against expected_hash: a node with `data` is a chunk, hashed with `0x00`;
+      a node with `children` is hashed with `0x01` over left ++ right; reject a mismatch
    e. Continue to children of newly fetched nodes
 6. Once all nodes fetched and verified:
    a. Build signature over roots array matching on-chain historical_roots
@@ -2297,7 +2514,10 @@ the exact chunk a challenge targets.
 pub struct ChunkLocation {
     /// Index of the challenged leaf within the MMR
     pub leaf_index: u64,
-    /// Index of the challenged chunk within the leaf's data
+    /// Index of the challenged chunk within the leaf's data: chunk `i` covers
+    /// bytes `[i * CHUNK_SIZE, min((i + 1) * CHUNK_SIZE, data_size))`. An
+    /// index at or beyond the chunk count is answered with
+    /// `ChallengeResponse::ChunkOutOfRange`.
     pub chunk_index: u64,
 }
 ```
@@ -2324,9 +2544,14 @@ pub struct CommitmentPayload {
 
 ```rust
 pub struct MmrLeaf {
-    /// Merkle root of chunk tree
+    /// Leaf format version (`LEAF_VERSION = 1`). First field, so the leaf
+    /// hash preimage is `0x00 ++ leaf_version ++ ...`. The version defines the
+    /// fields below, `CHUNK_SIZE` and the chunk tree shape.
+    pub leaf_version: u8,
+    /// Root of the chunk tree (see "Chunk Tree")
     pub data_root: H256,
-    /// Size of content under this data_root
+    /// Byte length of the data under `data_root`. The chunk count is
+    /// `ceil(data_size / CHUNK_SIZE)` and is never zero.
     pub data_size: u64,
     /// Cumulative unique bytes in MMR at this point
     pub total_size: u64,
@@ -2334,26 +2559,74 @@ pub struct MmrLeaf {
 // Sequence number is implicit: start_seq + leaf_position
 ```
 
-### Merkle Proofs
+The provider writes `LEAF_VERSION`, the current version, into every leaf it
+commits. A verifier reads `leaf_version` first and checks the rest of the leaf
+under that version: its fields, its `CHUNK_SIZE`, the chunk tree shape and the
+hash prefixes. The pallet accepts every version it knows; a response whose
+leaf has an unknown version fails with `InvalidProof`. A format change bumps
+`LEAF_VERSION`; leaves of different versions share one MMR, so no root has to
+be recomputed.
+
+### Hash Prefixes
+
+Every hash in the chunk tree and the MMR is `blake2_256` over a one-byte
+prefix and the payload. The prefix identifies the kind of node the payload
+is, so a node's bytes never verify as a leaf of the same tree.
+
+| Prefix | Preimage | Hashes | Function |
+|---|---|---|---|
+| `0x00` | `0x00 ++ chunk` | a chunk: leaf of the chunk tree | `hash_leaf` |
+| `0x00` | `0x00 ++ leaf.encode()` | an `MmrLeaf`: leaf of the MMR (`leaf_version` is the first byte after the prefix) | `hash_leaf` |
+| `0x01` | `0x01 ++ left ++ right` | an internal node, in the chunk tree and in the MMR | `hash_children` |
+| `0x02` | `0x02 ++ peak ++ rest` | the MMR root: peaks folded right to left, one peak is the root, no peaks give zero | `bag_peaks` |
+
+### Chunk Tree
+
+The chunk tree is the binary Merkle tree of RFC 9162 (section 2.1.1) over the
+chunks of one piece of data, with the hashes of "Hash Prefixes" in place of
+SHA-256: the tree over one chunk is `hash_leaf(chunk)`; the tree over `n > 1`
+chunks is `hash_children(tree(chunks[0..k]), tree(chunks[k..n]))` with `k` the
+largest power of two smaller than `n`.
+
+Every chunk has `CHUNK_SIZE` bytes (256 KiB in leaf version 1) except the
+last, which has 1 to `CHUNK_SIZE` bytes, so `n = ceil(data_size / CHUNK_SIZE)`
+and `n >= 1`. Empty data has no chunks: the client does not upload it, and a
+root whose last chunk is empty fails the `/commit` check.
+
+Pairing nodes left to right at each level and moving an unpaired last node up
+unchanged builds the same tree. Reference implementation:
+`storage_primitives::merkle` (`merkle_root`, `build_merkle_proofs`,
+`verify_merkle_proof`).
+
+A chunk proof is the RFC 9162 inclusion proof (section 2.1.3.1): the sibling
+hashes from the chunk to the root, and nothing else. The verifier runs the
+algorithm of section 2.1.3.2 with `leaf_index = chunk_index` and
+`tree_size = n`; it derives every left/right direction from those two values,
+so the prover cannot choose them and the proof is bound to the chunk count
+that `data_size` implies. A proof against a tree of another size fails.
+
+### MMR Proof
 
 ```rust
-pub struct MerkleProof {
-    /// Sibling hashes from leaf to root
-    pub siblings: Vec<H256>,
-    /// Path bits (0 = left, 1 = right)
-    pub path: Vec<bool>,
-}
-
 pub struct MmrProof {
-    /// Peaks of the MMR
-    pub peaks: Vec<H256>,
-    /// The leaf being proven. Verification hashes `leaf.encode()` as the
-    /// proof's starting point, so the leaf content is part of the proof.
+    /// The leaf being proven.
     pub leaf: MmrLeaf,
-    /// Proof from leaf to peak
-    pub leaf_proof: MerkleProof,
+    /// Proof for leaf `leaf_index` of an MMR with `leaf_count` leaves. Both
+    /// values come from the challenge and its commitment, not from the proof.
+    /// Items, in this order:
+    /// 1. the root of each peak left of the leaf's peak, left to right;
+    /// 2. the sibling at each level from the leaf up to its peak, bottom up;
+    /// 3. if any peaks are right of the leaf's peak, one hash of them, bagged
+    ///    right to left.
+    /// A proof with any other number of items is rejected, and so is any
+    /// proof against a commitment with more than `u64::MAX / 2` leaves.
+    pub items: Vec<H256>,
 }
 ```
+
+Reference implementation: `polkadot-ckb-merkle-mountain-range` with
+`StorageMerge` (`gen_proof(..).proof_items()` to build, `MerkleProof::verify` to
+check).
 
 ---
 
@@ -2391,7 +2664,13 @@ pub struct MmrProof {
     └─ Treated as a valid response: provider's fee reimbursed as in 3a,
        remainder returned to challenger; stake untouched
 
-3c. Provider fails to respond / invalid proof
+3c. Provider responds with an invalid proof or claim
+    └─ Response rejected; the provider pays the transaction fee
+    └─ Challenge stays open; the provider may answer again before the deadline
+
+3d. Provider fails to respond by the deadline
+    └─ Anyone submits `resolve_expired_challenge` (free on success; the
+       challenger has the deposit as a reason to)
     └─ Provider's contract stake fully slashed
     └─ Challenger made whole from the slash: deposit refunded, tx fees
        reimbursed—but no reward beyond actual costs (no profit motive
@@ -2406,32 +2685,48 @@ pub struct MmrProof {
 - **Monetary exposure is bounded to chosen counterparties**: a provider is made to bear cost only for accounts it accepted agreements with (or the admin added)—it controls that risk by vetting whom it signs with.
 - **Off-chain resolution preferred**: answering on-chain means posting the data as a transaction—far costlier than serving the same bytes off-chain (the bandwidth is spent either way)—plus in-window hassle and reputation damage, even when the fee is reimbursed. So the provider serves directly.
 
-> **Note on the deposit/fee mechanic.** The deposit is sized to the *transaction cost* of the provider's response, not a slice of stake. A simple implementation: the provider pays the response fee from its account when it submits the proof, and the challenge-resolution logic refunds that fee out of the locked deposit (in full for public challengers, or the table fraction for authorized ones), returning any remainder to the challenger. No stake movement occurs on a valid response—stake is only ever touched by the slash in 3c.
+> **Note on the deposit/fee mechanic.** The deposit is sized to the *transaction cost* of the provider's response, not a slice of stake. A simple implementation: the provider pays the response fee from its account when it submits the proof, and the challenge-resolution logic refunds that fee out of the locked deposit (in full for public challengers, or the table fraction for authorized ones), returning any remainder to the challenger. No stake movement occurs on a valid response—stake is only ever touched by the slash in 3d.
 
 ### Verification
 
 ```rust
 /// Judged in one step. A valid response settles the deposit; an invalid
-/// one slashes the provider on the spot with the returned reason. Only a
-/// malformed submission — unknown challenge, wrong provider, past the
-/// deadline, or a `Deleted` claim naming a signer who is not a bucket
-/// admin — fails as a plain dispatch error the provider may correct and
-/// resend.
+/// one is rejected with the returned error and the challenge stays open, so
+/// the provider may correct and resend before the deadline. Only a timeout
+/// slashes (see `resolve_expired_challenge`).
 fn verify_challenge_response(
     challenge: &Challenge,
     response: &ChallengeResponse,
     bucket: &Bucket,
-) -> Result<(), SlashReason> {
-    let challenged_seq = challenge.start_seq + challenge.target.leaf_index;
+) -> Result<(), Error> {
+    let challenged_seq = challenge.commitment.start_seq + challenge.target.leaf_index;
     match response {
         ChallengeResponse::Proof { chunk_data, mmr_proof, chunk_proof } => {
             // The chunk must sit in the leaf and the leaf in the committed MMR.
-            let chunk_hash = blake2_256(chunk_data);
+            // The chunk count comes from the proven leaf, not from the prover.
+            let chunk_count = chunk_count(&mmr_proof.leaf); // ceil(data_size / CHUNK_SIZE of leaf_version)
+            let chunk_hash = hash_leaf(chunk_data); // blake2_256(0x00 ++ chunk_data)
             let chunk_ok = verify_merkle_proof(
-                chunk_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
+                chunk_hash,
+                challenge.target.chunk_index,
+                chunk_count,
+                chunk_proof,
+                &mmr_proof.leaf.data_root,
             );
-            let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.mmr_root);
-            if chunk_ok && mmr_ok { Ok(()) } else { Err(SlashReason::InvalidProof) }
+            // Bound to the challenged leaf: the leaf position and the MMR shape
+            // come from (target.leaf_index, commitment.leaf_count), not from the
+            // proof, so a proof for a different leaf of the same MMR does not verify.
+            let mmr_ok = verify_mmr_proof(mmr_proof, challenge.target.leaf_index, &challenge.commitment);
+            if chunk_ok && mmr_ok { Ok(()) } else { Err(Error::InvalidProof) }
+        }
+
+        ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
+            // The challenged leaf must be in the committed MMR and have no chunk at
+            // the index. Bound to target.leaf_index like the Proof arm, so the
+            // prover cannot pick a shorter leaf to claim the index is out of range.
+            let mmr_ok = verify_mmr_proof(mmr_proof, challenge.target.leaf_index, &challenge.commitment);
+            let out_of_range = challenge.target.chunk_index >= chunk_count(&mmr_proof.leaf);
+            if mmr_ok && out_of_range { Ok(()) } else { Err(Error::InvalidProof) }
         }
 
         ChallengeResponse::Deleted { new_mmr_root, new_start_seq, admin, admin_signature } => {
@@ -2444,7 +2739,7 @@ fn verify_challenge_response(
 
             // The purge must actually cover the challenged leaf.
             if challenged_seq >= *new_start_seq {
-                return Err(SlashReason::InvalidDeletionClaim);
+                return Err(Error::InvalidDeletionClaim);
             }
             // And the admin must have signed the newer commitment.
             let payload = CommitmentPayload::new(
@@ -2454,7 +2749,7 @@ fn verify_challenge_response(
             if verify_signature(admin_signature, &payload.encode(), admin) {
                 Ok(())
             } else {
-                Err(SlashReason::InvalidDeletionClaim)
+                Err(Error::InvalidDeletionClaim)
             }
         }
 
@@ -2478,14 +2773,14 @@ fn verify_challenge_response(
             // beyond canonical_end (they signed something canonical never covered).
             let Some(snapshot) = bucket.snapshot.as_ref() else {
                 // Nothing canonical to lean on: the claim is unsupported.
-                return Err(SlashReason::InvalidSupersededClaim);
+                return Err(Error::InvalidSupersededClaim);
             };
-            if challenge.mmr_root != snapshot.commitment.mmr_root
+            if challenge.commitment.mmr_root != snapshot.commitment.mmr_root
                 && snapshot.contains_seq(challenged_seq)
             {
                 Ok(())
             } else {
-                Err(SlashReason::InvalidSupersededClaim)
+                Err(Error::InvalidSupersededClaim)
             }
         }
     }

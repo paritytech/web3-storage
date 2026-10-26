@@ -10,10 +10,6 @@ pub enum Error {
     #[error("Node not found: {0:?}")]
     NodeNotFound(H256),
 
-    /// A chunk index past the end of a data root's chunk list.
-    #[error("Chunk not found: index {chunk_index} in data root {data_root:?}")]
-    ChunkNotFound { data_root: H256, chunk_index: u64 },
-
     /// A leaf index past the end of a bucket's leaf list.
     #[error("Leaf not found: index {leaf_index} in bucket {bucket_id}")]
     LeafNotFound { bucket_id: u64, leaf_index: u64 },
@@ -22,11 +18,38 @@ pub enum Error {
     #[error("MMR proof not found: leaf index {leaf_index} in bucket {bucket_id}")]
     MmrProofNotFound { bucket_id: u64, leaf_index: u64 },
 
+    #[error("Commitment not reproducible from local leaves: {0}")]
+    CommitmentNotReproducible(String),
+
     #[error("Children missing: {0:?}")]
     ChildrenMissing(Vec<H256>),
 
+    /// An internal node arrived with a child list that is not exactly two
+    /// hashes. Send the left and right child hashes.
+    #[error("Invalid child count: expected 2, got {0}")]
+    InvalidChildCount(usize),
+
+    /// A node arrived with both `data` and `children`, or with neither. Send
+    /// `data` for a chunk or `children` for an internal node.
+    #[error("A node is either data (a chunk) or children (an internal node)")]
+    InvalidNode,
+
+    /// No chunks to build a tree from. Send at least one byte.
+    #[error("Empty data has no chunk tree")]
+    EmptyData,
+
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
+
+    /// A leaf chunk above `DEFAULT_CHUNK_SIZE` bytes. Split the data into chunks
+    /// of at most that size.
+    #[error("Chunk too large: {size} bytes, max {max}", max = storage_primitives::DEFAULT_CHUNK_SIZE)]
+    ChunkTooLarge { size: u64 },
+
+    /// `chunk_index` is at or beyond the chunk count of the tree under the
+    /// data root: the leaf has no such chunk.
+    #[error("Chunk index {chunk_index} out of range: the tree has {chunk_count} chunks")]
+    ChunkIndexOutOfRange { chunk_index: u64, chunk_count: u64 },
 
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
@@ -37,8 +60,19 @@ pub enum Error {
     #[error("Invalid hash: expected {expected:?}, got {actual:?}")]
     InvalidHash { expected: H256, actual: H256 },
 
+    /// The tree under a data root is not `merkle_tree` over chunks of
+    /// `DEFAULT_CHUNK_SIZE` bytes, with only the last chunk shorter. Split the
+    /// data into such chunks and upload the nodes of
+    /// `storage_primitives::merkle_tree`.
+    #[error("Non-canonical tree: {0}")]
+    NonCanonicalTree(String),
+
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    /// Building the bucket MMR or a proof from it failed.
+    #[error("MMR error: {0}")]
+    Mmr(#[from] storage_primitives::mmr::Error),
 
     /// The RocksDB engine itself failed. Carries the engine's error as
     /// `source()` so the cause survives instead of being flattened into a
@@ -51,4 +85,10 @@ pub enum Error {
     /// fault.
     #[error("Column family not found: {0}")]
     ColumnFamilyMissing(&'static str),
+
+    /// The database on disk was written in a format this build cannot read.
+    /// Opening it anyway would decode its records wrongly, so the engine
+    /// refuses rather than reporting phantom missing data.
+    #[error("Incompatible on-disk format: {0}")]
+    IncompatibleFormat(String),
 }

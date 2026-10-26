@@ -14,8 +14,7 @@ use common::{StorageBackendKind, TestServer};
 
 /// Decodes a `0x`-prefixed (or bare) hex hash into an `H256`.
 fn h256_from_hex(s: &str) -> H256 {
-    let bytes = hex::decode(s.strip_prefix("0x").unwrap_or(s)).unwrap();
-    H256::from_slice(&bytes)
+    s.parse().unwrap()
 }
 
 impl TestServer {
@@ -418,7 +417,7 @@ common::backend_tests! {
 
         let body: Value = proof_response.json().await.unwrap();
         assert!(body["leaf"]["data_root"].is_string());
-        assert!(body["proof"]["peaks"].is_array());
+        assert!(body["items"].is_array());
     }
 }
 
@@ -427,7 +426,7 @@ common::backend_tests! {
         let server = TestServer::new(backend).await;
 
         // Two full chunks plus a partial one, so the object spans more than
-        // two chunks and the padded proof tree is not itself a power of two.
+        // two chunks and the chunk count is not a power of two.
         let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
         let data: Vec<u8> = (0..2 * chunk_size + 50_000)
             .map(|i| (i * 37 + 11) as u8)
@@ -465,7 +464,7 @@ common::backend_tests! {
             let resp = server
                 .client
                 .get(server.url(&format!(
-                    "/chunk_proof?data_root={data_root_hex}&chunk_index={chunk_index}"
+                    "/chunk_proof?bucket_id=1&data_root={data_root_hex}&chunk_index={chunk_index}"
                 )))
                 .send()
                 .await
@@ -487,27 +486,21 @@ common::backend_tests! {
             );
 
             let chunk_hash = h256_from_hex(body["chunk_hash"].as_str().unwrap());
-            assert_eq!(chunk_hash, storage_primitives::blake2_256(expected_chunk));
+            assert_eq!(chunk_hash, storage_primitives::hash_leaf(expected_chunk));
 
-            let siblings: Vec<H256> = body["proof"]["siblings"]
+            let siblings: Vec<H256> = body["proof"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .map(|s| h256_from_hex(s.as_str().unwrap()))
                 .collect();
-            let path: Vec<bool> = body["proof"]["path"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|b| b.as_bool().unwrap())
-                .collect();
 
-            let proof = storage_primitives::MerkleProof { siblings, path };
             assert!(
                 storage_primitives::verify_merkle_proof(
                     chunk_hash,
                     chunk_index as u64,
-                    &proof,
+                    chunk_count as u64,
+                    &siblings,
                     &data_root
                 ),
                 "chunk {chunk_index} proof did not verify against the data root"
@@ -552,7 +545,7 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_put_empty_body(backend) {
+    async fn test_s3_put_empty_body_is_rejected(backend) {
         let server = TestServer::new(backend).await;
 
         let response = server
@@ -562,21 +555,17 @@ common::backend_tests! {
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body: Value = response.json().await.unwrap();
-        assert_eq!(body["size"], 0);
+        assert_eq!(body["error"], "empty_body");
 
-        // GET should return empty body
         let response = server
             .client
             .get(server.url("/s3/1/object?key=empty.bin"))
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let data = response.bytes().await.unwrap();
-        assert!(data.is_empty());
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
 

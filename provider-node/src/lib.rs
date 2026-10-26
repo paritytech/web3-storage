@@ -10,10 +10,13 @@
 //! - Syncing data between providers (for replicas)
 
 pub mod api;
+pub(crate) mod chain_connection;
+pub(crate) mod chain_follower;
 pub mod challenge_proofs;
 pub mod cli;
 pub mod command;
 pub mod error;
+pub(crate) mod event_decoding;
 pub mod fs_api;
 pub mod membership;
 pub mod negotiate;
@@ -27,16 +30,15 @@ pub use error::Error;
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
 pub use provider_challenge::{
     self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
-    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
+    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle, ChallengeResponse,
     ChallengeResponseResult, DetectedChallenge, ProofTarget, ResponderCommand,
 };
 /// The chain-state coordinator lives in the `provider-coordinator` crate; keep
 /// the old module path working for existing consumers.
 pub use provider_coordinator as chain_state_coordinator;
 pub use provider_coordinator::{
-    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
-    NonceCounter, PalletConstants, ProviderLifecycleEvent,
+    refresh_if_relevant_event, refresh_provider_state, sync_constants, ChainState,
+    ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle, PalletConstants,
 };
 pub use provider_replica::{
     ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
@@ -46,7 +48,7 @@ pub use provider_replica::{
 pub use types::*;
 
 use codec::Encode;
-use provider_storage::{FsIndexManager, NonceStore, S3IndexManager, StorageBackend};
+use provider_storage::{FsIndexManager, S3IndexManager, StorageBackend};
 use provider_types::{KeyScheme, ProviderKeypair, SigningRefused};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair};
@@ -57,8 +59,6 @@ use std::sync::Arc;
 pub struct ProviderDeps {
     /// Local storage backend.
     pub storage: Arc<dyn StorageBackend>,
-    /// Persistence backing for the nonce counter.
-    pub nonce_store: Arc<dyn NonceStore>,
     /// Verifies signed requests and enforces bucket roles.
     pub auth: Arc<provider_auth::Authenticator>,
 }
@@ -84,8 +84,8 @@ pub struct ProviderState {
     /// permissive policy; `Some(list)` restricts to exactly those origins.
     pub cors_allowed_origins: Option<Vec<String>>,
     /// Live chain state kept in sync by the chain-state coordinator — the single
-    /// writer for `current_anchor_block`, `constants`, `provider_info`, and
-    /// `nonce_counter`. `/negotiate` gates on all four before signing.
+    /// writer for `current_anchor_block`, `constants`, and `provider_info`.
+    /// `/negotiate` gates on all three before signing.
     pub chain_state: Arc<ChainState>,
 }
 
@@ -97,11 +97,7 @@ impl ProviderState {
         provider_id: String,
         keypair: Option<ProviderKeypair>,
     ) -> Self {
-        let ProviderDeps {
-            storage,
-            nonce_store,
-            auth,
-        } = deps;
+        let ProviderDeps { storage, auth } = deps;
         Self {
             storage,
             provider_id,
@@ -112,7 +108,7 @@ impl ProviderState {
             fs_index: FsIndexManager::new(),
             auth,
             cors_allowed_origins: None,
-            chain_state: Arc::new(ChainState::with_nonce_store(nonce_store)),
+            chain_state: Arc::new(ChainState::default()),
         }
     }
 
@@ -142,12 +138,19 @@ impl ProviderState {
         seed: &str,
         scheme: KeyScheme,
     ) -> Result<Self, String> {
-        let account = sr25519::Pair::from_string(seed, None)
-            .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
-        let provider_id = account.public().to_ss58check();
+        let provider_id = Self::provider_id_from_seed(seed)?;
         let keypair = ProviderKeypair::from_seed(seed, scheme)?;
 
         Ok(Self::from_parts(deps, provider_id, Some(keypair)))
+    }
+
+    /// The provider id for `seed`: its sr25519 account, SS58-encoded. This is
+    /// the extrinsic-submission account the provider is keyed by on-chain,
+    /// whatever signing scheme the node runs with.
+    pub fn provider_id_from_seed(seed: &str) -> Result<String, String> {
+        let account = sr25519::Pair::from_string(seed, None)
+            .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
+        Ok(account.public().to_ss58check())
     }
 
     /// Restrict the browser origins allowed via CORS. `None` (the default) keeps
@@ -167,7 +170,7 @@ impl ProviderState {
     /// cryptographically invalid commitment masquerading as a real one.
     pub fn sign(&self, message: &[u8]) -> Result<String, Error> {
         let keypair = self.signing_keypair()?;
-        Ok(format!("0x{}", hex::encode(keypair.sign(message).encode())))
+        Ok(array_bytes::bytes2hex("0x", keypair.sign(message).encode()))
     }
 
     /// The keypair every signing path goes through, once the guard below
@@ -204,8 +207,8 @@ impl ProviderState {
         };
         if &info.public_key != local {
             tracing::warn!(
-                registered = %hex::encode(&info.public_key),
-                local = %hex::encode(local),
+                registered = %array_bytes::bytes2hex("", &info.public_key),
+                local = %array_bytes::bytes2hex("", local),
                 "local signing key does not match registered on-chain public_key"
             );
             return Err(SigningRefused::KeyMismatch);
@@ -238,13 +241,12 @@ mod tests {
     /// Deps over a throwaway backend. Keep the returned guard bound for as
     /// long as the state is used.
     fn test_deps() -> (ProviderDeps, tempfile::TempDir) {
-        let (storage, nonce_store, dir) = temp_rocksdb();
+        let (storage, dir) = temp_rocksdb();
         let deps = ProviderDeps {
             storage,
-            nonce_store,
-            auth: Arc::new(Authenticator::new(provider_auth::StaticMembershipResolver(
-                vec![],
-            ))),
+            auth: Arc::new(Authenticator::new(
+                provider_auth::StaticMembershipResolver::private(vec![]),
+            )),
         };
         (deps, dir)
     }
@@ -311,7 +313,7 @@ mod tests {
         let message = b"commitment-payload-bytes";
 
         let sig_hex = state.sign(message).expect("signing succeeds with keypair");
-        let sig_bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
+        let sig_bytes = array_bytes::hex2bytes(&sig_hex).unwrap();
         assert_eq!(
             sig_bytes.len(),
             65,
@@ -367,7 +369,7 @@ mod tests {
     /// `sr25519::Signature`, asserting the variant tag.
     fn sig_from_hex(sig_hex: &str) -> sr25519::Signature {
         use codec::Decode;
-        let bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
+        let bytes = array_bytes::hex2bytes(sig_hex).unwrap();
         match MultiSignature::decode(&mut &bytes[..]).expect("valid SCALE MultiSignature") {
             MultiSignature::Sr25519(sig) => sig,
             other => panic!("expected an Sr25519 signature, got {other:?}"),
@@ -395,7 +397,7 @@ mod tests {
         let sig_b = state.sign(msg).unwrap();
 
         for sig_hex in [&sig_a, &sig_b] {
-            let bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
+            let bytes = array_bytes::hex2bytes(sig_hex).unwrap();
             assert_ne!(bytes, vec![0u8; 64]);
             let sig = sig_from_hex(sig_hex);
             assert!(sr25519::Pair::verify(&sig, msg, &alice_pub));
