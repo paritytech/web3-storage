@@ -3,6 +3,8 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
+    chain_connection::{self, ChainHandle},
+    chain_follower::SubxtChainFollower,
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, DEFAULT_PROVIDER_ID},
     create_router,
@@ -14,10 +16,8 @@ use crate::{
 };
 use clap::Parser;
 use provider_auth::Authenticator;
-use provider_chain::{
-    chain_connection::{self, ChainHandle, ChainTransport},
-    BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY,
-};
+use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
+use sp_core::crypto::{AccountId32, Ss58Codec};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -59,13 +59,29 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let backend = cli.storage.spec();
     tracing::info!("Storage backend: {backend}");
-    let (storage, nonce_store) = backend.build()?;
+    let storage = backend.build()?;
+
+    // The provider identity, resolved once: the sr25519 submission account
+    // derived from the seed (whatever the signing scheme), else --provider-id.
+    let seed = cli.key.load_seed()?;
+    let provider_id = match &seed {
+        Some(seed) => ProviderState::provider_id_from_seed(seed)?,
+        None => cli
+            .key
+            .provider_id
+            .clone()
+            .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_string()),
+    };
 
     // Membership-based auth over the chain's bucket member sets, resolved
     // through the shared watch connection. Subscribed here rather than after
     // the chain-state coordinator starts, so the cache cannot miss the
     // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
-    let resolver = ChainMembershipResolver::new(chain_rx.clone());
+    // The node's account serves the resolver's replica lookups and the
+    // authenticator's operator self-auth. Both stay off when the provider id
+    // is not an SS58 account (the placeholder default).
+    let provider_account = AccountId32::from_ss58check(&provider_id).ok();
+    let resolver = ChainMembershipResolver::new(chain_rx.clone(), provider_account.clone());
     // Incoherent, not unsafe - warn rather than clamp an explicit choice.
     if cli.auth.auth_max_stale <= cli.auth.auth_cache_ttl {
         tracing::warn!(
@@ -75,14 +91,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             cli.auth.auth_cache_ttl
         );
     }
-    let auth = Arc::new(
-        Authenticator::new(resolver)
-            .with_ttl(Duration::from_secs(cli.auth.auth_cache_ttl))
-            .with_max_skew(Duration::from_secs(cli.auth.auth_max_skew))
-            .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
-            .with_max_entries(cli.auth.auth_cache_max_entries)
-            .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe())),
-    );
+    let mut authenticator = Authenticator::new(resolver)
+        .with_ttl(Duration::from_secs(cli.auth.auth_cache_ttl))
+        .with_max_skew(Duration::from_secs(cli.auth.auth_max_skew))
+        .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
+        .with_max_entries(cli.auth.auth_cache_max_entries)
+        .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe()));
+    if let Some(account) = provider_account {
+        authenticator = authenticator.with_provider_account(account);
+    }
+    let auth = Arc::new(authenticator);
     tracing::info!(
         "Auth: membership cache_ttl={}s, max_stale={}s, max_skew={}s, max_entries={}",
         cli.auth.auth_cache_ttl,
@@ -91,14 +109,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         cli.auth.auth_cache_max_entries
     );
 
-    let deps = ProviderDeps {
-        storage,
-        nonce_store,
-        auth,
-    };
+    let deps = ProviderDeps { storage, auth };
 
     // Resolve provider identity
-    let seed = cli.key.load_seed()?;
     let state = match &seed {
         Some(seed) => {
             let state = ProviderState::with_seed_scheme(deps, seed, cli.key.key_scheme)?;
@@ -110,16 +123,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             state
         }
         None => {
-            let provider_id = cli
-                .key
-                .provider_id
-                .clone()
-                .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_string());
             tracing::warn!(
                 "No --keyfile set, using --provider-id without signing: {}",
                 provider_id
             );
-
             ProviderState::with_provider_id(deps, provider_id)
         }
     }
@@ -148,8 +155,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let challenge_events = events_tx.subscribe();
 
     // Start optional background services (failures are non-fatal)
-    let _chain_state_handle =
-        start_chain_state_coordinator(transport, chain_tx, events_tx, state.clone());
+    let follower = Arc::new(SubxtChainFollower::new(transport, chain_tx));
+    let _chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), replica_events, state.clone())
             .await;
@@ -194,8 +201,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// retries with a backoff if the chain is unreachable, so `current_anchor_block`
 /// is populated as soon as the chain comes up.
 fn start_chain_state_coordinator(
-    transport: ChainTransport,
-    chain_tx: watch::Sender<Option<ChainHandle>>,
+    follower: Arc<dyn provider_coordinator::ChainFollower>,
     events_tx: BlockEventTx,
     state: Arc<ProviderState>,
 ) -> Option<ChainStateCoordinatorHandle> {
@@ -211,10 +217,9 @@ fn start_chain_state_coordinator(
     };
 
     let coordinator = ChainStateCoordinator::new(
-        transport,
+        follower,
         provider_account,
         state.chain_state.clone(),
-        chain_tx,
         events_tx,
     );
 

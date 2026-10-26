@@ -10,9 +10,11 @@
 //! `OnlineClient`/`Keypair` clone that shares the underlying WebSocket
 //! connection).
 
-use crate::challenge_responder::{ChallengeChainClient, ChallengeError, DetectedChallenge};
+use crate::chain_connection::{self, ChainWatch};
+use crate::challenge_responder::{
+    ChallengeChainClient, ChallengeError, ChallengeResponse, DetectedChallenge,
+};
 use crate::Error;
-use provider_chain::chain_connection::{self, ChainWatch};
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
 use sp_core::crypto::Ss58Codec;
@@ -21,12 +23,13 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ChallengeResponse as RuntimeChallengeResponse;
 use storage_subxt::api::runtime_types::storage_primitives::{
-    ChallengeId as RuntimeChallengeId, MerkleProof as RuntimeMerkleProof,
-    MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof,
+    mmr::{MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof},
+    ChallengeId as RuntimeChallengeId, ChunkLocation as RuntimeChunkLocation,
+    Commitment as RuntimeCommitment,
 };
 use subxt::dynamic::Value;
 use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};
@@ -162,11 +165,7 @@ impl SubxtChainClient {
     /// Backs `get_current_block` on the replica-sync trait.
     async fn current_anchor_block(&self) -> Result<u64, ChainClientError> {
         let at = self.at_current_block().await?;
-        Ok(u64::from(
-            provider_coordinator::fetch_current_anchor_block(&at)
-                .await
-                .map_err(|e| ChainClientError::query("current anchor block", e))?,
-        ))
+        Ok(u64::from(fetch_current_anchor_block(&at).await?))
     }
 
     /// Whether the failure is the chain rejecting the call itself (a
@@ -527,6 +526,46 @@ impl SubxtChainClient {
         }
     }
 
+    /// Resolve each provider account (raw 32-byte keys) to its HTTP endpoint
+    /// via the on-chain `Providers` multiaddr. Accounts without a resolvable
+    /// registration are skipped.
+    async fn endpoints_for_accounts(
+        &self,
+        provider_bytes_list: Vec<Vec<u8>>,
+    ) -> Result<Vec<String>, ChainClientError> {
+        use subxt::ext::scale_value::At;
+
+        if provider_bytes_list.is_empty() {
+            return Ok(Vec::new());
+        }
+        let at = self.at_current_block().await?;
+        let mut endpoints = Vec::new();
+        for provider_bytes in provider_bytes_list {
+            let provider_addr =
+                subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
+            let Ok(Some(value)) = at
+                .storage()
+                .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
+                .await
+            else {
+                continue;
+            };
+            let Ok(decoded) = value.decode() else {
+                continue;
+            };
+            let Some(field0) = decoded.at(0) else {
+                continue;
+            };
+            let bytes = Self::extract_byte_vec(field0);
+            if !bytes.is_empty() {
+                let multiaddr_str = String::from_utf8_lossy(&bytes);
+                endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
+            }
+        }
+
+        Ok(endpoints)
+    }
+
     /// Parse a BucketSnapshot value from scale_value.
     fn parse_bucket_snapshot_value<T>(value: &subxt::ext::scale_value::Value<T>) -> BucketSnapshot {
         use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
@@ -597,7 +636,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
         let payload = storage_subxt::api::runtime_apis()
             .storage_provider_api()
-            .provider_agreements(subxt::utils::AccountId32(*account.as_ref()))
+            .provider_agreements(subxt_account(&account))
             .unvalidated();
 
         let agreements = self
@@ -712,30 +751,38 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             }
         }
 
-        // Look up each provider's multiaddr
-        let mut endpoints = Vec::new();
-        for provider_bytes in provider_bytes_list {
-            let provider_addr =
-                subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
+        self.endpoints_for_accounts(provider_bytes_list).await
+    }
 
-            if let Ok(Some(value)) = at
-                .storage()
-                .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
-                .await
-            {
-                if let Ok(decoded) = value.decode() {
-                    if let Some(field0) = decoded.at(0) {
-                        let bytes = Self::extract_byte_vec(field0);
-                        if !bytes.is_empty() {
-                            let multiaddr_str = String::from_utf8_lossy(&bytes);
-                            endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
-                        }
-                    }
-                }
-            }
-        }
+    async fn fetch_replica_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError> {
+        use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
 
-        Ok(endpoints)
+        let provider_account = self.signer.public_key().0.to_vec();
+
+        let payload = storage_subxt::api::runtime_apis()
+            .storage_provider_api()
+            .bucket_agreements(bucket_id)
+            .unvalidated();
+
+        let agreements = self
+            .at_current_block()
+            .await?
+            .runtime_apis()
+            .call(payload)
+            .await
+            .map_err(|e| ChainClientError::query("bucket agreements", e))?;
+
+        let accounts: Vec<Vec<u8>> = agreements
+            .into_iter()
+            .filter(|agreement| matches!(agreement.role, ProviderRole::Replica { .. }))
+            .map(|agreement| agreement.provider)
+            .filter(|provider| provider != &provider_account)
+            .collect();
+
+        self.endpoints_for_accounts(accounts).await
     }
 
     async fn submit_sync_confirmation(
@@ -783,16 +830,65 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 /// The generated `Challenge` value held in `StorageProvider::Challenges`.
 type OnChainChallenge = storage_subxt::api::storage_provider::storage::challenges::Output;
 
+/// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
+/// the block every on-chain duration (timeouts, expiries, `valid_until`) is
+/// measured against. Reading it through the runtime API keeps the
+/// provider agnostic to whether the anchor is a relay, parachain, or other
+/// block number: the pallet decides via its `BlockNumberProvider`.
+pub(crate) async fn fetch_current_anchor_block<C>(
+    at: &subxt::client::ClientAtBlock<subxt::PolkadotConfig, C>,
+) -> Result<u32, ChainClientError>
+where
+    C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
+{
+    // `unvalidated`: see the `storage-subxt` crate docs.
+    at.runtime_apis()
+        .call(
+            storage_subxt::api::runtime_apis()
+                .storage_provider_api()
+                .current_anchor_block()
+                .unvalidated(),
+        )
+        .await
+        .map_err(|e| ChainClientError::query("current anchor block", e))
+}
+
+/// Convert an account from the `sp_runtime` representation the node uses into
+/// the `subxt` one the generated bindings expect. Same 32 bytes either way.
+pub(crate) fn subxt_account(who: &sp_runtime::AccountId32) -> subxt::utils::AccountId32 {
+    subxt::utils::AccountId32(*<sp_runtime::AccountId32 as AsRef<[u8; 32]>>::as_ref(who))
+}
+
 /// `storage-primitives` and the generated bindings carry structurally identical
 /// proof types; only the `H256` differs (`sp_core` vs `subxt::utils`).
 fn to_runtime_hash(hash: H256) -> subxt::utils::H256 {
     subxt::utils::H256(hash.0)
 }
 
-fn to_runtime_merkle_proof(proof: storage_primitives::MerkleProof) -> RuntimeMerkleProof {
-    RuntimeMerkleProof {
-        siblings: proof.siblings.into_iter().map(to_runtime_hash).collect(),
-        path: proof.path,
+fn to_runtime_mmr_proof(mmr_proof: storage_primitives::MmrProof) -> RuntimeMmrProof {
+    RuntimeMmrProof {
+        leaf: RuntimeMmrLeaf {
+            leaf_version: mmr_proof.leaf.leaf_version,
+            data_root: to_runtime_hash(mmr_proof.leaf.data_root),
+            data_size: mmr_proof.leaf.data_size,
+            total_size: mmr_proof.leaf.total_size,
+        },
+        items: mmr_proof.items.into_iter().map(to_runtime_hash).collect(),
+    }
+}
+
+fn commitment(commitment: RuntimeCommitment) -> Commitment {
+    Commitment {
+        mmr_root: H256::from(commitment.mmr_root.0),
+        start_seq: commitment.start_seq,
+        leaf_count: commitment.leaf_count,
+    }
+}
+
+fn chunk_location(target: RuntimeChunkLocation) -> ChunkLocation {
+    ChunkLocation {
+        leaf_index: target.leaf_index,
+        chunk_index: target.chunk_index,
     }
 }
 
@@ -812,11 +908,8 @@ fn detected_challenge(
         bucket_id: challenge.bucket_id,
         deadline,
         index,
-        mmr_root: H256::from(challenge.mmr_root.0),
-        start_seq: challenge.start_seq,
-        leaf_index: challenge.target.leaf_index,
-        chunk_index: challenge.target.chunk_index,
-        challenger: sp_core::crypto::AccountId32::from(challenge.challenger.0).to_ss58check(),
+        commitment: commitment(challenge.commitment),
+        target: chunk_location(challenge.target),
     })
 }
 
@@ -858,36 +951,15 @@ fn replica_agreement_info(agreement: AgreementFromRuntimeApi) -> Option<ReplicaA
 type ChallengeFromRuntimeApi =
     storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api::ChallengeResponse;
 
-/// Map a `provider_challenges` entry into a `DetectedChallenge`.
-///
-/// Unlike the storage-map shape this response is already flat (no nested
-/// `target`) and carries accounts as SCALE-encoded bytes, so it needs its own
-/// mapping. No provider check here: the runtime API filtered on-chain.
+/// Map a `provider_challenges` entry into a `DetectedChallenge`. No provider
+/// check here: the runtime API filtered on-chain.
 fn detected_from_response(challenge: ChallengeFromRuntimeApi) -> DetectedChallenge {
-    // An unreadable challenger only costs us a diagnostic field, so it must not
-    // discard the challenge — failing to respond is what gets us slashed.
-    let challenger = match <[u8; 32]>::try_from(challenge.challenger.as_slice()) {
-        Ok(bytes) => sp_core::crypto::AccountId32::from(bytes).to_ss58check(),
-        Err(_) => {
-            tracing::warn!(
-                "Challenge {}/{} carried a {}-byte challenger account, expected 32",
-                challenge.deadline,
-                challenge.index,
-                challenge.challenger.len()
-            );
-            String::new()
-        }
-    };
-
     DetectedChallenge {
         bucket_id: challenge.bucket_id,
         deadline: challenge.deadline,
         index: challenge.index,
-        mmr_root: H256::from(challenge.mmr_root.0),
-        start_seq: challenge.start_seq,
-        leaf_index: challenge.leaf_index,
-        chunk_index: challenge.chunk_index,
-        challenger,
+        commitment: commitment(challenge.commitment),
+        target: chunk_location(challenge.target),
     }
 }
 
@@ -926,7 +998,7 @@ impl ChallengeChainClient for SubxtChainClient {
     /// Backs the event-driven path: a `ChallengeCreated` event carries the
     /// challenge id but not the proof parameters, so the responder fetches
     /// the full `Challenge` value here. Returns `None` when the entry is
-    /// missing (already responded / reaped) or targets another provider.
+    /// missing (already responded / resolved) or targets another provider.
     async fn fetch_challenge(
         &self,
         deadline: u32,
@@ -967,24 +1039,24 @@ impl ChallengeChainClient for SubxtChainClient {
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
-        chunk_data: Vec<u8>,
-        mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: storage_primitives::MerkleProof,
+        response: ChallengeResponse,
     ) -> Result<H256, ChallengeError> {
         let (deadline, index) = challenge_id;
-
-        let response = RuntimeChallengeResponse::Proof {
-            chunk_data: BoundedVec(chunk_data),
-            mmr_proof: RuntimeMmrProof {
-                peaks: mmr_proof.peaks.into_iter().map(to_runtime_hash).collect(),
-                leaf: RuntimeMmrLeaf {
-                    data_root: to_runtime_hash(mmr_proof.leaf.data_root),
-                    data_size: mmr_proof.leaf.data_size,
-                    total_size: mmr_proof.leaf.total_size,
-                },
-                leaf_proof: to_runtime_merkle_proof(mmr_proof.leaf_proof),
+        let response = match response {
+            ChallengeResponse::Proof {
+                chunk_data,
+                mmr_proof,
+                chunk_proof,
+            } => RuntimeChallengeResponse::Proof {
+                chunk_data: BoundedVec(chunk_data),
+                mmr_proof: to_runtime_mmr_proof(mmr_proof),
+                chunk_proof: chunk_proof.into_iter().map(to_runtime_hash).collect(),
             },
-            chunk_proof: to_runtime_merkle_proof(chunk_proof),
+            ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
+                RuntimeChallengeResponse::ChunkOutOfRange {
+                    mmr_proof: to_runtime_mmr_proof(mmr_proof),
+                }
+            }
         };
 
         let tx = storage_subxt::api::tx()
@@ -1005,7 +1077,9 @@ impl ChallengeChainClient for SubxtChainClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use storage_subxt::api::runtime_types::storage_primitives::ChunkLocation;
+    use storage_subxt::api::runtime_types::storage_primitives::{
+        ChunkLocation as RuntimeChunkLocation, Commitment as RuntimeCommitment,
+    };
 
     const OURS: [u8; 32] = [9u8; 32];
 
@@ -1019,14 +1093,18 @@ mod tests {
             bucket_id: 42,
             provider: subxt::utils::AccountId32(provider),
             challenger: subxt::utils::AccountId32([2u8; 32]),
-            mmr_root: subxt::utils::H256([3u8; 32]),
-            start_seq: 100,
-            target: ChunkLocation {
+            commitment: RuntimeCommitment {
+                mmr_root: subxt::utils::H256([3u8; 32]),
+                start_seq: 100,
+                leaf_count: 9,
+            },
+            target: RuntimeChunkLocation {
                 leaf_index: 7,
                 chunk_index: 5,
             },
             deposit: 1_000_000_000_000,
             authorized: false,
+            created_at: 1,
         }
     }
 
@@ -1038,16 +1116,13 @@ mod tests {
         assert_eq!(detected.bucket_id, 42);
         assert_eq!(detected.deadline, 11);
         assert_eq!(detected.index, 3);
-        assert_eq!(detected.mmr_root.0, [3u8; 32]);
-        assert_eq!(detected.start_seq, 100);
+        assert_eq!(detected.commitment.mmr_root.0, [3u8; 32]);
+        assert_eq!(detected.commitment.leaf_count, 9);
+        assert_eq!(detected.commitment.start_seq, 100);
         // Both come from the nested `target: ChunkLocation`, and they are
         // deliberately different values so a swapped mapping is caught.
-        assert_eq!(detected.leaf_index, 7);
-        assert_eq!(detected.chunk_index, 5);
-        assert_eq!(
-            detected.challenger,
-            sp_core::crypto::AccountId32::from([2u8; 32]).to_ss58check()
-        );
+        assert_eq!(detected.target.leaf_index, 7);
+        assert_eq!(detected.target.chunk_index, 5);
     }
 
     #[test]
@@ -1058,17 +1133,21 @@ mod tests {
         );
     }
 
-    /// Build a `provider_challenges` response entry with the given challenger
-    /// bytes, so the account-decoding path can be exercised both ways.
-    fn runtime_api_challenge(challenger: Vec<u8>) -> ChallengeFromRuntimeApi {
+    /// Build a `provider_challenges` response entry.
+    fn runtime_api_challenge() -> ChallengeFromRuntimeApi {
         ChallengeFromRuntimeApi {
             bucket_id: 42,
             provider: OURS.to_vec(),
-            challenger,
-            mmr_root: subxt::utils::H256([3u8; 32]),
-            start_seq: 100,
-            leaf_index: 7,
-            chunk_index: 5,
+            challenger: [2u8; 32].to_vec(),
+            commitment: RuntimeCommitment {
+                mmr_root: subxt::utils::H256([3u8; 32]),
+                start_seq: 100,
+                leaf_count: 9,
+            },
+            target: RuntimeChunkLocation {
+                leaf_index: 7,
+                chunk_index: 5,
+            },
             deadline: 11,
             index: 3,
             deposit: 1_000_000_000_000,
@@ -1078,32 +1157,16 @@ mod tests {
 
     #[test]
     fn maps_runtime_api_challenge() {
-        let detected = detected_from_response(runtime_api_challenge([2u8; 32].to_vec()));
+        let detected = detected_from_response(runtime_api_challenge());
 
         assert_eq!(detected.bucket_id, 42);
         assert_eq!(detected.deadline, 11);
         assert_eq!(detected.index, 3);
-        assert_eq!(detected.mmr_root.0, [3u8; 32]);
-        assert_eq!(detected.start_seq, 100);
-        // Flat on this shape, unlike the nested `target` on the storage value.
-        assert_eq!(detected.leaf_index, 7);
-        assert_eq!(detected.chunk_index, 5);
-        assert_eq!(
-            detected.challenger,
-            sp_core::crypto::AccountId32::from([2u8; 32]).to_ss58check()
-        );
-    }
-
-    #[test]
-    fn malformed_challenger_does_not_discard_the_challenge() {
-        let detected = detected_from_response(runtime_api_challenge(vec![7u8; 8]));
-
-        // Only the diagnostic field degrades; the challenge still has to be
-        // answered, since not answering is what gets the provider slashed.
-        assert!(detected.challenger.is_empty());
-        assert_eq!(detected.bucket_id, 42);
-        assert_eq!(detected.leaf_index, 7);
-        assert_eq!(detected.chunk_index, 5);
+        assert_eq!(detected.commitment.mmr_root.0, [3u8; 32]);
+        assert_eq!(detected.commitment.leaf_count, 9);
+        assert_eq!(detected.commitment.start_seq, 100);
+        assert_eq!(detected.target.leaf_index, 7);
+        assert_eq!(detected.target.chunk_index, 5);
     }
 
     /// Build an agreement response carrying `role`.

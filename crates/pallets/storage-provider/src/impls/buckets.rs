@@ -4,9 +4,8 @@ use crate::Member;
 use crate::*;
 use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
-use sp_core::H256;
 use sp_runtime::traits::{SaturatedConversion, Saturating, Zero};
-use storage_primitives::{BucketId, ProviderRole, Role, Visibility};
+use storage_primitives::{BucketId, Commitment, ProviderRole, Role, Visibility};
 
 impl<T: Config> Pallet<T> {
     /// Internal function to cleanup a bucket and all its agreements.
@@ -127,10 +126,7 @@ impl<T: Config> Pallet<T> {
         Ok(total_refunded)
     }
 
-    /// Create a bucket internally (for use by other pallets like Layer 1 File System).
-    ///
-    /// This bypasses the normal extrinsic flow and creates a bucket directly,
-    /// with the specified account as admin.
+    /// Creates a bucket with `admin` as its sole admin.
     ///
     /// Parameters:
     /// - `admin`: Account that will be the bucket admin.
@@ -138,7 +134,7 @@ impl<T: Config> Pallet<T> {
     ///   sign each checkpoint.
     /// - `initial_primary`: Optional provider to seed as the bucket's
     ///   first `primary_providers` entry. Used by
-    ///   `establish_storage_agreement_internal` to atomically create the
+    ///   `create_bucket_with_primary_internal` to atomically create the
     ///   bucket together with its primary agreement; pass `None` for
     ///   buckets that will register primaries later.
     /// - `visibility`: Read visibility. Creation surfaces that omit the
@@ -151,6 +147,11 @@ impl<T: Config> Pallet<T> {
         initial_primary: Option<&T::AccountId>,
         visibility: Visibility,
     ) -> Result<BucketId, DispatchError> {
+        ensure!(
+            min_providers >= 1 && min_providers <= T::MaxPrimaryProviders::get(),
+            Error::<T>::InvalidMinProviders
+        );
+
         let bucket_id = NextBucketId::<T>::get();
         NextBucketId::<T>::put(bucket_id.saturating_add(1));
 
@@ -177,7 +178,7 @@ impl<T: Config> Pallet<T> {
             min_providers,
             primary_providers,
             snapshot: None,
-            historical_roots: [(0, H256::zero()); 6],
+            historical_roots: [(0, Commitment::default()); 6],
             total_snapshots: 0,
             visibility,
         };

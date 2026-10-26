@@ -133,7 +133,7 @@ async function main() {
     //    account so the precompile can reserve the agreement payment.
     console.log("\n[4/6] buyStorage{value: 5 UNIT}(provider, terms[1KiB×50], sig)…");
     const contractAccount = h160ToSubstrate(deployed.addressBytes);
-    const signed = await negotiatePrecompileTerms(PROVIDER_URL, contractAccount, {
+    const signed = await negotiatePrecompileTerms(api, PROVIDER_URL, contractAccount, {
       maxBytes: MAX_BYTES,
       duration: DURATION,
       pricePerByte: PRICE_PER_BYTE,
@@ -176,7 +176,7 @@ async function main() {
     await callContract(api, client, deployed.addressBytes, grantData, { finalized: true });
     const payload = `Hello via SC! ${new Date().toISOString()}`;
     const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, client);
-    const downloaded = await downloadChunk(PROVIDER_URL, upload.hash);
+    const downloaded = await downloadChunk(PROVIDER_URL, bucketId, upload.hash);
     assert.deepStrictEqual(
       downloaded,
       upload.data,
@@ -189,7 +189,7 @@ async function main() {
       leafIndex: upload.commit.leaf_indices[0],
       providerSignature: upload.commit.provider_signature,
     });
-    const proof = await fetchChallengeProof(api, PROVIDER_URL, offchainId);
+    const proof = await fetchChallengeProof(api, PROVIDER_URL, offchainId, provider);
     await respondToChallenge(api, provider, offchainId, proof);
     console.log("  ChallengeDefended ✓");
 

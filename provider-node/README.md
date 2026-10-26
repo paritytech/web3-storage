@@ -31,24 +31,21 @@ the scheme tag travels with them (`0x01<64-byte sr25519>`,
 
 ## Storage backend
 
-`--storage-backend` picks the storage engine (default `rocksdb`). Chunks, MMR
-state and the nonce counter go under `--storage-path` (`./provider-data`, or
-`$STORAGE_PATH`) and survive a restart — a provider that forgot its data could
-not answer challenges for buckets it still has agreements for.
-
-Writes are not fsynced (RocksDB's default `WriteOptions`), so what they survive
-is a clean process restart, not a power loss or kernel panic. `DiskNonceStore`
-documents what that costs the nonce counter.
+`--storage-backend` picks the storage engine (default `rocksdb`). Chunks and
+MMR state go under `--storage-path` (`./provider-data`, or `$STORAGE_PATH`)
+and survive a restart — a provider that forgot its data could not answer
+challenges for buckets it still has agreements for.
 
 ## Authentication
 
 Authentication is always enforced: every mutating Layer-0 endpoint (`PUT
 /node`, `POST /commit`, `POST /delete`) and all fs/s3 endpoints require a
 signed `Authorization` header, and there is no way to turn enforcement off.
-Layer-0 content-addressed reads (`GET /node`, `GET /read`, `POST
-/fetch_nodes`, the commitment/proof endpoints) are currently unauthenticated;
-whether they should require the `Reader` role is tracked in
-[#228](https://github.com/paritytech/web3-storage/issues/228).
+Layer-0 reads that return a bucket's commitments, proofs or MMR shape
+require the `Reader` role on a private bucket. Hash-keyed reads (`GET /node`,
+`GET /read`, `GET /chunk_proof`, `POST /fetch_nodes`) take a `bucket_id` but
+need no signature: the hash is the read capability. See "Read access at
+Layer 0" in the [design doc](../docs/design/scalable-web3-storage.md).
 
 The client signs an sr25519 message binding the request to a bucket and a
 timestamp. Unlike provider signatures, client auth is sr25519-only;

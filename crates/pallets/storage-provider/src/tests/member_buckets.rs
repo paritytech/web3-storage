@@ -68,7 +68,7 @@ fn member_buckets_index_on_remove_member() {
 #[test]
 fn member_buckets_index_on_bucket_delete() {
     new_test_ext().execute_with(|| {
-        create_bucket(1, 0);
+        create_bucket(1, 1);
         assert_ok!(StorageProvider::set_member(
             RuntimeOrigin::signed(1),
             0,

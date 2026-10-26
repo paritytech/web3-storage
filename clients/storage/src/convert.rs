@@ -26,7 +26,7 @@ pub fn to_sp_account(a: &subxt::utils::AccountId32) -> sp_runtime::AccountId32 {
 /// Render a chain-side account as the `0x…` hex string the SDK's public
 /// structs carry.
 pub fn account_hex(a: &subxt::utils::AccountId32) -> String {
-    format!("0x{}", hex::encode(a.0))
+    array_bytes::bytes2hex("0x", a.0)
 }
 
 /// Decode an account carried by a runtime-API response, where accounts arrive
@@ -131,24 +131,26 @@ pub fn challenge_id(deadline: u32, index: u16) -> rt::ChallengeId<u32> {
     rt::ChallengeId { deadline, index }
 }
 
-/// [`storage_primitives::MerkleProof`] → generated twin.
-pub fn merkle_proof(p: &storage_primitives::MerkleProof) -> rt::MerkleProof {
-    rt::MerkleProof {
-        siblings: p.siblings.clone(),
-        path: p.path.clone(),
-    }
-}
-
 /// [`storage_primitives::MmrProof`] → generated twin.
-pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::MmrProof {
-    rt::MmrProof {
-        peaks: p.peaks.clone(),
-        leaf: rt::MmrLeaf {
+pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::mmr::MmrProof {
+    rt::mmr::MmrProof {
+        leaf: rt::mmr::MmrLeaf {
+            leaf_version: p.leaf.leaf_version,
             data_root: p.leaf.data_root,
             data_size: p.leaf.data_size,
             total_size: p.leaf.total_size,
         },
-        leaf_proof: merkle_proof(&p.leaf_proof),
+        items: p.items.clone(),
+    }
+}
+
+/// `storage_primitives::BucketTarget` → generated `BucketTarget`.
+pub fn bucket_target(b: storage_primitives::BucketTarget) -> rt::agreement_term::BucketTarget {
+    match b {
+        storage_primitives::BucketTarget::New => rt::agreement_term::BucketTarget::New,
+        storage_primitives::BucketTarget::Existing(id) => {
+            rt::agreement_term::BucketTarget::Existing(id)
+        }
     }
 }
 
@@ -167,7 +169,7 @@ pub fn agreement_terms(
         price_per_byte: t.price_per_byte,
         valid_until: t.valid_until,
         nonce: t.nonce,
-        bucket_id: t.bucket_id,
+        bucket: bucket_target(t.bucket),
         replica_params: t.replica_params.as_ref().map(|r| at::ReplicaTerms {
             sync_balance: r.sync_balance,
             min_sync_interval: r.min_sync_interval,
@@ -235,7 +237,7 @@ mod tests {
             price_per_byte: 30,
             valid_until: 40,
             nonce: 50,
-            bucket_id: Some(60),
+            bucket: storage_primitives::BucketTarget::Existing(60),
             replica_params: Some(crate::agreement::ReplicaTermsOf {
                 sync_balance: 70,
                 min_sync_interval: 80,
@@ -245,7 +247,10 @@ mod tests {
         let rt_terms = agreement_terms(&terms);
         assert_eq!(rt_terms.owner.0, [1u8; 32]);
         assert_eq!(rt_terms.max_bytes, 10);
-        assert_eq!(rt_terms.bucket_id, Some(60));
+        assert_eq!(
+            rt_terms.bucket,
+            rt::agreement_term::BucketTarget::Existing(60)
+        );
         let rp = rt_terms.replica_params.expect("replica params present");
         assert_eq!(rp.sync_balance, 70);
         assert_eq!(rp.min_sync_interval, 80);

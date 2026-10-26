@@ -61,6 +61,26 @@ impl SubstrateClient {
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))
     }
 
+    /// Sign `tx`, submit it and wait for finalized success. Returns the
+    /// extrinsic's events.
+    pub async fn submit(
+        &self,
+        tx: &impl subxt::tx::Payload,
+    ) -> Result<subxt::extrinsics::ExtrinsicEvents<PolkadotConfig>, ClientError> {
+        let signer = self.signer()?;
+        self.api()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
+            .sign_and_submit_then_watch_default(tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))
+    }
+
     /// Get the signer if available.
     pub fn signer(&self) -> Result<&Signer, ClientError> {
         self.signer
@@ -150,23 +170,48 @@ pub mod extrinsics {
             .update_provider_settings(settings)
     }
 
-    /// Build an `establish_storage_agreement` extrinsic payload.
+    /// Build a `create_bucket` extrinsic payload.
+    pub fn create_bucket(
+        min_providers: u32,
+        visibility: storage_primitives::Visibility,
+    ) -> impl Payload {
+        api::tx()
+            .storage_provider()
+            .create_bucket(min_providers, convert::visibility(visibility))
+    }
+
+    /// Build a `create_bucket_with_primary` extrinsic payload.
     ///
     /// Bundles the SCALE-encoded provider-signed terms and signature into
-    /// the dynamic call shape Layer 0 expects. The chain hashes
+    /// the call shape Layer 0 expects. The chain hashes
     /// `blake2_256(TERM_CONTEXT | SCALE(terms))` and verifies the
     /// signature against the provider's registered public key.
-    pub fn establish_storage_agreement(
+    pub fn create_bucket_with_primary(
         provider: AccountId32,
         terms: &crate::agreement::AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
         visibility: storage_primitives::Visibility,
     ) -> impl Payload {
-        api::tx().storage_provider().establish_storage_agreement(
+        api::tx().storage_provider().create_bucket_with_primary(
             convert::to_subxt_account(&provider),
             convert::agreement_terms(terms),
             convert::multisig(sig),
             convert::visibility(visibility),
+        )
+    }
+
+    /// Build an `add_primary_provider` extrinsic payload (admin only).
+    pub fn add_primary_provider(
+        bucket_id: u64,
+        provider: AccountId32,
+        terms: &crate::agreement::AgreementTermsOf,
+        sig: &sp_runtime::MultiSignature,
+    ) -> impl Payload {
+        api::tx().storage_provider().add_primary_provider(
+            bucket_id,
+            convert::to_subxt_account(&provider),
+            convert::agreement_terms(terms),
+            convert::multisig(sig),
         )
     }
 
@@ -361,18 +406,25 @@ pub mod extrinsics {
         challenge_id: (u32, u16),
         chunk_data: &[u8],
         mmr_proof: &storage_primitives::MmrProof,
-        chunk_proof: &storage_primitives::MerkleProof,
+        chunk_proof: &[H256],
     ) -> impl Payload {
         let response = runtime_types::pallet_storage_provider::pallet::ChallengeResponse::Proof {
             chunk_data: convert::bounded(chunk_data.to_vec()),
             mmr_proof: convert::mmr_proof(mmr_proof),
-            chunk_proof: convert::merkle_proof(chunk_proof),
+            chunk_proof: chunk_proof.to_vec(),
         };
 
         api::tx().storage_provider().respond_to_challenge(
             convert::challenge_id(challenge_id.0, challenge_id.1),
             response,
         )
+    }
+
+    /// Create a resolve_expired_challenge extrinsic payload.
+    pub fn resolve_expired_challenge(challenge_id: (u32, u16)) -> impl Payload {
+        api::tx()
+            .storage_provider()
+            .resolve_expired_challenge(convert::challenge_id(challenge_id.0, challenge_id.1))
     }
 }
 
@@ -426,27 +478,33 @@ where
 /// per-variant length check on the same wire format.
 pub fn decode_multi_signature(sig_hex: &str) -> Result<sp_runtime::MultiSignature, ClientError> {
     use codec::DecodeAll;
-    let s = sig_hex.strip_prefix("0x").unwrap_or(sig_hex);
-    let bytes = hex::decode(s).map_err(|e| ClientError::Serialization(e.to_string()))?;
+    let bytes = array_bytes::hex2bytes(sig_hex)
+        .map_err(|e| ClientError::Serialization(format!("{e:?}")))?;
     sp_runtime::MultiSignature::decode_all(&mut &bytes[..])
         .map_err(|e| ClientError::Serialization(format!("invalid SCALE MultiSignature: {e}")))
 }
 
 /// Parse a hex string to H256.
 pub fn parse_h256(hex: &str) -> Result<H256, ClientError> {
-    let hex = hex.strip_prefix("0x").unwrap_or(hex);
-    let bytes =
-        hex::decode(hex).map_err(|e| ClientError::Serialization(format!("Invalid hex: {e}")))?;
-    if bytes.len() != 32 {
-        return Err(ClientError::Serialization(format!(
-            "Expected 32 bytes, got {}",
-            bytes.len()
-        )));
-    }
-    Ok(H256::from_slice(&bytes))
+    hex.parse()
+        .map_err(|e| ClientError::Serialization(format!("Invalid H256 hex: {e}")))
 }
 
 /// Convert H256 to hex string.
 pub fn h256_to_hex(hash: &H256) -> String {
-    format!("0x{}", hex::encode(hash.as_bytes()))
+    format!("{hash:#x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_h256_rejects_a_hash_of_wrong_length() {
+        assert!(parse_h256(&format!("0x{}", "ab".repeat(31))).is_err());
+        assert_eq!(
+            parse_h256(&format!("0x{}", "ab".repeat(32))).unwrap(),
+            H256::repeat_byte(0xab)
+        );
+    }
 }

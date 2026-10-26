@@ -13,12 +13,12 @@
 
 import assert from "node:assert";
 import { Enum } from "polkadot-api";
-import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   endAgreement,
   ensureProviderRegistered,
   fetchCheckpointSignature,
   freezeBucket,
+  hashLeaf,
   makeSigner,
   READ_OPTS,
   setMember,
@@ -138,7 +138,7 @@ async function main() {
       );
       // freeze_bucket requires a snapshot (checkpoint) to exist.
       await uploadChunk(PROVIDER_URL, bucketId, "data for snapshot", bob);
-      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, bob);
       await submitClientCheckpoint(api, bob, provider, bucketId, ck);
       await freezeBucket(api, bob, bucketId);
       const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
@@ -164,14 +164,14 @@ async function main() {
       // Upload some data.
       await uploadChunk(PROVIDER_URL, bucketId, "pre-freeze data", bob);
       // Checkpoint before freeze.
-      const ck1 = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+      const ck1 = await fetchCheckpointSignature(PROVIDER_URL, bucketId, bob);
       await submitClientCheckpoint(api, bob, provider, bucketId, ck1);
       // Freeze.
       await freezeBucket(api, bob, bucketId);
       // Upload more data.
       await uploadChunk(PROVIDER_URL, bucketId, "post-freeze data", bob);
       // Checkpoint after freeze — should still work (captures frozen_start_seq).
-      const ck2 = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+      const ck2 = await fetchCheckpointSignature(PROVIDER_URL, bucketId, bob);
       const result = await submitClientCheckpoint(api, bob, provider, bucketId, ck2);
       const events = api.event.StorageProvider.BucketCheckpointed.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Checkpoint after freeze should emit event");
@@ -211,7 +211,7 @@ async function main() {
   // ── Data Integrity ────────────────────────────────────────────────────────
 
   tests.push({
-    name: "10.8 Upload verify blake2-256",
+    name: "10.8 Upload verify leaf hash",
     fn: async () => {
       const { bucketId } = await negotiateAndEstablish(
         api,
@@ -221,11 +221,11 @@ async function main() {
         { maxBytes, duration: 100 },
         true, // finalize: immediate upload reads finalized membership
       );
-      const data = "integrity check data for blake2-256";
+      const data = "integrity check data for the leaf hash";
       const bytes = new TextEncoder().encode(data);
-      const expectedHash = toHex(blake2b256(bytes));
+      const expectedHash = toHex(hashLeaf(bytes));
       const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, bob);
-      assert.strictEqual(hash, expectedHash, "Provider hash should match local blake2-256");
+      assert.strictEqual(hash, expectedHash, "Provider hash should match the local leaf hash");
     },
   });
 
@@ -312,7 +312,7 @@ async function main() {
       const bytes = new TextEncoder().encode("must not land");
       const body = JSON.stringify({
         bucket_id: Number(bucketId),
-        hash: toHex(blake2b256(bytes)),
+        hash: toHex(hashLeaf(bytes)),
         data: Buffer.from(bytes).toString("base64"),
         children: null,
       });
