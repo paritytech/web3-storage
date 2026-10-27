@@ -576,6 +576,7 @@ fn should_update_provider_settings() {
             replica_sync_price: Some(3),
             accepting_extensions: false,
             max_capacity: 1_024 * 1_024,
+            min_bytes: 512,
         };
 
         assert_ok_ok(construct_and_apply_extrinsic(
@@ -823,6 +824,7 @@ fn register_accepting_provider_for(account: Sr25519Keyring, stake: Balance) {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 0, // Unlimited
+                min_bytes: 0,
             },
         }),
     ));

@@ -86,7 +86,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   </li>
   <li>
     <h3>Get a signed quote</h3>
-    <p>Call <code>POST /negotiate</code> on the provider with the owner account, <code>bucket</code> (<code>null</code> for a new bucket, or the bucket id), <code>max_bytes</code>, <code>duration</code>, <code>price_per_byte</code>, <code>nonce</code> (your current <code>AgreementNonces</code> value, read from chain at the best block), and <code>replica_params</code> for a replica. The provider returns signed <code>AgreementTerms</code>.</p>
+    <p>Call <code>POST /negotiate</code> on the provider with the owner account, <code>bucket</code> (<code>null</code> for a new bucket, or the bucket id), <code>max_bytes</code>, <code>duration</code>, <code>price_per_byte</code>, <code>nonce</code> (your current <code>AgreementNonces</code> value, read from chain at the best block), and <code>replica_params</code> for a replica. The provider rejects requests below its minimum agreement size (<code>min_bytes</code>); the pallet also rejects terms with <code>max_bytes</code> below it (<code>MaxBytesBelowMinimum</code>). The provider returns signed <code>AgreementTerms</code>.</p>
     <p>The quote is for one owner and one bucket target. You can redeem it once, until <code>valid_until</code>. Only one quote per nonce can be redeemed: on <code>NonceMismatch</code>, read the nonce again and request a new quote. At redemption the chain requires <code>valid_until</code> to be at most <code>RequestTimeout</code> (6 hours) after the current anchor block.</p>
   </li>
   <li>

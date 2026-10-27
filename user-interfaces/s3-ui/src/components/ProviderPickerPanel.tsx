@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { queryMatchingProviders } from "@/state";
 import type { MatchingProviders, AvailableProvider } from "@/lib/s3-client";
-import { formatBytes, truncateHash } from "@web3-storage/format";
+import { formatBytes, providerDisabledReason, truncateHash } from "@web3-storage/format";
 
 interface ProviderPickerPanelProps {
   onSelect: (provider: AvailableProvider) => void;
@@ -26,7 +26,7 @@ export default function ProviderPickerPanel({
   const [providers, setProviders] = useState<MatchingProviders[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const results = await queryMatchingProviders(
@@ -44,11 +44,12 @@ export default function ProviderPickerPanel({
     } finally {
       setLoading(false);
     }
-  };
+  }, [requiredCapacity, requiredDuration, requiredPricePerByte]);
 
+  // Re-score when the requirements change so the Score column follows the form.
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
   if (loading) {
     return (
@@ -85,7 +86,7 @@ export default function ProviderPickerPanel({
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground w-24">Price/byte</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground w-24">Duration</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground w-28">Reputation</th>
-                <th className="px-3 py-2 w-20" />
+                <th className="px-3 py-2 w-44" />
               </tr>
             </thead>
             <tbody>
@@ -97,12 +98,14 @@ export default function ProviderPickerPanel({
                   free !== undefined && p.maxCapacity > 0n
                     ? Number((free * 100n) / p.maxCapacity)
                     : 0;
-                const isPartial = p.matchScore < 100;
+                // Evaluated against the current form values.
+                const reason = providerDisabledReason(p, requiredCapacity, requiredDuration);
+                const rowDisabled = reason !== null;
 
                 return (
                   <tr
                     key={p.account}
-                    className={`border-b last:border-b-0 ${isPartial ? "opacity-60" : ""}`}
+                    className={`border-b last:border-b-0 ${rowDisabled ? "opacity-60" : ""}`}
                   >
                     <td className="px-3 py-2 font-mono text-xs">
                       {truncateHash(p.account, 6, 4)}
@@ -145,16 +148,20 @@ export default function ProviderPickerPanel({
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      <Button
-                        data-testid={`select-provider-${p.account}`}
-                        size="sm"
-                        variant="outline"
-                        className="h-7 text-xs"
-                        onClick={() => onSelect(p)}
-                        disabled={disabled}
-                      >
-                        Select
-                      </Button>
+                      {rowDisabled ? (
+                        <span className="text-xs text-muted-foreground">{reason}</span>
+                      ) : (
+                        <Button
+                          data-testid={`select-provider-${p.account}`}
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => onSelect(p)}
+                          disabled={disabled}
+                        >
+                          Select
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 );

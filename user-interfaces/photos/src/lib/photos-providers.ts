@@ -7,6 +7,7 @@
 // duration bounds) plus the negotiate endpoint resolved from the multiaddr.
 
 import { parseMultiaddrToUrl, toSs58, type ParachainApi } from '@web3-storage/papi'
+import { formatBytesBinary } from '@web3-storage/format'
 
 // Largest u128 — used as the price cap so the runtime API never filters on
 // price. Eligibility against the actual size/duration is re-evaluated locally
@@ -29,6 +30,8 @@ export interface PhotosProvider {
   /** Free capacity per the chain; `undefined` = unlimited, not `0n` ("full"). */
   availableCapacity: bigint | undefined
   maxCapacity: bigint
+  /** Smallest agreement `max_bytes` the provider accepts; `0n` = no minimum. */
+  minBytes: bigint
   minDuration: number
   maxDuration: number
   /** 0-100, computed on-chain by `ProviderStats::reputation`. */
@@ -67,6 +70,7 @@ export async function listProviders(api: ParachainApi): Promise<PhotosProvider[]
       availableCapacity,
       // `max_capacity === 0` means "unlimited" in the pallet.
       maxCapacity,
+      minBytes: info.min_bytes,
       minDuration: info.min_duration,
       maxDuration: info.max_duration,
       reputation: info.stats.reputation,
@@ -94,6 +98,11 @@ export interface ProviderEligibility {
   reasons: string[]
 }
 
+/** Reason text when `bytesNeeded` is below the provider's minimum agreement size, else `null`. */
+export function belowMinimumReason(minBytes: bigint, bytesNeeded: bigint): string | null {
+  return bytesNeeded < minBytes ? `Below minimum size (min ${formatBytesBinary(minBytes)})` : null
+}
+
 /**
  * Check whether a provider can serve the requested terms. Returns the reasons
  * it can't, so the picker can disable the row and explain why.
@@ -105,6 +114,8 @@ export function annotate(
   const reasons: string[] = []
   if (!provider.acceptingPrimary) reasons.push('Not accepting')
   if (provider.url === null) reasons.push('No HTTP endpoint')
+  const belowMinimum = belowMinimumReason(provider.minBytes, bytesNeeded)
+  if (belowMinimum) reasons.push(belowMinimum)
   // `undefined` free capacity is unlimited; otherwise it must cover the request.
   if (provider.availableCapacity !== undefined && provider.availableCapacity < bytesNeeded) {
     reasons.push('Capacity full')

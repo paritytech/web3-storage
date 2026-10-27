@@ -194,6 +194,10 @@ function ProviderDetails({ provider: p }: { provider: ProviderRow }) {
               <dd className="text-gray-200">
                 {s.maxCapacity === 0n ? 'Unlimited' : formatBytes(s.maxCapacity)}
               </dd>
+              <dt className="text-gray-400">Min agreement size</dt>
+              <dd className="text-gray-200">
+                {s.minBytes === 0n ? 'No minimum' : formatBytes(s.minBytes)}
+              </dd>
             </dl>
           </div>
           <div>

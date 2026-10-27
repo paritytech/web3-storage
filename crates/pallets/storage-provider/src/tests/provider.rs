@@ -188,6 +188,7 @@ fn cancel_deregister_clears_announcement() {
             replica_sync_price: None,
             accepting_extensions: true,
             max_capacity: 0,
+            min_bytes: 0,
         };
         assert_ok!(StorageProvider::update_provider_settings(
             RuntimeOrigin::signed(1),
@@ -252,6 +253,7 @@ fn update_provider_settings_blocked_while_announcement_pending() {
             replica_sync_price: None,
             accepting_extensions: true,
             max_capacity: 0,
+            min_bytes: 0,
         };
         assert_noop!(
             StorageProvider::update_provider_settings(RuntimeOrigin::signed(1), resumed),
@@ -358,6 +360,7 @@ fn update_provider_settings_works() {
             replica_sync_price: Some(10u64),
             accepting_extensions: true,
             max_capacity: 0, // Unlimited
+            min_bytes: 0,
         };
 
         assert_ok!(StorageProvider::update_provider_settings(
@@ -394,6 +397,7 @@ fn update_provider_settings_with_max_capacity_works() {
             replica_sync_price: None,
             accepting_extensions: true,
             max_capacity: 200, // Up to 200 bytes (within stake limit)
+            min_bytes: 0,
         };
 
         assert_ok!(StorageProvider::update_provider_settings(
@@ -423,6 +427,7 @@ fn update_provider_settings_fails_with_capacity_below_committed() {
             replica_sync_price: None,
             accepting_extensions: true,
             max_capacity: 50, // Below committed 100 bytes
+            min_bytes: 0,
         };
 
         assert_noop!(
@@ -455,6 +460,7 @@ fn update_provider_settings_fails_with_insufficient_stake_for_capacity() {
             replica_sync_price: None,
             accepting_extensions: true,
             max_capacity: 1000, // Requires 1000 stake, but only have 200
+            min_bytes: 0,
         };
 
         assert_noop!(
@@ -486,6 +492,7 @@ fn update_provider_settings_fails_when_min_duration_above_max() {
             replica_sync_price: None,
             accepting_extensions: true,
             max_capacity: 0,
+            min_bytes: 0,
         };
 
         assert_noop!(
@@ -502,11 +509,46 @@ fn update_provider_settings_fails_when_min_duration_above_max() {
             replica_sync_price: None,
             accepting_extensions: true,
             max_capacity: 0,
+            min_bytes: 0,
         };
         assert_ok!(StorageProvider::update_provider_settings(
             RuntimeOrigin::signed(1),
             edge_settings
         ));
+    });
+}
+
+#[test]
+fn update_provider_settings_fails_when_min_bytes_above_max_capacity() {
+    new_test_ext().execute_with(|| {
+        register_provider(1, 200);
+
+        let settings = |max_capacity, min_bytes| ProviderSettings {
+            max_capacity,
+            min_bytes,
+            ..Default::default()
+        };
+
+        assert_noop!(
+            StorageProvider::update_provider_settings(RuntimeOrigin::signed(1), settings(50, 51)),
+            Error::<Test>::MinBytesExceedsMaxCapacity
+        );
+
+        // Equal to the capacity is allowed.
+        assert_ok!(StorageProvider::update_provider_settings(
+            RuntimeOrigin::signed(1),
+            settings(50, 50)
+        ));
+
+        // Unlimited capacity accepts any minimum.
+        assert_ok!(StorageProvider::update_provider_settings(
+            RuntimeOrigin::signed(1),
+            settings(0, 1_000_000)
+        ));
+        assert_eq!(
+            Providers::<Test>::get(1).unwrap().settings.min_bytes,
+            1_000_000
+        );
     });
 }
 
@@ -532,6 +574,7 @@ fn update_provider_settings_emits_event_with_new_settings() {
             replica_sync_price: Some(10u64),
             accepting_extensions: true,
             max_capacity: 0,
+            min_bytes: 0,
         };
 
         assert_ok!(StorageProvider::update_provider_settings(
@@ -620,6 +663,7 @@ fn establish_agreement_fails_when_capacity_exceeded() {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 50,
+                min_bytes: 0,
             },
         );
 
@@ -637,6 +681,37 @@ fn establish_agreement_fails_when_capacity_exceeded() {
             ),
             Error::<Test>::CapacityExceeded
         );
+    });
+}
+
+#[test]
+fn establish_agreement_fails_when_below_min_bytes() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                accepting_primary: true,
+                min_bytes: 40,
+                ..Default::default()
+            },
+        );
+
+        let (terms, sig) = signed_primary_terms(2, 1, BucketTarget::New, 39, 10);
+        assert_err!(
+            StorageProvider::create_bucket_with_primary(
+                RuntimeOrigin::signed(1),
+                2,
+                terms,
+                sig,
+                storage_primitives::Visibility::Public
+            ),
+            Error::<Test>::MaxBytesBelowMinimum
+        );
+
+        // Exactly the minimum is accepted.
+        setup_agreement(2, 1, 40, 10);
+        assert_eq!(Providers::<Test>::get(2).unwrap().committed_bytes, 40);
     });
 }
 
@@ -670,6 +745,7 @@ fn establish_agreement_works_within_capacity() {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 150,
+                min_bytes: 0,
             },
         );
 

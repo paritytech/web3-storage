@@ -329,13 +329,17 @@ impl<T: Config> Pallet<T> {
         })
     }
 
-    /// Checks duration, capacity and stake for `terms`. Returns the
+    /// Checks duration, minimum size, capacity and stake for `terms`. Returns the
     /// provider's `committed_bytes` with `terms.max_bytes` added.
     fn check_capacity(
         provider_info: &ProviderInfo<T>,
         terms: &AgreementTermsOf<T>,
     ) -> Result<u64, DispatchError> {
         Self::validate_duration(&provider_info.settings, terms.duration)?;
+        ensure!(
+            terms.max_bytes >= provider_info.settings.min_bytes,
+            Error::<T>::MaxBytesBelowMinimum
+        );
 
         let new_committed = provider_info
             .committed_bytes

@@ -144,6 +144,7 @@ async function main() {
         replica_sync_price: undefined,
         accepting_extensions: false,
         max_capacity: 0n,
+        min_bytes: 0n,
       });
       const tx = api.tx.StorageProvider.extend_agreement({
         bucket_id: bucketId,
@@ -161,6 +162,7 @@ async function main() {
         replica_sync_price: undefined,
         accepting_extensions: true,
         max_capacity: 0n,
+        min_bytes: 0n,
       });
     },
   });

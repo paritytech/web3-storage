@@ -73,6 +73,7 @@ fn setup_provider() -> sp_core::sr25519::Public {
         replica_sync_price: None,
         accepting_extensions: true,
         max_capacity: 10_000_000_000, // stake / MinStakePerByte
+        min_bytes: 0,
     };
     assert_ok!(StorageProvider::update_provider_settings(
         RuntimeOrigin::signed(3),

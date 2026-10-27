@@ -97,6 +97,7 @@
         "now <= terms.valid_until <= now + RequestTimeout (TermsExpired / TermsValidityTooLong)",
         "Signature over blake2_256(context | SCALE(terms)); terms.nonce equals AgreementNonces[owner], which redemption advances (NonceMismatch)",
         "Provider active, terms.max_bytes > 0 and within capacity and stake (CapacityExceeded / InsufficientStakeForBytes)",
+        "terms.max_bytes >= settings.min_bytes (MaxBytesBelowMinimum)",
         "The client reads AgreementNonces[owner] at the best block and sends it as nonce; the provider signs it unchanged. One quote per nonce: on NonceMismatch, read it again and request a new quote"
       ]
     },

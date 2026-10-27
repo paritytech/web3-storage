@@ -496,6 +496,12 @@ function OverviewContent() {
                 <p className="font-medium">{formatBytes(Number(settings.maxCapacity))}</p>
               </div>
               <div>
+                <p className="text-sm text-gray-400">Min Agreement Size</p>
+                <p className="font-medium">
+                  {settings.minBytes === 0n ? 'No minimum' : formatBytes(Number(settings.minBytes))}
+                </p>
+              </div>
+              <div>
                 <p className="text-sm text-gray-400">Accepting Primary</p>
                 <Badge variant={settings.acceptingPrimary ? 'success' : 'secondary'}>
                   {settings.acceptingPrimary ? 'Yes' : 'No'}

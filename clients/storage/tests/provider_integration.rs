@@ -413,6 +413,7 @@ async fn test_update_settings_round_trip() {
         replica_sync_price: before.replica_sync_price,
         accepting_extensions: before.accepting_extensions,
         max_capacity: before.max_capacity,
+        min_bytes: before.min_bytes,
     };
 
     provider
@@ -440,6 +441,7 @@ async fn test_update_settings_round_trip() {
         replica_sync_price: before.replica_sync_price,
         accepting_extensions: before.accepting_extensions,
         max_capacity: before.max_capacity,
+        min_bytes: before.min_bytes,
     };
     provider
         .update_settings(restored)
