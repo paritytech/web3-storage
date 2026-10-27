@@ -342,7 +342,7 @@ fn add_primary_provider_fails_when_below_min_bytes() {
                 ..Default::default()
             },
         );
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
 
         // `quote_for` requests 50 bytes, one below the minimum.
         let quote = quote_for(2, 1, bucket_id);

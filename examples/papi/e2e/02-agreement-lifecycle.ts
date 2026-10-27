@@ -23,6 +23,7 @@ import {
   createBucket,
   endAgreement,
   ensureProviderRegistered,
+  getProviderNodeInfo,
   makeSigner,
   READ_OPTS,
   sameAddress,
@@ -252,6 +253,7 @@ async function main() {
         duration,
       });
       await updateProviderSettings(api, provider, { ...original, min_bytes: maxBytes + 1n });
+      await waitForNodeMinBytes(maxBytes + 1n);
       try {
         await assertNegotiateRejects(
           () => negotiateSigned(api, PROVIDER_URL, client, provider, { maxBytes, duration }),
@@ -265,6 +267,7 @@ async function main() {
         await submitTxExpectFailure(tx, client.signer, "MaxBytesBelowMinimum", "2.9b");
       } finally {
         await updateProviderSettings(api, provider, original);
+        await waitForNodeMinBytes(original.min_bytes);
       }
     },
   });
@@ -322,6 +325,26 @@ async function main() {
 
   await runSuite("02 — Agreement Lifecycle", tests, { api, papi });
   papi.destroy();
+}
+
+/**
+ * Wait until the provider node reports `minBytes` in its settings. The node
+ * reads its settings from finalized blocks, so it lags the best block that
+ * `updateProviderSettings` waits for.
+ */
+async function waitForNodeMinBytes(minBytes: bigint) {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    const { provider_registration_info } = await getProviderNodeInfo(PROVIDER_URL);
+    if (
+      provider_registration_info != null &&
+      BigInt(provider_registration_info.settings.min_bytes) === minBytes
+    ) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`provider node did not report min_bytes ${minBytes} within 60s`);
 }
 
 /**

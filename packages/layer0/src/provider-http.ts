@@ -86,7 +86,7 @@ export interface ProviderNodeInfo {
    * until `readiness.provider_info_loaded`.
    */
   provider_registration_info: {
-    settings: { price_per_byte: string | number | bigint };
+    settings: { price_per_byte: string | number | bigint; min_bytes: string | number | bigint };
   } | null;
 }
 

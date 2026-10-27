@@ -881,7 +881,7 @@ fn add_replica_provider_fails_when_below_min_bytes() {
                 ..Default::default()
             },
         );
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
 
         let (terms, sig) = signed_replica_terms(
             2,
