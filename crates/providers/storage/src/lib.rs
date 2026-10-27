@@ -13,6 +13,18 @@
 //!
 //! Outputs: nodes, chunk data, MMR commitments ([`CommitOutcome`]) and proofs. The challenge
 //! responder reads its proofs through the same backend.
+//!
+//! How it works:
+//! 1. Uploads store chunk tree nodes under their hashes with [`StorageBackend::store_node`].
+//! 2. [`StorageBackend::commit`] appends data roots as leaves to the bucket's MMR and returns the
+//!    new root.
+//! 3. Reads walk the chunk tree down from a data root, for example
+//!    [`StorageBackend::get_chunk_at_index`] for one chunk and its Merkle proof.
+//! 4. [`StorageBackend::get_mmr_proof`] proves a leaf against the current MMR.
+//!    [`StorageBackend::get_mmr_proof_for_commitment`] rebuilds the proof for an older
+//!    commitment that a challenge cites.
+//! 5. The fs and S3 indexes map paths and object keys to data roots, and
+//!    [`StorageBackend::delete_before`] prunes leaves before a sequence number.
 pub mod backend;
 pub mod error;
 pub mod index;
