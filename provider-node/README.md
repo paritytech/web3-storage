@@ -79,8 +79,8 @@ flowchart LR
 5. Build `ProviderState` and, when a key file exists, `SubxtChainClient`.
 6. Subscribe each background service to the `BlockEvent` channel, then start `ChainStateCoordinator`.
    This order lets every service receive the first `Resubscribed` event.
-7. Start `ChallengeResponder` when `--enable-challenge-responder` is set and a chain client exists.
-8. Sync the provider multiaddr on chain.
+7. Start `ChallengeResponder` when `--enable-challenge-responder` is set, a chain client exists and the provider id is an SS58 account.
+8. Sync the provider multiaddr on chain when a chain client exists.
 9. Bind the listener and serve the router.
 
 ## Build & Run

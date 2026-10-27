@@ -38,8 +38,8 @@
 //!    new connection to the node's other chain consumers.
 //! 2. On every connect, fetch the pallet constants and the provider info, then broadcast
 //!    `Resubscribed` so the other services rescan chain state.
-//! 3. For each finalized block, update the anchor block, re-fetch the provider info when a block
-//!    event concerns this provider, and broadcast the block's [`BlockEvent`]s.
+//! 3. For each finalized block, update the anchor block, broadcast the block's [`BlockEvent`]s,
+//!    and re-fetch the provider info when a block event concerns this provider.
 //! 4. When the block stream ends, or no finalized block arrives within the stall timeout, wait
 //!    and reconnect from step 1.
 

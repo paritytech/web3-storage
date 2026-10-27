@@ -24,8 +24,8 @@
 //! Outputs: a [`ChallengeResponse`] transaction for each challenge against this provider.
 //!
 //! How it works:
-//! 1. At start, scan all open challenges against this provider with
-//!    [`ChallengeChainClient::poll_challenges`].
+//! 1. At start, or on the first `Resubscribed` when the safety-net interval is off, scan all
+//!    open challenges against this provider with [`ChallengeChainClient::poll_challenges`].
 //! 2. On each `ChallengeCreated` event, read the challenge with
 //!    [`ChallengeChainClient::fetch_challenge`]. It returns `None` for a challenge against
 //!    another provider or one already resolved.
