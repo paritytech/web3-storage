@@ -4,6 +4,15 @@
 //! commitments, plus the drive/S3 metadata indexes served over it. No HTTP or
 //! chain dependencies.
 //!
+//! Main types:
+//! * [`StorageBackend`] : the engine interface. The node holds an `Arc<dyn StorageBackend>`.
+//! * [`DiskStorage`] : the RocksDB implementation, built from a [`StorageBackendSpec`].
+//! * [`FsIndexManager`], [`S3IndexManager`] : the drive and S3 metadata indexes.
+//!
+//! Inputs: chunk tree nodes and data roots to commit, per bucket, from the HTTP handlers.
+//!
+//! Outputs: nodes, chunk data, MMR commitments ([`CommitOutcome`]) and proofs. The challenge
+//! responder reads its proofs through the same backend.
 pub mod backend;
 pub mod error;
 pub mod index;

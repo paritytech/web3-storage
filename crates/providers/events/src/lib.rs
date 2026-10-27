@@ -7,6 +7,17 @@
 //! coordinator-relevant subset as [`BlockEvent`]s. Coordinators react to
 //! events instead of polling storage maps; a slow safety-net scan (and a
 //! bootstrap scan on every (re)subscribe) covers anything missed.
+//!
+//! Main types:
+//! * [`BlockEvent`] : one coordinator-relevant chain event, plus the `Resubscribed` and
+//!   `MembershipScopeUnknown` signals.
+//! * [`BlockEventTx`], [`BlockEventRx`] : the sending and receiving halves of the fan-out.
+//!
+//! Inputs: the chain-state coordinator sends decoded events on the [`BlockEventTx`] it owns.
+//!
+//! Outputs: each subscriber, such as the challenge responder and the auth membership cache,
+//! gets its own [`BlockEventRx`]. A receiver that lags past [`EVENT_CHANNEL_CAPACITY`] events
+//! runs its bootstrap scan.
 
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
