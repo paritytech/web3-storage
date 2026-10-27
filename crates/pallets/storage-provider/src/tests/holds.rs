@@ -212,7 +212,7 @@ fn try_state_catches_bookkeeping_with_no_funds_behind_it() {
 /// `(bucket_id, fee)`.
 fn setup_replica_escrow() -> (u64, u64) {
     replica_provider(2, 200);
-    let bucket_id = create_bucket(1, 0);
+    let bucket_id = create_bucket(1, 1);
     setup_replica_agreement(
         2,
         1,

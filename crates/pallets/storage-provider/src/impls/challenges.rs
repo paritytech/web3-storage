@@ -2,12 +2,37 @@
 
 use crate::*;
 use frame_support::pallet_prelude::*;
+use sp_core::H256;
 use sp_runtime::traits::Saturating;
 use storage_primitives::{
-    BucketId, ChallengeId, ChunkLocation, Commitment, ProviderRole, Visibility,
+    BucketId, ChallengeId, ChunkLocation, Commitment, MmrProof, ProviderRole, Visibility,
 };
 
 impl<T: Config> Pallet<T> {
+    /// Check that `mmr_proof` proves the challenged leaf under the challenged
+    /// commitment, and return the leaf's `data_root` and chunk count.
+    /// `InvalidProof` when the proof does not verify or the leaf's
+    /// `leaf_version` is unknown.
+    pub(crate) fn verify_challenged_leaf(
+        challenge: &Challenge<T>,
+        mmr_proof: MmrProof,
+    ) -> Result<(H256, u64), Error<T>> {
+        let data_root = mmr_proof.leaf.data_root;
+        let chunk_count = mmr_proof
+            .leaf
+            .chunk_count()
+            .ok_or(Error::<T>::InvalidProof)?;
+        ensure!(
+            storage_primitives::verify_mmr_proof(
+                mmr_proof,
+                challenge.target.leaf_index,
+                &challenge.commitment,
+            ),
+            Error::<T>::InvalidProof
+        );
+        Ok((data_root, chunk_count))
+    }
+
     /// Open a challenge against `provider`'s signature on the bucket's current
     /// snapshot and return the new challenge's id. Shared by the
     /// `challenge_checkpoint` call and the precompile, which hands the id back
@@ -52,6 +77,9 @@ impl<T: Config> Pallet<T> {
         )
     }
 
+    /// Common entry for the three `challenge_*` extrinsics: validates
+    /// the target, reserves the challenger's deposit, and stores the challenge
+    /// under a stable `(deadline, index)` id.
     pub(crate) fn create_challenge(
         challenger: T::AccountId,
         bucket_id: BucketId,
@@ -62,6 +90,12 @@ impl<T: Config> Pallet<T> {
         target: ChunkLocation,
     ) -> Result<ChallengeId<BlockNumberFor<T>>, DispatchError> {
         ensure!(challenger != provider, Error::<T>::SelfChallenge);
+        // A challenge on a leaf the commitment does not cover has no defense
+        // and would resolve only by timeout slash.
+        ensure!(
+            target.leaf_index < commitment.leaf_count,
+            Error::<T>::LeafNotInCommitment
+        );
 
         // Private-bucket gate: the public has no legitimate reliance on data
         // it cannot read, and must not be able to force private bytes
@@ -97,11 +131,11 @@ impl<T: Config> Pallet<T> {
             bucket_id,
             provider: provider.clone(),
             challenger: challenger.clone(),
-            mmr_root: commitment.mmr_root,
-            start_seq: commitment.start_seq,
+            commitment,
             target,
             deposit,
             authorized,
+            created_at: anchor_block,
         };
 
         // Cap the number of challenges that can share this deadline.

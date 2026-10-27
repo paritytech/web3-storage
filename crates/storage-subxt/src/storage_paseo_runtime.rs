@@ -1283,10 +1283,6 @@ pub mod api {
             use super::root_mod;
             use super::runtime_types;
             #[doc = " Runtime API for the storage provider pallet."]
-            #[doc = ""]
-            #[doc = " v2 reshaped `ProviderInfoResponse` (`deregister_at`, `reputation`) and added"]
-            #[doc = " `challenge_candidates`. Declared explicitly so callers can probe the version"]
-            #[doc = " instead of decoding a v1 shape that no longer exists."]
             pub struct StorageProviderApi;
             impl StorageProviderApi {
                 #[doc = " Get provider information."]
@@ -1460,9 +1456,10 @@ pub mod api {
                         "challenges_at",
                         (block,),
                         [
-                            216u8, 226u8, 89u8, 183u8, 95u8, 35u8, 105u8, 91u8, 152u8, 236u8, 56u8,
-                            37u8, 172u8, 121u8, 197u8, 250u8, 250u8, 144u8, 19u8, 130u8, 233u8,
-                            87u8, 54u8, 67u8, 254u8, 149u8, 243u8, 184u8, 245u8, 22u8, 53u8, 63u8,
+                            15u8, 79u8, 43u8, 145u8, 39u8, 17u8, 239u8, 176u8, 173u8, 122u8, 211u8,
+                            225u8, 136u8, 174u8, 218u8, 50u8, 160u8, 190u8, 171u8, 188u8, 32u8,
+                            30u8, 30u8, 90u8, 12u8, 200u8, 175u8, 253u8, 130u8, 124u8, 194u8,
+                            127u8,
                         ],
                     )
                 }
@@ -1479,10 +1476,10 @@ pub mod api {
                         "bucket_challenges",
                         (bucket_id,),
                         [
-                            53u8, 180u8, 217u8, 216u8, 255u8, 151u8, 157u8, 88u8, 60u8, 121u8,
-                            205u8, 91u8, 183u8, 58u8, 180u8, 133u8, 95u8, 101u8, 158u8, 31u8,
-                            141u8, 122u8, 151u8, 164u8, 221u8, 22u8, 199u8, 72u8, 77u8, 196u8,
-                            69u8, 216u8,
+                            146u8, 43u8, 118u8, 165u8, 62u8, 233u8, 63u8, 138u8, 131u8, 113u8,
+                            74u8, 172u8, 201u8, 154u8, 52u8, 55u8, 81u8, 98u8, 246u8, 206u8, 179u8,
+                            68u8, 170u8, 164u8, 19u8, 254u8, 226u8, 43u8, 250u8, 151u8, 172u8,
+                            225u8,
                         ],
                     )
                 }
@@ -1500,10 +1497,10 @@ pub mod api {
                         "provider_challenges",
                         (provider,),
                         [
-                            48u8, 176u8, 221u8, 58u8, 106u8, 223u8, 57u8, 12u8, 188u8, 228u8,
-                            153u8, 226u8, 16u8, 115u8, 83u8, 57u8, 23u8, 119u8, 151u8, 116u8,
-                            116u8, 157u8, 139u8, 213u8, 127u8, 0u8, 155u8, 49u8, 73u8, 131u8, 15u8,
-                            249u8,
+                            89u8, 29u8, 166u8, 61u8, 232u8, 184u8, 220u8, 223u8, 131u8, 152u8,
+                            106u8, 197u8, 9u8, 16u8, 218u8, 193u8, 218u8, 189u8, 74u8, 224u8,
+                            162u8, 187u8, 190u8, 221u8, 21u8, 28u8, 243u8, 113u8, 155u8, 21u8,
+                            91u8, 159u8,
                         ],
                     )
                 }
@@ -1520,10 +1517,9 @@ pub mod api {
                         "challenger_challenges",
                         (challenger,),
                         [
-                            147u8, 30u8, 106u8, 195u8, 126u8, 16u8, 142u8, 181u8, 212u8, 197u8,
-                            189u8, 11u8, 65u8, 194u8, 218u8, 242u8, 218u8, 103u8, 31u8, 183u8,
-                            176u8, 234u8, 137u8, 239u8, 209u8, 159u8, 133u8, 211u8, 203u8, 64u8,
-                            90u8, 112u8,
+                            149u8, 8u8, 115u8, 28u8, 147u8, 142u8, 255u8, 66u8, 99u8, 6u8, 199u8,
+                            240u8, 6u8, 163u8, 5u8, 189u8, 30u8, 214u8, 122u8, 117u8, 116u8, 22u8,
+                            72u8, 161u8, 79u8, 125u8, 241u8, 17u8, 93u8, 160u8, 8u8, 83u8,
                         ],
                     )
                 }
@@ -2089,9 +2085,10 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            247u8, 37u8, 36u8, 166u8, 85u8, 78u8, 53u8, 144u8, 124u8, 225u8, 145u8,
-                            134u8, 89u8, 125u8, 83u8, 29u8, 145u8, 213u8, 143u8, 8u8, 102u8, 192u8,
-                            239u8, 8u8, 3u8, 207u8, 111u8, 211u8, 55u8, 68u8, 45u8, 234u8,
+                            101u8, 191u8, 199u8, 175u8, 87u8, 79u8, 218u8, 114u8, 109u8, 9u8,
+                            212u8, 211u8, 58u8, 114u8, 153u8, 1u8, 202u8, 107u8, 89u8, 96u8, 155u8,
+                            252u8, 179u8, 228u8, 120u8, 80u8, 65u8, 143u8, 187u8, 99u8, 127u8,
+                            214u8,
                         ],
                     )
                 }
@@ -3470,9 +3467,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                210u8, 204u8, 23u8, 173u8, 164u8, 85u8, 168u8, 226u8, 100u8, 49u8, 221u8, 43u8,
-                115u8, 6u8, 230u8, 67u8, 81u8, 163u8, 139u8, 171u8, 27u8, 114u8, 229u8, 251u8,
-                173u8, 213u8, 28u8, 133u8, 107u8, 37u8, 51u8, 150u8,
+                8u8, 176u8, 191u8, 64u8, 229u8, 93u8, 91u8, 58u8, 39u8, 251u8, 47u8, 115u8, 173u8,
+                57u8, 79u8, 155u8, 144u8, 188u8, 126u8, 213u8, 98u8, 101u8, 195u8, 1u8, 254u8,
+                175u8, 47u8, 212u8, 44u8, 16u8, 42u8, 17u8,
             ]
     }
     pub mod system {
@@ -8461,10 +8458,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                209u8, 117u8, 147u8, 162u8, 132u8, 249u8, 73u8, 179u8, 153u8,
-                                157u8, 68u8, 147u8, 120u8, 114u8, 163u8, 100u8, 234u8, 224u8,
-                                148u8, 29u8, 44u8, 56u8, 218u8, 106u8, 188u8, 205u8, 103u8, 66u8,
-                                187u8, 95u8, 51u8, 169u8,
+                                164u8, 252u8, 214u8, 184u8, 68u8, 110u8, 173u8, 146u8, 114u8, 10u8,
+                                46u8, 60u8, 200u8, 108u8, 111u8, 115u8, 2u8, 113u8, 201u8, 4u8,
+                                155u8, 242u8, 36u8, 244u8, 64u8, 249u8, 191u8, 41u8, 154u8, 146u8,
+                                45u8, 184u8,
                             ],
                         )
                     }
@@ -8487,10 +8484,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                158u8, 118u8, 32u8, 218u8, 13u8, 60u8, 6u8, 198u8, 64u8, 189u8,
-                                219u8, 225u8, 138u8, 54u8, 197u8, 2u8, 23u8, 117u8, 120u8, 160u8,
-                                142u8, 76u8, 67u8, 152u8, 63u8, 2u8, 185u8, 240u8, 145u8, 158u8,
-                                150u8, 46u8,
+                                110u8, 100u8, 237u8, 10u8, 73u8, 60u8, 107u8, 141u8, 161u8, 242u8,
+                                215u8, 166u8, 40u8, 175u8, 148u8, 142u8, 138u8, 10u8, 255u8, 189u8,
+                                97u8, 6u8, 144u8, 94u8, 244u8, 72u8, 84u8, 20u8, 9u8, 19u8, 16u8,
+                                230u8,
                             ],
                         )
                     }
@@ -8529,10 +8526,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                48u8, 167u8, 77u8, 41u8, 118u8, 50u8, 98u8, 149u8, 83u8, 223u8,
-                                34u8, 235u8, 147u8, 208u8, 38u8, 187u8, 168u8, 17u8, 201u8, 134u8,
-                                26u8, 192u8, 194u8, 253u8, 23u8, 114u8, 116u8, 111u8, 57u8, 193u8,
-                                91u8, 102u8,
+                                115u8, 58u8, 237u8, 141u8, 105u8, 172u8, 124u8, 128u8, 65u8, 2u8,
+                                133u8, 73u8, 120u8, 107u8, 184u8, 171u8, 74u8, 199u8, 48u8, 72u8,
+                                124u8, 70u8, 191u8, 20u8, 195u8, 170u8, 134u8, 89u8, 156u8, 113u8,
+                                13u8, 193u8,
                             ],
                         )
                     }
@@ -14725,10 +14722,10 @@ pub mod api {
                             "batch",
                             super::Batch { calls },
                             [
-                                39u8, 19u8, 183u8, 231u8, 217u8, 148u8, 32u8, 93u8, 130u8, 60u8,
-                                128u8, 115u8, 157u8, 193u8, 158u8, 58u8, 189u8, 42u8, 26u8, 105u8,
-                                6u8, 15u8, 112u8, 93u8, 95u8, 0u8, 27u8, 201u8, 203u8, 192u8,
-                                178u8, 248u8,
+                                12u8, 150u8, 170u8, 33u8, 89u8, 250u8, 138u8, 129u8, 105u8, 201u8,
+                                18u8, 62u8, 134u8, 221u8, 168u8, 21u8, 27u8, 127u8, 230u8, 5u8,
+                                220u8, 38u8, 123u8, 254u8, 191u8, 247u8, 70u8, 195u8, 141u8, 218u8,
+                                153u8, 109u8,
                             ],
                         )
                     }
@@ -14759,10 +14756,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                226u8, 219u8, 247u8, 89u8, 140u8, 235u8, 85u8, 228u8, 232u8, 83u8,
-                                52u8, 139u8, 160u8, 52u8, 98u8, 215u8, 205u8, 203u8, 58u8, 146u8,
-                                187u8, 162u8, 5u8, 121u8, 141u8, 55u8, 21u8, 182u8, 144u8, 76u8,
-                                29u8, 124u8,
+                                240u8, 76u8, 194u8, 249u8, 206u8, 196u8, 100u8, 206u8, 11u8, 138u8,
+                                247u8, 2u8, 20u8, 165u8, 49u8, 125u8, 148u8, 230u8, 41u8, 32u8,
+                                221u8, 215u8, 99u8, 0u8, 109u8, 242u8, 125u8, 66u8, 9u8, 171u8,
+                                210u8, 253u8,
                             ],
                         )
                     }
@@ -14788,10 +14785,10 @@ pub mod api {
                             "batch_all",
                             super::BatchAll { calls },
                             [
-                                44u8, 15u8, 69u8, 132u8, 215u8, 135u8, 131u8, 127u8, 124u8, 32u8,
-                                193u8, 58u8, 159u8, 168u8, 161u8, 26u8, 88u8, 203u8, 181u8, 220u8,
-                                208u8, 124u8, 242u8, 23u8, 10u8, 148u8, 216u8, 229u8, 102u8, 132u8,
-                                155u8, 49u8,
+                                230u8, 106u8, 109u8, 21u8, 234u8, 176u8, 230u8, 235u8, 115u8,
+                                157u8, 242u8, 114u8, 84u8, 82u8, 46u8, 117u8, 254u8, 205u8, 76u8,
+                                82u8, 224u8, 51u8, 186u8, 251u8, 27u8, 31u8, 142u8, 75u8, 242u8,
+                                172u8, 160u8, 54u8,
                             ],
                         )
                     }
@@ -14815,10 +14812,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                125u8, 46u8, 45u8, 193u8, 242u8, 98u8, 115u8, 144u8, 172u8, 89u8,
-                                183u8, 252u8, 62u8, 78u8, 191u8, 157u8, 40u8, 140u8, 39u8, 83u8,
-                                242u8, 252u8, 234u8, 32u8, 187u8, 179u8, 185u8, 235u8, 58u8, 143u8,
-                                75u8, 28u8,
+                                172u8, 52u8, 38u8, 214u8, 148u8, 255u8, 46u8, 225u8, 126u8, 13u8,
+                                112u8, 204u8, 2u8, 188u8, 201u8, 181u8, 93u8, 188u8, 195u8, 237u8,
+                                165u8, 169u8, 76u8, 217u8, 69u8, 170u8, 169u8, 220u8, 42u8, 119u8,
+                                130u8, 246u8,
                             ],
                         )
                     }
@@ -14845,10 +14842,10 @@ pub mod api {
                             "force_batch",
                             super::ForceBatch { calls },
                             [
-                                233u8, 187u8, 174u8, 29u8, 106u8, 78u8, 7u8, 61u8, 160u8, 118u8,
-                                197u8, 10u8, 167u8, 101u8, 110u8, 23u8, 97u8, 123u8, 136u8, 202u8,
-                                219u8, 32u8, 128u8, 212u8, 206u8, 156u8, 255u8, 78u8, 151u8, 9u8,
-                                88u8, 21u8,
+                                204u8, 31u8, 162u8, 107u8, 22u8, 175u8, 221u8, 64u8, 255u8, 250u8,
+                                148u8, 192u8, 107u8, 44u8, 58u8, 210u8, 237u8, 63u8, 56u8, 35u8,
+                                123u8, 229u8, 243u8, 196u8, 139u8, 168u8, 230u8, 158u8, 184u8,
+                                163u8, 62u8, 20u8,
                             ],
                         )
                     }
@@ -14872,10 +14869,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                47u8, 37u8, 22u8, 37u8, 5u8, 97u8, 217u8, 106u8, 211u8, 56u8,
-                                159u8, 55u8, 70u8, 160u8, 225u8, 102u8, 50u8, 60u8, 30u8, 144u8,
-                                24u8, 51u8, 99u8, 83u8, 140u8, 115u8, 110u8, 189u8, 97u8, 45u8,
-                                240u8, 246u8,
+                                155u8, 140u8, 33u8, 44u8, 85u8, 30u8, 255u8, 148u8, 19u8, 81u8,
+                                183u8, 167u8, 225u8, 209u8, 218u8, 112u8, 166u8, 85u8, 84u8, 183u8,
+                                249u8, 244u8, 188u8, 195u8, 86u8, 193u8, 7u8, 209u8, 182u8, 58u8,
+                                118u8, 2u8,
                             ],
                         )
                     }
@@ -14915,10 +14912,10 @@ pub mod api {
                                 fallback: ::subxt::alloc::boxed::Box::new(fallback),
                             },
                             [
-                                227u8, 225u8, 67u8, 115u8, 110u8, 136u8, 177u8, 127u8, 71u8, 213u8,
-                                139u8, 32u8, 136u8, 5u8, 210u8, 136u8, 103u8, 202u8, 86u8, 60u8,
-                                10u8, 214u8, 77u8, 39u8, 225u8, 62u8, 72u8, 251u8, 98u8, 139u8,
-                                109u8, 131u8,
+                                190u8, 128u8, 24u8, 128u8, 48u8, 106u8, 0u8, 131u8, 12u8, 70u8,
+                                47u8, 253u8, 212u8, 63u8, 1u8, 158u8, 233u8, 173u8, 86u8, 235u8,
+                                171u8, 217u8, 135u8, 218u8, 120u8, 121u8, 212u8, 23u8, 40u8, 55u8,
+                                77u8, 161u8,
                             ],
                         )
                     }
@@ -14941,10 +14938,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                122u8, 170u8, 107u8, 48u8, 155u8, 210u8, 253u8, 94u8, 21u8, 243u8,
-                                166u8, 195u8, 61u8, 105u8, 231u8, 113u8, 194u8, 160u8, 213u8,
-                                255u8, 149u8, 88u8, 213u8, 241u8, 223u8, 198u8, 149u8, 185u8,
-                                156u8, 60u8, 251u8, 179u8,
+                                204u8, 161u8, 233u8, 125u8, 225u8, 26u8, 131u8, 174u8, 115u8,
+                                114u8, 191u8, 226u8, 112u8, 170u8, 220u8, 4u8, 73u8, 43u8, 99u8,
+                                78u8, 112u8, 172u8, 254u8, 245u8, 48u8, 135u8, 64u8, 24u8, 234u8,
+                                177u8, 15u8, 175u8,
                             ],
                         )
                     }
@@ -16196,8 +16193,9 @@ pub mod api {
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Challenged provider only. Answer before the deadline with a chunk"]
-            #[doc = "proof, a proof that the data was legitimately deleted, or a note"]
-            #[doc = "that the challenged state has been superseded."]
+            #[doc = "proof, a proof that the leaf has no chunk at the challenged index, a"]
+            #[doc = "proof that the data was legitimately deleted, or a note that the"]
+            #[doc = "challenged state has been superseded."]
             #[doc = ""]
             #[doc = "A valid response settles the deposit between challenger and"]
             #[doc = "provider. An invalid one is rejected (`InvalidProof`,"]
@@ -17098,8 +17096,9 @@ pub mod api {
                         )
                     }
                     #[doc = "Challenged provider only. Answer before the deadline with a chunk"]
-                    #[doc = "proof, a proof that the data was legitimately deleted, or a note"]
-                    #[doc = "that the challenged state has been superseded."]
+                    #[doc = "proof, a proof that the leaf has no chunk at the challenged index, a"]
+                    #[doc = "proof that the data was legitimately deleted, or a note that the"]
+                    #[doc = "challenged state has been superseded."]
                     #[doc = ""]
                     #[doc = "A valid response settles the deposit between challenger and"]
                     #[doc = "provider. An invalid one is rejected (`InvalidProof`,"]
@@ -17120,10 +17119,10 @@ pub mod api {
                                 response,
                             },
                             [
-                                85u8, 139u8, 231u8, 142u8, 210u8, 34u8, 182u8, 213u8, 88u8, 52u8,
-                                150u8, 158u8, 20u8, 225u8, 56u8, 83u8, 233u8, 253u8, 173u8, 204u8,
-                                12u8, 88u8, 173u8, 113u8, 223u8, 117u8, 91u8, 23u8, 243u8, 25u8,
-                                136u8, 254u8,
+                                34u8, 122u8, 34u8, 205u8, 103u8, 233u8, 8u8, 142u8, 213u8, 71u8,
+                                237u8, 37u8, 253u8, 45u8, 202u8, 99u8, 16u8, 188u8, 156u8, 22u8,
+                                214u8, 40u8, 51u8, 187u8, 87u8, 176u8, 105u8, 251u8, 164u8, 145u8,
+                                96u8, 86u8,
                             ],
                         )
                     }
@@ -18223,10 +18222,9 @@ pub mod api {
                         "StorageProvider",
                         "Buckets",
                         [
-                            122u8, 40u8, 42u8, 232u8, 37u8, 140u8, 10u8, 203u8, 98u8, 92u8, 146u8,
-                            3u8, 138u8, 117u8, 87u8, 195u8, 244u8, 153u8, 207u8, 66u8, 141u8,
-                            145u8, 255u8, 108u8, 73u8, 170u8, 46u8, 183u8, 240u8, 142u8, 106u8,
-                            144u8,
+                            94u8, 138u8, 17u8, 48u8, 152u8, 138u8, 24u8, 166u8, 111u8, 41u8, 175u8,
+                            237u8, 125u8, 13u8, 34u8, 213u8, 85u8, 89u8, 99u8, 167u8, 189u8, 94u8,
+                            29u8, 240u8, 145u8, 84u8, 239u8, 213u8, 195u8, 50u8, 11u8, 209u8,
                         ],
                     )
                 }
@@ -18268,10 +18266,10 @@ pub mod api {
                         "StorageProvider",
                         "Challenges",
                         [
-                            235u8, 132u8, 91u8, 181u8, 74u8, 233u8, 182u8, 65u8, 84u8, 185u8,
-                            147u8, 3u8, 233u8, 101u8, 113u8, 24u8, 113u8, 27u8, 212u8, 51u8, 197u8,
-                            110u8, 134u8, 109u8, 63u8, 25u8, 63u8, 237u8, 187u8, 208u8, 109u8,
-                            128u8,
+                            37u8, 105u8, 216u8, 252u8, 113u8, 67u8, 226u8, 250u8, 20u8, 9u8, 153u8,
+                            224u8, 236u8, 154u8, 173u8, 85u8, 68u8, 254u8, 24u8, 169u8, 205u8,
+                            172u8, 143u8, 63u8, 222u8, 169u8, 104u8, 144u8, 167u8, 142u8, 164u8,
+                            200u8,
                         ],
                     )
                 }
@@ -18538,7 +18536,11 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " Maximum chunk size for challenge responses (e.g., 256 KiB)."]
+                #[doc = " Upper bound of `chunk_data` in a challenge response: at least the"]
+                #[doc = " chunk size of every leaf version the pallet accepts"]
+                #[doc = " (`storage_primitives::DEFAULT_CHUNK_SIZE` for version 1). A leaf's"]
+                #[doc = " chunk count comes from its own version's chunk size, not from this"]
+                #[doc = " value."]
                 pub fn max_chunk_size(
                     &self,
                 ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
@@ -20839,10 +20841,10 @@ pub mod api {
                                 transaction_encoded,
                             },
                             [
-                                62u8, 164u8, 221u8, 224u8, 204u8, 240u8, 110u8, 229u8, 217u8,
-                                146u8, 166u8, 160u8, 116u8, 183u8, 212u8, 153u8, 242u8, 105u8,
-                                130u8, 97u8, 164u8, 186u8, 241u8, 54u8, 222u8, 33u8, 160u8, 160u8,
-                                184u8, 194u8, 45u8, 148u8,
+                                117u8, 21u8, 7u8, 6u8, 162u8, 214u8, 2u8, 152u8, 40u8, 204u8,
+                                246u8, 154u8, 123u8, 36u8, 101u8, 40u8, 182u8, 71u8, 101u8, 175u8,
+                                243u8, 216u8, 19u8, 203u8, 21u8, 94u8, 223u8, 118u8, 83u8, 82u8,
+                                193u8, 162u8,
                             ],
                         )
                     }
@@ -21010,10 +21012,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                15u8, 0u8, 138u8, 166u8, 30u8, 131u8, 222u8, 111u8, 127u8, 189u8,
-                                60u8, 72u8, 23u8, 229u8, 229u8, 111u8, 18u8, 2u8, 174u8, 244u8,
-                                77u8, 215u8, 86u8, 5u8, 75u8, 135u8, 106u8, 137u8, 199u8, 163u8,
-                                80u8, 102u8,
+                                125u8, 204u8, 159u8, 133u8, 173u8, 168u8, 186u8, 139u8, 102u8,
+                                245u8, 244u8, 84u8, 50u8, 78u8, 106u8, 159u8, 240u8, 33u8, 71u8,
+                                5u8, 170u8, 72u8, 95u8, 218u8, 135u8, 40u8, 59u8, 34u8, 227u8,
+                                53u8, 142u8, 176u8,
                             ],
                         )
                     }
@@ -26114,7 +26116,10 @@ pub mod api {
                     pub snapshot: ::core::option::Option<
                         runtime_types::storage_primitives::BucketSnapshot<::core::primitive::u32>,
                     >,
-                    pub historical_roots: [(::core::primitive::u32, ::subxt::utils::H256); 6usize],
+                    pub historical_roots: [(
+                        ::core::primitive::u32,
+                        runtime_types::storage_primitives::Commitment,
+                    ); 6usize],
                     pub total_snapshots: ::core::primitive::u32,
                 }
                 #[derive(
@@ -26476,8 +26481,9 @@ pub mod api {
                     },
                     #[codec(index = 41)]
                     #[doc = "Challenged provider only. Answer before the deadline with a chunk"]
-                    #[doc = "proof, a proof that the data was legitimately deleted, or a note"]
-                    #[doc = "that the challenged state has been superseded."]
+                    #[doc = "proof, a proof that the leaf has no chunk at the challenged index, a"]
+                    #[doc = "proof that the data was legitimately deleted, or a note that the"]
+                    #[doc = "challenged state has been superseded."]
                     #[doc = ""]
                     #[doc = "A valid response settles the deposit between challenger and"]
                     #[doc = "provider. An invalid one is rejected (`InvalidProof`,"]
@@ -26538,11 +26544,11 @@ pub mod api {
                     pub bucket_id: ::core::primitive::u64,
                     pub provider: ::subxt::utils::AccountId32,
                     pub challenger: ::subxt::utils::AccountId32,
-                    pub mmr_root: ::subxt::utils::H256,
-                    pub start_seq: ::core::primitive::u64,
+                    pub commitment: runtime_types::storage_primitives::Commitment,
                     pub target: runtime_types::storage_primitives::ChunkLocation,
                     pub deposit: ::core::primitive::u128,
                     pub authorized: ::core::primitive::bool,
+                    pub created_at: ::core::primitive::u32,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -26560,17 +26566,21 @@ pub mod api {
                         chunk_data: runtime_types::bounded_collections::bounded_vec::BoundedVec<
                             ::core::primitive::u8,
                         >,
-                        mmr_proof: runtime_types::storage_primitives::MmrProof,
-                        chunk_proof: runtime_types::storage_primitives::MerkleProof,
+                        mmr_proof: runtime_types::storage_primitives::mmr::MmrProof,
+                        chunk_proof: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
                     },
                     #[codec(index = 1)]
+                    ChunkOutOfRange {
+                        mmr_proof: runtime_types::storage_primitives::mmr::MmrProof,
+                    },
+                    #[codec(index = 2)]
                     Deleted {
                         new_mmr_root: ::subxt::utils::H256,
                         new_start_seq: ::core::primitive::u64,
                         admin: ::subxt::utils::AccountId32,
                         admin_signature: runtime_types::sp_runtime::MultiSignature,
                     },
-                    #[codec(index = 2)]
+                    #[codec(index = 3)]
                     Superseded,
                 }
                 #[derive(
@@ -26756,8 +26766,9 @@ pub mod api {
                     #[doc = "Only the challenged provider may respond."]
                     NotChallengeProvider,
                     #[codec(index = 49)]
-                    #[doc = "The chunk or MMR proof does not verify. The challenge stays open;"]
-                    #[doc = "respond again before the deadline."]
+                    #[doc = "The chunk or MMR proof does not verify, the leaf's `leaf_version` is"]
+                    #[doc = "unknown, or a `ChunkOutOfRange` response names a chunk the leaf has."]
+                    #[doc = "The challenge stays open; respond again before the deadline."]
                     InvalidProof,
                     #[codec(index = 50)]
                     #[doc = "`new_start_seq` does not cover the challenged leaf, or the admin"]
@@ -26773,74 +26784,79 @@ pub mod api {
                     #[doc = "with a signed commitment instead."]
                     ProviderNotInSnapshot,
                     #[codec(index = 53)]
+                    #[doc = "`target.leaf_index` is not below the commitment's `leaf_count`: the"]
+                    #[doc = "leaf does not exist, so no proof could defend the challenge. Pick a"]
+                    #[doc = "`leaf_index` below `leaf_count`."]
+                    LeafNotInCommitment,
+                    #[codec(index = 54)]
                     #[doc = "A provider with unresolved challenges (`PendingChallenges > 0`)"]
                     #[doc = "cannot complete deregistration — they are still slashable."]
                     ProviderHasPendingChallenges,
-                    #[codec(index = 54)]
+                    #[codec(index = 55)]
                     #[doc = "An agreement with an unresolved challenge against this"]
                     #[doc = "`(bucket, provider)` cannot be torn down until the challenge"]
                     #[doc = "resolves (defended or timed out)."]
                     AgreementHasPendingChallenge,
-                    #[codec(index = 55)]
+                    #[codec(index = 56)]
                     #[doc = "`MaxChallengesPerDeadline` challenges have already been allocated"]
                     #[doc = "for the deadline this challenge would land on."]
                     TooManyChallengesThisBlock,
-                    #[codec(index = 56)]
+                    #[codec(index = 57)]
                     #[doc = "A provider signature does not verify against the commitment."]
                     InvalidSignature,
-                    #[codec(index = 57)]
+                    #[codec(index = 58)]
                     #[doc = "The bucket has no checkpoint yet."]
                     NoSnapshot,
-                    #[codec(index = 58)]
+                    #[codec(index = 59)]
                     #[doc = "A frozen bucket only accepts checkpoints that keep its"]
                     #[doc = "`frozen_start_seq`."]
                     SnapshotViolatesFrozen,
-                    #[codec(index = 59)]
+                    #[codec(index = 60)]
                     #[doc = "Fewer valid provider signatures than the bucket's `min_providers`."]
                     InsufficientSignatures,
-                    #[codec(index = 60)]
+                    #[codec(index = 61)]
                     #[doc = "A balance or counter computation overflowed."]
                     ArithmeticOverflow,
-                    #[codec(index = 61)]
+                    #[codec(index = 62)]
                     #[doc = "The public key is not 32 bytes (sr25519/ed25519) or 33 bytes"]
                     #[doc = "(compressed ecdsa), or does not match the signature's scheme."]
                     InvalidPublicKey,
-                    #[codec(index = 62)]
+                    #[codec(index = 63)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 63)]
+                    #[codec(index = 64)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 64)]
+                    #[codec(index = 65)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 65)]
+                    #[codec(index = 66)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 66)]
+                    #[codec(index = 67)]
                     #[doc = "The terms' nonce does not match the owner's next expected"]
                     #[doc = "[`AgreementNonces`] value. Read the current value and request a"]
                     #[doc = "new quote with it."]
                     NonceMismatch,
-                    #[codec(index = 67)]
+                    #[codec(index = 68)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 68)]
+                    #[codec(index = 69)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 69)]
+                    #[codec(index = 70)]
                     #[doc = "Replica terms present in a signed quote redeemed as a primary"]
                     #[doc = "agreement. Negotiate the quote without `replica_params`, or"]
                     #[doc = "redeem it with `add_replica_provider`."]
                     UnexpectedReplicaTerms,
-                    #[codec(index = 70)]
+                    #[codec(index = 71)]
                     #[doc = "The terms' `bucket` does not name the bucket the call targets:"]
                     #[doc = "`New` is redeemable only by the calls that create a bucket, and"]
                     #[doc = "`Existing(id)` only against bucket `id`."]
                     TermsBucketMismatch,
-                    #[codec(index = 71)]
+                    #[codec(index = 72)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
                 }
@@ -27198,6 +27214,7 @@ pub mod api {
                     Debug,
                     Eq,
                     PartialEq,
+                    codec :: Decode,
                 )]
                 #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
@@ -27314,10 +27331,8 @@ pub mod api {
                     pub bucket_id: ::core::primitive::u64,
                     pub provider: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
                     pub challenger: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                    pub mmr_root: ::subxt::utils::H256,
-                    pub start_seq: ::core::primitive::u64,
-                    pub leaf_index: ::core::primitive::u64,
-                    pub chunk_index: ::core::primitive::u64,
+                    pub commitment: runtime_types::storage_primitives::Commitment,
+                    pub target: runtime_types::storage_primitives::ChunkLocation,
                     pub deadline: ::core::primitive::u32,
                     pub index: ::core::primitive::u16,
                     pub deposit: ::core::primitive::u128,
@@ -31676,6 +31691,39 @@ pub mod api {
                     pub sync_price: _0,
                 }
             }
+            pub mod mmr {
+                use super::runtime_types;
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub struct MmrLeaf {
+                    pub leaf_version: ::core::primitive::u8,
+                    pub data_root: ::subxt::utils::H256,
+                    pub data_size: ::core::primitive::u64,
+                    pub total_size: ::core::primitive::u64,
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub struct MmrProof {
+                    pub leaf: runtime_types::storage_primitives::mmr::MmrLeaf,
+                    pub items: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
+                }
+            }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,
                 :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -31726,6 +31774,7 @@ pub mod api {
                 Debug,
                 Eq,
                 PartialEq,
+                codec :: Decode,
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
@@ -31757,50 +31806,7 @@ pub mod api {
                 Debug,
                 Eq,
                 PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct MerkleProof {
-                pub siblings: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
-                pub path: ::subxt::alloc::vec::Vec<::core::primitive::bool>,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct MmrLeaf {
-                pub data_root: ::subxt::utils::H256,
-                pub data_size: ::core::primitive::u64,
-                pub total_size: ::core::primitive::u64,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct MmrProof {
-                pub peaks: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
-                pub leaf: runtime_types::storage_primitives::MmrLeaf,
-                pub leaf_proof: runtime_types::storage_primitives::MerkleProof,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
+                codec :: Decode,
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
@@ -31842,6 +31848,7 @@ pub mod api {
                 Debug,
                 Eq,
                 PartialEq,
+                codec :: Decode,
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]

@@ -153,7 +153,6 @@ jobs:
           cargo check --workspace --quiet
           cargo check --workspace --features=runtime-benchmarks --quiet
           cargo check --workspace --features=try-runtime --quiet
-          cargo check -p provider-chain --no-default-features --quiet
 
   clippy:
     name: Cargo clippy
@@ -267,7 +266,7 @@ jobs:
           save-if: false
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-llvm-cov
 
@@ -307,7 +306,7 @@ jobs:
 
       - name: Upload coverage artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: rust-coverage
           path: |

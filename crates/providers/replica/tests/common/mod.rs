@@ -34,7 +34,7 @@ pub fn body(body: impl Into<String>) -> Reply {
 
 /// `0x`-prefixed hex, the form both provider endpoints use for hashes.
 pub fn hex_hash(hash: H256) -> String {
-    format!("0x{}", hex::encode(hash.as_bytes()))
+    format!("{hash:#x}")
 }
 
 pub fn base64(data: &[u8]) -> String {
@@ -46,13 +46,37 @@ pub fn peaks_body(mmr_root: &str, peaks: &[String]) -> Reply {
     body(serde_json::json!({ "bucket_id": 1, "mmr_root": mmr_root, "peaks": peaks }).to_string())
 }
 
-/// A `/node` body carrying `data` and `children` verbatim.
-pub fn node_body(hash: &str, data: &str, children: Option<Vec<String>>) -> Reply {
-    body(serde_json::json!({ "hash": hash, "data": data, "children": children }).to_string())
+/// A `/node` body carrying `data` and `children` verbatim. A `None` field is
+/// left out, as a real provider leaves it out.
+pub fn node_body(hash: &str, data: Option<&str>, children: Option<Vec<String>>) -> Reply {
+    let mut node = serde_json::json!({ "hash": hash });
+    if let Some(data) = data {
+        node["data"] = data.into();
+    }
+    if let Some(children) = children {
+        node["children"] = children.into();
+    }
+    body(node.to_string())
+}
+
+/// A `/node` body for a chunk.
+pub fn chunk_body(hash: H256, data: &[u8]) -> Reply {
+    node_body(&hex_hash(hash), Some(&base64(data)), None)
+}
+
+/// A `/node` body for an internal node.
+pub fn internal_body(hash: H256, left: H256, right: H256) -> Reply {
+    node_body(
+        &hex_hash(hash),
+        None,
+        Some(vec![hex_hash(left), hex_hash(right)]),
+    )
 }
 
 #[derive(serde::Deserialize)]
 struct NodeQuery {
+    #[serde(rename = "bucket_id")]
+    _bucket_id: u64,
     hash: String,
 }
 
