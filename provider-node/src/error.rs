@@ -100,8 +100,9 @@ pub enum Error {
     )]
     ChainStateNotReady,
 
+    /// The node has not connected to the chain yet.
     #[error(transparent)]
-    Chain(#[from] provider_chain::Error),
+    ChainNotConnected(#[from] crate::chain_connection::NotConnected),
 
     /// The node cannot sign with its registered key. Each reason keeps the
     /// response code it had when these were three separate variants.
@@ -113,6 +114,9 @@ pub enum Error {
 
     #[error("Too many requests")]
     RateLimited,
+
+    #[error("Empty request body: empty data has no chunk tree")]
+    EmptyBody,
 }
 
 impl Error {
@@ -135,7 +139,6 @@ struct ErrorResponse {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        use provider_chain::Error as ChainError;
         use provider_storage::Error as StorageError;
         let (status, error_response) = match &self {
             // Exhaustive on purpose — no wildcard — so a new storage variant
@@ -153,6 +156,50 @@ impl IntoResponse for Error {
                     ErrorResponse {
                         error: "children_missing".to_string(),
                         details: Some(serde_json::json!({ "missing": children })),
+                    },
+                ),
+                StorageError::InvalidChildCount(count) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_child_count".to_string(),
+                        details: Some(serde_json::json!({ "expected": 2, "actual": count })),
+                    },
+                ),
+                StorageError::ChunkTooLarge { size } => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "chunk_too_large".to_string(),
+                        details: Some(serde_json::json!({
+                            "size": size,
+                            "max": storage_primitives::DEFAULT_CHUNK_SIZE,
+                        })),
+                    },
+                ),
+                StorageError::ChunkIndexOutOfRange {
+                    chunk_index,
+                    chunk_count,
+                } => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "chunk_index_out_of_range".to_string(),
+                        details: Some(serde_json::json!({
+                            "chunk_index": chunk_index,
+                            "chunk_count": chunk_count,
+                        })),
+                    },
+                ),
+                StorageError::InvalidNode => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_node".to_string(),
+                        details: None,
+                    },
+                ),
+                StorageError::EmptyData => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "empty_data".to_string(),
+                        details: None,
                     },
                 ),
                 StorageError::QuotaExceeded { used, max } => (
@@ -176,6 +223,13 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "data_root": root })),
                     },
                 ),
+                StorageError::CommitmentNotReproducible(reason) => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "commitment_not_reproducible".to_string(),
+                        details: Some(serde_json::json!({ "reason": reason })),
+                    },
+                ),
                 StorageError::InvalidHash { expected, actual } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
@@ -186,7 +240,17 @@ impl IntoResponse for Error {
                         })),
                     },
                 ),
-                e @ (StorageError::RocksDb(_) | StorageError::ColumnFamilyMissing(_)) => (
+                StorageError::NonCanonicalTree(root) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "non_canonical_tree".to_string(),
+                        details: Some(serde_json::json!({ "data_root": root })),
+                    },
+                ),
+                e @ (StorageError::RocksDb(_)
+                | StorageError::ColumnFamilyMissing(_)
+                | StorageError::IncompatibleFormat(_)
+                | StorageError::Mmr(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ErrorResponse {
                         error: "internal_error".to_string(),
@@ -282,6 +346,13 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "invalid_path".to_string(),
                     details: Some(serde_json::json!({ "message": msg })),
+                },
+            ),
+            Error::EmptyBody => (
+                StatusCode::BAD_REQUEST,
+                ErrorResponse {
+                    error: "empty_body".to_string(),
+                    details: None,
                 },
             ),
             Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
@@ -430,24 +501,15 @@ impl IntoResponse for Error {
                     })),
                 },
             ),
-            Error::Chain(err) => match err {
-                ChainError::NotConnected => (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    ErrorResponse {
-                        error: "chain_unavailable".to_string(),
-                        details: Some(serde_json::json!({
-                            "message": "the node has not yet established a connection to the chain"
-                        })),
-                    },
-                ),
-                ChainError::Connection(_) | ChainError::Internal(_) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    ErrorResponse {
-                        error: "internal_error".to_string(),
-                        details: Some(serde_json::json!({ "message": err.to_string() })),
-                    },
-                ),
-            },
+            Error::ChainNotConnected(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "chain_unavailable".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "the node has not yet established a connection to the chain"
+                    })),
+                },
+            ),
             Error::ProviderDeregistering => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -497,6 +559,29 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
+            status_of(Error::from(provider_storage::Error::EmptyData)),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::NonCanonicalTree(
+                "x".into()
+            ))),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::ChunkTooLarge {
+                size: 2
+            })),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::ChunkIndexOutOfRange {
+                chunk_index: 1,
+                chunk_count: 1
+            })),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
             status_of(Error::from(provider_storage::Error::QuotaExceeded {
                 used: 0,
                 max: 0
@@ -505,6 +590,12 @@ mod tests {
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::BucketNotFound(1))),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::from(
+                provider_storage::Error::CommitmentNotReproducible("x".into())
+            )),
             StatusCode::NOT_FOUND
         );
         assert_eq!(
@@ -564,6 +655,7 @@ mod tests {
             status_of(Error::InvalidObjectKey("k".into())),
             StatusCode::BAD_REQUEST
         );
+        assert_eq!(status_of(Error::EmptyBody), StatusCode::BAD_REQUEST);
         assert_eq!(
             status_of(Error::FileNotFound {
                 bucket_id: 1,
@@ -616,15 +708,10 @@ mod tests {
             status_of(SigningRefused::NoKey.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
-        // A connection that was never established is retryable; a failed
-        // connect attempt is a bug. They must not share a status code.
+        // A connection that was never established is retryable.
         assert_eq!(
-            status_of(provider_chain::Error::NotConnected.into()),
+            status_of(crate::chain_connection::NotConnected.into()),
             StatusCode::SERVICE_UNAVAILABLE
-        );
-        assert_eq!(
-            status_of(provider_chain::Error::Internal("boom".into()).into()),
-            StatusCode::INTERNAL_SERVER_ERROR
         );
     }
 

@@ -64,8 +64,7 @@ pub mod pallet {
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, CommitmentPayload,
-        EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplicaSyncRecord, Role,
-        Visibility,
+        EndAction, MmrProof, ProviderRole, RemovalReason, ReplicaSyncRecord, Role, Visibility,
     };
 
     /// Balance type of the configured currency.
@@ -134,6 +133,11 @@ pub mod pallet {
                 provider is still slashable"
             );
             assert!(
+                T::MaxChunkSize::get() >= storage_primitives::DEFAULT_CHUNK_SIZE,
+                "MaxChunkSize must be at least DEFAULT_CHUNK_SIZE, the chunk size \
+                of leaf version 1, so every chunk of an accepted leaf fits a response"
+            );
+            assert!(
                 T::AnchorBlockTimeMillis::get() > 0,
                 "AnchorBlockTimeMillis must be non-zero; off-chain consumers \
                 convert anchor-denominated durations to wall-clock time with it"
@@ -196,7 +200,11 @@ pub mod pallet {
         #[pallet::constant]
         type MinProviderStake: Get<BalanceOf<Self>>;
 
-        /// Maximum chunk size for challenge responses (e.g., 256 KiB).
+        /// Upper bound of `chunk_data` in a challenge response: at least the
+        /// chunk size of every leaf version the pallet accepts
+        /// (`storage_primitives::DEFAULT_CHUNK_SIZE` for version 1). A leaf's
+        /// chunk count comes from its own version's chunk size, not from this
+        /// value.
         #[pallet::constant]
         type MaxChunkSize: Get<u32>;
 
@@ -650,8 +658,11 @@ pub mod pallet {
         pub primary_providers: BoundedVec<T::AccountId, T::MaxPrimaryProviders>,
         /// Current canonical state.
         pub snapshot: Option<BucketSnapshot<BlockNumberFor<T>>>,
-        /// Historical MMR roots for replica sync validation.
-        pub historical_roots: [(u32, H256); 6],
+        /// Recent snapshot commitments for replica sync validation, one per
+        /// prime-spaced position (see `update_historical_roots`). Each entry is
+        /// the full commitment, so a replica that syncs to one of these roots
+        /// records a range `challenge_replica` can bind a proof to.
+        pub historical_roots: [(u32, Commitment); 6],
         /// Total snapshots created for this bucket.
         pub total_snapshots: u32,
     }
@@ -706,10 +717,9 @@ pub mod pallet {
         pub provider: T::AccountId,
         /// Account that issued the challenge.
         pub challenger: T::AccountId,
-        /// MMR root the provider committed to.
-        pub mmr_root: H256,
-        /// Start sequence of the commitment.
-        pub start_seq: u64,
+        /// The commitment being challenged; its `leaf_count` binds the proof
+        /// to the exact `leaf_index` in `respond_to_challenge`.
+        pub commitment: Commitment,
         /// Leaf + chunk being challenged.
         pub target: ChunkLocation,
         /// Deposit locked by challenger.
@@ -719,6 +729,10 @@ pub mod pallet {
         /// membership/agreement changes between creation and response cannot
         /// alter the fee split applied in `respond_to_challenge`.
         pub authorized: bool,
+        /// Anchor block at which the challenge was created.
+        /// `respond_to_challenge` computes the response time for the fee
+        /// split from it.
+        pub created_at: BlockNumberFor<T>,
     }
 
     /// Challenge response from provider.
@@ -740,8 +754,17 @@ pub mod pallet {
             chunk_data: BoundedVec<u8, T::MaxChunkSize>,
             /// Proves the leaf is part of the committed MMR.
             mmr_proof: MmrProof,
-            /// Proves the chunk is part of the leaf.
-            chunk_proof: MerkleProof,
+            /// Proves the chunk is part of the leaf: the sibling hashes from
+            /// the chunk up to `mmr_proof.leaf.data_root`.
+            chunk_proof: Vec<H256>,
+        },
+        /// The challenged `chunk_index` is at or beyond the leaf's chunk count,
+        /// so the leaf has no such chunk. Valid when the proof is for the
+        /// challenged `leaf_index` and the leaf's chunk count (from
+        /// `data_size` and `leaf_version`) is at most the index.
+        ChunkOutOfRange {
+            /// Proves the leaf is part of the committed MMR.
+            mmr_proof: MmrProof,
         },
         /// Data was deleted - show newer commitment without this seq.
         Deleted {
@@ -1136,12 +1159,13 @@ pub mod pallet {
         /// The bucket already has `MaxPrimaryProviders` primary providers.
         MaxPrimaryProvidersReached,
         /// The current snapshot carries fewer provider signatures than the
-        /// bucket's `min_providers`.
+        /// bucket's `min_providers`, or none.
         MinProvidersNotMet,
-        /// A `min_providers` value the bucket cannot satisfy: above
+        /// A `min_providers` value the pallet does not accept: zero, above
         /// `MaxPrimaryProviders` at creation, or above the bucket's current
-        /// primary count in `set_min_providers`. Pass a smaller number, or
-        /// add primaries first.
+        /// primary count in `set_min_providers`. Pass a value from 1 to the
+        /// current primary count; to require more signatures, add primaries
+        /// first.
         InvalidMinProviders,
         /// Only members and primary-agreement owners may challenge a primary
         /// provider of a private bucket.
@@ -1204,8 +1228,9 @@ pub mod pallet {
         ChallengeNotExpired,
         /// Only the challenged provider may respond.
         NotChallengeProvider,
-        /// The chunk or MMR proof does not verify. The challenge stays open;
-        /// respond again before the deadline.
+        /// The chunk or MMR proof does not verify, the leaf's `leaf_version` is
+        /// unknown, or a `ChunkOutOfRange` response names a chunk the leaf has.
+        /// The challenge stays open; respond again before the deadline.
         InvalidProof,
         /// `new_start_seq` does not cover the challenged leaf, or the admin
         /// signature does not verify. The challenge stays open.
@@ -1217,6 +1242,10 @@ pub mod pallet {
         /// is no on-chain commitment to challenge; use `challenge_offchain`
         /// with a signed commitment instead.
         ProviderNotInSnapshot,
+        /// `target.leaf_index` is not below the commitment's `leaf_count`: the
+        /// leaf does not exist, so no proof could defend the challenge. Pick a
+        /// `leaf_index` below `leaf_count`.
+        LeafNotInCommitment,
         /// A provider with unresolved challenges (`PendingChallenges > 0`)
         /// cannot complete deregistration — they are still slashable.
         ProviderHasPendingChallenges,
@@ -1236,7 +1265,8 @@ pub mod pallet {
         /// A frozen bucket only accepts checkpoints that keep its
         /// `frozen_start_seq`.
         SnapshotViolatesFrozen,
-        /// Fewer valid provider signatures than the bucket's `min_providers`.
+        /// Fewer valid provider signatures than the bucket's `min_providers`,
+        /// or none.
         InsufficientSignatures,
 
         // General errors
@@ -1611,7 +1641,8 @@ pub mod pallet {
         ///
         /// Parameters:
         /// - `min_providers`: primary-provider signatures each checkpoint
-        ///   needs. At most `MaxPrimaryProviders` (`InvalidMinProviders`).
+        ///   needs. At least 1 and at most `MaxPrimaryProviders`
+        ///   (`InvalidMinProviders`).
         ///   Changeable later with [`Pallet::set_min_providers`].
         /// - `visibility`: who may read the bucket (see [`Visibility`]).
         #[pallet::call_index(10)]
@@ -1679,7 +1710,8 @@ pub mod pallet {
         }
 
         /// Admin only. Set how many primary-provider signatures a checkpoint
-        /// needs. Cannot exceed the bucket's primary provider count.
+        /// needs. At least 1 and at most the bucket's primary provider count,
+        /// so a bucket with no primaries needs one added first.
         #[pallet::call_index(11)]
         #[pallet::weight(T::WeightInfo::set_bucket_min_providers())]
         pub fn set_min_providers(
@@ -1694,9 +1726,8 @@ pub mod pallet {
 
                 Self::ensure_admin(&who, bucket)?;
 
-                // Cannot exceed current primary provider count
                 ensure!(
-                    min_providers <= bucket.primary_providers.len() as u32,
+                    min_providers >= 1 && min_providers <= bucket.primary_providers.len() as u32,
                     Error::<T>::InvalidMinProviders
                 );
 
@@ -1707,7 +1738,7 @@ pub mod pallet {
 
         /// Admin only. Make the bucket append-only from its current snapshot
         /// on. Irreversible; the snapshot must already carry `min_providers`
-        /// signatures.
+        /// signatures, and at least one.
         #[pallet::call_index(12)]
         #[pallet::weight(T::WeightInfo::freeze_bucket())]
         pub fn freeze_bucket(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult {
@@ -1723,10 +1754,11 @@ pub mod pallet {
                 // Require snapshot with min_providers
                 let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
 
-                // Count set bits in the bitfield
+                // Count set bits in the bitfield. At least one, as in
+                // `checkpoint`.
                 let signer_count = snapshot.count_signers();
                 ensure!(
-                    signer_count >= bucket.min_providers as usize,
+                    signer_count >= bucket.min_providers.max(1) as usize,
                     Error::<T>::MinProvidersNotMet
                 );
 
@@ -2375,7 +2407,8 @@ pub mod pallet {
 
         /// Writer or admin. Make a provider-signed commitment the bucket's
         /// canonical state. Needs valid signatures from at least
-        /// `min_providers` of the bucket's primary providers; a frozen bucket
+        /// `min_providers` of the bucket's primary providers, and at least
+        /// one; a frozen bucket
         /// only accepts commitments that keep its `frozen_start_seq`.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
@@ -2440,16 +2473,18 @@ pub mod pallet {
                     signing_providers.push(signer.clone());
                 }
 
-                // Check min_providers
+                // At least one signature even if `min_providers` is 0 in
+                // state written before the bound existed: a snapshot no
+                // provider signed is a snapshot no provider is liable for.
                 ensure!(
-                    signing_count >= bucket.min_providers as usize,
+                    signing_count >= bucket.min_providers.max(1) as usize,
                     Error::<T>::InsufficientSignatures
                 );
 
                 let anchor_block = Self::current_anchor_block();
 
                 // Update historical roots
-                Self::update_historical_roots(bucket, anchor_block, commitment.mmr_root);
+                Self::update_historical_roots(bucket, anchor_block, commitment);
 
                 bucket.snapshot = Some(BucketSnapshot {
                     commitment,
@@ -2576,11 +2611,7 @@ pub mod pallet {
             origin: OriginFor<T>,
             bucket_id: BucketId,
             provider: T::AccountId,
-            // `commitment` carries the `(mmr_root, start_seq, leaf_count)` the
-            // provider signed. The challenger passes it through so the payload
-            // reconstruction matches the signed `CommitmentPayload` exactly.
             commitment: Commitment,
-            // `target` is the leaf+chunk being challenged within `commitment`.
             target: ChunkLocation,
             provider_signature: sp_runtime::MultiSignature,
         ) -> DispatchResult {
@@ -2683,8 +2714,9 @@ pub mod pallet {
         }
 
         /// Challenged provider only. Answer before the deadline with a chunk
-        /// proof, a proof that the data was legitimately deleted, or a note
-        /// that the challenged state has been superseded.
+        /// proof, a proof that the leaf has no chunk at the challenged index, a
+        /// proof that the data was legitimately deleted, or a note that the
+        /// challenged state has been superseded.
         ///
         /// A valid response settles the deposit between challenger and
         /// provider. An invalid one is rejected (`InvalidProof`,
@@ -2694,6 +2726,9 @@ pub mod pallet {
         #[pallet::call_index(41)]
         #[pallet::weight(match response {
             ChallengeResponse::Proof { .. } => T::WeightInfo::respond_to_challenge_proof(),
+            ChallengeResponse::ChunkOutOfRange { .. } => {
+                T::WeightInfo::respond_to_challenge_chunk_out_of_range()
+            }
             ChallengeResponse::Deleted { .. } => T::WeightInfo::respond_to_challenge_deleted(),
             ChallengeResponse::Superseded => T::WeightInfo::respond_to_challenge_superseded(),
         })]
@@ -2722,22 +2757,29 @@ pub mod pallet {
             let bucket =
                 Buckets::<T>::get(challenge.bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 
-            match &response {
+            match response {
                 ChallengeResponse::Proof {
                     chunk_data,
                     mmr_proof,
                     chunk_proof,
                 } => {
-                    let chunk_hash = storage_primitives::blake2_256(chunk_data);
+                    let (data_root, chunk_count) =
+                        Self::verify_challenged_leaf(&challenge, mmr_proof)?;
                     let chunk_ok = storage_primitives::verify_merkle_proof(
-                        chunk_hash,
+                        storage_primitives::hash_leaf(&chunk_data),
                         challenge.target.chunk_index,
-                        chunk_proof,
-                        &mmr_proof.leaf.data_root,
+                        chunk_count,
+                        &chunk_proof,
+                        &data_root,
                     );
-                    let mmr_ok =
-                        storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root);
-                    ensure!(chunk_ok && mmr_ok, Error::<T>::InvalidProof);
+                    ensure!(chunk_ok, Error::<T>::InvalidProof);
+                }
+                ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
+                    let (_, chunk_count) = Self::verify_challenged_leaf(&challenge, mmr_proof)?;
+                    ensure!(
+                        challenge.target.chunk_index >= chunk_count,
+                        Error::<T>::InvalidProof
+                    );
                 }
                 ChallengeResponse::Deleted {
                     new_mmr_root,
@@ -2745,26 +2787,31 @@ pub mod pallet {
                     admin,
                     admin_signature,
                 } => {
-                    Self::ensure_admin(admin, &bucket)?;
+                    Self::ensure_admin(&admin, &bucket)?;
 
                     let challenged_seq = challenge
+                        .commitment
                         .start_seq
                         .saturating_add(challenge.target.leaf_index);
                     ensure!(
-                        challenged_seq < *new_start_seq,
+                        challenged_seq < new_start_seq,
                         Error::<T>::InvalidDeletionClaim
                     );
                     let deletion_payload = CommitmentPayload::new(
                         challenge.bucket_id,
                         Commitment {
-                            mmr_root: *new_mmr_root,
-                            start_seq: *new_start_seq,
+                            mmr_root: new_mmr_root,
+                            start_seq: new_start_seq,
                             leaf_count: 0, // not needed for deletion proof
                         },
                     );
                     ensure!(
-                        Self::verify_signature(admin_signature, &deletion_payload.encode(), admin)
-                            .is_ok(),
+                        Self::verify_signature(
+                            &admin_signature,
+                            &deletion_payload.encode(),
+                            &admin
+                        )
+                        .is_ok(),
                         Error::<T>::InvalidDeletionClaim
                     );
                 }
@@ -2779,21 +2826,19 @@ pub mod pallet {
                         .as_ref()
                         .ok_or(Error::<T>::InvalidSupersededClaim)?;
                     let challenged_seq = challenge
+                        .commitment
                         .start_seq
                         .saturating_add(challenge.target.leaf_index);
                     ensure!(
-                        challenge.mmr_root != snapshot.commitment.mmr_root
+                        challenge.commitment.mmr_root != snapshot.commitment.mmr_root
                             && snapshot.contains_seq(challenged_seq),
                         Error::<T>::InvalidSupersededClaim
                     );
                 }
             }
 
-            // Calculate response time (blocks since challenge was created)
-            let challenge_created_at = challenge_id
-                .deadline
-                .saturating_sub(T::ChallengeTimeout::get());
-            let response_time = anchor_block.saturating_sub(challenge_created_at);
+            // Response time: blocks since the challenge was created.
+            let response_time = anchor_block.saturating_sub(challenge.created_at);
 
             // A valid response never touches the provider's stake — only the
             // response cost (proxied by the deposit) is at issue, and the
@@ -2902,7 +2947,8 @@ pub mod pallet {
         /// the replica holds the bucket at one of them. If a root matches the
         /// current snapshot or recent history, the replica is paid
         /// `sync_price` from its sync balance. Rate-limited by
-        /// `min_sync_interval`.
+        /// `min_sync_interval`. Fails with `AgreementExpired` once the anchor
+        /// block reaches the agreement's `expires_at`.
         #[pallet::call_index(50)]
         #[pallet::weight(T::WeightInfo::confirm_replica_sync())]
         pub fn confirm_replica_sync(
@@ -2943,20 +2989,26 @@ pub mod pallet {
 
                     let anchor_block = Self::current_anchor_block();
 
+                    // `challenge_replica` rejects an expired agreement, so a
+                    // sync confirmed after expiry would be paid with no
+                    // liability behind it.
+                    ensure!(
+                        anchor_block < agreement.expires_at,
+                        Error::<T>::AgreementExpired
+                    );
+
                     // Check sync interval
                     if let Some(record) = last_sync {
                         let min_next_block = record.block.saturating_add(*min_sync_interval);
                         ensure!(anchor_block >= min_next_block, Error::<T>::SyncTooFrequent);
                     }
 
-                    // Find matching root position
-                    let (position_matched, matched_root) =
-                        Self::find_matching_root(&bucket, &roots)?;
+                    let matched = Self::find_matching_root(&bucket, &roots)?;
 
                     // Check it's a new root
                     if let Some(record) = last_sync {
                         ensure!(
-                            matched_root != record.commitment.mmr_root,
+                            matched.commitment.mmr_root != record.commitment.mmr_root,
                             Error::<T>::InvalidSyncRoot
                         );
                     }
@@ -2968,32 +3020,8 @@ pub mod pallet {
                     );
                     *sync_balance = sync_balance.saturating_sub(*sync_price);
 
-                    // Capture sequence metadata for the matched root so a
-                    // future `challenge_replica` can target a specific leaf.
-                    // For the current snapshot (position_matched == 0) we
-                    // know start_seq + leaf_count exactly. Historical roots
-                    // don't carry sequence metadata in `historical_roots`, so
-                    // they default to 0 here — challenges targeting a leaf
-                    // beyond seq 0 in that case still work because
-                    // `challenge_replica` only uses `start_seq` as an offset
-                    // additive identity.
-                    let (start_seq, leaf_count) = if position_matched == 0 {
-                        bucket
-                            .snapshot
-                            .as_ref()
-                            .map(|s| (s.commitment.start_seq, s.commitment.leaf_count))
-                            .unwrap_or((0, 0))
-                    } else {
-                        (0u64, 0u64)
-                    };
-
-                    // Update last sync
                     *last_sync = Some(ReplicaSyncRecord {
-                        commitment: Commitment {
-                            mmr_root: matched_root,
-                            start_seq,
-                            leaf_count,
-                        },
+                        commitment: matched.commitment,
                         block: anchor_block,
                     });
 
@@ -3013,8 +3041,8 @@ pub mod pallet {
                     Self::deposit_event(Event::ReplicaSynced {
                         bucket_id,
                         provider: who.clone(),
-                        mmr_root: matched_root,
-                        position_matched,
+                        mmr_root: matched.commitment.mmr_root,
+                        position_matched: matched.position,
                         sync_payment: *sync_price,
                     });
 

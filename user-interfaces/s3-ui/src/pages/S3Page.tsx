@@ -128,7 +128,9 @@ function CreationCard({
     >
       <div className="flex justify-between items-start">
         <div>
-          <p className="font-medium">{item.name}</p>
+          <p className="font-medium">
+            {item.bucketId !== undefined ? `Bucket #${item.bucketId}` : "New bucket"}
+          </p>
           <p className="text-xs text-muted-foreground mt-0.5">
             {item.stage === "failed" ? item.error : item.stage}
           </p>

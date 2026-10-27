@@ -24,7 +24,7 @@
 //! let commitment = client.commit(1, vec![data_root]).await?;
 //!
 //! // Download and verify
-//! let retrieved = client.download(&data_root, 0, data.len() as u64).await?;
+//! let retrieved = client.download(1, &data_root, 0, data.len() as u64).await?;
 //! assert_eq!(retrieved, data);
 //! # Ok(())
 //! # }
@@ -129,8 +129,8 @@ pub use provider_negotiation as agreement;
 /// standalone building block usable without the rest of this SDK, and their
 /// failure modes (transport, connect, subscribe) are its whole error surface.
 pub use storage_indexers::{
-    BlockEvent, BlockStream, EventFilter, EventStream, IndexerError, DRIVE_REGISTRY_PALLET,
-    S3_REGISTRY_PALLET, STORAGE_PALLETS, STORAGE_PROVIDER_PALLET,
+    BlockEvent, BlockStream, EventFilter, EventStream, IndexerError, STORAGE_PALLETS,
+    STORAGE_PROVIDER_PALLET,
 };
 
 // Re-export commonly used types
@@ -157,7 +157,7 @@ pub use provider::{ProviderClient, ProviderSettings};
 pub use signer::Signer;
 pub use storage_user::{
     CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,
-    HealthResponse, StorageUserClient,
+    HealthResponse, Node, StorageUserClient,
 };
 pub use verification::ClientVerifier;
 

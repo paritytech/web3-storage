@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// A client-maintained mirror of a drive's entry set: the source of truth for the
+// A client-maintained mirror of a bucket's entry set: the source of truth for the
 // anchored metadata Merkle root, updated on upload/edit/delete so the root never
 // needs a full re-download. File leaves are keyed on locally verified byte length,
 // never a provider-reported size, so the anchor commits only to what the client saw.
@@ -15,7 +15,7 @@
 //
 // `root()` returns raw bytes: the browser anchor path (`rootToBytes32`) consumes
 // them directly, and the script hex-encodes via `toHex`. Serialization
-// (`toJSON`/`fromJSON`) backs the browser's per-drive IndexedDB persistence; the
+// (`toJSON`/`fromJSON`) backs the browser's per-bucket IndexedDB persistence; the
 // script uses the index purely in-memory.
 
 import { hexToBytes, metadataMerkleRoot, toHex, type MerkleEntry } from '@web3-storage/sdk'
@@ -40,7 +40,7 @@ export interface SerializedIndexEntry {
   size: string
 }
 
-/** Client-maintained drive index. Persisted per-drive; revalidated against the anchor. */
+/** Client-maintained bucket index. Persisted per bucket; revalidated against the anchor. */
 export class LocalIndex {
   private readonly byPath = new Map<string, IndexEntry>()
 
@@ -74,7 +74,7 @@ export class LocalIndex {
     return [...this.byPath.values()].map((e) => ({ path: e.path, dataRoot: e.dataRoot, size: e.size }))
   }
 
-  /** The drive's metadata Merkle root over the current entry set, as raw bytes. */
+  /** The bucket's metadata Merkle root over the current entry set, as raw bytes. */
   root(): Uint8Array {
     return metadataMerkleRoot(this.entries())
   }
