@@ -22736,6 +22736,7 @@ pub mod api {
                             Debug,
                             Eq,
                             PartialEq,
+                            codec :: Decode,
                             serde :: Deserialize,
                             serde :: Serialize,
                         )]
