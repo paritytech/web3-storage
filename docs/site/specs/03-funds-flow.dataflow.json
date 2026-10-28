@@ -184,10 +184,10 @@
       "from": "provider_acct",
       "to": "stake",
       "label": "register_provider, add_stake",
-      "classification": "register: stake + storage deposit + ED",
+      "classification": "register: stake + storage deposit + ED free",
       "variant": "emphasis",
       "labelAt": [
-        208,
+        196,
         105
       ]
     },
