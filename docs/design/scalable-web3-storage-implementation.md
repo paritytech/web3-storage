@@ -346,7 +346,7 @@ and an account with a hold cannot be reaped.
 Every record a user creates also carries a **storage deposit** under
 `StorageDeposit`: the provider record (held on the provider), the bucket
 (held on its creator), each member entry (held on the admin that added the
-member) and each agreement (held on its owner). The deposit is a
+member) and each agreement (held on the account that opened it). The deposit is a
 `T::StorageDeposit` ticket stored in the record; the footprint it is priced
 from is fixed per record kind, and dropping the ticket when the record is
 removed releases the hold to the depositor. Genesis providers and buckets take
@@ -623,9 +623,13 @@ pub struct StorageAgreement<T: Config> {
     pub role: ProviderRole<T>,
     /// Block when agreement became active (for statistics)
     pub started_at: BlockNumberFor<T>,
-    /// The storage deposit for this record, held on `owner`. Moves with the
-    /// escrow in `transfer_agreement_ownership` and is released to the owner
-    /// wherever the agreement is removed: `end_agreement`,
+    /// The account that opened the agreement and paid `deposit`. Fixed at
+    /// creation: `transfer_agreement_ownership` moves `owner`, not the
+    /// deposit, so a transfer never holds funds on an account that did not
+    /// sign it.
+    pub depositor: T::AccountId,
+    /// The storage deposit for this record, held on `depositor` and released
+    /// to it wherever the agreement is removed: `end_agreement`,
     /// `claim_expired_agreement`, `remove_slashed`, `cleanup_bucket_internal`.
     /// Footprint: the record's maximum encoded length. Applies at any price,
     /// so a zero-price agreement still costs its owner something to keep.
@@ -1665,9 +1669,9 @@ impl<T: Config> Pallet<T> {
     /// private bucket may challenge primaries without being a member. Open
     /// challenges keep the tier they were created with.
     ///
-    /// **The storage deposit follows the owner.** A new ticket is held on
-    /// `new_owner` first and the caller's ticket is then released, so a new
-    /// owner that cannot fund the deposit fails the transfer.
+    /// **The storage deposit does not move.** It stays on
+    /// `StorageAgreement.depositor`, so `new_owner` pays nothing and does not
+    /// need to sign.
     /// 
     /// Parameters:
     /// - `bucket_id`: The bucket containing the agreement
@@ -1711,8 +1715,8 @@ impl<T: Config> Pallet<T> {
     /// agreement cannot be settled out from under a live slashable challenge.
     /// The same guard applies to `claim_expired_agreement` below.
     ///
-    /// Removing the agreement releases its storage deposit to the owner, in
-    /// every settlement path: here, `claim_expired_agreement`,
+    /// Removing the agreement releases its storage deposit to its depositor,
+    /// in every settlement path: here, `claim_expired_agreement`,
     /// `remove_slashed` and `cleanup_bucket_internal`.
     #[pallet::weight(...)]
     pub fn end_agreement(
