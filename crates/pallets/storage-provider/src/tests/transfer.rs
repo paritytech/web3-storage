@@ -73,7 +73,7 @@ fn transfer_leaves_the_storage_deposit_on_the_depositor() {
 /// The recipient pays nothing, so an account with only the existential
 /// deposit can receive an agreement.
 #[test]
-fn transfer_to_an_account_without_free_balance_succeeds() {
+fn transfer_to_an_account_with_only_the_existential_deposit_succeeds() {
     new_test_ext().execute_with(|| {
         priced_provider(PROVIDER, 200);
         let bucket_id = setup_agreement(PROVIDER, OWNER, 50, 100);
