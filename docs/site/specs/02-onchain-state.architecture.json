@@ -343,7 +343,7 @@
         "role: Primary, or Replica { sync_balance, sync_price, min_sync_interval, last_sync }",
         "PendingChallengesByBucket also gates claim_expired_agreement and delete_bucket",
         "AgreementNonces: AccountId → next expected terms.nonce; redemption advances it (NonceMismatch)",
-        "ProviderInfo.deposit, StorageAgreement.deposit: StorageDeposit tickets; StorageAgreement.depositor opened the agreement and keeps paying after a transfer"
+        "ProviderInfo.deposit, StorageAgreement.deposit: StorageDeposit tickets; StorageAgreement.depositor opened the agreement and keeps the deposit on hold after a transfer"
       ]
     },
     {
