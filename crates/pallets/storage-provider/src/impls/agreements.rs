@@ -359,14 +359,14 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Deletes the agreement record and releases its storage deposit to the
-    /// owner. Every removal path goes through here.
+    /// depositor. Every removal path goes through here.
     pub(crate) fn remove_agreement(
         bucket_id: BucketId,
         provider: &T::AccountId,
         agreement: StorageAgreement<T>,
     ) -> DispatchResult {
         StorageAgreements::<T>::remove(bucket_id, provider);
-        agreement.deposit.drop(&agreement.owner)
+        agreement.deposit.drop(&agreement.depositor)
     }
 
     /// Stores the agreement an accepted quote pays for, holds its storage
@@ -403,6 +403,7 @@ impl<T: Config> Pallet<T> {
             provider,
             StorageAgreement {
                 owner: owner.clone(),
+                depositor: owner.clone(),
                 max_bytes: terms.max_bytes,
                 payment_locked: payment,
                 price_per_byte: terms.price_per_byte,

@@ -727,9 +727,12 @@ pub mod pallet {
         pub role: ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,
         /// Block when agreement became active.
         pub started_at: BlockNumberFor<T>,
-        /// The storage deposit for this record, held on `owner`. Moves with
-        /// the escrow when ownership is transferred and is released when the
-        /// agreement is removed.
+        /// The account that opened the agreement and paid `deposit`. Fixed at
+        /// creation: a transfer moves `owner`, not the deposit, so it never
+        /// holds funds on an account that did not sign.
+        pub depositor: T::AccountId,
+        /// The storage deposit for this record, held on `depositor` and
+        /// released to it when the agreement is removed.
         pub deposit: TicketOf<T>,
     }
 
@@ -1901,8 +1904,8 @@ pub mod pallet {
         ///
         /// Anyone can call this to clean up slashed providers.
         /// The provider must have zero stake (indicating they were slashed).
-        /// Returns the escrow and the agreement's storage deposit to the
-        /// agreement owner and removes the provider from the bucket. The
+        /// Returns the escrow to the agreement owner and the storage deposit
+        /// to its depositor, and removes the provider from the bucket. The
         /// provider's own deposit is on its provider record and is released
         /// by `complete_deregister`; slashing takes the stake only.
         #[pallet::call_index(15)]
@@ -2192,8 +2195,8 @@ pub mod pallet {
         /// balance — moves to `new_owner` and stays on hold; every later
         /// settlement and refund uses the new owner.
         ///
-        /// The agreement's storage deposit moves with the escrow: it is held
-        /// on the new owner and released from the caller.
+        /// The agreement's storage deposit stays on the account that opened
+        /// the agreement; `new_owner` pays nothing.
         ///
         /// Bucket membership does not move: the new owner cannot write to or
         /// administer the bucket, and the bucket admin keeps every admin
@@ -2218,9 +2221,6 @@ pub mod pallet {
 
             let escrow = agreement.escrow();
             Self::transfer_payment_on_hold(&who, &new_owner, escrow)?;
-            let released = agreement.deposit;
-            agreement.deposit = T::StorageDeposit::new(&new_owner, Self::agreement_footprint())?;
-            released.drop(&who)?;
             agreement.owner = new_owner.clone();
             StorageAgreements::<T>::insert(bucket_id, &provider, agreement);
 

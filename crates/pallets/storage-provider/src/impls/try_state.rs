@@ -30,7 +30,7 @@ impl<T: Config> Pallet<T> {
 
     /// For every account, the storage-deposit tickets stored in its provider
     /// record, the buckets it created, the member entries it paid for and
-    /// the agreements it owns add up to its `StorageDeposit` hold; an
+    /// the agreements it opened add up to its `StorageDeposit` hold; an
     /// account with no tickets holds nothing. A ticket is read as the held
     /// amount, which is what a `HoldConsideration` ticket encodes.
     fn check_storage_deposits() -> Result<(), TryRuntimeError> {
@@ -54,7 +54,7 @@ impl<T: Config> Pallet<T> {
             }
         }
         for (_bucket_id, _provider, agreement) in StorageAgreements::<T>::iter() {
-            add(&agreement.owner, &agreement.deposit)?;
+            add(&agreement.depositor, &agreement.deposit)?;
         }
         for who in frame_system::Account::<T>::iter_keys() {
             let expected = deposit_by_account.get(&who).copied().unwrap_or_default();

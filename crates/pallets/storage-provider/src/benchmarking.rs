@@ -225,6 +225,7 @@ fn add_primary_to_bucket<T: Config>(
         extensions_blocked: false,
         role: ProviderRole::Primary,
         started_at: anchor_block,
+        depositor: admin.clone(),
         deposit: T::StorageDeposit::new(admin, StorageProvider::<T>::agreement_footprint())
             .expect("benchmark admin cannot fund the agreement deposit"),
     };

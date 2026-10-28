@@ -2441,6 +2441,7 @@ mod challenge_tests {
                     }),
                 },
                 started_at: 1,
+                depositor: 1,
                 deposit: agreement_deposit(1),
             };
             StorageAgreements::<Test>::insert(0u64, 4u64, replica_agreement);
@@ -2520,6 +2521,7 @@ mod challenge_tests {
                     last_sync: None::<ReplicaSyncRecord<u64>>,
                 },
                 started_at: 1,
+                depositor: 1,
                 deposit: agreement_deposit(1),
             };
             StorageAgreements::<Test>::insert(bucket_id, 4u64, replica_agreement);
@@ -2784,6 +2786,7 @@ mod challenge_tests {
                     }),
                 },
                 started_at: 1,
+                depositor: 1,
                 deposit: agreement_deposit(1),
             };
             StorageAgreements::<Test>::insert(bucket_id, 4u64, replica_agreement);

@@ -53,11 +53,10 @@ fn transfer_moves_owner_and_escrow_together() {
     });
 }
 
-/// The deposit is the owner's claim on the record; after a transfer the old
-/// owner has no stake left in it, so the hold must move too or the old owner
-/// would keep paying for state it no longer controls.
+/// A transfer must not put funds on hold on an account that did not sign it,
+/// so the agreement's storage deposit stays on the account that opened it.
 #[test]
-fn transfer_moves_the_agreement_deposit_to_the_new_owner() {
+fn transfer_leaves_the_storage_deposit_on_the_depositor() {
     new_test_ext().execute_with(|| {
         priced_provider(PROVIDER, 200);
         let bucket_id = setup_agreement(PROVIDER, OWNER, 50, 100);
@@ -65,29 +64,36 @@ fn transfer_moves_the_agreement_deposit_to_the_new_owner() {
 
         assert_ok!(transfer(OWNER, bucket_id, PROVIDER, NEW_OWNER));
 
-        assert_eq!(held(HoldReason::StorageDeposit, OWNER), owner_deposits - 10);
-        assert_eq!(held(HoldReason::StorageDeposit, NEW_OWNER), 10);
+        assert_eq!(held(HoldReason::StorageDeposit, OWNER), owner_deposits);
+        assert_eq!(held(HoldReason::StorageDeposit, NEW_OWNER), 0);
         assert_ok!(StorageProvider::do_try_state());
     });
 }
 
-/// The new owner takes over the record's deposit; without funds for it the
-/// record would be left unpaid, so the transfer fails.
+/// The deposit returns to the account that paid it, not to whoever owns the
+/// agreement when it ends.
 #[test]
-fn transfer_fails_when_the_new_owner_cannot_fund_the_deposit() {
+fn ending_a_transferred_agreement_refunds_the_depositor() {
     new_test_ext().execute_with(|| {
         priced_provider(PROVIDER, 200);
         let bucket_id = setup_agreement(PROVIDER, OWNER, 50, 100);
-        assert_ok!(Balances::force_set_balance(
-            RuntimeOrigin::root(),
-            NEW_OWNER,
-            1
+        assert_ok!(transfer(OWNER, bucket_id, PROVIDER, NEW_OWNER));
+        let owner_deposits = held(HoldReason::StorageDeposit, OWNER);
+        let expires_at = StorageAgreements::<Test>::get(bucket_id, PROVIDER)
+            .unwrap()
+            .expires_at;
+        run_to_block(expires_at + 1);
+
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(NEW_OWNER),
+            bucket_id,
+            PROVIDER,
+            storage_primitives::EndAction::Pay
         ));
 
-        assert_noop!(
-            transfer(OWNER, bucket_id, PROVIDER, NEW_OWNER),
-            sp_runtime::TokenError::FundsUnavailable
-        );
+        assert_eq!(held(HoldReason::StorageDeposit, OWNER), owner_deposits - 10);
+        assert_eq!(held(HoldReason::StorageDeposit, NEW_OWNER), 0);
+        assert_ok!(StorageProvider::do_try_state());
     });
 }
 
