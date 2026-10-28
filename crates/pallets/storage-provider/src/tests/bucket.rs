@@ -39,8 +39,8 @@ fn create_bucket_holds_a_storage_deposit_on_the_creator() {
 }
 
 /// A member entry is a record the adding admin chose to create, so the admin
-/// pays for it: members must not be able to be charged by someone else's
-/// action, and a role change creates no new record.
+/// pays for it: a member must not be charged for someone else's action, and a
+/// role change creates no new record.
 #[test]
 fn set_member_holds_the_deposit_on_the_adding_admin_not_the_member() {
     new_test_ext().execute_with(|| {
@@ -148,7 +148,7 @@ fn create_bucket_fails_without_funds_for_the_deposit() {
 }
 
 /// The deposit belongs to whoever created the bucket, not to whoever removes
-/// it: a later admin must not be able to pocket the creator's funds.
+/// it: a later admin must not receive the creator's funds.
 #[test]
 fn removing_a_bucket_refunds_the_creator_not_the_admin_who_removes_it() {
     new_test_ext().execute_with(|| {
@@ -250,8 +250,9 @@ fn delete_bucket_requires_an_admin() {
     });
 }
 
-/// An agreement holds the owner's escrow and the provider's obligations;
-/// deleting the bucket under it would strand both, so settlement comes first.
+/// An agreement contains the owner's escrow and the provider's obligations;
+/// deleting its bucket first would leave both without a bucket, so the
+/// agreement must be settled first.
 #[test]
 fn delete_bucket_rejects_a_bucket_with_an_agreement() {
     new_test_ext().execute_with(|| {

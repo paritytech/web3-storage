@@ -248,12 +248,10 @@ pub mod pallet {
         type MaxBucketsPerMember: Get<u32>;
 
         /// Storage deposit for records a user creates, priced from the
-        /// record's size (`Footprint`). The runtime sets it to a
-        /// `HoldConsideration` under `HoldReason::StorageDeposit`: creating the
-        /// ticket puts the deposit on hold on the depositor's balance, and
-        /// dropping it when the record is removed releases the hold. The
-        /// ticket must encode as the held balance, as `HoldConsideration`'s
-        /// does: `try_state` reads it that way to check holds against records.
+        /// record's size (`Footprint`). The runtime uses a `HoldConsideration`
+        /// under `HoldReason::StorageDeposit`. The ticket must encode as the
+        /// held balance, as `HoldConsideration`'s does: `try_state` reads it
+        /// that way to check holds against records.
         type StorageDeposit: Consideration<Self::AccountId, Footprint>;
 
         /// Minimum number of relay chain blocks between announcing a
@@ -379,9 +377,9 @@ pub mod pallet {
     /// `(bucket, provider)` pair. Maintained in lockstep with
     /// [`PendingChallenges`] and gates that bucket's agreement teardown
     /// (`end_agreement`, `claim_expired_agreement`) and bucket removal
-    /// (`cleanup_bucket_internal`). An entry exists only while the count is
-    /// positive, so a bucket with no entry under its prefix has no open
-    /// challenge.
+    /// (`delete_bucket`, `cleanup_bucket_internal`). An entry exists only
+    /// while the count is positive, so a bucket with no entry under its
+    /// prefix has no open challenge.
     #[pallet::storage]
     pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
         _,
@@ -662,11 +660,10 @@ pub mod pallet {
         /// Role the member holds in the bucket.
         pub role: Role,
         /// The admin that added the member and paid `deposit`. Fixed for the
-        /// lifetime of the entry; role changes do not move it.
+        /// lifetime of the entry.
         pub depositor: T::AccountId,
-        /// The storage deposit for this entry and its `MemberBuckets`
-        /// reverse-index entry, held on `depositor` and released when the
-        /// member is removed or the bucket is deleted.
+        /// Storage deposit for this entry and its `MemberBuckets` entry, held
+        /// on `depositor` until the member or the bucket is removed.
         pub deposit: TicketOf<T>,
     }
 
@@ -696,10 +693,10 @@ pub mod pallet {
         /// Total snapshots created for this bucket.
         pub total_snapshots: u32,
         /// The account that created the bucket and paid `deposit`. Fixed at
-        /// creation; it gets the deposit back when the bucket is removed even
-        /// if it is no longer an admin or a member by then.
+        /// creation; it gets the deposit back even if it is no longer an admin
+        /// or a member.
         pub creator: T::AccountId,
-        /// The storage deposit for the bucket record, held on `creator`.
+        /// Storage deposit for the bucket record, held on `creator`.
         pub deposit: TicketOf<T>,
     }
 
@@ -731,8 +728,8 @@ pub mod pallet {
         /// creation: a transfer moves `owner`, not the deposit, so it never
         /// holds funds on an account that did not sign.
         pub depositor: T::AccountId,
-        /// The storage deposit for this record, held on `depositor` and
-        /// released to it when the agreement is removed.
+        /// Storage deposit for this record, held on `depositor` until the
+        /// agreement is removed.
         pub deposit: TicketOf<T>,
     }
 
@@ -911,8 +908,7 @@ pub mod pallet {
             /// Start sequence of the snapshot the bucket was frozen at.
             frozen_start_seq: u64,
         },
-        /// A bucket was removed, by `delete_bucket` or together with its
-        /// agreements when its drive was deleted.
+        /// A bucket was removed, by `delete_bucket` or by deleting its drive.
         BucketDeleted {
             /// The removed bucket.
             bucket_id: BucketId,
@@ -1700,14 +1696,11 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Admin only. Delete a bucket that has no agreements and no open
-        /// challenges. Releases the bucket's storage deposit to its creator
-        /// and every member deposit to the admin that added the member, and
-        /// removes the bucket from each member's reverse index.
-        ///
-        /// Errors: `BucketNotEmpty` while an agreement exists (end it
-        /// first); `BucketHasPendingChallenge` while a challenge against a
-        /// provider on the bucket is open.
+        /// Admin only. Delete a bucket with no agreements (`BucketNotEmpty`)
+        /// and no open challenges (`BucketHasPendingChallenge`). Releases the
+        /// bucket deposit to its creator and each member deposit to the admin
+        /// that added the member, and removes the bucket from each member's
+        /// reverse index.
         #[pallet::call_index(19)]
         #[pallet::weight(T::WeightInfo::delete_bucket(T::MaxMembers::get()))]
         pub fn delete_bucket(
