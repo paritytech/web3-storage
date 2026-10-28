@@ -3,17 +3,13 @@
 /**
  * Real-time event subscription specs (multi-tab).
  *
- * Open two browser contexts, mutate state in tab A, assert tab B's sidebar
- * reflects the change without manual refresh. Exercises the
- * DriveRegistry.{DriveCreated,DriveDeleted,DriveNameUpdated} subscription.
+ * Open two browser contexts, change chain state from the test, assert both
+ * tabs' sidebars reflect the change without manual refresh. Exercises the
+ * StorageProvider.{BucketCreated,MemberSet,MemberRemoved} subscription.
  */
 import { test, expect } from "../fixtures";
-import {
-  Bob,
-  cleanupDrives,
-  createDriveViaApi,
-  deleteDriveViaApi,
-} from "@web3-storage/test-helpers";
+import { removeMember, setMember } from "@web3-storage/sdk";
+import { Bob, Charlie, createDriveViaApi, getApi } from "@web3-storage/test-helpers";
 import {
   waitForConnection,
   waitForMinBlock,
@@ -21,10 +17,6 @@ import {
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
-
-test.afterEach(async () => {
-  await cleanupDrives(Bob);
-});
 
 async function openTabB(browser: import("@playwright/test").Browser) {
   // New context with the same localStorage seed as the fixture.
@@ -42,21 +34,20 @@ async function openTabB(browser: import("@playwright/test").Browser) {
   return { tabB, ctx };
 }
 
-test("DriveCreated cross-tab", async ({ localPage, browser }) => {
+test("BucketCreated cross-tab", async ({ localPage, browser }) => {
   const { tabB, ctx } = await openTabB(browser);
   try {
-    const drive = await createDriveViaApi(Bob, {
-      name: `rt-create-${Date.now()}`,
+    const { bucketId } = await createDriveViaApi(Bob, {
       maxCapacity: 10_000_000n,
       storagePeriod: 10_000,
     });
 
     // Tab A also reflects (sanity).
-    await expect(localPage.getByTestId(`drive-list-item-${drive.driveId}`)).toBeVisible({
+    await expect(localPage.getByTestId(`drive-list-item-${bucketId}`)).toBeVisible({
       timeout: 90_000,
     });
     // Tab B reflects without reload.
-    await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toBeVisible({
+    await expect(tabB.getByTestId(`drive-list-item-${bucketId}`)).toBeVisible({
       timeout: 90_000,
     });
   } finally {
@@ -64,28 +55,32 @@ test("DriveCreated cross-tab", async ({ localPage, browser }) => {
   }
 });
 
-test("DriveDeleted cross-tab", async ({ localPage, browser }) => {
+test("MemberSet and MemberRemoved cross-tab", async ({ localPage, browser }) => {
   const { tabB, ctx } = await openTabB(browser);
   try {
-    const drive = await createDriveViaApi(Bob, {
-      name: `rt-delete-${Date.now()}`,
+    // Charlie owns the bucket; adding Bob as a member must make it appear in
+    // Bob's list, and removing him must make it disappear.
+    const { bucketId } = await createDriveViaApi(Charlie, {
       maxCapacity: 10_000_000n,
       storagePeriod: 10_000,
     });
-    await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toBeVisible({
+
+    await setMember(getApi(), Charlie, bucketId, Bob, "Reader");
+    await expect(tabB.getByTestId(`drive-list-item-${bucketId}`)).toBeVisible({
+      timeout: 90_000,
+    });
+    await expect(localPage.getByTestId(`drive-list-item-${bucketId}`)).toBeVisible({
       timeout: 90_000,
     });
 
-    await deleteDriveViaApi(Bob, drive.driveId);
-
-    await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toBeHidden({
+    await removeMember(getApi(), Charlie, bucketId, Bob);
+    await expect(tabB.getByTestId(`drive-list-item-${bucketId}`)).toBeHidden({
       timeout: 90_000,
     });
-    await expect(localPage.getByTestId(`drive-list-item-${drive.driveId}`)).toBeHidden({
+    await expect(localPage.getByTestId(`drive-list-item-${bucketId}`)).toBeHidden({
       timeout: 90_000,
     });
   } finally {
     await ctx.close();
   }
 });
-

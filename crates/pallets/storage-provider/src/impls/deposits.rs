@@ -6,8 +6,7 @@
 
 use crate::{pallet::Member, *};
 use frame_support::{pallet_prelude::*, traits::Footprint};
-use sp_core::H256;
-use storage_primitives::{BucketId, Visibility};
+use storage_primitives::{BucketId, Commitment, Visibility};
 
 impl<T: Config> Pallet<T> {
     /// A provider record.
@@ -42,7 +41,7 @@ impl<T: Config> Pallet<T> {
             + u32::max_encoded_len()
             + empty_primary_providers
             + no_snapshot
-            + <[(u32, H256); 6]>::max_encoded_len()
+            + <[(u32, Commitment); 6]>::max_encoded_len()
             + u32::max_encoded_len()
             + T::AccountId::max_encoded_len()
             + TicketOf::<T>::max_encoded_len();

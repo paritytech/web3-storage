@@ -31,7 +31,7 @@ fn create_bucket_holds_a_storage_deposit_on_the_creator() {
     new_test_ext().execute_with(|| {
         let free_before = Balances::free_balance(1);
 
-        create_bucket(1, 0);
+        create_bucket(1, 1);
 
         assert_eq!(held(HoldReason::StorageDeposit, 1), 20);
         assert_eq!(Balances::free_balance(1), free_before - 20);
@@ -44,7 +44,7 @@ fn create_bucket_holds_a_storage_deposit_on_the_creator() {
 #[test]
 fn set_member_holds_the_deposit_on_the_adding_admin_not_the_member() {
     new_test_ext().execute_with(|| {
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
         let admin_held = held(HoldReason::StorageDeposit, 1);
 
         assert_ok!(StorageProvider::set_member(
@@ -75,7 +75,7 @@ fn set_member_holds_the_deposit_on_the_adding_admin_not_the_member() {
 #[test]
 fn set_member_fails_without_funds_for_the_deposit() {
     new_test_ext().execute_with(|| {
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
         assert_ok!(StorageProvider::set_member(
             RuntimeOrigin::signed(1),
             bucket_id,
@@ -96,7 +96,7 @@ fn set_member_fails_without_funds_for_the_deposit() {
 #[test]
 fn removing_a_member_refunds_the_admin_who_added_them() {
     new_test_ext().execute_with(|| {
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
         assert_ok!(StorageProvider::set_member(
             RuntimeOrigin::signed(1),
             bucket_id,
@@ -139,7 +139,7 @@ fn create_bucket_fails_without_funds_for_the_deposit() {
         assert_noop!(
             StorageProvider::create_bucket(
                 RuntimeOrigin::signed(9),
-                0,
+                1,
                 storage_primitives::Visibility::Public
             ),
             sp_runtime::TokenError::FundsUnavailable
@@ -154,7 +154,7 @@ fn removing_a_bucket_refunds_the_creator_not_the_admin_who_removes_it() {
     new_test_ext().execute_with(|| {
         let creator_free = Balances::free_balance(1);
         let admin_free = Balances::free_balance(3);
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
         assert_ok!(StorageProvider::set_member(
             RuntimeOrigin::signed(1),
             bucket_id,
@@ -191,7 +191,7 @@ fn delete_bucket_refunds_the_creator_and_every_member_depositor() {
     new_test_ext().execute_with(|| {
         System::set_block_number(1);
         let creator_free = Balances::free_balance(1);
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
         assert_ok!(StorageProvider::set_member(
             RuntimeOrigin::signed(1),
             bucket_id,
@@ -231,7 +231,7 @@ fn delete_bucket_refunds_the_creator_and_every_member_depositor() {
 #[test]
 fn delete_bucket_requires_an_admin() {
     new_test_ext().execute_with(|| {
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
         assert_ok!(StorageProvider::set_member(
             RuntimeOrigin::signed(1),
             bucket_id,
@@ -464,17 +464,33 @@ fn remove_member_fails_for_non_existent() {
 #[test]
 fn set_min_providers_works() {
     new_test_ext().execute_with(|| {
-        create_bucket(1, 2);
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+        setup_added_primary(3, 1, bucket_id, 50, 200);
 
-        // Can set to 0 (no minimum)
         assert_ok!(StorageProvider::set_min_providers(
             RuntimeOrigin::signed(1),
-            0,
-            0
+            bucket_id,
+            2
         ));
 
-        let bucket = Buckets::<Test>::get(0).unwrap();
-        assert_eq!(bucket.min_providers, 0);
+        let bucket = Buckets::<Test>::get(bucket_id).unwrap();
+        assert_eq!(bucket.min_providers, 2);
+    });
+}
+
+#[test]
+fn set_min_providers_rejects_zero() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+
+        // Zero would let `checkpoint` accept a commitment no provider signed.
+        assert_noop!(
+            StorageProvider::set_min_providers(RuntimeOrigin::signed(1), bucket_id, 0),
+            Error::<Test>::InvalidMinProviders
+        );
     });
 }
 

@@ -102,8 +102,8 @@ common::backend_tests! {
 
         // Create test data
         let data = b"Hello, World!";
-        let hash = storage_primitives::blake2_256(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash = storage_primitives::hash_leaf(data);
+        let hash_hex = format!("{hash:#x}");
 
         // Upload node
         let upload_response = server
@@ -127,7 +127,7 @@ common::backend_tests! {
         // Download node
         let download_response = server
             .client
-            .get(server.url(&format!("/node?hash={hash_hex}")))
+            .get(server.url(&format!("/node?bucket_id=1&hash={hash_hex}")))
             .send()
             .await
             .unwrap();
@@ -139,6 +139,18 @@ common::backend_tests! {
 
         let downloaded_data = BASE64.decode(body["data"].as_str().unwrap()).unwrap();
         assert_eq!(downloaded_data, data);
+
+        // A bare hex request gets the `0x`-prefixed hash back.
+        let body: Value = server
+            .client
+            .get(server.url(&format!("/node?bucket_id=1&hash={}", &hash_hex[2..])))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(body["hash"], hash_hex);
     }
 }
 
@@ -148,8 +160,8 @@ common::backend_tests! {
 
         // Upload a node first
         let data = b"Test data for exists check";
-        let hash = storage_primitives::blake2_256(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash = storage_primitives::hash_leaf(data);
+        let hash_hex = format!("{hash:#x}");
 
         server
             .client
@@ -197,8 +209,8 @@ common::backend_tests! {
 
         // Upload a data root (leaf chunk)
         let data = b"Chunk data for commit test";
-        let hash = storage_primitives::blake2_256(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash = storage_primitives::hash_leaf(data);
+        let hash_hex = format!("{hash:#x}");
 
         server
             .client
@@ -250,43 +262,6 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_list_buckets(backend) {
-        let server = TestServer::new(backend).await;
-
-        // Upload to bucket 1 to create it
-        let data = b"Data for bucket 1";
-        let hash = storage_primitives::blake2_256(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
-
-        server
-            .client
-            .put(server.url("/node"))
-            .json(&json!({
-                "bucket_id": 1,
-                "hash": hash_hex,
-                "data": BASE64.encode(data),
-                "children": null
-            }))
-            .send()
-            .await
-            .unwrap();
-
-        // List buckets
-        let response = server
-            .client
-            .get(server.url("/buckets"))
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body: Value = response.json().await.unwrap();
-        assert!(body["buckets"].is_array());
-    }
-}
-
-common::backend_tests! {
     async fn test_upload_with_invalid_hash_fails(backend) {
         let server = TestServer::new(backend).await;
 
@@ -313,6 +288,51 @@ common::backend_tests! {
     }
 }
 
+// Chunks and internal nodes are hashed with different prefixes, so a hash
+// computed without the prefix for the node's kind is never accepted.
+common::backend_tests! {
+    async fn test_upload_rejects_untagged_chunk_and_node_hashes(backend) {
+        let server = TestServer::new(backend).await;
+
+        let data = b"untagged chunk";
+        let response = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": format!("{:#x}", storage_primitives::blake2_256(data)),
+                "data": BASE64.encode(data),
+                "children": null
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash");
+
+        let left = storage_primitives::hash_leaf(b"left");
+        let right = storage_primitives::hash_leaf(b"right");
+        let response = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": format!("{:#x}", H256::zero()),
+                "children": [
+                    format!("{left:#x}"),
+                    format!("{right:#x}"),
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash");
+    }
+}
+
 common::backend_tests! {
     async fn test_upload_internal_node_with_missing_children_fails(backend) {
         let server = TestServer::new(backend).await;
@@ -320,13 +340,11 @@ common::backend_tests! {
         let child1 = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let child2 = "0x0000000000000000000000000000000000000000000000000000000000000002";
 
-        // Create internal node data (child hashes concatenated)
-        let mut node_data = Vec::new();
-        node_data.extend_from_slice(&hex_decode(child1).unwrap());
-        node_data.extend_from_slice(&hex_decode(child2).unwrap());
-
-        let hash = storage_primitives::blake2_256(&node_data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash = storage_primitives::hash_children(
+            child1.parse::<sp_core::H256>().unwrap(),
+            child2.parse::<sp_core::H256>().unwrap(),
+        );
+        let hash_hex = format!("{hash:#x}");
 
         let response = server
             .client
@@ -334,7 +352,6 @@ common::backend_tests! {
             .json(&json!({
                 "bucket_id": 1,
                 "hash": hash_hex,
-                "data": BASE64.encode(&node_data),
                 "children": [child1, child2]
             }))
             .send()
@@ -349,6 +366,166 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
+    async fn test_upload_internal_node_rejects_children_that_are_not_a_pair(backend) {
+        let server = TestServer::new(backend).await;
+
+        // The child count is checked before anything is looked up, so the
+        // child does not need to exist.
+        let child_hash = H256::repeat_byte(0x11);
+        let child_hex = format!("{child_hash:#x}");
+
+        let hash = storage_primitives::hash_children(child_hash, child_hash);
+        let response = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": format!("{hash:#x}"),
+                "children": [child_hex],
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_child_count");
+        assert_eq!(body["details"]["expected"], 2);
+        assert_eq!(body["details"]["actual"], 1);
+    }
+}
+
+common::backend_tests! {
+    async fn test_upload_node_rejects_leaf_above_max_chunk_size(backend) {
+        let server = TestServer::new(backend).await;
+        let max = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+
+        let put = |data: Vec<u8>| {
+            let hash = storage_primitives::hash_leaf(&data);
+            let request = server.client.put(server.url("/node")).json(&json!({
+                "bucket_id": 1,
+                "hash": format!("{hash:#x}"),
+                "data": BASE64.encode(&data),
+                "children": null,
+            }));
+            async move { request.send().await.unwrap() }
+        };
+
+        let response = put(vec![7u8; max]).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = put(vec![7u8; max + 1]).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "chunk_too_large");
+        assert_eq!(body["details"]["size"], max + 1);
+        assert_eq!(body["details"]["max"], max);
+    }
+}
+
+common::backend_tests! {
+    async fn test_upload_node_rejects_both_or_neither_of_data_and_children(backend) {
+        let server = TestServer::new(backend).await;
+
+        let (left, right) = (H256::from_low_u64_be(1), H256::from_low_u64_be(2));
+        let hash = storage_primitives::hash_children(left, right);
+        for request in [
+            json!({
+                "bucket_id": 1,
+                "hash": format!("{hash:#x}"),
+                "data": BASE64.encode(b"unrelated bytes"),
+                "children": [format!("{left:#x}"), format!("{right:#x}")],
+            }),
+            json!({ "bucket_id": 1, "hash": format!("{hash:#x}") }),
+        ] {
+            let response = server
+                .client
+                .put(server.url("/node"))
+                .json(&request)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body: Value = response.json().await.unwrap();
+            assert_eq!(body["error"], "invalid_node");
+        }
+    }
+}
+
+// An internal node is its two children: both download paths return them and
+// no `data`.
+common::backend_tests! {
+    async fn test_download_internal_node_returns_its_children(backend) {
+        let server = TestServer::new(backend).await;
+
+        let mut child_hexes = Vec::new();
+        for chunk in [b"left-chunk".as_slice(), b"right-chunk".as_slice()] {
+            let chunk_hash = storage_primitives::hash_leaf(chunk);
+            child_hexes.push(format!("{chunk_hash:#x}"));
+            server
+                .client
+                .put(server.url("/node"))
+                .json(&json!({
+                    "bucket_id": 1,
+                    "hash": format!("{chunk_hash:#x}"),
+                    "data": BASE64.encode(chunk),
+                }))
+                .send()
+                .await
+                .unwrap();
+        }
+
+        let hash = storage_primitives::hash_children(
+            storage_primitives::hash_leaf(b"left-chunk"),
+            storage_primitives::hash_leaf(b"right-chunk"),
+        );
+        let hash_hex = format!("{hash:#x}");
+
+        let response = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": hash_hex,
+                "children": child_hexes,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = server
+            .client
+            .get(server.url(&format!("/node?bucket_id=1&hash={hash_hex}")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["children"], json!(child_hexes));
+        assert!(body.get("data").is_none());
+
+        let response = server
+            .client
+            .post(server.url("/fetch_nodes"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hashes": [hash_hex],
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = response.json().await.unwrap();
+        let node = &body["nodes"].as_array().unwrap()[0];
+        assert_eq!(node["children"], json!(child_hexes));
+        assert!(node.get("data").is_none());
+    }
+}
+
+common::backend_tests! {
     async fn test_full_upload_commit_read_flow(backend) {
         let server = TestServer::new(backend).await;
 
@@ -357,8 +534,8 @@ common::backend_tests! {
         let mut chunk_hashes = Vec::new();
 
         for chunk in &chunks {
-            let hash = storage_primitives::blake2_256(chunk);
-            let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+            let hash = storage_primitives::hash_leaf(chunk);
+            let hash_hex = format!("{hash:#x}");
             chunk_hashes.push(hash_hex.clone());
 
             let response = server
@@ -400,7 +577,7 @@ common::backend_tests! {
         // Step 4: Read back
         let read_response = server
             .client
-            .get(server.url(&format!("/read?data_root={data_root}&offset=0&length=100")))
+            .get(server.url(&format!("/read?bucket_id=1&data_root={data_root}&offset=0&length=100")))
             .send()
             .await
             .unwrap();
@@ -422,8 +599,8 @@ common::backend_tests! {
 /// the parsed commit-response body.
 async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Value) {
     let data = b"chunk-for-signature-tests";
-    let hash = storage_primitives::blake2_256(data);
-    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+    let hash = storage_primitives::hash_leaf(data);
+    let hash_hex = format!("{hash:#x}");
 
     let resp = server
         .client
@@ -465,7 +642,7 @@ fn alice_public() -> sr25519::Public {
 /// `MultiSignature`, as emitted by `ProviderState::sign`.
 fn decode_provider_signature(sig_hex: &str) -> sp_runtime::MultiSignature {
     use codec::Decode;
-    let bytes = hex_decode(sig_hex).expect("signature hex parses");
+    let bytes = array_bytes::hex2bytes(sig_hex).expect("signature hex parses");
     sp_runtime::MultiSignature::decode(&mut &bytes[..]).expect("valid SCALE MultiSignature")
 }
 
@@ -502,8 +679,7 @@ common::backend_tests! {
 
         // Reconstruct exactly what the handler signed: CommitmentPayload with
         // the real post-commit leaf_count (no longer hardcoded 0).
-        let mmr_root_bytes = hex_decode(mmr_root_hex).unwrap();
-        let mmr_root = H256::from_slice(&mmr_root_bytes);
+        let mmr_root: H256 = mmr_root_hex.parse().unwrap();
         let leaf_count = body["leaf_count"]
             .as_u64()
             .expect("leaf_count present in /commit response");
@@ -543,7 +719,7 @@ common::backend_tests! {
         assert_eq!(resp.status(), StatusCode::OK);
         let body: Value = resp.json().await.unwrap();
 
-        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let mmr_root = body["mmr_root"].as_str().unwrap().parse::<H256>().unwrap();
         let start_seq = body["start_seq"].as_u64().unwrap();
         let leaf_count = body["leaf_count"].as_u64().unwrap();
         assert!(leaf_count > 0, "leaf_count must be the real on-disk value");
@@ -577,7 +753,7 @@ common::backend_tests! {
         let bucket_id = 9;
 
         let (_h, body) = upload_and_commit(&server, bucket_id).await;
-        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let mmr_root = body["mmr_root"].as_str().unwrap().parse::<H256>().unwrap();
         let start_seq = body["start_seq"].as_u64().unwrap();
         let sig = expect_sr25519(decode_provider_signature(
             body["provider_signature"].as_str().unwrap(),
@@ -611,7 +787,7 @@ async fn commit_signs_with_configured_ed25519_scheme() {
     let bucket_id = 11;
 
     let (_h, body) = upload_and_commit(&server, bucket_id).await;
-    let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+    let mmr_root = body["mmr_root"].as_str().unwrap().parse::<H256>().unwrap();
     let start_seq = body["start_seq"].as_u64().unwrap();
     let leaf_count = body["leaf_count"].as_u64().unwrap();
 
@@ -645,8 +821,8 @@ common::backend_tests! {
         let server = TestServer::new_unsigned(backend).await;
 
         let data = b"chunk-without-key";
-        let hash = storage_primitives::blake2_256(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash = storage_primitives::hash_leaf(data);
+        let hash_hex = format!("{hash:#x}");
 
         server
             .client
@@ -685,8 +861,8 @@ common::backend_tests! {
         // unsigned server returns 503 but still mutates storage, which is enough
         // to make /commitment reach state.sign(...).
         let data = b"chunk-for-commitment-503";
-        let hash = storage_primitives::blake2_256(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash = storage_primitives::hash_leaf(data);
+        let hash_hex = format!("{hash:#x}");
         server
             .client
             .put(server.url("/node"))
@@ -731,8 +907,8 @@ common::backend_tests! {
         // sign() and returns 503, but still mutates storage, which is enough
         // to make /commitment reach state.sign(...) too.
         let data = b"chunk-for-commitment-unregistered";
-        let hash = storage_primitives::blake2_256(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash = storage_primitives::hash_leaf(data);
+        let hash_hex = format!("{hash:#x}");
         server
             .client
             .put(server.url("/node"))
@@ -771,8 +947,8 @@ common::backend_tests! {
 
         // Seed and commit so the delete handler can reach its sign() call.
         let data = b"chunk-for-delete-503";
-        let hash = storage_primitives::blake2_256(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash = storage_primitives::hash_leaf(data);
+        let hash_hex = format!("{hash:#x}");
         server
             .client
             .put(server.url("/node"))
@@ -830,7 +1006,7 @@ common::backend_tests! {
         assert_eq!(body["total_buckets"], 0);
         assert_eq!(body["total_nodes"], 0);
         assert_eq!(body["total_bytes"], 0);
-        assert!(body["buckets"].as_array().unwrap().is_empty());
+        assert!(body.get("buckets").is_none());
     }
 }
 
@@ -853,9 +1029,7 @@ common::backend_tests! {
         assert_eq!(body["total_buckets"], 1);
         assert!(body["total_nodes"].as_u64().unwrap() > 0);
         assert!(body["total_bytes"].as_u64().unwrap() > 0);
-        let buckets = body["buckets"].as_array().unwrap();
-        assert_eq!(buckets.len(), 1);
-        assert_eq!(buckets[0]["bucket_id"], 1);
+        assert!(body.get("buckets").is_none());
     }
 }
 
@@ -870,7 +1044,7 @@ common::backend_tests! {
 
         let resp = server
             .client
-            .get(server.url(&format!("/chunk_proof?data_root={hash_hex}&chunk_index=0")))
+            .get(server.url(&format!("/chunk_proof?bucket_id=1&data_root={hash_hex}&chunk_index=0")))
             .send()
             .await
             .unwrap();
@@ -879,8 +1053,27 @@ common::backend_tests! {
         let body: Value = resp.json().await.unwrap();
         assert!(body["chunk_hash"].is_string());
         assert!(body["chunk_data"].is_string()); // base64
-        assert!(body["proof"]["siblings"].is_array());
-        assert!(body["proof"]["path"].is_array());
+        assert!(body["proof"].is_array());
+    }
+}
+
+common::backend_tests! {
+    async fn test_chunk_proof_past_the_last_chunk_is_out_of_range(backend) {
+        let server = TestServer::new(backend).await;
+        let (hash_hex, _body) = upload_and_commit(&server, 1).await;
+
+        let resp = server
+            .client
+            .get(server.url(&format!("/chunk_proof?bucket_id=1&data_root={hash_hex}&chunk_index=1")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "chunk_index_out_of_range");
+        assert_eq!(body["details"]["chunk_index"], 1);
+        assert_eq!(body["details"]["chunk_count"], 1);
     }
 }
 
@@ -891,7 +1084,7 @@ common::backend_tests! {
         let fake_root = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let resp = server
             .client
-            .get(server.url(&format!("/chunk_proof?data_root={fake_root}&chunk_index=0")))
+            .get(server.url(&format!("/chunk_proof?bucket_id=1&data_root={fake_root}&chunk_index=0")))
             .send()
             .await
             .unwrap();
@@ -908,18 +1101,25 @@ common::backend_tests! {
     async fn test_mmr_proof_endpoint(backend) {
         let server = TestServer::new(backend).await;
         upload_and_commit(&server, 1).await;
+        let (_, commit) = upload_and_commit(&server, 1).await;
 
         let resp = server
             .client
-            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=0"))
+            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=1"))
             .send()
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        let proof: storage_primitives::MmrProof = resp.json().await.unwrap();
 
-        let body: Value = resp.json().await.unwrap();
-        assert!(body["leaf"]["data_root"].is_string());
-        assert!(body["proof"]["peaks"].is_array());
+        let h256 = |v: &Value| v.as_str().unwrap().parse::<H256>().unwrap();
+        assert!(!proof.items.is_empty());
+        let commitment = storage_primitives::Commitment {
+            mmr_root: h256(&commit["mmr_root"]),
+            start_seq: commit["start_seq"].as_u64().unwrap(),
+            leaf_count: commit["leaf_count"].as_u64().unwrap(),
+        };
+        assert!(storage_primitives::verify_mmr_proof(proof, 1, &commitment));
     }
 }
 
@@ -960,28 +1160,6 @@ common::backend_tests! {
     }
 }
 
-common::backend_tests! {
-    async fn test_mmr_subtree_endpoint(backend) {
-        let server = TestServer::new(backend).await;
-        upload_and_commit(&server, 1).await;
-
-        let resp = server
-            .client
-            .get(server.url("/mmr_subtree?bucket_id=1&peak_index=0&depth=1"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-
-        let body: Value = resp.json().await.unwrap();
-        let nodes = body["nodes"].as_array().unwrap();
-        assert!(!nodes.is_empty());
-        assert!(nodes[0]["hash"].is_string());
-        // position is a number
-        assert!(nodes[0]["position"].is_number());
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Fetch nodes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -991,8 +1169,8 @@ common::backend_tests! {
         let server = TestServer::new(backend).await;
 
         let data = b"fetch-nodes-test-data";
-        let hash = storage_primitives::blake2_256(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash = storage_primitives::hash_leaf(data);
+        let hash_hex = format!("{hash:#x}");
 
         server
             .client
@@ -1032,6 +1210,7 @@ common::backend_tests! {
 common::backend_tests! {
     async fn test_fetch_nodes_unknown_hashes(backend) {
         let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
 
         let fake = "0x0000000000000000000000000000000000000000000000000000000000000042";
         let resp = server
@@ -1049,6 +1228,38 @@ common::backend_tests! {
         let body: Value = resp.json().await.unwrap();
         let nodes = body["nodes"].as_array().unwrap();
         assert!(nodes.is_empty());
+    }
+}
+
+common::backend_tests! {
+    async fn test_hash_keyed_reads_reject_a_bucket_the_provider_does_not_store(backend) {
+        let server = TestServer::new(backend).await;
+        let (hash_hex, _body) = upload_and_commit(&server, 1).await;
+
+        for request in [
+            server
+                .client
+                .get(server.url(&format!("/node?bucket_id=2&hash={hash_hex}"))),
+            server.client.get(server.url(&format!(
+                "/read?bucket_id=2&data_root={hash_hex}&offset=0&length=100"
+            ))),
+            server.client.get(server.url(&format!(
+                "/chunk_proof?bucket_id=2&data_root={hash_hex}&chunk_index=0"
+            ))),
+            server
+                .client
+                .post(server.url("/fetch_nodes"))
+                .json(&json!({ "bucket_id": 2, "hashes": [hash_hex] })),
+        ] {
+            let resp = request.send().await.unwrap();
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+            let body: Value = resp.json().await.unwrap();
+            assert_eq!(
+                body["error"], "bucket_not_found",
+                "the provider stores this hash only under bucket 1, so a read that names \
+                 bucket 2 must fail before backends store buckets separately"
+            );
+        }
     }
 }
 
@@ -1114,12 +1325,12 @@ common::backend_tests! {
 
         // Commit two data roots
         let data1 = b"chunk-for-delete-1";
-        let hash1 = storage_primitives::blake2_256(data1);
-        let hash1_hex = format!("0x{}", hex_encode(hash1.as_bytes()));
+        let hash1 = storage_primitives::hash_leaf(data1);
+        let hash1_hex = format!("{hash1:#x}");
 
         let data2 = b"chunk-for-delete-2";
-        let hash2 = storage_primitives::blake2_256(data2);
-        let hash2_hex = format!("0x{}", hex_encode(hash2.as_bytes()));
+        let hash2 = storage_primitives::hash_leaf(data2);
+        let hash2_hex = format!("{hash2:#x}");
 
         for (hash_hex, data) in [(&hash1_hex, &data1[..]), (&hash2_hex, &data2[..])] {
             server
@@ -1170,7 +1381,7 @@ common::backend_tests! {
         // /commit proofs: a real signature, in the SCALE MultiSignature wire
         // format, over the *post-delete* commitment. A zero placeholder or a
         // raw untagged signature both pass a `starts_with("0x")` check.
-        let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
+        let mmr_root = body["mmr_root"].as_str().unwrap().parse::<H256>().unwrap();
         let sig = expect_sr25519(decode_provider_signature(
             body["provider_signature"].as_str().unwrap(),
         ));
@@ -1201,7 +1412,24 @@ common::backend_tests! {
 
         let resp = server
             .client
-            .get(server.url("/node?hash=not_hex_at_all"))
+            .get(server.url("/node?bucket_id=1&hash=not_hex_at_all"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash");
+    }
+}
+
+common::backend_tests! {
+    async fn test_get_node_hash_of_wrong_length(backend) {
+        let server = TestServer::new(backend).await;
+
+        let resp = server
+            .client
+            .get(server.url("/node?bucket_id=1&hash=0x01"))
             .send()
             .await
             .unwrap();
@@ -1215,11 +1443,12 @@ common::backend_tests! {
 common::backend_tests! {
     async fn test_get_node_not_found(backend) {
         let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
 
         let valid_but_absent = "0x0000000000000000000000000000000000000000000000000000000000000099";
         let resp = server
             .client
-            .get(server.url(&format!("/node?hash={valid_but_absent}")))
+            .get(server.url(&format!("/node?bucket_id=1&hash={valid_but_absent}")))
             .send()
             .await
             .unwrap();
@@ -1258,17 +1487,12 @@ common::backend_tests! {
     async fn test_upload_node_invalid_hex_children(backend) {
         let server = TestServer::new(backend).await;
 
-        let data = b"child test data";
-        let hash = storage_primitives::blake2_256(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
-
         let resp = server
             .client
             .put(server.url("/node"))
             .json(&json!({
                 "bucket_id": 1,
-                "hash": hash_hex,
-                "data": BASE64.encode(data),
+                "hash": format!("{:#x}", H256::zero()),
                 "children": ["zzz_invalid_hex"]
             }))
             .send()
@@ -1308,8 +1532,8 @@ common::backend_tests! {
 
         // Upload a valid node first (upload doesn't need signing)
         let data = b"commit-no-key";
-        let hash = storage_primitives::blake2_256(data);
-        let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+        let hash = storage_primitives::hash_leaf(data);
+        let hash_hex = format!("{hash:#x}");
 
         server
             .client
@@ -1347,7 +1571,7 @@ common::backend_tests! {
 
         let resp = server
             .client
-            .get(server.url("/read?data_root=not_hex&offset=0&length=100"))
+            .get(server.url("/read?bucket_id=1&data_root=not_hex&offset=0&length=100"))
             .send()
             .await
             .unwrap();
@@ -1361,11 +1585,12 @@ common::backend_tests! {
 common::backend_tests! {
     async fn test_read_chunks_nonexistent_root(backend) {
         let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
 
         let valid_hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let resp = server
             .client
-            .get(server.url(&format!("/read?data_root={valid_hex}&offset=0&length=100")))
+            .get(server.url(&format!("/read?bucket_id=1&data_root={valid_hex}&offset=0&length=100")))
             .send()
             .await
             .unwrap();
@@ -1384,7 +1609,7 @@ common::backend_tests! {
 
         let resp = server
             .client
-            .get(server.url("/chunk_proof?data_root=not_hex&chunk_index=0"))
+            .get(server.url("/chunk_proof?bucket_id=1&data_root=not_hex&chunk_index=0"))
             .send()
             .await
             .unwrap();
@@ -1393,22 +1618,4 @@ common::backend_tests! {
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["error"], "invalid_hash");
     }
-}
-
-// Helper functions
-
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn hex_decode(s: &str) -> Result<Vec<u8>, &'static str> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    if !s.len().is_multiple_of(2) {
-        return Err("invalid hex length");
-    }
-
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| "invalid hex"))
-        .collect()
 }

@@ -34,6 +34,12 @@ RELAY_PORT := "9900"
 CHAIN_PORT := "2222"
 PROVIDER_PORT := "3333"
 
+# Provider node settings (override with: just PROVIDER_STORAGE_PATH=/tmp/p2 start-provider)
+PROVIDER_BACKEND := "rocksdb"
+PROVIDER_STORAGE_PATH := "./provider-data"
+PROVIDER_KEYFILE := ""
+PROVIDER_KEY_SCHEME := ""
+
 # Network URLs (constructed from ports)
 RELAY_WS := "ws://127.0.0.1:" + RELAY_PORT
 CHAIN_WS := "ws://127.0.0.1:" + CHAIN_PORT
@@ -185,12 +191,12 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
 
 # Start the storage provider node (without registering on-chain)
 # Examples:
-#   just start-provider                                            # default backend in ./provider-data, //Alice key, port 3333
-#   just start-provider BACKEND=rocksdb STORAGE_PATH=/tmp/rocks    # pick the engine and where it stores
-#   just start-provider PORT=3334 STORAGE_PATH=/tmp/p2             # second provider, separate data dir
-#   just start-provider KEYFILE=/path/to/seed                      # custom key from file
-#   just start-provider KEY_SCHEME=ed25519                         # non-sr25519 signing key
-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="": build-provider
+#   just start-provider                                                   # rocksdb in ./provider-data, //Alice key, port 3333
+#   just PROVIDER_STORAGE_PATH=/tmp/rocks start-provider                  # pick where it stores
+#   just PROVIDER_PORT=3334 PROVIDER_STORAGE_PATH=/tmp/p2 start-provider  # second provider, separate data dir
+#   just PROVIDER_KEYFILE=/path/to/seed start-provider                    # custom key from file
+#   just PROVIDER_KEY_SCHEME=ed25519 start-provider                       # non-sr25519 signing key
+start-provider BACKEND=PROVIDER_BACKEND PORT=PROVIDER_PORT STORAGE_PATH=PROVIDER_STORAGE_PATH KEYFILE=PROVIDER_KEYFILE KEY_SCHEME=PROVIDER_KEY_SCHEME: build-provider
     #!/usr/bin/env bash
     set -euo pipefail
     echo ""
@@ -220,18 +226,10 @@ start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-dat
         --bind-addr "0.0.0.0:{{PORT}}" \
         --chain-rpc "{{ CHAIN_WS }}"
 
-# Register on-chain then start the provider node (original behavior)
-# Registration is a chain-only extrinsic, so it must run first: start-provider
-# runs in the foreground and never returns.
-register-then-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="":
-    just register-provider "{{KEYFILE}}" "{{KEY_SCHEME}}"
-    just start-provider BACKEND="{{BACKEND}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}" KEY_SCHEME="{{KEY_SCHEME}}"
-
 # Register provider on-chain (idempotent). Requires a running chain.
-# Called automatically by register-then-start-provider, or run standalone.
 # KEY_SCHEME registers a non-sr25519 signing key (the node's --key-scheme
 # must match); extrinsics are still submitted from the sr25519 account.
-register-provider KEYFILE="" KEY_SCHEME="":
+register-provider KEYFILE=PROVIDER_KEYFILE KEY_SCHEME=PROVIDER_KEY_SCHEME:
     #!/usr/bin/env bash
     set -euo pipefail
     ARGS=("{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_MULTI_ADDR }}")
@@ -288,6 +286,10 @@ subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtim
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Encode" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Decode" \
+        --derive-for-type "pallet_storage_provider::pallet::StorageAgreement=codec::Decode" \
+        --derive-for-type "storage_primitives::ProviderRole=codec::Decode" \
+        --derive-for-type "storage_primitives::ReplicaSyncRecord=codec::Decode" \
+        --derive-for-type "storage_primitives::Commitment=codec::Decode" \
         | rustfmt --edition=2021 --emit=stdout >> "{{ OUTPUT }}"
     echo "Generated {{ OUTPUT }}"
 
@@ -300,7 +302,7 @@ subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtim
 demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/full-flow.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
-# Compile the example marketplace contract to PolkaVM bytecode + ABI.
+# Compile the example contracts to PolkaVM bytecode + ABI.
 # Requires: solc and resolc on PATH (see examples/contracts/README.md).
 build-contracts:
     bash examples/contracts/build.sh
@@ -312,14 +314,14 @@ sc-demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": p
     node --import tsx examples/papi/sc-flow.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Smart-contract precompile-coverage e2e: directly invokes every selector on
-# all three precompiles (storage-provider + drive-registry + s3-registry) and
-# asserts pallet events/storage updated. No intermediate contract.
+# the storage-provider precompile and asserts pallet events/storage updated.
+# No intermediate contract.
 # Requires: chain + provider running, contracts built (`just build-contracts`).
 sc-coverage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/sc-coverage.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Smart-contract team-drive demo: deploys SharedTeamDrive, exercises
-# createTeam → invite → kick → disband through the drive-registry precompile.
+# createTeam → invite → kick through the storage-provider precompile.
 sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/sc-team-drive.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
@@ -327,9 +329,9 @@ sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//B
 # e.g. `just photos build`, `just photos deploy`, `just photos flow`.
 mod photos 'user-interfaces/photos/photos.just'
 
-# Smart-contract token-gated demo: deploys TokenGatedDrive, mints an
-# NFT-shaped access token per S3 object through the s3-registry precompile,
-# transfers + burns + shuts down.
+# Smart-contract token-gated demo: deploys TokenGatedDrive, mints an access
+# token whose holder becomes a bucket Reader through the storage-provider
+# precompile, then transfers and burns it.
 sc-token-gated PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/sc-token-gated.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 

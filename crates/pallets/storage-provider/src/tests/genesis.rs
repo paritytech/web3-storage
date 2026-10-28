@@ -56,7 +56,7 @@ fn genesis_provider_is_registered_with_settings_and_reserved_stake() {
 /// block 0 on.
 #[test]
 fn genesis_bucket_holds_its_deposit_on_the_admin() {
-    new_test_ext_with_genesis(vec![(1, 10_000)], vec![], vec![(1, 0)]).execute_with(|| {
+    new_test_ext_with_genesis(vec![(1, 10_000)], vec![], vec![(1, 1)]).execute_with(|| {
         let bucket = Buckets::<Test>::get(0).expect("bucket created at genesis");
         assert_eq!(bucket.creator, 1);
         assert_eq!(bucket.members[0].depositor, 1);

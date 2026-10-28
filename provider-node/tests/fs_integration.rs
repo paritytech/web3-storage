@@ -495,10 +495,9 @@ common::backend_tests! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 common::backend_tests! {
-    async fn test_fs_put_empty_body(backend) {
+    async fn test_fs_put_empty_body_is_rejected(backend) {
         let server = TestServer::new(backend).await;
 
-        // PUT with empty body should succeed (zero-size file)
         let resp = server
             .client
             .put(server.url("/fs/1/file?path=/empty.bin"))
@@ -506,21 +505,17 @@ common::backend_tests! {
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body: Value = resp.json().await.unwrap();
-        assert_eq!(body["size"], 0);
+        assert_eq!(body["error"], "empty_body");
 
-        // GET should return empty body
         let resp = server
             .client
             .get(server.url("/fs/1/file?path=/empty.bin"))
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        let data = resp.bytes().await.unwrap();
-        assert!(data.is_empty());
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }
 

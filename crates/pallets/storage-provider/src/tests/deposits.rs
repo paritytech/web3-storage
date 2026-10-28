@@ -30,7 +30,7 @@ fn member_footprint_covers_the_reverse_index_entry() {
 #[test]
 fn bucket_footprint_matches_a_new_bucket_record() {
     new_test_ext().execute_with(|| {
-        let bucket_id = create_bucket(1, 0);
+        let bucket_id = create_bucket(1, 1);
         let stored = Buckets::<Test>::get(bucket_id).unwrap();
 
         assert_eq!(
