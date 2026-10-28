@@ -145,7 +145,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   </li>
   <li>
     <h3>Delete data or freeze</h3>
-    <p>An admin deletes old leaves with <code>POST /delete</code> and a <code>new_start_seq</code>; the provider returns a new commitment. <code>freeze_bucket</code> makes the bucket append-only. Freezing cannot be undone.</p>
+    <p>An admin deletes old leaves with <code>POST /delete</code> and a <code>new_start_seq</code>; the provider returns a new commitment. <code>freeze_bucket</code> makes the bucket append-only. Freezing cannot be undone. To remove a bucket, end its agreements, then an admin calls <code>delete_bucket</code>. It fails while an agreement exists or a challenge on the bucket is open, and releases the bucket's storage deposits.</p>
   </li>
 </ol>
 </section>
@@ -170,6 +170,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   <thead><tr><th>Cost</th><th>Who pays</th><th>Rule</th></tr></thead>
   <tbody>
     <tr><td>Storage payment</td><td>Agreement owner</td><td><code>price_per_byte × max_bytes × duration</code>, held on the owner, paid to the provider at settlement</td></tr>
+    <tr><td>Storage deposit</td><td>The account that creates the record</td><td>Refundable, one per bucket, member entry and agreement: <code>UNIT / 10</code> plus <code>MICROUNIT</code> per byte of the record. Held until the record is removed. An admin pays for the members it adds. An agreement's deposit stays on the account that opened it after a transfer</td></tr>
     <tr><td>Replica sync</td><td>Agreement owner (anyone can top up)</td><td><code>sync_price</code> per accepted sync confirmation, drawn from <code>sync_balance</code></td></tr>
     <tr><td>Challenge response, public challenger</td><td>Challenger: 100%</td><td>The deposit reimburses the provider's response fee in full</td></tr>
     <tr><td>Challenge response, member or agreement owner</td><td>Challenger: at least 50%. Provider: the rest</td><td>A slower response makes the provider pay a larger share. The design gives example tiers from 90% / 10% to 50% / 50%</td></tr>

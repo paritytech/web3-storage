@@ -218,7 +218,8 @@
       "items": [
         "stake >= MinProviderStake",
         "add_stake only increases stake",
-        "if max_capacity > 0: stake >= max_capacity * MinStakePerByte"
+        "if max_capacity > 0: stake >= max_capacity * MinStakePerByte",
+        "register_provider also holds a storage deposit; complete_deregister releases it"
       ]
     },
     {
