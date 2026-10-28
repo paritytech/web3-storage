@@ -141,8 +141,7 @@ from `bucket.primary_providers` and deletes the agreement, not the bucket.
 The bucket, its members, `snapshot` and `frozen_start_seq` remain on-chain.
 The admin can add a new primary with `add_primary_provider` at any later
 time and re-upload the data; the `bucket_id` and every external reference to
-it stay valid. The bucket exists until an admin removes it with
-`delete_bucket`, which releases its storage deposits.
+it stay valid. The bucket remains until an admin calls `delete_bucket`.
 
 **Snapshot liability**: Providers remain liable for snapshots they signed until those snapshots are superseded by a new checkpoint that doesn't include them, or until the bucket's canonical depth grows past the data they signed for.
 
@@ -256,13 +255,12 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     type MaxBucketsPerMember: Get<u32>;
 
     /// Storage deposit for records a user creates: provider registrations,
-    /// buckets, member entries and agreements. Priced from a fixed
-    /// `Footprint` per record kind, so a ticket is never updated while its
-    /// record exists. The runtime sets it to a `HoldConsideration` under
-    /// `HoldReason::StorageDeposit`: creating the ticket puts the deposit on
-    /// hold on the depositor's balance, and dropping it when the record is
-    /// removed releases the hold. The ticket is stored in the record it pays
-    /// for.
+    /// buckets, member entries and agreements. Each record stores its ticket,
+    /// priced from a fixed `Footprint` per record kind, so a ticket is never
+    /// updated while its record exists. The runtime uses a
+    /// `HoldConsideration` under `HoldReason::StorageDeposit`: the deposit
+    /// stays on hold on the depositor until the pallet drops the ticket with
+    /// its record.
     type StorageDeposit: Consideration<Self::AccountId, Footprint>;
 
     /// Minimum number of blocks between announcing a deregistration and
@@ -343,14 +341,11 @@ hold), and — unlike `reserve` — a hold must leave the existential deposit
 spendable, so registering needs `stake + storage deposit + ED` of free balance
 and an account with a hold cannot be reaped.
 
-Every record a user creates also carries a **storage deposit** under
-`StorageDeposit`: the provider record (held on the provider), the bucket
-(held on its creator), each member entry (held on the admin that added the
-member) and each agreement (held on the account that opened it). The deposit is a
-`T::StorageDeposit` ticket stored in the record; the footprint it is priced
-from is fixed per record kind, and dropping the ticket when the record is
-removed releases the hold to the depositor. Genesis providers and buckets take
-their deposits the same way, from the genesis endowment.
+Each user-created record also has a **storage deposit**, held on the
+provider (provider record), the bucket creator (bucket), the admin that added
+the member (member entry) or the account that opened the agreement
+(agreement). Removing the record releases it to that account. Genesis
+providers and buckets pay it from the genesis endowment.
 
 ### Storage Items
 
@@ -386,8 +381,8 @@ pub struct ProviderInfo<T: Config> {
     /// is in progress. During the announcement window the provider is still
     /// on-chain and still slashable for any pending challenge.
     pub deregister_at: Option<BlockNumberFor<T>>,
-    /// The storage deposit for this record, held on the provider at
-    /// registration beside the stake and released by `complete_deregister`.
+    /// Storage deposit, held on the provider at registration beside the
+    /// stake and released by `complete_deregister`.
     /// Footprint: the record's maximum encoded length.
     pub deposit: T::StorageDeposit,
 }
@@ -468,13 +463,11 @@ pub struct Member<T: Config> {
     pub account: T::AccountId,
     pub role: Role,
     /// The admin that added the member and paid `deposit`. Fixed for the
-    /// lifetime of the entry; role changes do not move it.
+    /// lifetime of the entry.
     pub depositor: T::AccountId,
-    /// The storage deposit for this entry and its `MemberBuckets`
-    /// reverse-index entry, released to `depositor` when the member is
-    /// removed or the bucket is deleted. Footprint: the entry's maximum
-    /// encoded length plus a `BucketId`. Every member carries one, including
-    /// the founding admin, whose deposit the creator pays at `create_bucket`.
+    /// Storage deposit for this entry and its `MemberBuckets` entry, released
+    /// to `depositor` when the member or the bucket is removed. Footprint:
+    /// the entry's maximum encoded length plus a `BucketId`.
     pub deposit: T::StorageDeposit,
 }
 
@@ -551,29 +544,22 @@ pub struct Bucket<T: Config> {
     pub historical_roots: [(u32, Commitment); 6],
     /// Total snapshots created for this bucket (for statistics)
     pub total_snapshots: u32,
-    /// The account that created the bucket and paid `deposit`. Set at
-    /// creation and never changed. A bucket has no single owner
-    /// (`Role::Admin` can be held by several members at once), so the
-    /// depositor is tracked separately from admin control, the same way
-    /// `StorageAgreement.owner` is separate from which provider is
-    /// assigned. The creator gets the deposit back when the bucket is
-    /// removed, even if it is no longer an admin or member by then.
+    /// The account that created the bucket and paid `deposit`. Fixed at
+    /// creation. A bucket can have several admins, so the bucket stores the
+    /// depositor apart from admin control; the creator gets the deposit back
+    /// even if it is no longer an admin or member.
     pub creator: T::AccountId,
-    /// The storage deposit for the bucket record, held on `creator`. The
-    /// ticket records only the amount, so the depositor is stored next to
-    /// it (the same pairing `pallet-preimage` uses). Released when the
-    /// bucket is removed by `delete_bucket` or `cleanup_bucket_internal`.
-    /// Both reject the removal while any entry
-    /// exists under the bucket's `PendingChallengesByBucket` prefix.
+    /// Storage deposit for the bucket record, held on `creator` and released
+    /// when `delete_bucket` or `cleanup_bucket_internal` removes the bucket.
+    /// The ticket contains only the amount, so the record stores the
+    /// depositor beside it, as `pallet-preimage` does.
     ///
-    /// The footprint is the same for every bucket: one item, sized to the
-    /// record `create_bucket` writes. That is the encoded size of a new
-    /// `Bucket` with one member, no primary providers and no snapshot,
-    /// including this field. The pallet sums it from the field types, so it
-    /// follows changes to `Bucket`. Records added later carry their own
-    /// deposit: member entries (`Member.deposit`) and agreements
-    /// (`StorageAgreement.deposit`); the primary slot that
-    /// `create_bucket_with_primary` seeds is paid for by its agreement.
+    /// Footprint: one item of the encoded size of a new `Bucket` with one
+    /// member, no primary providers and no snapshot, including this field;
+    /// the same for every bucket. The pallet sums it from the field types, so
+    /// it follows changes to `Bucket`. Members and agreements added later pay
+    /// their own deposits; the agreement pays for the primary slot that
+    /// `create_bucket_with_primary` seeds.
     pub deposit: T::StorageDeposit,
 }
 
@@ -624,15 +610,13 @@ pub struct StorageAgreement<T: Config> {
     /// Block when agreement became active (for statistics)
     pub started_at: BlockNumberFor<T>,
     /// The account that opened the agreement and paid `deposit`. Fixed at
-    /// creation: `transfer_agreement_ownership` moves `owner`, not the
-    /// deposit, so a transfer never holds funds on an account that did not
-    /// sign it.
+    /// creation; `transfer_agreement_ownership` moves `owner` only.
     pub depositor: T::AccountId,
-    /// The storage deposit for this record, held on `depositor` and released
-    /// to it wherever the agreement is removed: `end_agreement`,
-    /// `claim_expired_agreement`, `remove_slashed`, `cleanup_bucket_internal`.
-    /// Footprint: the record's maximum encoded length. Applies at any price,
-    /// so a zero-price agreement still costs its owner something to keep.
+    /// Storage deposit, held on `depositor` and released to it wherever the
+    /// agreement is removed: `end_agreement`, `claim_expired_agreement`,
+    /// `remove_slashed`, `cleanup_bucket_internal`. Footprint: the record's
+    /// maximum encoded length. Applies at any price, so a zero-price
+    /// agreement still costs its depositor something to keep.
     pub deposit: T::StorageDeposit,
 }
 
@@ -805,8 +789,8 @@ pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
 
 /// Reverse index: account → bucket IDs they are a member of.
 /// Bounded by `T::MaxBucketsPerMember` to keep iteration costs predictable.
-/// Each entry is paid for by the member deposits behind it; the entry is
-/// deleted when the account's last membership ends.
+/// The member deposits pay for each entry; the pallet deletes it when the
+/// account's last membership ends.
 #[pallet::storage]
 pub type MemberBuckets<T: Config> = StorageMap<
     _,
@@ -1214,8 +1198,8 @@ impl<T: Config> Pallet<T> {
     ///   signatures (commitments, checkpoints, replica sync) on-chain.
     /// - `stake`: Initial stake to lock (must meet minimum, provides sybil resistance)
     ///
-    /// Also holds the storage deposit for the provider record on the caller
-    /// (`ProviderInfo.deposit`), beside the stake.
+    /// Also holds the provider record's storage deposit
+    /// (`ProviderInfo.deposit`) on the caller, beside the stake.
     #[pallet::weight(...)]
     pub fn register_provider(
         origin: OriginFor<T>,
@@ -1331,11 +1315,10 @@ impl<T: Config> Pallet<T> {
 
     /// Create a new bucket.
     /// 
-    /// The caller becomes the bucket admin and the depositor: two
-    /// `T::StorageDeposit` tickets are created on the caller, one for the
-    /// bucket record (`Bucket.deposit`) and one for the caller's own member
-    /// entry (`Member.deposit`), and held until the bucket is removed. The
-    /// bucket starts empty with no providers or data.
+    /// The caller becomes the bucket admin and pays two storage deposits: one
+    /// for the bucket record (`Bucket.deposit`) and one for its own member
+    /// entry (`Member.deposit`). The bucket starts empty with no providers or
+    /// data.
     /// 
     /// Parameters:
     /// - `min_providers`: Minimum primary provider signatures required for checkpoints
@@ -1352,22 +1335,21 @@ impl<T: Config> Pallet<T> {
     /// Delete an empty bucket and release its storage deposits (admin only).
     ///
     /// Requires:
-    /// - zero storage agreements on the bucket (`BucketNotEmpty`);
+    /// - no storage agreement on the bucket (`BucketNotEmpty`);
     /// - no entry under the bucket's `PendingChallengesByBucket` prefix
-    ///   (`BucketHasPendingChallenge`). Zero agreements alone is not
-    ///   enough: `remove_slashed` removes a slashed provider's agreement
-    ///   without checking for pending challenges, so another challenge
-    ///   against that provider can still be open, and answering it reads
-    ///   the bucket. `cleanup_bucket_internal` applies the same gate.
+    ///   (`BucketHasPendingChallenge`). No agreements is not enough:
+    ///   `remove_slashed` removes a slashed provider's agreement without
+    ///   checking for pending challenges, so another challenge against that
+    ///   provider can still be open, and answering it reads the bucket.
+    ///   `cleanup_bucket_internal` applies the same gate.
     ///
-    /// For every current member (bounded by `MaxMembers`): releases the
-    /// member deposit to its `depositor` and removes the bucket from the
-    /// member's `MemberBuckets` reverse index, deleting the index entry when
-    /// it is the member's last bucket. Then removes the bucket itself and
-    /// drops its deposit ticket, which releases it to `Bucket.creator`, even
-    /// if the creator is no longer an admin. The caller may be a different
-    /// admin. While the creator is an admin, the refund gives it a reason to
-    /// delete a bucket nobody uses. Emits `BucketDeleted`.
+    /// For every member (at most `MaxMembers`) releases the member deposit to
+    /// its `depositor` and removes the bucket from the member's
+    /// `MemberBuckets` entry. Then removes the bucket and releases its deposit
+    /// to `Bucket.creator`, even if the creator is no longer an admin or the
+    /// caller is another admin. While the creator is an admin, the refund
+    /// gives it a reason to delete a bucket nobody uses. Emits
+    /// `BucketDeleted`.
     #[pallet::weight(...)]
     pub fn delete_bucket(
         origin: OriginFor<T>,
@@ -1424,9 +1406,9 @@ impl<T: Config> Pallet<T> {
     /// private bucket. Visibility is set separately via `set_bucket_visibility`—
     /// adding a Reader does not by itself make a bucket private.
     ///
-    /// Adding a member holds a storage deposit on the caller
-    /// (`Member.deposit`); the member pays nothing. A role change creates
-    /// no record and holds nothing.
+    /// Adding a member holds a storage deposit (`Member.deposit`) on the
+    /// caller, not on the member. A role change creates no record and holds
+    /// nothing.
     #[pallet::weight(...)]
     pub fn set_member(
         origin: OriginFor<T>,
@@ -1450,8 +1432,7 @@ impl<T: Config> Pallet<T> {
     /// ..).
     ///
     /// Releases the entry's storage deposit to the admin that added the
-    /// member (`Member.depositor`), whoever performs the removal, and deletes
-    /// the member's `MemberBuckets` entry when this was its last bucket.
+    /// member (`Member.depositor`), whoever performs the removal.
     #[pallet::weight(...)]
     pub fn remove_member(
         origin: OriginFor<T>,
@@ -1707,10 +1688,6 @@ impl<T: Config> Pallet<T> {
     /// (`AgreementHasPendingChallenge`, via `PendingChallengesByBucket`): an
     /// agreement cannot be settled out from under a live slashable challenge.
     /// The same guard applies to `claim_expired_agreement` below.
-    ///
-    /// Removing the agreement releases its storage deposit to its depositor,
-    /// in every settlement path: here, `claim_expired_agreement`,
-    /// `remove_slashed` and `cleanup_bucket_internal`.
     #[pallet::weight(...)]
     pub fn end_agreement(
         origin: OriginFor<T>,
