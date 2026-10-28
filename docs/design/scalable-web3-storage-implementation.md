@@ -562,8 +562,8 @@ pub struct Bucket<T: Config> {
     /// The storage deposit for the bucket record, held on `creator`. The
     /// ticket records only the amount, so the depositor is stored next to
     /// it (the same pairing `pallet-preimage` uses). Released when the
-    /// bucket is removed: by `delete_bucket`, or by `cleanup_bucket_internal`
-    /// when a drive is deleted. Both reject the removal while any entry
+    /// bucket is removed by `delete_bucket` or `cleanup_bucket_internal`.
+    /// Both reject the removal while any entry
     /// exists under the bucket's `PendingChallengesByBucket` prefix.
     ///
     /// The footprint is the same for every bucket: one item, sized to the
@@ -929,9 +929,7 @@ pub enum Event<T: Config> {
         bucket_id: BucketId,
         frozen_start_seq: u64,
     },
-    /// A bucket was removed, by `delete_bucket` or together with its
-    /// agreements when its drive was deleted. Its storage deposits are
-    /// released.
+    /// A bucket was removed and its storage deposits released.
     BucketDeleted {
         bucket_id: BucketId,
     },
@@ -1370,11 +1368,6 @@ impl<T: Config> Pallet<T> {
     /// if the creator is no longer an admin. The caller may be a different
     /// admin. While the creator is an admin, the refund gives it a reason to
     /// delete a bucket nobody uses. Emits `BucketDeleted`.
-    ///
-    /// A bucket that a drive uses is removed through `delete_drive`, which
-    /// ends the agreements and calls `cleanup_bucket_internal`. Deleting
-    /// such a bucket here first is possible once its agreements are gone
-    /// and leaves the drive pointing at a missing bucket.
     #[pallet::weight(...)]
     pub fn delete_bucket(
         origin: OriginFor<T>,
