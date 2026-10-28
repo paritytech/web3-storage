@@ -3466,9 +3466,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                127u8, 129u8, 185u8, 16u8, 17u8, 192u8, 165u8, 251u8, 115u8, 3u8, 190u8, 251u8,
-                59u8, 203u8, 138u8, 226u8, 54u8, 50u8, 201u8, 242u8, 196u8, 185u8, 16u8, 198u8,
-                105u8, 169u8, 96u8, 135u8, 130u8, 143u8, 79u8, 77u8,
+                7u8, 249u8, 185u8, 227u8, 4u8, 157u8, 179u8, 4u8, 24u8, 180u8, 226u8, 10u8, 156u8,
+                28u8, 220u8, 233u8, 192u8, 108u8, 228u8, 68u8, 140u8, 74u8, 234u8, 209u8, 102u8,
+                46u8, 250u8, 215u8, 108u8, 92u8, 102u8, 102u8,
             ]
     }
     pub mod system {
@@ -15962,7 +15962,8 @@ pub mod api {
             #[doc = "settlement and refund uses the new owner."]
             #[doc = ""]
             #[doc = "The agreement's storage deposit stays on the account that opened"]
-            #[doc = "the agreement; `new_owner` pays nothing."]
+            #[doc = "the agreement until the agreement is removed; `new_owner` pays"]
+            #[doc = "nothing and decides when to settle."]
             #[doc = ""]
             #[doc = "Bucket membership does not move: the new owner cannot write to or"]
             #[doc = "administer the bucket, and the bucket admin keeps every admin"]
@@ -16956,7 +16957,8 @@ pub mod api {
                     #[doc = "settlement and refund uses the new owner."]
                     #[doc = ""]
                     #[doc = "The agreement's storage deposit stays on the account that opened"]
-                    #[doc = "the agreement; `new_owner` pays nothing."]
+                    #[doc = "the agreement until the agreement is removed; `new_owner` pays"]
+                    #[doc = "nothing and decides when to settle."]
                     #[doc = ""]
                     #[doc = "Bucket membership does not move: the new owner cannot write to or"]
                     #[doc = "administer the bucket, and the bucket admin keeps every admin"]
@@ -21458,10 +21460,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            116u8, 252u8, 171u8, 232u8, 171u8, 25u8, 191u8, 131u8, 17u8, 30u8,
-                            43u8, 52u8, 157u8, 0u8, 13u8, 193u8, 199u8, 100u8, 25u8, 242u8, 44u8,
-                            168u8, 162u8, 132u8, 183u8, 30u8, 12u8, 154u8, 225u8, 250u8, 99u8,
-                            89u8,
+                            202u8, 196u8, 178u8, 139u8, 1u8, 79u8, 215u8, 113u8, 139u8, 234u8,
+                            105u8, 11u8, 114u8, 125u8, 179u8, 184u8, 101u8, 241u8, 61u8, 46u8,
+                            177u8, 3u8, 62u8, 253u8, 150u8, 226u8, 95u8, 14u8, 70u8, 21u8, 24u8,
+                            24u8,
                         ],
                     )
                 }
@@ -26486,7 +26488,8 @@ pub mod api {
                     #[doc = "settlement and refund uses the new owner."]
                     #[doc = ""]
                     #[doc = "The agreement's storage deposit stays on the account that opened"]
-                    #[doc = "the agreement; `new_owner` pays nothing."]
+                    #[doc = "the agreement until the agreement is removed; `new_owner` pays"]
+                    #[doc = "nothing and decides when to settle."]
                     #[doc = ""]
                     #[doc = "Bucket membership does not move: the new owner cannot write to or"]
                     #[doc = "administer the bucket, and the bucket admin keeps every admin"]
