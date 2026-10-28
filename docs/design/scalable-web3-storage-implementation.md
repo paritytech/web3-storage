@@ -610,7 +610,7 @@ pub struct StorageAgreement<T: Config> {
     /// Block when agreement became active (for statistics)
     pub started_at: BlockNumberFor<T>,
     /// The account that opened the agreement and paid `deposit`. Fixed at
-    /// creation; `transfer_agreement_ownership` moves `owner` only.
+    /// creation; `transfer_agreement_ownership` does not change it.
     pub depositor: T::AccountId,
     /// Storage deposit, held on `depositor` and released to it wherever the
     /// agreement is removed: `end_agreement`, `claim_expired_agreement`,
@@ -1644,8 +1644,9 @@ impl<T: Config> Pallet<T> {
     /// challenges keep the tier they were created with.
     ///
     /// **The storage deposit does not move.** It stays on
-    /// `StorageAgreement.depositor`, so `new_owner` pays nothing and does not
-    /// need to sign.
+    /// `StorageAgreement.depositor` until the agreement is removed, so
+    /// `new_owner` pays nothing. After the transfer the depositor no longer
+    /// decides when that happens.
     /// 
     /// Parameters:
     /// - `bucket_id`: The bucket containing the agreement
