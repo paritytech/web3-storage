@@ -725,8 +725,8 @@ pub mod pallet {
         /// Block when agreement became active.
         pub started_at: BlockNumberFor<T>,
         /// The account that opened the agreement and paid `deposit`. Fixed at
-        /// creation: a transfer moves `owner`, not the deposit, so it never
-        /// holds funds on an account that did not sign.
+        /// creation: a transfer moves `owner`, not the deposit, so `new_owner`
+        /// pays nothing.
         pub depositor: T::AccountId,
         /// Storage deposit for this record, held on `depositor` until the
         /// agreement is removed.
@@ -2189,7 +2189,8 @@ pub mod pallet {
         /// settlement and refund uses the new owner.
         ///
         /// The agreement's storage deposit stays on the account that opened
-        /// the agreement; `new_owner` pays nothing.
+        /// the agreement until the agreement is removed; `new_owner` pays
+        /// nothing and decides when to settle.
         ///
         /// Bucket membership does not move: the new owner cannot write to or
         /// administer the bucket, and the bucket admin keeps every admin

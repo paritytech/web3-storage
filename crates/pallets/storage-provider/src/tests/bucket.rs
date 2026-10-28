@@ -250,9 +250,8 @@ fn delete_bucket_requires_an_admin() {
     });
 }
 
-/// An agreement contains the owner's escrow and the provider's obligations;
-/// deleting its bucket first would leave both without a bucket, so the
-/// agreement must be settled first.
+/// An agreement contains the owner's escrow and the provider's obligations,
+/// so `delete_bucket` requires every agreement on the bucket to end first.
 #[test]
 fn delete_bucket_rejects_a_bucket_with_an_agreement() {
     new_test_ext().execute_with(|| {

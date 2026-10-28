@@ -83,9 +83,8 @@ fn create_bucket_with_primary_reserves_payment() {
     });
 }
 
-/// At a zero price only the deposit makes an agreement cost anything and gives
-/// the owner a reason to settle it, so it applies at any price and returns on
-/// settlement.
+/// At a zero price only the deposit makes an agreement cost anything to keep,
+/// so it applies at any price and returns on settlement.
 #[test]
 fn agreement_record_holds_a_storage_deposit_even_at_zero_price() {
     new_test_ext().execute_with(|| {

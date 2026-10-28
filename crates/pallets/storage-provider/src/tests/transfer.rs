@@ -53,8 +53,8 @@ fn transfer_moves_owner_and_escrow_together() {
     });
 }
 
-/// A transfer must not put funds on hold on an account that did not sign it,
-/// so the agreement's storage deposit stays on the account that opened it.
+/// A transfer must not take funds from an account that did not sign it, so
+/// the agreement's storage deposit stays on the account that opened it.
 #[test]
 fn transfer_leaves_the_storage_deposit_on_the_depositor() {
     new_test_ext().execute_with(|| {
@@ -66,6 +66,26 @@ fn transfer_leaves_the_storage_deposit_on_the_depositor() {
 
         assert_eq!(held(HoldReason::StorageDeposit, OWNER), owner_deposits);
         assert_eq!(held(HoldReason::StorageDeposit, NEW_OWNER), 0);
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+/// The recipient pays nothing, so an account with only the existential
+/// deposit can receive an agreement.
+#[test]
+fn transfer_to_an_account_without_free_balance_succeeds() {
+    new_test_ext().execute_with(|| {
+        priced_provider(PROVIDER, 200);
+        let bucket_id = setup_agreement(PROVIDER, OWNER, 50, 100);
+        assert_ok!(Balances::force_set_balance(
+            RuntimeOrigin::root(),
+            NEW_OWNER,
+            1
+        ));
+
+        assert_ok!(transfer(OWNER, bucket_id, PROVIDER, NEW_OWNER));
+
+        assert_eq!(Balances::free_balance(NEW_OWNER), 1);
         assert_ok!(StorageProvider::do_try_state());
     });
 }
