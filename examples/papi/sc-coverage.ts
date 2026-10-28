@@ -341,8 +341,7 @@ async function main() {
     assertEvent(r.events, "StorageProvider", "ProviderAddedToBucket", "addPrimaryProvider");
     assertEvent(r.events, "StorageProvider", "StorageAgreementEstablished", "addPrimaryProvider");
 
-    console.log("
-✅ 13 of 13 selectors exercised, every expected event observed");
+    console.log("\n✅ 13 of 13 selectors exercised, every expected event observed");
   } finally {
     papi.destroy();
   }
