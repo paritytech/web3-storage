@@ -139,23 +139,6 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
     ext
 }
 
-/// Build test externalities with custom balances.
-#[allow(dead_code)]
-pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExternalities {
-    let mut t = frame_system::GenesisConfig::<Test>::default()
-        .build_storage()
-        .unwrap();
-
-    pallet_balances::GenesisConfig::<Test> {
-        balances,
-        dev_accounts: None,
-    }
-    .assimilate_storage(&mut t)
-    .unwrap();
-
-    t.into()
-}
-
 /// Build test externalities with custom balances and genesis providers.
 pub fn new_test_ext_with_genesis_providers(
     balances: Vec<(u64, u64)>,
@@ -238,7 +221,6 @@ pub fn provider_signer_with<P: sp_core::Pair>(provider: u64) -> P {
 
 /// Helper: deterministic sr25519 keypair for `provider`, stamped into the
 /// provider's on-chain `public_key` so terms signatures verify.
-#[allow(dead_code)]
 pub fn provider_signer(provider: u64) -> sp_core::sr25519::Pair {
     provider_signer_with(provider)
 }
@@ -258,7 +240,6 @@ where
 }
 
 /// Helper: sign SCALE-encoded terms the way a provider quotes off-chain.
-#[allow(dead_code)]
 pub fn sign_terms(
     pair: &sp_core::sr25519::Pair,
     terms: &crate::AgreementTermsOf<Test>,
@@ -282,7 +263,6 @@ pub fn sign_sync_roots(
 /// Helper: primary terms
 /// + at the owner's next expected nonce
 /// + valid for the current RequestTimeout window.
-#[allow(dead_code)]
 pub fn primary_terms(
     owner: u64,
     bucket: BucketTarget,
@@ -305,7 +285,6 @@ pub fn primary_terms(
 
 /// Helper: replica terms bound to `bucket_id`,
 /// + valid for the current RequestTimeout window.
-#[allow(dead_code)]
 pub fn replica_terms(
     owner: u64,
     bucket_id: u64,
@@ -328,7 +307,6 @@ pub fn replica_terms(
 }
 
 /// Helper: signed primary terms at the provider's current settings price.
-#[allow(dead_code)]
 pub fn signed_primary_terms(
     provider: u64,
     owner: u64,
@@ -346,7 +324,6 @@ pub fn signed_primary_terms(
 }
 
 /// Helper: signed replica terms at the provider's current settings price.
-#[allow(dead_code)]
 pub fn signed_replica_terms(
     provider: u64,
     owner: u64,
@@ -369,7 +346,6 @@ pub fn signed_replica_terms(
 /// Public visibility: the existing suite exercises stranger challenges and
 /// was written under pre-visibility (open) semantics. Private-bucket tests
 /// create their buckets explicitly.
-#[allow(dead_code)]
 pub fn create_bucket(admin: u64, min_providers: u32) -> u64 {
     use frame_support::assert_ok;
     assert_ok!(StorageProvider::create_bucket(
@@ -383,7 +359,6 @@ pub fn create_bucket(admin: u64, min_providers: u32) -> u64 {
 /// Helper: signatures of `providers` over `commitment` for `bucket_id`, in
 /// the form `checkpoint` and `extend_checkpoint` take. Stamps each
 /// provider's [`provider_signer`] key on chain.
-#[allow(dead_code)]
 pub fn sign_commitment(
     bucket_id: u64,
     commitment: storage_primitives::Commitment,
@@ -412,7 +387,6 @@ fn last_created_bucket_id() -> u64 {
 
 /// Helper: move an account's whole free balance to account 9 so that
 /// `frame_system` reaps it.
-#[allow(dead_code)]
 pub fn reap(who: u64) {
     use frame_support::assert_ok;
     assert_ok!(Balances::transfer_allow_death(
@@ -424,7 +398,6 @@ pub fn reap(who: u64) {
 }
 
 /// Helper: fund an account again after it was reaped.
-#[allow(dead_code)]
 pub fn refund(who: u64) {
     use frame_support::assert_ok;
     assert_ok!(Balances::transfer_allow_death(
@@ -453,7 +426,6 @@ pub fn setup_agreement(provider: u64, client: u64, max_bytes: u64, duration: u64
 }
 
 /// Helper: redeem signed replica terms against an existing bucket.
-#[allow(dead_code)]
 pub fn setup_replica_agreement(
     provider: u64,
     client: u64,
@@ -475,7 +447,6 @@ pub fn setup_replica_agreement(
 }
 
 /// Helper: redeem signed primary terms against an existing bucket.
-#[allow(dead_code)]
 pub fn setup_added_primary(
     provider: u64,
     admin: u64,
