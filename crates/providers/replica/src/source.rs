@@ -6,7 +6,7 @@
 
 use crate::Error;
 use base64::Engine;
-use provider_storage::ChunkTreeNode;
+use provider_storage::{ChunkTreeNode, LeafPage};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::collections::HashSet;
@@ -18,15 +18,6 @@ use storage_primitives::{mmr::MmrLeaf, BucketId};
 /// node's `api` module), about 5.3 MiB as base64, so this leaves room for other
 /// page limits without letting a source fill the replica's memory.
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
-
-/// A page of leaves from `/mmr_leaves`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LeafPage {
-    /// The leaves from the requested `from_seq`, in sequence order.
-    pub leaves: Vec<MmrLeaf>,
-    /// The first sequence number not in `leaves`: the next page starts here.
-    pub next_seq: u64,
-}
 
 /// A page of nodes from `/fetch_nodes`. Every requested hash is in exactly one
 /// of the three lists.

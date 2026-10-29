@@ -140,9 +140,6 @@ impl<'a> TreeWalk<'a> {
                 deepest.remove();
                 continue;
             };
-            if deepest.get().is_empty() {
-                deepest.remove();
-            }
             match client.fetch_nodes(&source, self.bucket_id, &batch).await {
                 Ok(page) => self.accept(level, &source, page)?,
                 Err(e) => {
@@ -161,10 +158,7 @@ impl<'a> TreeWalk<'a> {
 
     /// Put hashes that were taken but not fetched back at the end of `level`.
     fn requeue(&mut self, level: usize, hashes: impl IntoIterator<Item = H256>) {
-        let mut hashes = hashes.into_iter().peekable();
-        if hashes.peek().is_some() {
-            self.frontier.entry(level).or_default().extend(hashes);
-        }
+        self.frontier.entry(level).or_default().extend(hashes);
     }
 
     /// Store what a source returned for a request at `level`. Hashes it lists

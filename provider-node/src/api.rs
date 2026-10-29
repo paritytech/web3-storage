@@ -546,10 +546,16 @@ async fn delete_data(
 // Replica Sync
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Maximum number of items (leaves or nodes) in one page. Limits the storage
-/// reads and hash checks of one request when items are small: 1000 leaves are
-/// about 49 KB encoded, 1000 internal nodes about 64 KB.
+/// Maximum number of nodes in one `/fetch_nodes` page. Limits the storage
+/// reads and hash checks of one request when nodes are small: 1000 internal
+/// nodes are about 64 KB.
 const PAGE_MAX_ITEMS: usize = 1000;
+
+/// Maximum number of leaves in one `/mmr_leaves` page. Each page request
+/// decodes the whole bucket state, so a larger page means fewer decodes for the
+/// same range. A leaf is at most about 165 bytes as JSON, so a full page is
+/// about 5.4 MB, the size of a full page of chunks.
+const PAGE_MAX_LEAVES: usize = 32 * 1024;
 
 /// Maximum payload bytes in one page: the SCALE-encoded size of a leaf, or the
 /// data of a chunk. The JSON response is larger (hex hashes, base64 data).
@@ -633,7 +639,7 @@ async fn get_mmr_leaves(
         query.bucket_id,
         query.from_seq,
         query.to_seq,
-        PAGE_MAX_ITEMS,
+        PAGE_MAX_LEAVES,
         PAGE_MAX_BYTES,
     )?;
 

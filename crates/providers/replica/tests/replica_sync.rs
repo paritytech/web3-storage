@@ -15,7 +15,7 @@ use provider_replica::{
 };
 use provider_storage::{temp_rocksdb, ChunkTreeNode, StorageBackend};
 use sp_core::H256;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::{hash_leaf, BucketId, Commitment};
@@ -79,6 +79,8 @@ struct MockReplicaSyncChainClient {
     block: Mutex<u64>,
     agreements: Mutex<Vec<ReplicaAgreementInfo>>,
     snapshots: Mutex<HashMap<BucketId, BucketCommitments>>,
+    failing_commitments: Mutex<HashSet<BucketId>>,
+    commitment_reads: Mutex<Vec<BucketId>>,
     endpoints: Mutex<HashMap<BucketId, Vec<String>>>,
     confirmations: Mutex<Vec<BucketId>>,
     attestations: Mutex<Vec<SignedSyncRoots>>,
@@ -92,6 +94,8 @@ impl MockReplicaSyncChainClient {
             block: Mutex::new(100),
             agreements: Mutex::new(Vec::new()),
             snapshots: Mutex::new(HashMap::new()),
+            failing_commitments: Mutex::new(HashSet::new()),
+            commitment_reads: Mutex::new(Vec::new()),
             endpoints: Mutex::new(HashMap::new()),
             confirmations: Mutex::new(Vec::new()),
             attestations: Mutex::new(Vec::new()),
@@ -129,6 +133,12 @@ impl MockReplicaSyncChainClient {
                 ..Default::default()
             },
         )
+    }
+
+    /// Reading the commitments of `bucket_id` fails.
+    fn with_failing_commitments(self, bucket_id: BucketId) -> Self {
+        self.failing_commitments.lock().unwrap().insert(bucket_id);
+        self
     }
 
     fn with_replica_endpoints(self, result: Result<Vec<String>, ChainClientError>) -> Self {
@@ -169,6 +179,15 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<BucketCommitments, ChainClientError> {
+        self.commitment_reads.lock().unwrap().push(bucket_id);
+        if self
+            .failing_commitments
+            .lock()
+            .unwrap()
+            .contains(&bucket_id)
+        {
+            return Err(ChainClientError::query("buckets", "unavailable"));
+        }
         let snapshots = self.snapshots.lock().unwrap();
         Ok(snapshots
             .get(&bucket_id)
@@ -634,10 +653,10 @@ async fn the_agreement_quota_limits_what_a_sync_stores() {
     let result = coordinator.sync_and_confirm(&duty).await;
 
     match result {
-        SyncResult::VerificationFailed { reason, .. } => {
-            assert!(reason.contains("Quota exceeded"), "{reason}")
+        SyncResult::StorageFailed { error, .. } => {
+            assert!(error.contains("Quota exceeded"), "{error}")
         }
-        other => panic!("expected VerificationFailed, got {other:?}"),
+        other => panic!("expected StorageFailed, got {other:?}"),
     }
     assert_eq!(storage.get_bucket(1).unwrap().leaf_count, 0);
     assert!(mock.confirmations.lock().unwrap().is_empty());
@@ -772,6 +791,59 @@ async fn test_duties_filter_insufficient_balance() {
 
     let duties = coordinator.get_active_replica_duties().await.unwrap();
     assert!(duties.is_empty(), "insufficient balance should be filtered");
+}
+
+/// An agreement for `bucket_id` that is due now, and a chain snapshot for it.
+fn due_agreement(bucket_id: BucketId) -> ReplicaAgreementInfo {
+    ReplicaAgreementInfo {
+        bucket_id,
+        sync_balance: 1000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
+        max_bytes: 1024 * 1024,
+        expires_at: 10_000,
+    }
+}
+
+#[tokio::test]
+async fn a_failing_agreement_does_not_hide_the_other_duties() {
+    let mock = MockReplicaSyncChainClient::new()
+        .with_agreements(vec![due_agreement(1), due_agreement(2)])
+        .with_failing_commitments(1)
+        .with_snapshot_root(2, H256::repeat_byte(0xAA));
+    let (storage, _dir) = temp_rocksdb();
+    let coordinator = coordinator(ReplicaSyncCoordinatorConfig::default(), storage, mock);
+
+    let duties = coordinator.get_active_replica_duties().await.unwrap();
+
+    let buckets: Vec<_> = duties.iter().map(|duty| duty.bucket_id).collect();
+    assert_eq!(buckets, vec![2]);
+}
+
+#[tokio::test]
+async fn a_syncing_bucket_gets_no_duty_and_no_chain_reads() {
+    let mock = Arc::new(
+        MockReplicaSyncChainClient::new()
+            .with_agreements(vec![due_agreement(1), due_agreement(2)])
+            .with_snapshot_root(1, H256::repeat_byte(0xAA))
+            .with_snapshot_root(2, H256::repeat_byte(0xBB)),
+    );
+    let (storage, _dir) = temp_rocksdb();
+    let syncing = SyncingBuckets::default();
+    let _guard = syncing.begin(1);
+    let coordinator = coordinator(
+        ReplicaSyncCoordinatorConfig::default(),
+        storage,
+        Arc::clone(&mock),
+    )
+    .with_syncing_buckets(syncing);
+
+    let duties = coordinator.get_active_replica_duties().await.unwrap();
+
+    let buckets: Vec<_> = duties.iter().map(|duty| duty.bucket_id).collect();
+    assert_eq!(buckets, vec![2]);
+    assert_eq!(*mock.commitment_reads.lock().unwrap(), vec![2]);
 }
 
 #[tokio::test]

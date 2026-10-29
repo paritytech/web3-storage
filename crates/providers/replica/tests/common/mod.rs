@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared harness for the crate's integration tests: a storage fixture and a
-//! mock primary provider.
+//! Shared harness for the crate's integration tests: a storage fixture and
+//! mock `/mmr_leaves` and `/fetch_nodes` sources.
 //!
 //! Each test binary compiles this module separately and uses part of it, so
 //! unused items here are expected.
@@ -15,7 +15,7 @@ use axum::{Json, Router};
 use base64::Engine;
 use provider_storage::{build_merkle_tree, ChunkTreeNode, StorageBackend};
 use sp_core::H256;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::{hash_leaf, mmr::MmrLeaf, Commitment, DEFAULT_CHUNK_SIZE};
@@ -44,45 +44,6 @@ pub fn base64(data: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(data)
 }
 
-/// A `/mmr_peaks` body naming `mmr_root` and `peaks` verbatim.
-pub fn peaks_body(mmr_root: &str, peaks: &[String]) -> Reply {
-    body(serde_json::json!({ "bucket_id": 1, "mmr_root": mmr_root, "peaks": peaks }).to_string())
-}
-
-/// A `/node` body carrying `data` and `children` verbatim. A `None` field is
-/// left out, as a real provider leaves it out.
-pub fn node_body(hash: &str, data: Option<&str>, children: Option<Vec<String>>) -> Reply {
-    let mut node = serde_json::json!({ "hash": hash });
-    if let Some(data) = data {
-        node["data"] = data.into();
-    }
-    if let Some(children) = children {
-        node["children"] = children.into();
-    }
-    body(node.to_string())
-}
-
-/// A `/node` body for a chunk.
-pub fn chunk_body(hash: H256, data: &[u8]) -> Reply {
-    node_body(&hex_hash(hash), Some(&base64(data)), None)
-}
-
-/// A `/node` body for an internal node.
-pub fn internal_body(hash: H256, left: H256, right: H256) -> Reply {
-    node_body(
-        &hex_hash(hash),
-        None,
-        Some(vec![hex_hash(left), hex_hash(right)]),
-    )
-}
-
-#[derive(serde::Deserialize)]
-struct NodeQuery {
-    #[serde(rename = "bucket_id")]
-    _bucket_id: u64,
-    hash: String,
-}
-
 fn render(reply: &Reply) -> Response {
     (
         reply.0,
@@ -90,46 +51,6 @@ fn render(reply: &Reply) -> Response {
         reply.1.clone(),
     )
         .into_response()
-}
-
-/// Mock primary serving only `/mmr_peaks`.
-pub async fn spawn_primary(peaks: Reply) -> String {
-    spawn_primary_with_nodes(peaks, HashMap::new()).await
-}
-
-/// Mock primary: `/mmr_peaks` always answers `peaks`; `/node` answers the
-/// entry keyed by the requested `0x`-prefixed hash, or 404 for a hash it was
-/// not given - as a real primary does for a hash it never stored.
-pub async fn spawn_primary_with_nodes(peaks: Reply, nodes: HashMap<String, Reply>) -> String {
-    let nodes = Arc::new(nodes);
-    let app = Router::new()
-        .route(
-            "/mmr_peaks",
-            get(move || {
-                let peaks = peaks.clone();
-                async move { render(&peaks) }
-            }),
-        )
-        .route(
-            "/node",
-            get(move |Query(query): Query<NodeQuery>| {
-                let nodes = Arc::clone(&nodes);
-                async move {
-                    render(
-                        nodes
-                            .get(&query.hash)
-                            .unwrap_or(&status(StatusCode::NOT_FOUND)),
-                    )
-                }
-            }),
-        );
-
-    // `bind` has already called listen(2), so the port accepts connections
-    // before the serve task is first polled: no readiness wait is needed.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    format!("http://{addr}")
 }
 
 /// An address with nothing listening on it: bind a port, then release it.

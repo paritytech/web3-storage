@@ -158,14 +158,12 @@ async function uploadFile(
   return { chunks, commit };
 }
 
-/** The position where `confirm_replica_sync` finds `root`: 0 for the snapshot, 1-6 for a slot. */
-async function positionOf(api: ParachainApi, bucketId: bigint, root: string): Promise<number> {
+/** The root the chain holds at `position`: 0 for the snapshot, 1-6 for a slot. */
+async function rootAt(api: ParachainApi, bucketId: bigint, position: number): Promise<string> {
   const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
-  const same = (a: string) => a.toLowerCase() === root.toLowerCase();
-  if (bucket.snapshot && same(bucket.snapshot.commitment.mmr_root as string)) return 0;
-  const slot = bucket.historical_roots.findIndex(([, c]) => same(c.mmr_root as string));
-  assert.ok(slot >= 0, `the chain does not hold root ${root}`);
-  return slot + 1;
+  const commitment = position === 0 ? bucket.snapshot?.commitment : bucket.historical_roots[position - 1]?.[1];
+  assert.ok(commitment, `the chain holds no commitment at position ${position}`);
+  return commitment.mmr_root as string;
 }
 
 /**
@@ -216,12 +214,12 @@ async function verifyReplica(
   event: { position_matched: number; sync_payment: bigint },
   files: Uint8Array[][],
 ) {
-  const position = await positionOf(api, bucketId, root);
   console.log("  ReplicaSynced: position=%d payment=%s", event.position_matched, event.sync_payment);
   assert.strictEqual(event.sync_payment, SYNC_PRICE, "the replica is paid its sync price");
-  // The pallet matches the first position that holds the root, which is the
-  // position the replica chose unless an older slot also holds it.
-  assert.ok(event.position_matched <= position, "the confirmed position holds the root");
+  // The replica signs the root at one position only, so the pallet matches that
+  // position.
+  const confirmed = await rootAt(api, bucketId, event.position_matched);
+  assert.strictEqual(confirmed.toLowerCase(), root.toLowerCase(), "the confirmed position holds the root");
 
   const { last_sync: lastSync } = await replicaRole(api, bucketId, replica);
   assert.ok(lastSync, "the agreement records the sync");

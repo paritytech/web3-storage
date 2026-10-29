@@ -1244,6 +1244,28 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
+    async fn test_mmr_leaves_page_is_limited_to_32768_leaves(backend) {
+        let server = TestServer::new(backend).await;
+        commit_chunks(&server, 1, 1).await;
+        let root = storage_primitives::hash_leaf(&[0u8; 8]);
+        let resp = server
+            .client
+            .request_bucket(Method::POST, server.url("/commit"), 1)
+            .json(&json!({ "bucket_id": 1, "data_roots": vec![root; 32 * 1024] }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let (status, body) = get_leaves(&server, "from_seq=0&to_seq=32769").await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["next_seq"], 32 * 1024);
+        assert_eq!(body["leaves"].as_array().unwrap().len(), 32 * 1024);
+    }
+}
+
+common::backend_tests! {
     async fn test_mmr_leaves_conflicts_on_deleted_and_missing_ranges(backend) {
         let server = TestServer::new(backend).await;
         commit_chunks(&server, 1, 5).await;

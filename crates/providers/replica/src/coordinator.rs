@@ -106,6 +106,9 @@ pub enum SyncResult {
     },
     /// Local state doesn't match expected root after sync.
     VerificationFailed { bucket_id: BucketId, reason: String },
+    /// The local storage engine rejected the sync, for example because the
+    /// bucket would exceed the agreement's `max_bytes`.
+    StorageFailed { bucket_id: BucketId, error: String },
     /// Failed to submit confirm_replica_sync transaction.
     SubmissionFailed { bucket_id: BucketId, error: String },
     /// Already synced to this root.
@@ -674,11 +677,19 @@ impl ReplicaSyncCoordinator {
 
         let mut duties = Vec::new();
         for agreement in agreements {
-            if let Some(duty) = self
+            let bucket_id = agreement.bucket_id;
+            // A running sync keeps its bucket, so it needs no duty.
+            if self.syncing.is_syncing(bucket_id) {
+                continue;
+            }
+            // One failing agreement must not hide the duties of the others.
+            match self
                 .duty_for(agreement, anchor_block, timeout_blocks, true)
-                .await?
+                .await
             {
-                duties.push(duty);
+                Ok(Some(duty)) => duties.push(duty),
+                Ok(None) => {}
+                Err(e) => tracing::warn!("Skipping bucket {bucket_id}: {e}"),
             }
         }
         Ok(duties)
@@ -734,16 +745,18 @@ impl ReplicaSyncCoordinator {
             return Ok(None);
         }
 
-        if let Some((_, last_block)) = agreement.last_sync.filter(|_| check_interval) {
-            let elapsed = anchor_block.saturating_sub(last_block);
-            if elapsed < agreement.min_sync_interval {
-                tracing::debug!(
-                    "Bucket {} sync interval not elapsed: {} < {}",
-                    agreement.bucket_id,
-                    elapsed,
-                    agreement.min_sync_interval
-                );
-                return Ok(None);
+        if check_interval {
+            if let Some((_, last_block)) = agreement.last_sync {
+                let elapsed = anchor_block.saturating_sub(last_block);
+                if elapsed < agreement.min_sync_interval {
+                    tracing::debug!(
+                        "Bucket {} sync interval not elapsed: {} < {}",
+                        agreement.bucket_id,
+                        elapsed,
+                        agreement.min_sync_interval
+                    );
+                    return Ok(None);
+                }
             }
         }
 
@@ -841,9 +854,9 @@ impl ReplicaSyncCoordinator {
 
         // The agreement's quota limits what the replica stores.
         if let Err(e) = self.prepare_bucket(duty.bucket_id, duty.max_bytes) {
-            return SyncResult::VerificationFailed {
+            return SyncResult::StorageFailed {
                 bucket_id: duty.bucket_id,
-                reason: format!("cannot prepare the bucket: {e}"),
+                error: format!("cannot prepare the bucket: {e}"),
             };
         }
 
@@ -869,6 +882,18 @@ impl ReplicaSyncCoordinator {
                 return SyncResult::SourcesUnavailable {
                     bucket_id: duty.bucket_id,
                     tried: duty.source_endpoints.clone(),
+                };
+            }
+            Ok(Err(Error::Backend(provider_storage::Error::CommitmentNotReproducible(reason)))) => {
+                return SyncResult::VerificationFailed {
+                    bucket_id: duty.bucket_id,
+                    reason,
+                };
+            }
+            Ok(Err(Error::Backend(e))) => {
+                return SyncResult::StorageFailed {
+                    bucket_id: duty.bucket_id,
+                    error: e.to_string(),
                 };
             }
             Ok(Err(e)) => {
