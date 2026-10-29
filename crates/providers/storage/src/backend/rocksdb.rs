@@ -8,7 +8,7 @@
 //! [`types`]: super::types
 
 use super::types::FORMAT_VERSION;
-use super::{BucketInfo, BucketState, ChunkTreeNode, StorageBackend};
+use super::{BucketInfo, BucketState, ChunkTreeNode, LeafPage, StorageBackend};
 use crate::error::Error;
 use codec::{DecodeAll, Encode};
 use rocksdb::{Options, DB};
@@ -128,6 +128,15 @@ impl DiskStorage {
         self.db.put_cf(&cf, key, &value)?;
 
         Ok(())
+    }
+
+    /// Set the quota of an existing bucket.
+    pub fn set_max_bytes(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
+        let mut bucket = self
+            .get_bucket(bucket_id)
+            .ok_or(Error::BucketNotFound(bucket_id))?;
+        bucket.max_bytes = max_bytes;
+        self.update_bucket(bucket_id, &bucket)
     }
 
     /// Get bucket state (internal, returns full BucketState).
@@ -488,11 +497,102 @@ impl DiskStorage {
 
         Ok(mmr::peaks(&bucket.leaves)?)
     }
+
+    /// See [`StorageBackend::get_leaves`].
+    pub fn get_leaves(
+        &self,
+        bucket_id: BucketId,
+        from_seq: u64,
+        to_seq: u64,
+        max_count: usize,
+        max_bytes: usize,
+    ) -> Result<LeafPage, Error> {
+        let bucket = self
+            .get_bucket(bucket_id)
+            .ok_or(Error::BucketNotFound(bucket_id))?;
+
+        if from_seq < bucket.start_seq {
+            return Err(Error::LeavesDeleted {
+                from_seq,
+                start_seq: bucket.start_seq,
+            });
+        }
+        let end_seq = bucket.start_seq.saturating_add(bucket.leaf_count());
+        if to_seq > end_seq {
+            return Err(Error::LeavesBeyondEnd { to_seq, end_seq });
+        }
+
+        let mut leaves = Vec::new();
+        let mut bytes = 0usize;
+        let in_range = if from_seq < to_seq {
+            let offset = (from_seq - bucket.start_seq) as usize;
+            &bucket.leaves[offset..(to_seq - bucket.start_seq) as usize]
+        } else {
+            &[]
+        };
+        for leaf in in_range {
+            let size = leaf.encoded_size();
+            if leaves.len() >= max_count || (!leaves.is_empty() && bytes + size > max_bytes) {
+                break;
+            }
+            bytes += size;
+            leaves.push(leaf.clone());
+        }
+        let next_seq = from_seq + leaves.len() as u64;
+        Ok(LeafPage { leaves, next_seq })
+    }
+
+    /// See [`StorageBackend::import_commitment`].
+    pub fn import_commitment(
+        &self,
+        bucket_id: BucketId,
+        commitment: &storage_primitives::Commitment,
+        leaves: Vec<MmrLeaf>,
+    ) -> Result<(), Error> {
+        let mut bucket = self
+            .get_bucket(bucket_id)
+            .ok_or(Error::BucketNotFound(bucket_id))?;
+
+        if leaves.len() as u64 != commitment.leaf_count {
+            return Err(Error::CommitmentNotReproducible(format!(
+                "commitment has {} leaves, got {}",
+                commitment.leaf_count,
+                leaves.len()
+            )));
+        }
+
+        let cf = self
+            .db
+            .cf_handle(CF_NODES)
+            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
+        for leaf in &leaves {
+            if self.db.get_cf(&cf, leaf.data_root.as_bytes())?.is_none() {
+                return Err(Error::RootNotFound(format!("{:#x}", leaf.data_root)));
+            }
+        }
+
+        let root = mmr::root(&leaves)?;
+        if root != commitment.mmr_root {
+            return Err(Error::CommitmentNotReproducible(format!(
+                "commitment_root {:#x} does not match the root {root:#x} of the leaves",
+                commitment.mmr_root
+            )));
+        }
+
+        bucket.leaves = leaves;
+        bucket.start_seq = commitment.start_seq;
+        bucket.mmr_root = root;
+        self.update_bucket(bucket_id, &bucket)
+    }
 }
 
 impl StorageBackend for DiskStorage {
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
         self.init_bucket(bucket_id, max_bytes)
+    }
+
+    fn set_max_bytes(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
+        self.set_max_bytes(bucket_id, max_bytes)
     }
 
     fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo> {
@@ -568,6 +668,26 @@ impl StorageBackend for DiskStorage {
 
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         self.get_mmr_peaks(bucket_id)
+    }
+
+    fn get_leaves(
+        &self,
+        bucket_id: BucketId,
+        from_seq: u64,
+        to_seq: u64,
+        max_count: usize,
+        max_bytes: usize,
+    ) -> Result<LeafPage, Error> {
+        self.get_leaves(bucket_id, from_seq, to_seq, max_count, max_bytes)
+    }
+
+    fn import_commitment(
+        &self,
+        bucket_id: BucketId,
+        commitment: &storage_primitives::Commitment,
+        leaves: Vec<MmrLeaf>,
+    ) -> Result<(), Error> {
+        self.import_commitment(bucket_id, commitment, leaves)
     }
 }
 
@@ -1004,6 +1124,187 @@ mod tests {
                 .unwrap();
             storage.commit(bucket_id, vec![hash]).unwrap();
         }
+    }
+
+    /// Copy the data root nodes of `leaves` from `from` into bucket `bucket_id`
+    /// of `to`.
+    fn copy_data_roots(
+        from: &DiskStorage,
+        to: &DiskStorage,
+        bucket_id: BucketId,
+        leaves: &[MmrLeaf],
+    ) {
+        to.init_bucket(bucket_id, u64::MAX).unwrap();
+        for leaf in leaves {
+            let node = from.get_node(&leaf.data_root).unwrap();
+            to.store_node(bucket_id, leaf.data_root, node).unwrap();
+        }
+    }
+
+    #[test]
+    fn get_leaves_pages_by_count_and_bytes() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 5);
+        let leaf_size = storage.get_bucket(1).unwrap().leaves[0].encoded_size();
+
+        let page = storage.get_leaves(1, 0, 5, 2, usize::MAX).unwrap();
+        assert_eq!((page.leaves.len(), page.next_seq), (2, 2));
+
+        let page = storage
+            .get_leaves(1, 2, 5, usize::MAX, leaf_size * 2 + 1)
+            .unwrap();
+        assert_eq!((page.leaves.len(), page.next_seq), (2, 4));
+
+        // A byte limit below one leaf still makes progress.
+        let page = storage.get_leaves(1, 4, 5, usize::MAX, 1).unwrap();
+        assert_eq!((page.leaves.len(), page.next_seq), (1, 5));
+
+        let page = storage.get_leaves(1, 5, 5, 10, usize::MAX).unwrap();
+        assert_eq!((page.leaves.len(), page.next_seq), (0, 5));
+    }
+
+    #[test]
+    fn get_leaves_rejects_deleted_and_missing_ranges() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 5);
+        storage.delete_before(1, 2).unwrap();
+
+        assert!(matches!(
+            storage.get_leaves(1, 1, 5, 10, usize::MAX),
+            Err(Error::LeavesDeleted {
+                from_seq: 1,
+                start_seq: 2
+            })
+        ));
+        assert!(matches!(
+            storage.get_leaves(1, 2, 6, 10, usize::MAX),
+            Err(Error::LeavesBeyondEnd {
+                to_seq: 6,
+                end_seq: 5
+            })
+        ));
+        assert!(matches!(
+            storage.get_leaves(9, 0, 0, 10, usize::MAX),
+            Err(Error::BucketNotFound(9))
+        ));
+        assert_eq!(
+            storage
+                .get_leaves(1, 2, 5, 10, usize::MAX)
+                .unwrap()
+                .leaves
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn import_commitment_reproduces_a_bucket_with_deleted_leaves() {
+        let source_dir = TempDir::new().unwrap();
+        let source = DiskStorage::new(source_dir.path()).unwrap();
+        bucket_with_leaves(&source, 1, 5);
+        let (root, start_seq, leaf_count) = source.delete_before(1, 2).unwrap();
+        let commitment = storage_primitives::Commitment {
+            mmr_root: root,
+            start_seq,
+            leaf_count,
+        };
+        let leaves = source.get_leaves(1, 2, 5, 10, usize::MAX).unwrap().leaves;
+
+        let target_dir = TempDir::new().unwrap();
+        let target = DiskStorage::new(target_dir.path()).unwrap();
+        copy_data_roots(&source, &target, 1, &leaves);
+        target.import_commitment(1, &commitment, leaves).unwrap();
+
+        let info = StorageBackend::get_bucket(&target, 1).unwrap();
+        assert_eq!(
+            (info.mmr_root, info.start_seq, info.leaf_count),
+            (root, 2, 3)
+        );
+        assert_eq!(
+            target.get_bucket(1).unwrap().leaves,
+            source.get_bucket(1).unwrap().leaves
+        );
+        // The imported leaves serve proofs for the commitment.
+        assert!(target
+            .get_mmr_proof_for_commitment(1, &commitment, 0)
+            .is_ok());
+    }
+
+    #[test]
+    fn import_commitment_rejections_leave_the_bucket_unchanged() {
+        let source_dir = TempDir::new().unwrap();
+        let source = DiskStorage::new(source_dir.path()).unwrap();
+        bucket_with_leaves(&source, 1, 3);
+        let state = source.get_bucket(1).unwrap();
+        let commitment = storage_primitives::Commitment {
+            mmr_root: state.mmr_root,
+            start_seq: 0,
+            leaf_count: 3,
+        };
+
+        let target_dir = TempDir::new().unwrap();
+        let target = DiskStorage::new(target_dir.path()).unwrap();
+        copy_data_roots(&source, &target, 1, &state.leaves[..2]);
+        let before = target.get_bucket(1).unwrap();
+
+        // The third data root is not stored.
+        let err = target
+            .import_commitment(1, &commitment, state.leaves.clone())
+            .unwrap_err();
+        assert!(matches!(err, Error::RootNotFound(_)), "got {err:?}");
+
+        copy_data_roots(&source, &target, 1, &state.leaves);
+
+        let wrong_root = storage_primitives::Commitment {
+            mmr_root: H256::repeat_byte(9),
+            ..commitment
+        };
+        let err = target
+            .import_commitment(1, &wrong_root, state.leaves.clone())
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::CommitmentNotReproducible(_)),
+            "got {err:?}"
+        );
+
+        let err = target
+            .import_commitment(1, &commitment, state.leaves[..2].to_vec())
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::CommitmentNotReproducible(_)),
+            "got {err:?}"
+        );
+
+        let err = target
+            .import_commitment(2, &commitment, state.leaves.clone())
+            .unwrap_err();
+        assert!(matches!(err, Error::BucketNotFound(2)), "got {err:?}");
+
+        let after = target.get_bucket(1).unwrap();
+        assert_eq!(after.leaves, before.leaves);
+        assert_eq!(after.mmr_root, before.mmr_root);
+        assert_eq!(after.start_seq, before.start_seq);
+    }
+
+    #[test]
+    fn set_max_bytes_applies_to_later_store_node_calls() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        storage.set_max_bytes(BUCKET, 10).unwrap();
+
+        let data = vec![1u8; 11];
+        let err = storage
+            .store_node(BUCKET, hash_leaf(&data), ChunkTreeNode::Chunk(data))
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::QuotaExceeded { max: 10, .. }),
+            "got {err:?}"
+        );
+        assert!(matches!(
+            storage.set_max_bytes(2, 10),
+            Err(Error::BucketNotFound(2))
+        ));
     }
 
     #[test]
