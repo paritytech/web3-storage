@@ -779,7 +779,7 @@ impl ReplicaSyncCoordinator {
                 error: "no signing key configured; cannot attest sync roots".to_string(),
             };
         };
-        let attestation = match SignedSyncRoots::sign(signer, duty.target_mmr_root) {
+        let attestation = match SignedSyncRoots::sign(signer, 0, duty.target_mmr_root) {
             Ok(attestation) => attestation,
             Err(e) => {
                 return SyncResult::SubmissionFailed {

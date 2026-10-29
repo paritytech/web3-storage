@@ -6,6 +6,7 @@
 pub mod coordinator;
 pub mod sync;
 pub mod sync_roots;
+pub mod target;
 
 pub use coordinator::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
