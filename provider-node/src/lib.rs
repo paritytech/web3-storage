@@ -63,6 +63,33 @@ pub struct ProviderDeps {
     pub auth: Arc<provider_auth::Authenticator>,
 }
 
+/// Upper bounds on one page of a paged read: the response holds at most
+/// `max_items` items and at most `max_bytes` bytes of payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageLimits {
+    /// Maximum number of items (leaves or nodes) in one page.
+    pub max_items: usize,
+    /// Maximum payload bytes in one page: the SCALE-encoded size of a leaf,
+    /// or the data of a chunk. The JSON response is larger (hex hashes,
+    /// base64 data).
+    pub max_bytes: usize,
+}
+
+impl Default for PageLimits {
+    fn default() -> Self {
+        Self {
+            // Limits the storage reads and hash checks of one request when
+            // items are small. 1000 leaves are about 49 KB encoded, 1000
+            // internal nodes about 64 KB.
+            max_items: 1000,
+            // 16 full chunks, about 5.3 MiB of base64 in the response: small
+            // enough that one page stays cheap in memory and quick to retry
+            // on a slow link.
+            max_bytes: 16 * storage_primitives::DEFAULT_CHUNK_SIZE as usize,
+        }
+    }
+}
+
 /// Provider node state shared across handlers.
 pub struct ProviderState {
     /// Local storage backend
@@ -83,6 +110,8 @@ pub struct ProviderState {
     /// Browser origins allowed via CORS. `None` (the default) keeps the
     /// permissive policy; `Some(list)` restricts to exactly those origins.
     pub cors_allowed_origins: Option<Vec<String>>,
+    /// Bounds on one page of a paged read such as `/mmr_leaves`.
+    pub page_limits: PageLimits,
     /// Live chain state kept in sync by the chain-state coordinator — the single
     /// writer for `current_anchor_block`, `constants`, and `provider_info`.
     /// `/negotiate` gates on all three before signing.
@@ -108,6 +137,7 @@ impl ProviderState {
             fs_index: FsIndexManager::new(),
             auth,
             cors_allowed_origins: None,
+            page_limits: PageLimits::default(),
             chain_state: Arc::new(ChainState::default()),
         }
     }
@@ -157,6 +187,13 @@ impl ProviderState {
     /// the permissive policy; `Some(list)` restricts to exactly those origins.
     pub fn with_cors_origins(mut self, origins: Option<Vec<String>>) -> Self {
         self.cors_allowed_origins = origins;
+        self
+    }
+
+    /// Set the bounds on one page of a paged read. The node runs with
+    /// [`PageLimits::default`]; tests set small limits to cover paging.
+    pub fn with_page_limits(mut self, page_limits: PageLimits) -> Self {
+        self.page_limits = page_limits;
         self
     }
 

@@ -752,6 +752,7 @@ async fn upload_and_commit_as(server: &AuthTestServer, keypair: &sr25519::Pair) 
 /// endpoint here; both tests below walk this list.
 const L0_GATED_GETS: &[&str] = &[
     "/mmr_peaks?bucket_id=1",
+    "/mmr_leaves?bucket_id=1&from_seq=0&to_seq=1",
     "/commitment?bucket_id=1",
     "/checkpoint-signature?bucket_id=1",
     "/mmr_proof?bucket_id=1&leaf_index=0",
@@ -831,13 +832,13 @@ async fn l0_reads_open_on_public_bucket() {
     let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
     upload_and_commit_as(&server, &alice).await;
 
-    let resp = server
-        .client
-        .get(server.url("/mmr_peaks?bucket_id=1"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    for path in [
+        "/mmr_peaks?bucket_id=1",
+        "/mmr_leaves?bucket_id=1&from_seq=0&to_seq=1",
+    ] {
+        let resp = server.client.get(server.url(path)).send().await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "anonymous GET {path}");
+    }
 }
 
 /// Hash-keyed reads (`GET /node`, `POST /fetch_nodes`) are capability
@@ -950,6 +951,14 @@ async fn replica_served_private_bucket_reads_anonymously() {
         StatusCode::OK,
         "a replica serves private-bucket reads to anyone"
     );
+
+    let resp = server
+        .client
+        .get(server.url("/mmr_leaves?bucket_id=1&from_seq=0&to_seq=1"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 
     // L1 reads follow the same rule through the shared authenticator.
     let resp = server

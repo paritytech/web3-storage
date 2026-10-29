@@ -89,6 +89,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/delete", post(delete_data))
         // Replica sync
         .route("/mmr_peaks", get(get_mmr_peaks))
+        .route("/mmr_leaves", get(get_mmr_leaves))
         .route("/fetch_nodes", post(fetch_nodes))
         // Off-chain term negotiation: signed AgreementTerms the caller redeems
         // on-chain (create_bucket_with_primary / add_primary_provider /
@@ -568,22 +569,78 @@ async fn get_mmr_peaks(
     }))
 }
 
+async fn get_mmr_leaves(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<MmrLeavesQuery>,
+) -> Result<Json<MmrLeavesResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let page = state.storage.get_leaves(
+        query.bucket_id,
+        query.from_seq,
+        query.to_seq,
+        state.page_limits.max_items,
+        state.page_limits.max_bytes,
+    )?;
+
+    Ok(Json(MmrLeavesResponse {
+        bucket_id: query.bucket_id,
+        from_seq: query.from_seq,
+        next_seq: page.next_seq,
+        leaves: page.leaves,
+    }))
+}
+
 async fn fetch_nodes(
     State(state): State<Arc<ProviderState>>,
     Json(request): Json<FetchNodesRequest>,
 ) -> Result<Json<FetchNodesResponse>, Error> {
     require_bucket(&state, request.bucket_id)?;
+    let hashes = request
+        .hashes
+        .iter()
+        .map(|hash| decode_hash(hash))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let limits = state.page_limits;
     let mut nodes = Vec::new();
+    let mut missing = Vec::new();
+    let mut bytes = 0usize;
+    let mut next = Vec::new();
 
-    for hash_str in &request.hashes {
-        let hash = decode_hash(hash_str)?;
-
-        if let Some(node) = state.storage.get_node(&hash) {
-            nodes.push(DownloadNodeResponse::new(hash, &node));
+    for (index, hash) in hashes.iter().enumerate() {
+        if nodes.len() + missing.len() >= limits.max_items {
+            next.extend_from_slice(&hashes[index..]);
+            break;
         }
+        let Some(node) = state.storage.get_node(hash) else {
+            missing.push(*hash);
+            continue;
+        };
+        // A page always holds at least one node, so an oversized chunk still
+        // makes progress.
+        let size = node.size() as usize;
+        if !nodes.is_empty() && bytes + size > limits.max_bytes {
+            next.extend_from_slice(&hashes[index..]);
+            break;
+        }
+        bytes += size;
+        nodes.push(DownloadNodeResponse::new(*hash, &node));
     }
 
-    Ok(Json(FetchNodesResponse { nodes }))
+    Ok(Json(FetchNodesResponse {
+        nodes,
+        missing,
+        next,
+    }))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
