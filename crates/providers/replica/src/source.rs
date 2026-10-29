@@ -13,6 +13,12 @@ use std::collections::HashSet;
 use std::time::Duration;
 use storage_primitives::{mmr::MmrLeaf, BucketId};
 
+/// The largest response body read from a source. A provider node's page holds
+/// at most 16 chunks of `DEFAULT_CHUNK_SIZE` (`PAGE_MAX_BYTES` in the
+/// node's `api` module), about 5.3 MiB as base64, so this leaves room for other
+/// page limits without letting a source fill the replica's memory.
+const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+
 /// A page of leaves from `/mmr_leaves`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LeafPage {
@@ -129,10 +135,12 @@ impl SourceClient {
     }
 }
 
-/// The body of a success response, or the error for any other status.
+/// The body of a success response, or the error for any other status. A body
+/// above [`MAX_RESPONSE_BYTES`] is a `BadSource` error and is not read to its
+/// end.
 async fn decode_body<T: serde::de::DeserializeOwned>(
     what: &'static str,
-    response: reqwest::Response,
+    mut response: reqwest::Response,
 ) -> Result<T, Error> {
     let status = response.status();
     if !status.is_success() {
@@ -141,7 +149,21 @@ async fn decode_body<T: serde::de::DeserializeOwned>(
             status: status.as_u16(),
         });
     }
-    response.json().await.map_err(|e| Error::decode(what, e))
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| Error::source_request(what, e))?
+    {
+        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return Err(Error::bad_source(
+                what,
+                format!("response is larger than {MAX_RESPONSE_BYTES} bytes"),
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&body).map_err(|e| Error::decode(what, e))
 }
 
 fn check_leaf_page(

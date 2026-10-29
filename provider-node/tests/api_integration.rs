@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair, H256};
 use storage_primitives::{Commitment, CommitmentPayload};
-use storage_provider_node::{PageLimits, ProviderState};
+use storage_provider_node::{ProviderState, SyncingBuckets};
 
 use common::{StorageBackendKind, TestServer};
 
@@ -34,12 +34,17 @@ impl TestServer {
         .await
     }
 
-    /// Signing provider (`//Alice`) serving pages within `limits`.
-    async fn new_with_page_limits(backend: StorageBackendKind, limits: PageLimits) -> Self {
+    /// Signing provider (`//Alice`) whose replica sync coordinator reports
+    /// into `syncing`.
+    async fn new_with_replica_syncing(
+        backend: StorageBackendKind,
+        syncing: SyncingBuckets,
+    ) -> Self {
         Self::start(backend, move |deps| {
-            ProviderState::with_seed(deps, common::PROVIDER_SEED)
-                .expect("//Alice is a valid SURI")
-                .with_page_limits(limits)
+            let mut state = ProviderState::with_seed(deps, common::PROVIDER_SEED)
+                .expect("//Alice is a valid SURI");
+            state.replica_syncing = syncing;
+            state
         })
         .await
     }
@@ -1216,34 +1221,23 @@ async fn get_leaves(server: &TestServer, query: &str) -> (StatusCode, Value) {
 }
 
 common::backend_tests! {
-    async fn test_mmr_leaves_pages_through_the_range(backend) {
-        let limits = PageLimits {
-            max_items: 2,
-            ..PageLimits::default()
-        };
-        let server = TestServer::new_with_page_limits(backend, limits).await;
+    async fn test_mmr_leaves_returns_the_requested_range(backend) {
+        let server = TestServer::new(backend).await;
         commit_chunks(&server, 1, 5).await;
 
-        let mut from = 0;
-        let mut pages = Vec::new();
-        let mut leaves = Vec::new();
-        while from < 5 {
-            let (status, body) = get_leaves(&server, &format!("from_seq={from}&to_seq=5")).await;
-            assert_eq!(status, StatusCode::OK);
-            assert_eq!(body["bucket_id"], 1);
-            assert_eq!(body["from_seq"], from);
-            let next = body["next_seq"].as_u64().unwrap();
-            leaves.extend(body["leaves"].as_array().unwrap().clone());
-            pages.push(next);
-            from = next;
-        }
-        assert_eq!(pages, [2, 4, 5]);
-        assert_eq!(leaves.len(), 5);
+        let (status, body) = get_leaves(&server, "from_seq=1&to_seq=5").await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["bucket_id"], 1);
+        assert_eq!(body["from_seq"], 1);
+        assert_eq!(body["next_seq"], 5);
+        let leaves = body["leaves"].as_array().unwrap();
+        assert_eq!(leaves.len(), 4);
         assert_eq!(leaves[0]["leaf_version"], 1);
         assert_eq!(leaves[0]["data_size"], 8);
-        assert_eq!(leaves[4]["total_size"], 40);
+        assert_eq!(leaves[3]["total_size"], 40);
         assert_eq!(
-            leaves[3]["data_root"],
+            leaves[2]["data_root"],
             format!("{:#x}", storage_primitives::hash_leaf(&[3u8; 8]))
         );
     }
@@ -1363,132 +1357,6 @@ common::backend_tests! {
     }
 }
 
-/// Upload single-chunk nodes of `len` bytes each and return their hashes.
-async fn upload_chunks(server: &TestServer, count: u8, len: usize) -> Vec<String> {
-    let mut hashes = Vec::new();
-    for i in 0..count {
-        let data = vec![i; len];
-        let hash = format!("{:#x}", storage_primitives::hash_leaf(&data));
-        let resp = server
-            .client
-            .request_bucket(Method::PUT, server.url("/node"), 1)
-            .json(&json!({
-                "bucket_id": 1,
-                "hash": hash,
-                "data": BASE64.encode(&data),
-                "children": null,
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        hashes.push(hash);
-    }
-    hashes
-}
-
-async fn fetch_nodes(server: &TestServer, hashes: &[String]) -> Value {
-    let resp = server
-        .client
-        .post(server.url("/fetch_nodes"))
-        .json(&json!({ "bucket_id": 1, "hashes": hashes }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    resp.json().await.unwrap()
-}
-
-/// Hashes of the `nodes` entries, in order.
-fn node_hashes(body: &Value) -> Vec<Value> {
-    body["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|node| node["hash"].clone())
-        .collect()
-}
-
-common::backend_tests! {
-    async fn test_fetch_nodes_stops_at_the_item_limit(backend) {
-        let limits = PageLimits {
-            max_items: 3,
-            ..PageLimits::default()
-        };
-        let server = TestServer::new_with_page_limits(backend, limits).await;
-        let stored = upload_chunks(&server, 4, 8).await;
-        let fake = "0x0000000000000000000000000000000000000000000000000000000000000042".to_string();
-
-        // The missing hash counts against the limit; the rest wait in `next`.
-        let requested = [stored[0].clone(), fake.clone(), stored[1].clone(), stored[2].clone(), stored[3].clone()];
-        let body = fetch_nodes(&server, &requested).await;
-        assert_eq!(node_hashes(&body), [json!(stored[0]), json!(stored[1])]);
-        assert_eq!(body["missing"], json!([fake]));
-        assert_eq!(body["next"], json!([stored[2], stored[3]]));
-
-        // Requesting `next` again finishes the work.
-        let body = fetch_nodes(&server, &[stored[2].clone(), stored[3].clone()]).await;
-        assert_eq!(node_hashes(&body), [json!(stored[2]), json!(stored[3])]);
-        assert!(body["next"].as_array().unwrap().is_empty());
-    }
-}
-
-common::backend_tests! {
-    async fn test_fetch_nodes_stops_at_the_byte_limit(backend) {
-        let limits = PageLimits {
-            max_bytes: 20,
-            ..PageLimits::default()
-        };
-        let server = TestServer::new_with_page_limits(backend, limits).await;
-        let stored = upload_chunks(&server, 3, 8).await;
-
-        // Two 8-byte chunks fit in 20 bytes; the third would not.
-        let body = fetch_nodes(&server, &stored).await;
-        assert_eq!(node_hashes(&body), [json!(stored[0]), json!(stored[1])]);
-        assert_eq!(body["next"], json!([stored[2]]));
-        assert!(body["missing"].as_array().unwrap().is_empty());
-    }
-}
-
-common::backend_tests! {
-    async fn test_fetch_nodes_returns_an_oversized_node_alone(backend) {
-        let limits = PageLimits {
-            max_bytes: 4,
-            ..PageLimits::default()
-        };
-        let server = TestServer::new_with_page_limits(backend, limits).await;
-        let stored = upload_chunks(&server, 2, 8).await;
-
-        let body = fetch_nodes(&server, &stored).await;
-        assert_eq!(node_hashes(&body), [json!(stored[0])]);
-        assert_eq!(body["next"], json!([stored[1]]));
-    }
-}
-
-common::backend_tests! {
-    async fn test_fetch_nodes_lists_each_hash_once(backend) {
-        let limits = PageLimits {
-            max_items: 4,
-            max_bytes: 20,
-        };
-        let server = TestServer::new_with_page_limits(backend, limits).await;
-        let stored = upload_chunks(&server, 3, 8).await;
-        let fake = "0x0000000000000000000000000000000000000000000000000000000000000042".to_string();
-        let requested = [fake.clone(), stored[0].clone(), stored[1].clone(), stored[2].clone()];
-
-        let body = fetch_nodes(&server, &requested).await;
-        let mut seen: Vec<Value> = node_hashes(&body);
-        for list in ["missing", "next"] {
-            seen.extend(body[list].as_array().unwrap().clone());
-        }
-        let mut seen: Vec<String> = seen.iter().map(|v| v.as_str().unwrap().to_string()).collect();
-        seen.sort();
-        let mut expected = requested.to_vec();
-        expected.sort();
-        assert_eq!(seen, expected);
-    }
-}
-
 common::backend_tests! {
     async fn test_hash_keyed_reads_reject_a_bucket_the_provider_does_not_store(backend) {
         let server = TestServer::new(backend).await;
@@ -1570,6 +1438,29 @@ common::backend_tests! {
         assert!(body["local_mmr_root"].is_string());
         assert!(body["local_leaf_count"].as_u64().unwrap() > 0);
         assert_eq!(body["syncing"], false);
+    }
+}
+
+common::backend_tests! {
+    async fn test_replica_sync_status_reports_a_sync_in_progress(backend) {
+        let syncing = SyncingBuckets::default();
+        let server = TestServer::new_with_replica_syncing(backend, syncing.clone()).await;
+        upload_and_commit(&server, 1).await;
+        let syncing_now = |server: &TestServer| {
+            let request = server.client.get(server.url("/replica/sync_status?bucket_id=1"));
+            async move {
+                let body: Value = request.send().await.unwrap().json().await.unwrap();
+                body["syncing"].as_bool().unwrap()
+            }
+        };
+
+        assert!(!syncing_now(&server).await);
+
+        let guard = syncing.begin(1);
+        assert!(syncing_now(&server).await);
+
+        drop(guard);
+        assert!(!syncing_now(&server).await);
     }
 }
 

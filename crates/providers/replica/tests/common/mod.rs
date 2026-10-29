@@ -291,6 +291,8 @@ pub struct NodeSourceConfig {
     pub tamper: bool,
     /// After this many `/fetch_nodes` requests, answer 500.
     pub max_node_requests: usize,
+    /// Answer 401 to `/mmr_leaves`, as a primary of a private bucket does.
+    pub refuse_leaves: bool,
 }
 
 impl Default for NodeSourceConfig {
@@ -300,6 +302,7 @@ impl Default for NodeSourceConfig {
             hidden: HashSet::new(),
             tamper: false,
             max_node_requests: usize::MAX,
+            refuse_leaves: false,
         }
     }
 }
@@ -347,6 +350,9 @@ pub async fn spawn_node_source(
             "/mmr_leaves",
             get(
                 |State(state): State<Arc<NodeSourceState>>, Query(query): Query<LeavesQuery>| async move {
+                    if state.config.refuse_leaves {
+                        return render(&status(StatusCode::UNAUTHORIZED));
+                    }
                     match state.storage.get_leaves(
                         query.bucket_id,
                         query.from_seq,

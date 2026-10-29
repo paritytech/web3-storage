@@ -96,6 +96,18 @@ async fn a_source_that_stops_answering_times_out() {
 }
 
 #[tokio::test]
+async fn a_response_above_the_size_limit_is_a_bad_source() {
+    let source = spawn_fixed(body(" ".repeat(17 * 1024 * 1024))).await;
+
+    let err = client()
+        .mmr_leaves(&source, BUCKET, 0, 1)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::BadSource { .. }), "{err:?}");
+}
+
+#[tokio::test]
 async fn a_malformed_leaf_body_is_a_decode_error() {
     let source = spawn_fixed(body("not json")).await;
 

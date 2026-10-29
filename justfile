@@ -33,6 +33,7 @@ try_runtime_sha256 := if os == "darwin" { env("TRY_RUNTIME_AARCH64_APPLE_DARWIN_
 RELAY_PORT := "9900"
 CHAIN_PORT := "2222"
 PROVIDER_PORT := "3333"
+REPLICA_PORT := "3334"
 
 # Provider node settings (override with: just PROVIDER_STORAGE_PATH=/tmp/p2 start-provider)
 PROVIDER_BACKEND := "rocksdb"
@@ -44,6 +45,7 @@ PROVIDER_KEY_SCHEME := ""
 RELAY_WS := "ws://127.0.0.1:" + RELAY_PORT
 CHAIN_WS := "ws://127.0.0.1:" + CHAIN_PORT
 PROVIDER_URL := "http://127.0.0.1:" + PROVIDER_PORT
+REPLICA_URL := "http://127.0.0.1:" + REPLICA_PORT
 PROVIDER_MULTI_ADDR := "/ip4/127.0.0.1/tcp/" + PROVIDER_PORT
 
 # Default recipe
@@ -226,6 +228,31 @@ start-provider BACKEND=PROVIDER_BACKEND PORT=PROVIDER_PORT STORAGE_PATH=PROVIDER
         --bind-addr "0.0.0.0:{{PORT}}" \
         --chain-rpc "{{ CHAIN_WS }}"
 
+# Start a second provider node that syncs the replica agreements it holds, for
+# `just replica-demo`. It signs with its own key (//Charlie by default) and
+# stores in its own directory.
+start-replica-provider PORT=REPLICA_PORT STORAGE_PATH="./replica-data" SEED="//Charlie": build-provider
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo ""
+    echo "=== Starting Replica Provider Node ==="
+    echo ""
+    echo "Provider health: http://127.0.0.1:{{PORT}}/health"
+    echo ""
+    KEYFILE=$(mktemp)
+    echo "{{SEED}}" > "$KEYFILE" && chmod 600 "$KEYFILE"
+    trap "rm -f $KEYFILE" EXIT
+
+    TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)
+    "$TARGET_DIR/release/storage-provider-node" \
+        --keyfile "$KEYFILE" \
+        --storage-backend "{{PROVIDER_BACKEND}}" \
+        --storage-path "{{STORAGE_PATH}}" \
+        --bind-addr "0.0.0.0:{{PORT}}" \
+        --chain-rpc "{{ CHAIN_WS }}" \
+        --enable-replica-sync \
+        --replica-poll-interval 10
+
 # Register provider on-chain (idempotent). Requires a running chain.
 # KEY_SCHEME registers a non-sr25519 signing key (the node's --key-scheme
 # must match); extrinsics are still submitted from the sr25519 account.
@@ -299,6 +326,17 @@ subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtim
 #   just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"          # target a different provider
 demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/full-flow.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# Demo: the whole replica workflow (PAPI-based). A primary opens a bucket and
+# checkpoints data, a replica agreement is added, and the replica node syncs,
+# confirms on chain and serves the data.
+# Requires a running chain (`just start-e2e-chain`), the primary
+# (`just start-provider`) and the replica (`just start-replica-provider`).
+# Examples:
+#   just replica-demo                                                   # Alice primary, Charlie replica, Bob client
+#   just replica-demo "http://127.0.0.1:3333" "http://127.0.0.1:3335"   # replica node on another port
+replica-demo PRIMARY_URL=PROVIDER_URL REPLICA_URL=REPLICA_URL PRIMARY_SEED="//Alice" REPLICA_SEED="//Charlie" CLIENT_SEED="//Bob": papi-setup
+    node --import tsx examples/papi/replica-flow.ts "{{ CHAIN_WS }}" "{{ PRIMARY_URL }}" "{{ REPLICA_URL }}" "{{ PRIMARY_SEED }}" "{{ REPLICA_SEED }}" "{{ CLIENT_SEED }}"
 
 # Compile the example contracts to PolkaVM bytecode + ABI.
 # Requires: solc and resolc on PATH (see examples/contracts/README.md).

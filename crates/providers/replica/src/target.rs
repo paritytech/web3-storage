@@ -60,6 +60,23 @@ pub fn select_target(
     })
 }
 
+/// The position where `confirm_replica_sync` finds `root`: 0 for the
+/// snapshot, `p` for `historical_roots[p - 1]`, in the order the pallet tries
+/// them. `None` when the chain no longer holds `root`.
+pub fn position_of(commitments: &BucketCommitments, root: H256) -> Option<u8> {
+    if root == H256::zero() {
+        return None;
+    }
+    if commitments.snapshot.mmr_root == root {
+        return Some(0);
+    }
+    commitments
+        .historical_roots
+        .iter()
+        .position(|(_, commitment)| commitment.mmr_root == root)
+        .map(|index| index as u8 + 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,6 +160,15 @@ mod tests {
             select_target(&snapshot_only, Some(H256::repeat_byte(1))),
             None
         );
+    }
+
+    #[test]
+    fn a_root_is_found_at_the_first_position_that_holds_it() {
+        let both = commitments(1, &[(3, 5, 2), (4, 1, 1)]);
+        assert_eq!(position_of(&both, H256::repeat_byte(1)), Some(0));
+        assert_eq!(position_of(&both, H256::repeat_byte(2)), Some(4));
+        assert_eq!(position_of(&both, H256::repeat_byte(9)), None);
+        assert_eq!(position_of(&both, H256::zero()), None);
     }
 
     #[test]

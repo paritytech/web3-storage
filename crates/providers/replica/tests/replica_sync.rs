@@ -4,8 +4,9 @@
 
 mod common;
 
-use common::{source_bucket, spawn_node_source, NodeSourceConfig};
-use provider_replica::coordinator::{BucketCommitments, ReplicaAgreementInfo};
+use common::{source_bucket, spawn_node_source, spawn_slow, NodeSourceConfig};
+use provider_events::BlockEvent;
+use provider_replica::coordinator::{BucketCommitments, ReplicaAgreementInfo, SyncingBuckets};
 use provider_replica::target::SyncTarget;
 use provider_replica::{
     ChainClientError, Error, ReplicaSyncChainClient, ReplicaSyncCoordinator,
@@ -115,6 +116,21 @@ impl MockReplicaSyncChainClient {
         }
     }
 
+    /// The chain's snapshot of `bucket_id` has the root `mmr_root`.
+    fn with_snapshot_root(self, bucket_id: BucketId, mmr_root: H256) -> Self {
+        self.with_snapshot(
+            bucket_id,
+            BucketCommitments {
+                snapshot: Commitment {
+                    mmr_root,
+                    start_seq: 0,
+                    leaf_count: 1,
+                },
+                ..Default::default()
+            },
+        )
+    }
+
     fn with_replica_endpoints(self, result: Result<Vec<String>, ChainClientError>) -> Self {
         Self {
             replica_endpoints: Mutex::new(result),
@@ -136,6 +152,10 @@ impl MockReplicaSyncChainClient {
 impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
     async fn get_current_block(&self) -> Result<u64, ChainClientError> {
         Ok(*self.block.lock().unwrap())
+    }
+
+    async fn get_anchor_block_time(&self) -> Result<Duration, ChainClientError> {
+        Ok(Duration::from_secs(6))
     }
 
     async fn fetch_replica_agreements(
@@ -260,7 +280,7 @@ async fn confirm_on_chain_attests_roots_with_signing_key() {
         last_sync: None,
     };
 
-    let mock = Arc::new(MockReplicaSyncChainClient::new());
+    let mock = Arc::new(MockReplicaSyncChainClient::new().with_snapshot_root(42, target));
     let (storage, _dir) = temp_rocksdb();
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator =
@@ -289,7 +309,8 @@ async fn confirm_on_chain_attests_roots_with_signing_key() {
 
 #[tokio::test]
 async fn confirm_on_chain_reports_the_matched_position_and_payment() {
-    let mock = Arc::new(MockReplicaSyncChainClient::new());
+    let mock =
+        Arc::new(MockReplicaSyncChainClient::new().with_snapshot_root(42, H256::repeat_byte(0xAB)));
     *mock.confirm_result.lock().unwrap() = Ok(Some((3, 250)));
     let (storage, _dir) = temp_rocksdb();
     let coordinator = coordinator_with_signer(
@@ -312,8 +333,48 @@ async fn confirm_on_chain_reports_the_matched_position_and_payment() {
 }
 
 #[tokio::test]
+async fn confirm_on_chain_signs_the_position_the_chain_holds_the_root_at_now() {
+    // The duty targets the snapshot (position 0). A checkpoint since then
+    // moved the root out of the snapshot; slot 3 still holds it.
+    let root = H256::repeat_byte(0xAB);
+    let mut commitments = BucketCommitments {
+        snapshot: Commitment {
+            mmr_root: H256::repeat_byte(0xCD),
+            start_seq: 0,
+            leaf_count: 2,
+        },
+        ..Default::default()
+    };
+    commitments.historical_roots[3] = (
+        7,
+        Commitment {
+            mmr_root: root,
+            start_seq: 0,
+            leaf_count: 1,
+        },
+    );
+    let mock = Arc::new(MockReplicaSyncChainClient::new().with_snapshot(42, commitments));
+    let (storage, _dir) = temp_rocksdb();
+    let coordinator = coordinator_with_signer(
+        ReplicaSyncCoordinatorConfig::default(),
+        storage,
+        mock.clone(),
+        Some(AliceSigner::new()),
+    );
+    let duty = mock_duty(42);
+    assert_eq!(duty.target.position, 0);
+
+    coordinator.confirm_on_chain(&duty).await;
+
+    let mut expected_roots = [None; 7];
+    expected_roots[4] = Some(root);
+    assert_eq!(mock.attestations.lock().unwrap()[0].roots, expected_roots);
+}
+
+#[tokio::test]
 async fn confirm_on_chain_treats_an_earlier_confirmation_as_already_synced() {
-    let mock = Arc::new(MockReplicaSyncChainClient::new());
+    let mock =
+        Arc::new(MockReplicaSyncChainClient::new().with_snapshot_root(42, H256::repeat_byte(0xAB)));
     *mock.confirm_result.lock().unwrap() = Ok(None);
     let (storage, _dir) = temp_rocksdb();
     let coordinator = coordinator_with_signer(
@@ -343,7 +404,8 @@ async fn confirm_on_chain_surfaces_submission_errors() {
         last_sync: None,
     };
 
-    let mock = Arc::new(MockReplicaSyncChainClient::new());
+    let mock =
+        Arc::new(MockReplicaSyncChainClient::new().with_snapshot_root(9, H256::repeat_byte(0xEF)));
     *mock.confirm_result.lock().unwrap() = Err(ChainClientError::tx_rejected(
         "confirm_replica_sync",
         "chain rejected",
@@ -423,7 +485,7 @@ async fn test_insufficient_balance() {
 }
 
 #[tokio::test]
-async fn test_already_synced() {
+async fn a_synced_root_that_is_not_confirmed_yet_is_confirmed_without_fetching() {
     let (storage, _dir) = temp_rocksdb();
     storage
         .init_bucket(1, u64::MAX)
@@ -433,6 +495,7 @@ async fn test_already_synced() {
     let _ = storage.store_node(1, data_root, ChunkTreeNode::Chunk(data));
     let mmr_root = storage.commit(1, vec![data_root]).unwrap().mmr_root;
 
+    // No source: everything the target needs is stored.
     let duty = SyncDuty {
         bucket_id: 1,
         target: snapshot_target(mmr_root, 1),
@@ -444,13 +507,17 @@ async fn test_already_synced() {
         last_sync: None,
     };
 
-    let mock = MockReplicaSyncChainClient::new();
-    let config = ReplicaSyncCoordinatorConfig::default();
-    let coordinator =
-        ReplicaSyncCoordinator::new(config, storage, "test".to_string(), Box::new(mock), None);
+    let mock = Arc::new(MockReplicaSyncChainClient::new().with_snapshot_root(1, mmr_root));
+    let coordinator = coordinator_with_signer(
+        ReplicaSyncCoordinatorConfig::default(),
+        storage,
+        mock.clone(),
+        Some(AliceSigner::new()),
+    );
 
     let result = coordinator.sync_and_confirm(&duty).await;
-    assert!(matches!(result, SyncResult::AlreadySynced { .. }));
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    assert_eq!(mock.confirmations.lock().unwrap().as_slice(), &[1]);
 }
 
 #[tokio::test]
@@ -502,7 +569,9 @@ async fn a_fresh_replica_syncs_and_confirms_at_the_target_position() {
         u64::MAX,
     );
 
-    let mock = Arc::new(MockReplicaSyncChainClient::new());
+    let mut commitments = BucketCommitments::default();
+    commitments.historical_roots[1] = (4, commitment);
+    let mock = Arc::new(MockReplicaSyncChainClient::new().with_snapshot(1, commitments));
     *mock.confirm_result.lock().unwrap() = Ok(Some((2, 1000)));
     // No local bucket: the sync creates it.
     let (storage, _dir) = temp_rocksdb();
@@ -777,7 +846,7 @@ async fn test_duties_filter_zero_snapshot_root() {
 }
 
 #[tokio::test]
-async fn test_duties_filter_already_synced() {
+async fn test_duties_keep_a_stored_root_that_is_not_confirmed() {
     let (storage, _dir) = temp_rocksdb();
     storage
         .init_bucket(1, u64::MAX)
@@ -817,8 +886,10 @@ async fn test_duties_filter_already_synced() {
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = coordinator(config, storage, mock);
 
+    // The root is stored but not confirmed (`last_sync` is empty), so the
+    // duty remains: the sync confirms it.
     let duties = coordinator.get_active_replica_duties().await.unwrap();
-    assert!(duties.is_empty(), "already synced should be filtered");
+    assert_eq!(duties.len(), 1);
 }
 
 /// A chain with one due replica duty: bucket 42, target root `0xCC..`, 10
@@ -898,6 +969,35 @@ async fn test_duties_target_the_historical_slot_that_stays_valid_longest() {
     assert_eq!(duties.len(), 1);
     assert_eq!(duties[0].target.position, 5);
     assert_eq!(duties[0].target.commitment, commitment(0xB4));
+}
+
+#[tokio::test]
+async fn a_duty_pass_creates_the_local_bucket_before_the_first_checkpoint() {
+    // The chain has no commitment to sync to yet, and in the second case the
+    // sync balance is too low for a sync.
+    for sync_balance in [1000, 10] {
+        let mock = MockReplicaSyncChainClient::new().with_agreements(vec![ReplicaAgreementInfo {
+            bucket_id: 42,
+            sync_balance,
+            sync_price: 100,
+            min_sync_interval: 0,
+            last_sync: None,
+            max_bytes: 1024 * 1024,
+            expires_at: 10_000,
+        }]);
+        let (storage, _dir) = temp_rocksdb();
+        let coordinator = coordinator(
+            ReplicaSyncCoordinatorConfig::default(),
+            Arc::clone(&storage),
+            mock,
+        );
+
+        let duties = coordinator.get_active_replica_duties().await.unwrap();
+
+        assert!(duties.is_empty());
+        // The bucket exists, so the first checkpoint of it starts a duty pass.
+        assert!(storage.get_bucket(42).is_some(), "balance {sync_balance}");
+    }
 }
 
 #[tokio::test]
@@ -984,4 +1084,271 @@ async fn test_force_sync_command() {
 
     handle.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sync tasks: concurrency, timeout, Stop, Pause, expiry
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A mock chain with replica duties for buckets `1..=count`, all served by
+/// `source`, which never answers in time.
+fn mock_with_stalled_duties(count: u64, source: &str) -> MockReplicaSyncChainClient {
+    let agreements = (1..=count)
+        .map(|bucket_id| ReplicaAgreementInfo {
+            bucket_id,
+            sync_balance: 1000,
+            sync_price: 100,
+            min_sync_interval: 0,
+            last_sync: None,
+            max_bytes: 1024 * 1024,
+            expires_at: 10_000,
+        })
+        .collect();
+    let mut mock = MockReplicaSyncChainClient::new().with_agreements(agreements);
+    for bucket_id in 1..=count {
+        mock = mock
+            .with_snapshot(
+                bucket_id,
+                BucketCommitments {
+                    snapshot: Commitment {
+                        mmr_root: H256::repeat_byte(bucket_id as u8),
+                        start_seq: 0,
+                        leaf_count: 1,
+                    },
+                    ..Default::default()
+                },
+            )
+            .with_endpoints(bucket_id, vec![source.to_string()]);
+    }
+    mock
+}
+
+/// Poll `condition` for up to two seconds.
+async fn eventually(mut condition: impl FnMut() -> bool) -> bool {
+    for _ in 0..100 {
+        if condition() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    false
+}
+
+fn syncing_count(syncing: &SyncingBuckets, buckets: u64) -> usize {
+    (1..=buckets).filter(|id| syncing.is_syncing(*id)).count()
+}
+
+#[tokio::test]
+async fn at_most_max_concurrent_syncs_run_at_once() {
+    let stalled = spawn_slow(Duration::from_secs(30)).await;
+    let mock = mock_with_stalled_duties(4, &stalled);
+    let config = ReplicaSyncCoordinatorConfig {
+        poll_interval: Duration::ZERO,
+        max_concurrent_syncs: 2,
+        ..Default::default()
+    };
+    let (storage, _dir) = temp_rocksdb();
+    let syncing = SyncingBuckets::default();
+    let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
+    let handle = coordinator(config, storage, mock)
+        .with_syncing_buckets(syncing.clone())
+        .start(events_rx, None)
+        .await
+        .unwrap();
+
+    events_tx
+        .send(BlockEvent::Resubscribed { at_block: 1 })
+        .unwrap();
+
+    assert!(eventually(|| syncing_count(&syncing, 4) == 2).await);
+    assert_eq!(handle.status().await.unwrap().active_syncs, 2);
+
+    // Another pass starts nothing while both slots are taken.
+    events_tx
+        .send(BlockEvent::Resubscribed { at_block: 2 })
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(syncing_count(&syncing, 4), 2);
+
+    handle.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn stop_aborts_the_running_syncs() {
+    let stalled = spawn_slow(Duration::from_secs(30)).await;
+    let mock = mock_with_stalled_duties(2, &stalled);
+    let config = ReplicaSyncCoordinatorConfig {
+        poll_interval: Duration::ZERO,
+        ..Default::default()
+    };
+    let (storage, _dir) = temp_rocksdb();
+    let syncing = SyncingBuckets::default();
+    let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
+    let handle = coordinator(config, storage, mock)
+        .with_syncing_buckets(syncing.clone())
+        .start(events_rx, None)
+        .await
+        .unwrap();
+    events_tx
+        .send(BlockEvent::Resubscribed { at_block: 1 })
+        .unwrap();
+    assert!(eventually(|| syncing_count(&syncing, 2) == 2).await);
+
+    handle.stop().await.unwrap();
+
+    assert!(eventually(|| syncing_count(&syncing, 2) == 0).await);
+}
+
+#[tokio::test]
+async fn pause_stops_the_running_syncs() {
+    let stalled = spawn_slow(Duration::from_secs(30)).await;
+    let mock = mock_with_stalled_duties(2, &stalled);
+    let config = ReplicaSyncCoordinatorConfig {
+        poll_interval: Duration::ZERO,
+        ..Default::default()
+    };
+    let (storage, _dir) = temp_rocksdb();
+    let syncing = SyncingBuckets::default();
+    let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
+    let handle = coordinator(config, storage, mock)
+        .with_syncing_buckets(syncing.clone())
+        .start(events_rx, None)
+        .await
+        .unwrap();
+    events_tx
+        .send(BlockEvent::Resubscribed { at_block: 1 })
+        .unwrap();
+    assert!(eventually(|| syncing_count(&syncing, 2) == 2).await);
+
+    handle.pause().await.unwrap();
+
+    assert!(eventually(|| syncing_count(&syncing, 2) == 0).await);
+    handle.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn pause_prevents_new_syncs_until_resume() {
+    let stalled = spawn_slow(Duration::from_secs(30)).await;
+    let mock = mock_with_stalled_duties(1, &stalled);
+    let config = ReplicaSyncCoordinatorConfig {
+        poll_interval: Duration::ZERO,
+        ..Default::default()
+    };
+    let (storage, _dir) = temp_rocksdb();
+    let syncing = SyncingBuckets::default();
+    let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
+    let handle = coordinator(config, storage, mock)
+        .with_syncing_buckets(syncing.clone())
+        .start(events_rx, None)
+        .await
+        .unwrap();
+
+    handle.pause().await.unwrap();
+    events_tx
+        .send(BlockEvent::Resubscribed { at_block: 1 })
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(syncing_count(&syncing, 1), 0);
+
+    // The event stayed queued, so resuming starts the sync.
+    handle.resume().await.unwrap();
+    assert!(eventually(|| syncing_count(&syncing, 1) == 1).await);
+
+    handle.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_sync_that_exceeds_the_timeout_ends_as_timed_out() {
+    let stalled = spawn_slow(Duration::from_secs(30)).await;
+    let duty = duty_from(
+        &stalled,
+        snapshot_target(H256::repeat_byte(0xAA), 1),
+        1024 * 1024,
+    );
+    let config = ReplicaSyncCoordinatorConfig {
+        sync_timeout: Duration::from_millis(200),
+        ..Default::default()
+    };
+    let (storage, _dir) = temp_rocksdb();
+    let coordinator = coordinator(config, storage, MockReplicaSyncChainClient::new());
+
+    let result = coordinator.sync_and_confirm(&duty).await;
+
+    assert!(
+        matches!(result, SyncResult::TimedOut { bucket_id: 1 }),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_duty_whose_agreement_expires_before_a_sync_can_finish_is_skipped() {
+    // The default timeout of 300 s is 50 anchor blocks of 6 s; the mock chain
+    // is at block 100, so a sync could end at block 150.
+    for (expires_at, expected_duties) in [(150, 0), (151, 1)] {
+        let mock = mock_with_bucket_42_duty();
+        mock.agreements.lock().unwrap()[0].expires_at = expires_at;
+        let (storage, _dir) = temp_rocksdb();
+        let coordinator = coordinator(ReplicaSyncCoordinatorConfig::default(), storage, mock);
+
+        let duties = coordinator.get_active_replica_duties().await.unwrap();
+
+        assert_eq!(duties.len(), expected_duties, "expires_at {expires_at}");
+    }
+}
+
+/// Start a coordinator over `mock` and force a sync of bucket 1. Returns the
+/// syncing set, the handle, and the storage directory, which must outlive the
+/// coordinator.
+async fn force_sync_bucket_1(
+    mock: MockReplicaSyncChainClient,
+) -> (
+    SyncingBuckets,
+    provider_replica::ReplicaSyncCoordinatorHandle,
+    tempfile::TempDir,
+) {
+    let config = ReplicaSyncCoordinatorConfig {
+        poll_interval: Duration::ZERO,
+        ..Default::default()
+    };
+    let (storage, _dir) = temp_rocksdb();
+    let syncing = SyncingBuckets::default();
+    let handle = coordinator(config, storage, mock)
+        .with_syncing_buckets(syncing.clone())
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
+    handle.force_sync(1).await.unwrap();
+    (syncing, handle, _dir)
+}
+
+#[tokio::test]
+async fn force_sync_ignores_the_sync_interval() {
+    let stalled = spawn_slow(Duration::from_secs(30)).await;
+    let mock = mock_with_stalled_duties(1, &stalled);
+    // Synced one block ago, with an interval of 1000 blocks.
+    {
+        let mut agreements = mock.agreements.lock().unwrap();
+        agreements[0].last_sync = Some((H256::repeat_byte(0xEE), 99));
+        agreements[0].min_sync_interval = 1000;
+    }
+
+    let (syncing, handle, _dir) = force_sync_bucket_1(mock).await;
+
+    assert!(eventually(|| syncing.is_syncing(1)).await);
+    handle.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn force_sync_does_not_start_for_an_expiring_agreement() {
+    let stalled = spawn_slow(Duration::from_secs(30)).await;
+    let mock = mock_with_stalled_duties(1, &stalled);
+    // The chain is at block 100 and a sync may take 50 blocks.
+    mock.agreements.lock().unwrap()[0].expires_at = 120;
+
+    let (syncing, handle, _dir) = force_sync_bucket_1(mock).await;
+
+    // The status reply comes after the force-sync command was handled.
+    assert_eq!(handle.status().await.unwrap().active_syncs, 0);
+    assert!(!syncing.is_syncing(1));
+    handle.stop().await.unwrap();
 }

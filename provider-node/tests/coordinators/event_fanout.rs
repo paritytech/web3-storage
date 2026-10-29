@@ -286,6 +286,10 @@ impl ReplicaSyncChainClient for MockReplicaClient {
         Ok(100)
     }
 
+    async fn get_anchor_block_time(&self) -> Result<Duration, provider_replica::ChainClientError> {
+        Ok(Duration::from_secs(6))
+    }
+
     async fn fetch_replica_agreements(
         &self,
         _provider_account: &str,

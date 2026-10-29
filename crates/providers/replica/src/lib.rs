@@ -13,6 +13,7 @@ pub mod target;
 pub use coordinator::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
+    SyncingBuckets,
 };
 pub use provider_types::ChainClientError;
 pub use sync::ReplicaSync;

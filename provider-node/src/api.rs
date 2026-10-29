@@ -18,7 +18,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use provider_auth::RequiredRole;
-use provider_storage::{BucketInfo, ChunkTreeNode};
+use provider_storage::{BucketInfo, ChunkTreeNode, StorageBackend};
 use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
@@ -546,6 +546,52 @@ async fn delete_data(
 // Replica Sync
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Maximum number of items (leaves or nodes) in one page. Limits the storage
+/// reads and hash checks of one request when items are small: 1000 leaves are
+/// about 49 KB encoded, 1000 internal nodes about 64 KB.
+const PAGE_MAX_ITEMS: usize = 1000;
+
+/// Maximum payload bytes in one page: the SCALE-encoded size of a leaf, or the
+/// data of a chunk. The JSON response is larger (hex hashes, base64 data).
+/// 16 full chunks are about 5.3 MiB of base64: small enough that one page stays
+/// cheap in memory and quick to retry on a slow link.
+const PAGE_MAX_BYTES: usize = 16 * storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+
+/// Look up `hashes` in order and stop at [`PAGE_MAX_ITEMS`] processed hashes
+/// (nodes and missing hashes) or when the next node would exceed
+/// [`PAGE_MAX_BYTES`]. The hashes after that point are returned as `next`, so
+/// every requested hash is in exactly one of the three lists.
+fn fetch_nodes_page(storage: &dyn StorageBackend, hashes: &[H256]) -> FetchNodesResponse {
+    let mut nodes = Vec::new();
+    let mut missing = Vec::new();
+    let mut bytes = 0usize;
+    let mut next = Vec::new();
+
+    for (index, hash) in hashes.iter().enumerate() {
+        if nodes.len() + missing.len() >= PAGE_MAX_ITEMS {
+            next.extend_from_slice(&hashes[index..]);
+            break;
+        }
+        let Some(node) = storage.get_node(hash) else {
+            missing.push(*hash);
+            continue;
+        };
+        let size = node.size() as usize;
+        if bytes + size > PAGE_MAX_BYTES {
+            next.extend_from_slice(&hashes[index..]);
+            break;
+        }
+        bytes += size;
+        nodes.push(DownloadNodeResponse::new(*hash, &node));
+    }
+
+    FetchNodesResponse {
+        nodes,
+        missing,
+        next,
+    }
+}
+
 async fn get_mmr_peaks(
     State(state): State<Arc<ProviderState>>,
     headers: axum::http::HeaderMap,
@@ -587,8 +633,8 @@ async fn get_mmr_leaves(
         query.bucket_id,
         query.from_seq,
         query.to_seq,
-        state.page_limits.max_items,
-        state.page_limits.max_bytes,
+        PAGE_MAX_ITEMS,
+        PAGE_MAX_BYTES,
     )?;
 
     Ok(Json(MmrLeavesResponse {
@@ -610,37 +656,7 @@ async fn fetch_nodes(
         .map(|hash| decode_hash(hash))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let limits = state.page_limits;
-    let mut nodes = Vec::new();
-    let mut missing = Vec::new();
-    let mut bytes = 0usize;
-    let mut next = Vec::new();
-
-    for (index, hash) in hashes.iter().enumerate() {
-        if nodes.len() + missing.len() >= limits.max_items {
-            next.extend_from_slice(&hashes[index..]);
-            break;
-        }
-        let Some(node) = state.storage.get_node(hash) else {
-            missing.push(*hash);
-            continue;
-        };
-        // A page always holds at least one node, so an oversized chunk still
-        // makes progress.
-        let size = node.size() as usize;
-        if !nodes.is_empty() && bytes + size > limits.max_bytes {
-            next.extend_from_slice(&hashes[index..]);
-            break;
-        }
-        bytes += size;
-        nodes.push(DownloadNodeResponse::new(*hash, &node));
-    }
-
-    Ok(Json(FetchNodesResponse {
-        nodes,
-        missing,
-        next,
-    }))
+    Ok(Json(fetch_nodes_page(state.storage.as_ref(), &hashes)))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -786,6 +802,6 @@ async fn get_replica_sync_status(
         local_mmr_root: bucket.mmr_root,
         local_leaf_count: bucket.leaf_count,
         last_sync_block: None, // Would be tracked by coordinator
-        syncing: false,        // Would check coordinator state
+        syncing: state.replica_syncing.is_syncing(query.bucket_id),
     }))
 }

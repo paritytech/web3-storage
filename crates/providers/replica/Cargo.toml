@@ -16,6 +16,7 @@ async-trait = { workspace = true }
 base64 = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
@@ -26,6 +27,5 @@ tracing = { workspace = true, features = ["std"] }
 provider-storage = { workspace = true, features = ["test-helpers"] }
 axum = { workspace = true }
 codec = { workspace = true, features = ["std"] }
-serde_json = { workspace = true, features = ["std"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }

@@ -645,6 +645,22 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         self.current_anchor_block().await
     }
 
+    async fn get_anchor_block_time(&self) -> Result<Duration, ChainClientError> {
+        let millis: u64 = self
+            .at_current_block()
+            .await?
+            .runtime_apis()
+            .call(
+                storage_subxt::api::runtime_apis()
+                    .storage_provider_api()
+                    .anchor_block_time_millis()
+                    .unvalidated(),
+            )
+            .await
+            .map_err(|e| ChainClientError::query("anchor block time", e))?;
+        Ok(Duration::from_millis(millis))
+    }
+
     /// This provider's replica agreements, including those for buckets it
     /// does not store yet: the coordinator creates the local bucket.
     ///

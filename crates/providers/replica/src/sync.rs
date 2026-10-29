@@ -24,7 +24,7 @@ use crate::source::{NodePage, SourceClient, SourceSet};
 use crate::Error;
 use provider_storage::{ChunkTreeNode, StorageBackend};
 use sp_core::H256;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{BucketId, Commitment};
@@ -55,8 +55,12 @@ impl ReplicaSync {
     /// Copy the bucket's data from `sources` up to `target`, a commitment the
     /// chain holds, and install its leaves.
     ///
-    /// The local bucket must exist, and its quota limits the nodes stored. A
-    /// source that fails is dropped from `sources`. If every source fails, the
+    /// The local bucket must exist, and its quota limits the nodes stored.
+    ///
+    /// Each phase starts with all of `sources`. A source that fails in the
+    /// leaf phase can still serve nodes: a primary of a private bucket answers
+    /// 401 to `/mmr_leaves` but serves `/fetch_nodes`. A source that fails in
+    /// the chunk phase is dropped from `sources`. If every source fails, the
     /// call returns `NoSourceLeft`. The nodes stored so far remain, and a later
     /// call skips them.
     pub async fn sync_to_target(
@@ -68,7 +72,7 @@ impl ReplicaSync {
         let leaves = fetch_leaves(
             self.storage.as_ref(),
             &self.client,
-            sources,
+            &mut sources.clone(),
             bucket_id,
             target,
         )
@@ -97,7 +101,7 @@ struct TreeWalk<'a> {
     storage: &'a dyn StorageBackend,
     bucket_id: BucketId,
     /// Hashes to request, by level: the distance below the data root.
-    frontier: BTreeMap<usize, Vec<H256>>,
+    frontier: BTreeMap<usize, VecDeque<H256>>,
     /// The hashes in `frontier` or `waiting`, so each is requested once.
     queued: HashSet<H256>,
     /// Internal nodes fetched but not stored, with their children.
@@ -122,18 +126,24 @@ impl<'a> TreeWalk<'a> {
         let (_, absent) = storage.check_exists(bucket_id, data_roots);
         for root in absent {
             if walk.queued.insert(root) {
-                walk.frontier.entry(0).or_default().push(root);
+                walk.frontier.entry(0).or_default().push_back(root);
             }
         }
         walk
     }
 
     async fn run(mut self, client: &SourceClient, sources: &mut SourceSet) -> Result<(), Error> {
-        while !self.frontier.is_empty() {
-            let Some((source, level, hashes)) = self.next_batch(sources) else {
-                return Err(Error::NoSourceLeft { what: "nodes" });
+        while let Some(mut deepest) = self.frontier.last_entry() {
+            let level = *deepest.key();
+            let Some((source, batch)) = take_batch(deepest.get_mut(), &self.missing_on, sources)?
+            else {
+                deepest.remove();
+                continue;
             };
-            match client.fetch_nodes(&source, self.bucket_id, &hashes).await {
+            if deepest.get().is_empty() {
+                deepest.remove();
+            }
+            match client.fetch_nodes(&source, self.bucket_id, &batch).await {
                 Ok(page) => self.accept(level, &source, page)?,
                 Err(e) => {
                     tracing::warn!(
@@ -142,55 +152,32 @@ impl<'a> TreeWalk<'a> {
                         "node page failed, trying the next source: {e}"
                     );
                     sources.drop_source(&source);
+                    self.requeue(level, batch);
                 }
             }
         }
         Ok(())
     }
 
-    /// The deepest level with a hash some source can still serve, and the
-    /// first such source with up to [`REQUEST_HASHES`] of those hashes. `None`
-    /// when no source can serve any pending hash.
-    fn next_batch(&self, sources: &SourceSet) -> Option<(String, usize, Vec<H256>)> {
-        for (&level, hashes) in self.frontier.iter().rev() {
-            for source in sources.iter() {
-                let batch: Vec<H256> = hashes
-                    .iter()
-                    .filter(|hash| {
-                        !self
-                            .missing_on
-                            .get(hash)
-                            .is_some_and(|missing| missing.contains(source))
-                    })
-                    .take(REQUEST_HASHES)
-                    .copied()
-                    .collect();
-                if !batch.is_empty() {
-                    return Some((source.to_owned(), level, batch));
-                }
-            }
+    /// Put hashes that were taken but not fetched back at the end of `level`.
+    fn requeue(&mut self, level: usize, hashes: impl IntoIterator<Item = H256>) {
+        let mut hashes = hashes.into_iter().peekable();
+        if hashes.peek().is_some() {
+            self.frontier.entry(level).or_default().extend(hashes);
         }
-        None
     }
 
     /// Store what a source returned for a request at `level`. Hashes it lists
-    /// as missing stay pending and are not requested from it again. Hashes it
-    /// did not process stay pending.
+    /// as missing go back to the level and are not requested from it again.
+    /// Hashes it did not process go back to the level.
     fn accept(&mut self, level: usize, source: &str, page: NodePage) -> Result<(), Error> {
-        for hash in page.missing {
+        for hash in &page.missing {
             self.missing_on
-                .entry(hash)
+                .entry(*hash)
                 .or_default()
                 .insert(source.to_owned());
         }
-
-        let fetched: HashSet<H256> = page.nodes.iter().map(|(hash, _)| *hash).collect();
-        if let Some(hashes) = self.frontier.get_mut(&level) {
-            hashes.retain(|hash| !fetched.contains(hash));
-            if hashes.is_empty() {
-                self.frontier.remove(&level);
-            }
-        }
+        self.requeue(level, page.missing.into_iter().chain(page.next));
 
         for (hash, node) in page.nodes {
             let ChunkTreeNode::Internal { left, right } = node else {
@@ -206,7 +193,7 @@ impl<'a> TreeWalk<'a> {
             for child in absent {
                 self.parents.entry(child).or_default().push(hash);
                 if self.queued.insert(child) {
-                    self.frontier.entry(level + 1).or_default().push(child);
+                    self.frontier.entry(level + 1).or_default().push_back(child);
                 }
             }
         }
@@ -234,4 +221,44 @@ impl<'a> TreeWalk<'a> {
         }
         Ok(())
     }
+}
+
+/// Take up to [`REQUEST_HASHES`] hashes from the front of `queue` and the
+/// source to request them from: the first source that has not reported the
+/// first hash as missing. Hashes that source reported as missing go to the back
+/// of the queue. `None` for an empty queue. Fails with `NoSourceLeft` when every
+/// source reported the first hash as missing.
+fn take_batch(
+    queue: &mut VecDeque<H256>,
+    missing_on: &HashMap<H256, HashSet<String>>,
+    sources: &SourceSet,
+) -> Result<Option<(String, Vec<H256>)>, Error> {
+    let reported_missing = |hash: &H256, source: &str| {
+        missing_on
+            .get(hash)
+            .is_some_and(|sources| sources.contains(source))
+    };
+    let Some(first) = queue.front() else {
+        return Ok(None);
+    };
+    let source = sources
+        .iter()
+        .find(|source| !reported_missing(first, source))
+        .ok_or(Error::NoSourceLeft { what: "nodes" })?
+        .to_owned();
+
+    let mut batch = Vec::new();
+    let mut skipped = Vec::new();
+    for _ in 0..REQUEST_HASHES {
+        let Some(hash) = queue.pop_front() else {
+            break;
+        };
+        if reported_missing(&hash, &source) {
+            skipped.push(hash);
+        } else {
+            batch.push(hash);
+        }
+    }
+    queue.extend(skipped);
+    Ok(Some((source, batch)))
 }

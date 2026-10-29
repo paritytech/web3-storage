@@ -315,3 +315,38 @@ async fn running_out_of_quota_stops_the_sync_without_blaming_the_source() {
     assert_eq!(set.current(), Some(node.url.as_str()));
     assert_eq!(replica.0.get_bucket(BUCKET).unwrap().leaf_count, 0);
 }
+
+#[tokio::test]
+async fn a_source_refused_in_the_leaf_phase_still_serves_nodes() {
+    let (source, _dir, target) = source_bucket(&[3, 2]);
+    // A primary of a private bucket: no leaves, all nodes.
+    let primary = spawn_node_source(
+        Arc::clone(&source),
+        NodeSourceConfig {
+            refuse_leaves: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    // A replica that serves the leaves but has none of the nodes.
+    let replica_source = spawn_node_source(
+        Arc::clone(&source),
+        NodeSourceConfig {
+            hidden: tree_depths(source.as_ref()).into_keys().collect(),
+            ..Default::default()
+        },
+    )
+    .await;
+    let replica = replica(u64::MAX);
+
+    sync(
+        &replica,
+        &target,
+        &mut sources(&[&primary.url, &replica_source.url]),
+    )
+    .await
+    .unwrap();
+
+    assert_synced(source.as_ref(), replica.0.as_ref(), &target);
+    assert!(!primary.node_requests().is_empty());
+}
