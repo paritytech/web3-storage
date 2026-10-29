@@ -7,17 +7,18 @@
 //! unused items here are expected.
 #![allow(dead_code)]
 
-use axum::extract::Query;
+use axum::extract::{Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
-use axum::Router;
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use base64::Engine;
+use provider_storage::{build_merkle_tree, ChunkTreeNode, StorageBackend};
 use sp_core::H256;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_primitives::mmr::MmrLeaf;
+use storage_primitives::{hash_leaf, mmr::MmrLeaf, Commitment, DEFAULT_CHUNK_SIZE};
 
 /// One canned answer from the mock primary: a status and a body. Tests serve
 /// bodies a real primary could not produce, so this is a raw string rather
@@ -235,5 +236,175 @@ pub async fn spawn_leaf_source(
     LeafSource {
         url: spawn_app(app).await,
         requests,
+    }
+}
+
+/// A bucket that committed one upload per entry of `chunk_counts`, in order.
+/// Upload `i` has `chunk_counts[i]` chunks: full-size ones with data of their
+/// own, then a short last one. Returns the bucket 1 backend and the commitment
+/// of its state.
+pub fn source_bucket(
+    chunk_counts: &[usize],
+) -> (Arc<dyn StorageBackend>, tempfile::TempDir, Commitment) {
+    let (storage, dir) = provider_storage::temp_rocksdb();
+    storage.init_bucket(1, u64::MAX).unwrap();
+    for (upload, &count) in chunk_counts.iter().enumerate() {
+        let mut leaves = Vec::new();
+        for chunk in 0..count {
+            let len = if chunk + 1 == count {
+                1000
+            } else {
+                DEFAULT_CHUNK_SIZE as usize
+            };
+            let data = vec![(upload * 16 + chunk) as u8 + 1; len];
+            let hash = hash_leaf(&data);
+            storage
+                .store_node(1, hash, ChunkTreeNode::Chunk(data))
+                .unwrap();
+            leaves.push(hash);
+        }
+        let root = build_merkle_tree(storage.as_ref(), 1, &leaves).unwrap();
+        storage.commit(1, vec![root]).unwrap();
+    }
+    let commitment = commitment_of(storage.as_ref());
+    (storage, dir, commitment)
+}
+
+/// The commitment of bucket 1's current state.
+pub fn commitment_of(storage: &dyn StorageBackend) -> Commitment {
+    let info = storage.get_bucket(1).unwrap();
+    Commitment {
+        mmr_root: info.mmr_root,
+        start_seq: info.start_seq,
+        leaf_count: info.leaf_count,
+    }
+}
+
+/// How a [`spawn_node_source`] source misbehaves.
+#[derive(Clone)]
+pub struct NodeSourceConfig {
+    /// Items one `/fetch_nodes` page processes before the rest are `next`.
+    pub max_items: usize,
+    /// Hashes the source answers as missing although it stores them.
+    pub hidden: HashSet<H256>,
+    /// Serve chunks whose data does not match their hash.
+    pub tamper: bool,
+    /// After this many `/fetch_nodes` requests, answer 500.
+    pub max_node_requests: usize,
+}
+
+impl Default for NodeSourceConfig {
+    fn default() -> Self {
+        Self {
+            max_items: usize::MAX,
+            hidden: HashSet::new(),
+            tamper: false,
+            max_node_requests: usize::MAX,
+        }
+    }
+}
+
+/// A source serving `/mmr_leaves` and `/fetch_nodes` from a real backend.
+pub struct NodeSource {
+    pub url: String,
+    /// The hashes of every `/fetch_nodes` request, in order.
+    pub node_requests: Arc<Mutex<Vec<Vec<H256>>>>,
+}
+
+impl NodeSource {
+    pub fn node_requests(&self) -> Vec<Vec<H256>> {
+        self.node_requests.lock().unwrap().clone()
+    }
+
+    pub fn requested(&self) -> HashSet<H256> {
+        self.node_requests().into_iter().flatten().collect()
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct FetchNodesBody {
+    hashes: Vec<H256>,
+}
+
+struct NodeSourceState {
+    storage: Arc<dyn StorageBackend>,
+    config: NodeSourceConfig,
+    node_requests: Arc<Mutex<Vec<Vec<H256>>>>,
+}
+
+pub async fn spawn_node_source(
+    storage: Arc<dyn StorageBackend>,
+    config: NodeSourceConfig,
+) -> NodeSource {
+    let node_requests = Arc::new(Mutex::new(Vec::new()));
+    let state = Arc::new(NodeSourceState {
+        storage,
+        config,
+        node_requests: Arc::clone(&node_requests),
+    });
+    let app = Router::new()
+        .route(
+            "/mmr_leaves",
+            get(
+                |State(state): State<Arc<NodeSourceState>>, Query(query): Query<LeavesQuery>| async move {
+                    match state.storage.get_leaves(
+                        query.bucket_id,
+                        query.from_seq,
+                        query.to_seq,
+                        1000,
+                        usize::MAX,
+                    ) {
+                        Ok(page) => render(&leaves_body(
+                            query.bucket_id,
+                            query.from_seq,
+                            page.next_seq,
+                            &page.leaves,
+                        )),
+                        Err(_) => render(&status(StatusCode::CONFLICT)),
+                    }
+                },
+            ),
+        )
+        .route(
+            "/fetch_nodes",
+            post(
+                |State(state): State<Arc<NodeSourceState>>, Json(request): Json<FetchNodesBody>| async move {
+                    let served = {
+                        let mut log = state.node_requests.lock().unwrap();
+                        log.push(request.hashes.clone());
+                        log.len() - 1
+                    };
+                    if served >= state.config.max_node_requests {
+                        return render(&status(StatusCode::INTERNAL_SERVER_ERROR));
+                    }
+                    let (mut nodes, mut missing, mut next) = (Vec::new(), Vec::new(), Vec::new());
+                    for hash in request.hashes {
+                        if nodes.len() + missing.len() >= state.config.max_items {
+                            next.push(hash);
+                            continue;
+                        }
+                        let stored = state.storage.get_node(&hash);
+                        match stored.filter(|_| !state.config.hidden.contains(&hash)) {
+                            None => missing.push(hash),
+                            Some(ChunkTreeNode::Chunk(data)) => {
+                                let data = if state.config.tamper { vec![0xFF] } else { data };
+                                nodes.push(serde_json::json!({ "hash": hash, "data": base64(&data) }));
+                            }
+                            Some(ChunkTreeNode::Internal { left, right }) => {
+                                nodes.push(serde_json::json!({ "hash": hash, "children": [left, right] }));
+                            }
+                        }
+                    }
+                    render(&body(
+                        serde_json::json!({ "nodes": nodes, "missing": missing, "next": next })
+                            .to_string(),
+                    ))
+                },
+            ),
+        )
+        .with_state(state);
+    NodeSource {
+        url: spawn_app(app).await,
+        node_requests,
     }
 }

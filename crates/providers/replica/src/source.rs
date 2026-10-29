@@ -263,6 +263,11 @@ impl SourceSet {
         self.urls.first().map(String::as_str)
     }
 
+    /// The sources that have not been dropped, in the order to try them.
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.urls.iter().map(String::as_str)
+    }
+
     /// Stop using `url` for the rest of the pass.
     pub fn drop_source(&mut self, url: &str) {
         self.urls.retain(|existing| existing != url);

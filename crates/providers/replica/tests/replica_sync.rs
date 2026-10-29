@@ -4,8 +4,9 @@
 
 mod common;
 
-use common::{hex_hash, peaks_body, spawn_primary};
+use common::{source_bucket, spawn_node_source, NodeSourceConfig};
 use provider_replica::coordinator::{BucketCommitments, ReplicaAgreementInfo};
+use provider_replica::target::SyncTarget;
 use provider_replica::{
     ChainClientError, Error, ReplicaSyncChainClient, ReplicaSyncCoordinator,
     ReplicaSyncCoordinatorConfig, SignedSyncRoots, SyncDuty, SyncResult, SyncRoots,
@@ -197,11 +198,23 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
     }
 }
 
+/// A target at position 0 (the snapshot) of `leaf_count` leaves from seq 0.
+fn snapshot_target(mmr_root: H256, leaf_count: u64) -> SyncTarget {
+    SyncTarget {
+        position: 0,
+        commitment: Commitment {
+            mmr_root,
+            start_seq: 0,
+            leaf_count,
+        },
+    }
+}
+
 fn mock_duty(bucket_id: BucketId) -> SyncDuty {
     SyncDuty {
         bucket_id,
-        target_mmr_root: H256::repeat_byte(0xAB),
-        target_leaf_count: 10,
+        target: snapshot_target(H256::repeat_byte(0xAB), 10),
+        max_bytes: 1024 * 1024,
         source_endpoints: vec![],
         sync_balance: 1_000,
         sync_price: 100,
@@ -238,8 +251,8 @@ async fn confirm_on_chain_attests_roots_with_signing_key() {
     let target = H256::repeat_byte(0xAB);
     let duty = SyncDuty {
         bucket_id: 42,
-        target_mmr_root: target,
-        target_leaf_count: 10,
+        target: snapshot_target(target, 10),
+        max_bytes: 1024 * 1024,
         source_endpoints: vec![],
         sync_balance: 1_000,
         sync_price: 100,
@@ -321,8 +334,8 @@ async fn confirm_on_chain_treats_an_earlier_confirmation_as_already_synced() {
 async fn confirm_on_chain_surfaces_submission_errors() {
     let duty = SyncDuty {
         bucket_id: 9,
-        target_mmr_root: H256::repeat_byte(0xEF),
-        target_leaf_count: 1,
+        target: snapshot_target(H256::repeat_byte(0xEF), 1),
+        max_bytes: 1024 * 1024,
         source_endpoints: vec![],
         sync_balance: 1_000,
         sync_price: 100,
@@ -357,8 +370,8 @@ async fn confirm_on_chain_surfaces_submission_errors() {
 async fn confirm_on_chain_refuses_without_signing_key() {
     let duty = SyncDuty {
         bucket_id: 7,
-        target_mmr_root: H256::repeat_byte(0xCD),
-        target_leaf_count: 1,
+        target: snapshot_target(H256::repeat_byte(0xCD), 1),
+        max_bytes: 1024 * 1024,
         source_endpoints: vec![],
         sync_balance: 1_000,
         sync_price: 100,
@@ -391,8 +404,8 @@ async fn confirm_on_chain_refuses_without_signing_key() {
 async fn test_insufficient_balance() {
     let duty = SyncDuty {
         bucket_id: 1,
-        target_mmr_root: H256::repeat_byte(0xAA),
-        target_leaf_count: 10,
+        target: snapshot_target(H256::repeat_byte(0xAA), 10),
+        max_bytes: 1024 * 1024,
         source_endpoints: vec![],
         sync_balance: 50,
         sync_price: 100,
@@ -422,8 +435,8 @@ async fn test_already_synced() {
 
     let duty = SyncDuty {
         bucket_id: 1,
-        target_mmr_root: mmr_root,
-        target_leaf_count: 1,
+        target: snapshot_target(mmr_root, 1),
+        max_bytes: 1024 * 1024,
         source_endpoints: vec![],
         sync_balance: 1000,
         sync_price: 100,
@@ -444,8 +457,8 @@ async fn test_already_synced() {
 async fn test_no_data_to_sync() {
     let duty = SyncDuty {
         bucket_id: 1,
-        target_mmr_root: H256::zero(),
-        target_leaf_count: 0,
+        target: snapshot_target(H256::zero(), 0),
+        max_bytes: 1024 * 1024,
         source_endpoints: vec![],
         sync_balance: 1000,
         sync_price: 100,
@@ -462,12 +475,111 @@ async fn test_no_data_to_sync() {
     assert!(matches!(result, SyncResult::NoDataToSync { .. }));
 }
 
+/// A duty for bucket 1 to the commitment `target`, served by `source`.
+fn duty_from(source: &str, target: SyncTarget, max_bytes: u64) -> SyncDuty {
+    SyncDuty {
+        bucket_id: 1,
+        target,
+        max_bytes,
+        source_endpoints: vec![source.to_string()],
+        sync_balance: 1000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
+    }
+}
+
+#[tokio::test]
+async fn a_fresh_replica_syncs_and_confirms_at_the_target_position() {
+    let (source, _source_dir, commitment) = source_bucket(&[2, 3]);
+    let node = spawn_node_source(source, NodeSourceConfig::default()).await;
+    let duty = duty_from(
+        &node.url,
+        SyncTarget {
+            position: 2,
+            commitment,
+        },
+        u64::MAX,
+    );
+
+    let mock = Arc::new(MockReplicaSyncChainClient::new());
+    *mock.confirm_result.lock().unwrap() = Ok(Some((2, 1000)));
+    // No local bucket: the sync creates it.
+    let (storage, _dir) = temp_rocksdb();
+    assert!(storage.get_bucket(1).is_none());
+    let coordinator = coordinator_with_signer(
+        ReplicaSyncCoordinatorConfig::default(),
+        Arc::clone(&storage),
+        mock.clone(),
+        Some(AliceSigner::new()),
+    );
+
+    let result = coordinator.sync_and_confirm(&duty).await;
+
+    assert!(
+        matches!(
+            result,
+            SyncResult::Success {
+                bucket_id: 1,
+                position_matched: 2,
+                payment: 1000,
+                ..
+            }
+        ),
+        "{result:?}"
+    );
+    let local = storage.get_bucket(1).unwrap();
+    assert_eq!(local.mmr_root, commitment.mmr_root);
+    assert_eq!(local.leaf_count, 2);
+    // The root is attested at the target's position and nowhere else.
+    let mut expected_roots = [None; 7];
+    expected_roots[2] = Some(commitment.mmr_root);
+    assert_eq!(mock.attestations.lock().unwrap()[0].roots, expected_roots);
+}
+
+#[tokio::test]
+async fn the_agreement_quota_limits_what_a_sync_stores() {
+    let (source, _source_dir, commitment) = source_bucket(&[3]);
+    let node = spawn_node_source(source, NodeSourceConfig::default()).await;
+    // The bucket needs more than 100 bytes.
+    let duty = duty_from(
+        &node.url,
+        SyncTarget {
+            position: 0,
+            commitment,
+        },
+        100,
+    );
+
+    let mock = Arc::new(MockReplicaSyncChainClient::new());
+    let (storage, _dir) = temp_rocksdb();
+    // A bucket created earlier without a quota gets the agreement's.
+    storage.init_bucket(1, u64::MAX).unwrap();
+    let coordinator = coordinator_with_signer(
+        ReplicaSyncCoordinatorConfig::default(),
+        Arc::clone(&storage),
+        mock.clone(),
+        Some(AliceSigner::new()),
+    );
+
+    let result = coordinator.sync_and_confirm(&duty).await;
+
+    match result {
+        SyncResult::VerificationFailed { reason, .. } => {
+            assert!(reason.contains("Quota exceeded"), "{reason}")
+        }
+        other => panic!("expected VerificationFailed, got {other:?}"),
+    }
+    assert_eq!(storage.get_bucket(1).unwrap().leaf_count, 0);
+    assert!(mock.confirmations.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn test_primary_unavailable() {
     let duty = SyncDuty {
         bucket_id: 1,
-        target_mmr_root: H256::repeat_byte(0xAA),
-        target_leaf_count: 10,
+        target: snapshot_target(H256::repeat_byte(0xAA), 10),
+        max_bytes: 1024 * 1024,
         source_endpoints: vec!["http://127.0.0.1:19999".to_string()],
         sync_balance: 1000,
         sync_price: 100,
@@ -482,39 +594,6 @@ async fn test_primary_unavailable() {
 
     let result = coordinator.sync_and_confirm(&duty).await;
     assert!(matches!(result, SyncResult::SourcesUnavailable { .. }));
-}
-
-#[tokio::test]
-async fn test_sync_from_source_succeeds_but_final_verification_fails() {
-    let bucket_id = 1;
-    let target_root = H256::repeat_byte(0xDD);
-    let primary_url = spawn_primary(peaks_body(&hex_hash(target_root), &[])).await;
-
-    let duty = SyncDuty {
-        bucket_id,
-        target_mmr_root: target_root,
-        target_leaf_count: 0,
-        source_endpoints: vec![primary_url],
-        sync_balance: 1000,
-        sync_price: 100,
-        min_sync_interval: 0,
-        last_sync: None,
-    };
-
-    let mock = MockReplicaSyncChainClient::new();
-    let config = ReplicaSyncCoordinatorConfig::default();
-    let (storage, _dir) = temp_rocksdb();
-    let coordinator = coordinator(config, storage, mock);
-
-    let result = coordinator.sync_and_confirm(&duty).await;
-    // The HTTP round trip with the primary succeeds (the peaks response's
-    // root matches the duty's target), but `sync_from_source` only fetches
-    // peaks/subtrees today - it never calls `Storage::commit` - so the local
-    // bucket's `mmr_root` stays zero and final verification fails.
-    assert!(
-        matches!(result, SyncResult::VerificationFailed { .. }),
-        "expected VerificationFailed, got {result:?}"
-    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -786,11 +865,39 @@ async fn test_duties_happy_path_returns_duty() {
 
     let duty = &duties[0];
     assert_eq!(duty.bucket_id, 42);
-    assert_eq!(duty.target_mmr_root, target_root);
-    assert_eq!(duty.target_leaf_count, 10);
+    assert_eq!(duty.target.commitment.mmr_root, target_root);
+    assert_eq!(duty.target.commitment.leaf_count, 10);
+    assert_eq!(duty.target.position, 0);
+    assert_eq!(duty.max_bytes, 1024 * 1024);
     assert_eq!(duty.source_endpoints, vec!["http://primary:3333"]);
     assert_eq!(duty.sync_balance, 1000);
     assert_eq!(duty.sync_price, 100);
+}
+
+#[tokio::test]
+async fn test_duties_target_the_historical_slot_that_stays_valid_longest() {
+    let commitment = |byte: u8| Commitment {
+        mmr_root: H256::repeat_byte(byte),
+        start_seq: 0,
+        leaf_count: 4,
+    };
+    let mut commitments = BucketCommitments {
+        snapshot: commitment(0xA1),
+        ..Default::default()
+    };
+    // Slot 4 (prime 47) is overwritten at block 94, slot 1 (prime 7) at 42.
+    commitments.historical_roots[1] = (5, commitment(0xB1));
+    commitments.historical_roots[4] = (1, commitment(0xB4));
+    let mock = mock_with_bucket_42_duty().with_snapshot(42, commitments);
+
+    let (storage, _dir) = temp_rocksdb();
+    let coordinator = coordinator(ReplicaSyncCoordinatorConfig::default(), storage, mock);
+
+    let duties = coordinator.get_active_replica_duties().await.unwrap();
+
+    assert_eq!(duties.len(), 1);
+    assert_eq!(duties[0].target.position, 5);
+    assert_eq!(duties[0].target.commitment, commitment(0xB4));
 }
 
 #[tokio::test]

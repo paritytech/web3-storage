@@ -11,8 +11,10 @@
 //! 4. Submits `confirm_replica_sync` transactions to receive payment
 //! 5. Handles historical roots matching for late syncs
 
+use crate::source::SourceSet;
 use crate::sync::ReplicaSync;
 use crate::sync_roots::{SignedSyncRoots, SyncRootsSigner};
+use crate::target::{select_target, SyncTarget};
 use crate::Error;
 use provider_events::{BlockEvent, BlockEventRx};
 use provider_storage::StorageBackend;
@@ -57,10 +59,11 @@ impl Default for ReplicaSyncCoordinatorConfig {
 pub struct SyncDuty {
     /// Bucket needing sync.
     pub bucket_id: BucketId,
-    /// Target MMR root from the latest checkpoint.
-    pub target_mmr_root: H256,
-    /// Target leaf count.
-    pub target_leaf_count: u64,
+    /// The commitment to sync to and the position `confirm_replica_sync`
+    /// finds it at.
+    pub target: SyncTarget,
+    /// Bytes the agreement allows the replica to store for the bucket.
+    pub max_bytes: u64,
     /// Provider endpoints to sync from, in try order: primaries first, then
     /// the bucket's other replicas (see the `replica_sync` module docs for
     /// why replicas are a source at all).
@@ -530,7 +533,7 @@ impl ReplicaSyncCoordinator {
                     tracing::info!(
                         "Starting sync for bucket {} (target root: {:#x})",
                         duty.bucket_id,
-                        duty.target_mmr_root
+                        duty.target.commitment.mmr_root
                     );
 
                     let result = self.sync_and_confirm(&duty).await;
@@ -585,18 +588,17 @@ impl ReplicaSyncCoordinator {
                 }
             }
 
-            let snapshot = self
+            let commitments = self
                 .chain_client
                 .fetch_bucket_commitments(agreement.bucket_id)
-                .await?
-                .snapshot;
-
-            if snapshot.mmr_root == H256::zero() {
+                .await?;
+            let last_sync_root = agreement.last_sync.map(|(root, _)| root);
+            let Some(target) = select_target(&commitments, last_sync_root) else {
                 continue;
-            }
+            };
 
             if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id) {
-                if bucket.mmr_root == snapshot.mmr_root {
+                if bucket.mmr_root == target.commitment.mmr_root {
                     continue;
                 }
             }
@@ -605,8 +607,8 @@ impl ReplicaSyncCoordinator {
 
             duties.push(SyncDuty {
                 bucket_id: agreement.bucket_id,
-                target_mmr_root: snapshot.mmr_root,
-                target_leaf_count: snapshot.leaf_count,
+                target,
+                max_bytes: agreement.max_bytes,
                 source_endpoints,
                 sync_balance: agreement.sync_balance,
                 sync_price: agreement.sync_price,
@@ -638,20 +640,35 @@ impl ReplicaSyncCoordinator {
         Ok(sources)
     }
 
-    /// Get sync duty for a specific bucket.
+    /// Get sync duty for a specific bucket, or `None` if this provider has no
+    /// replica agreement for it or the chain has no commitment to sync to.
     async fn get_sync_duty(&self, bucket_id: BucketId) -> Result<Option<SyncDuty>, Error> {
-        let snapshot = self
+        let agreements = self
+            .chain_client
+            .fetch_replica_agreements(&self.provider_id)
+            .await?;
+        let Some(agreement) = agreements
+            .into_iter()
+            .find(|agreement| agreement.bucket_id == bucket_id)
+        else {
+            return Ok(None);
+        };
+
+        let commitments = self
             .chain_client
             .fetch_bucket_commitments(bucket_id)
-            .await?
-            .snapshot;
+            .await?;
+        let last_sync_root = agreement.last_sync.map(|(root, _)| root);
+        let Some(target) = select_target(&commitments, last_sync_root) else {
+            return Ok(None);
+        };
 
         let source_endpoints = self.fetch_source_endpoints(bucket_id).await?;
 
         Ok(Some(SyncDuty {
             bucket_id,
-            target_mmr_root: snapshot.mmr_root,
-            target_leaf_count: snapshot.leaf_count,
+            target,
+            max_bytes: agreement.max_bytes,
             source_endpoints,
             sync_balance: u128::MAX,
             sync_price: 0,
@@ -662,12 +679,14 @@ impl ReplicaSyncCoordinator {
 
     /// Perform sync and submit confirmation.
     pub async fn sync_and_confirm(&self, duty: &SyncDuty) -> SyncResult {
+        let target_root = duty.target.commitment.mmr_root;
+
         // Check if we already have this root
         if let Some(bucket) = self.storage.get_bucket(duty.bucket_id) {
-            if bucket.mmr_root == duty.target_mmr_root {
+            if bucket.mmr_root == target_root {
                 return SyncResult::AlreadySynced {
                     bucket_id: duty.bucket_id,
-                    mmr_root: duty.target_mmr_root,
+                    mmr_root: target_root,
                 };
             }
         }
@@ -682,77 +701,48 @@ impl ReplicaSyncCoordinator {
         }
 
         // No data to sync if target is zero
-        if duty.target_mmr_root == H256::zero() {
+        if target_root == H256::zero() {
             return SyncResult::NoDataToSync {
                 bucket_id: duty.bucket_id,
             };
         }
 
-        // Try syncing from each source
-        let mut tried_endpoints = Vec::new();
-        let mut sync_success = false;
-
-        for endpoint in &duty.source_endpoints {
-            tried_endpoints.push(endpoint.clone());
-
-            match self.sync_from_source(duty, endpoint).await {
-                Ok(synced_root) => {
-                    if synced_root == duty.target_mmr_root {
-                        sync_success = true;
-                        tracing::info!(
-                            "Successfully synced bucket {} from {}: root = {:#x}",
-                            duty.bucket_id,
-                            endpoint,
-                            synced_root
-                        );
-                        break;
-                    } else {
-                        tracing::warn!(
-                            "Sync mismatch for bucket {} from {}: expected {:#x}, got {:#x}",
-                            duty.bucket_id,
-                            endpoint,
-                            duty.target_mmr_root,
-                            synced_root
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to sync bucket {} from {}: {}",
-                        duty.bucket_id,
-                        endpoint,
-                        e
-                    );
-                }
-            }
-        }
-
-        if !sync_success {
-            return SyncResult::SourcesUnavailable {
-                bucket_id: duty.bucket_id,
-                tried: tried_endpoints,
-            };
-        }
-
-        // Verify final state
-        let local_bucket = match self.storage.get_bucket(duty.bucket_id) {
-            Some(b) => b,
-            None => {
-                return SyncResult::VerificationFailed {
-                    bucket_id: duty.bucket_id,
-                    reason: "Bucket not found after sync".to_string(),
-                };
-            }
-        };
-
-        if local_bucket.mmr_root != duty.target_mmr_root {
+        // The agreement's quota limits what the replica stores. `init_bucket`
+        // keeps the quota of a bucket that exists, so set it afterwards.
+        if let Err(e) = self
+            .storage
+            .init_bucket(duty.bucket_id, duty.max_bytes)
+            .and_then(|()| self.storage.set_max_bytes(duty.bucket_id, duty.max_bytes))
+        {
             return SyncResult::VerificationFailed {
                 bucket_id: duty.bucket_id,
-                reason: format!(
-                    "Root mismatch: expected {:#x}, got {:#x}",
-                    duty.target_mmr_root, local_bucket.mmr_root
-                ),
+                reason: format!("cannot prepare the bucket: {e}"),
             };
+        }
+
+        let mut sources = SourceSet::new(duty.source_endpoints.clone());
+        match self
+            .replica_sync
+            .sync_to_target(duty.bucket_id, &duty.target.commitment, &mut sources)
+            .await
+        {
+            Ok(()) => tracing::info!(
+                "Synced bucket {} to root {:#x}",
+                duty.bucket_id,
+                target_root
+            ),
+            Err(Error::NoSourceLeft { .. }) => {
+                return SyncResult::SourcesUnavailable {
+                    bucket_id: duty.bucket_id,
+                    tried: duty.source_endpoints.clone(),
+                };
+            }
+            Err(e) => {
+                return SyncResult::VerificationFailed {
+                    bucket_id: duty.bucket_id,
+                    reason: e.to_string(),
+                };
+            }
         }
 
         // Submit on-chain confirmation if auto_confirm is enabled
@@ -761,8 +751,8 @@ impl ReplicaSyncCoordinator {
         } else {
             SyncResult::Success {
                 bucket_id: duty.bucket_id,
-                mmr_root: duty.target_mmr_root,
-                position_matched: 0,
+                mmr_root: target_root,
+                position_matched: duty.target.position,
                 payment: 0,
             }
         }
@@ -779,7 +769,8 @@ impl ReplicaSyncCoordinator {
                 error: "no signing key configured; cannot attest sync roots".to_string(),
             };
         };
-        let attestation = match SignedSyncRoots::sign(signer, 0, duty.target_mmr_root) {
+        let target_root = duty.target.commitment.mmr_root;
+        let attestation = match SignedSyncRoots::sign(signer, duty.target.position, target_root) {
             Ok(attestation) => attestation,
             Err(e) => {
                 return SyncResult::SubmissionFailed {
@@ -795,25 +786,18 @@ impl ReplicaSyncCoordinator {
         {
             Ok(Some((position, payment))) => SyncResult::Success {
                 bucket_id: duty.bucket_id,
-                mmr_root: duty.target_mmr_root,
+                mmr_root: target_root,
                 position_matched: position,
                 payment,
             },
             Ok(None) => SyncResult::AlreadySynced {
                 bucket_id: duty.bucket_id,
-                mmr_root: duty.target_mmr_root,
+                mmr_root: target_root,
             },
             Err(e) => SyncResult::SubmissionFailed {
                 bucket_id: duty.bucket_id,
                 error: e.to_string(),
             },
         }
-    }
-
-    /// Sync data from a source provider using top-down traversal.
-    async fn sync_from_source(&self, duty: &SyncDuty, source_url: &str) -> Result<H256, Error> {
-        self.replica_sync
-            .sync_from_source(duty.bucket_id, source_url)
-            .await
     }
 }

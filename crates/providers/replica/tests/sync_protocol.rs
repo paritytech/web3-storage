@@ -1,420 +1,317 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! HTTP-level tests for the replica sync protocol: what `ReplicaSync` does
-//! with the answers a primary provider gives it, including the failing and
-//! the malformed ones. A primary is another provider, not a trusted peer, so
-//! every one of its answers is an input this code must handle.
-//!
-//! The mock primary answers what this code asks for, not what a real one
-//! returns - see the two defect tests below. These cover the client's
-//! handling, not the protocol working end to end.
+//! `ReplicaSync` against mock sources serving real buckets: what a replica
+//! copies, in what order, and how it reacts to sources that fail or lie.
 
 mod common;
 
-use axum::http::StatusCode;
-use codec::Encode;
-use common::{
-    base64, body, chunk_body, dead_address, hex_hash, internal_body, node_body, peaks_body,
-    spawn_primary, spawn_primary_with_nodes, status, Reply,
-};
+use common::*;
+use provider_replica::source::SourceSet;
 use provider_replica::{Error, ReplicaSync};
-use provider_storage::{temp_rocksdb, ChunkTreeNode, StorageBackend};
+use provider_storage::{ChunkTreeNode, StorageBackend};
 use sp_core::H256;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use storage_primitives::{hash_children, hash_leaf, BucketId, MmrLeaf, LEAF_VERSION};
-use tempfile::TempDir;
+use storage_primitives::Commitment;
 
-const BUCKET: BucketId = 1;
+const BUCKET: u64 = 1;
 
-/// Asserts the error matches `$pattern`, printing it when it does not.
-macro_rules! assert_err {
-    ($result:expr, $pattern:pat $(if $guard:expr)?) => {
-        let err = $result.unwrap_err();
-        assert!(matches!(err, $pattern $(if $guard)?), "got {err}");
-    };
+type Replica = (Arc<dyn StorageBackend>, tempfile::TempDir);
+
+/// A replica with an empty bucket of `max_bytes`.
+fn replica(max_bytes: u64) -> Replica {
+    let (storage, dir) = provider_storage::temp_rocksdb();
+    storage.init_bucket(BUCKET, max_bytes).unwrap();
+    (storage, dir)
 }
 
-struct Fixture {
-    sync: ReplicaSync,
-    storage: Arc<dyn StorageBackend>,
-    /// Dropping this takes the database with it.
-    _dir: TempDir,
+async fn sync(
+    replica: &Replica,
+    target: &Commitment,
+    sources: &mut SourceSet,
+) -> Result<(), Error> {
+    ReplicaSync::new(Arc::clone(&replica.0))
+        .sync_to_target(BUCKET, target, sources)
+        .await
 }
 
-fn fixture() -> Fixture {
-    let (storage, dir) = temp_rocksdb();
-    Fixture {
-        sync: ReplicaSync::new(Arc::clone(&storage)),
-        storage,
-        _dir: dir,
+fn sources(urls: &[&str]) -> SourceSet {
+    SourceSet::new(urls.iter().map(|url| url.to_string()).collect())
+}
+
+/// Every node under the data roots of `storage`'s leaves, with its depth below
+/// its data root.
+fn tree_depths(storage: &dyn StorageBackend) -> HashMap<H256, usize> {
+    let info = storage.get_bucket(BUCKET).unwrap();
+    let leaves = storage
+        .get_leaves(
+            BUCKET,
+            info.start_seq,
+            info.start_seq + info.leaf_count,
+            usize::MAX,
+            usize::MAX,
+        )
+        .unwrap()
+        .leaves;
+    let mut depths = HashMap::new();
+    let mut pending: Vec<(H256, usize)> = leaves.iter().map(|leaf| (leaf.data_root, 0)).collect();
+    while let Some((hash, depth)) = pending.pop() {
+        depths.insert(hash, depth);
+        if let Some(ChunkTreeNode::Internal { left, right }) = storage.get_node(&hash) {
+            pending.push((left, depth + 1));
+            pending.push((right, depth + 1));
+        }
+    }
+    depths
+}
+
+fn assert_synced(source: &dyn StorageBackend, replica: &dyn StorageBackend, target: &Commitment) {
+    let info = replica.get_bucket(BUCKET).unwrap();
+    assert_eq!(
+        (info.mmr_root, info.start_seq, info.leaf_count),
+        (target.mmr_root, target.start_seq, target.leaf_count)
+    );
+    for hash in tree_depths(source).into_keys() {
+        assert_eq!(replica.get_node(&hash), source.get_node(&hash));
     }
 }
 
-/// A root no local bucket holds, so a sync never short-circuits.
-fn unheld_root() -> H256 {
-    H256::repeat_byte(0xAB)
-}
-
-/// Sync against a primary whose `/mmr_peaks` answers `peaks`.
-async fn sync_serving_peaks(peaks: Reply) -> Result<H256, Error> {
-    let f = fixture();
-    let url = spawn_primary(peaks).await;
-    f.sync.sync_from_source(BUCKET, &url).await
-}
-
-/// Sync against a primary offering one peak, whose `/node` answers `reply`.
-async fn sync_serving_node(peak: H256, reply: Reply) -> Result<H256, Error> {
-    let f = fixture();
-    let nodes = HashMap::from([(hex_hash(peak), reply)]);
-    let url = spawn_primary_with_nodes(
-        peaks_body(&hex_hash(unheld_root()), &[hex_hash(peak)]),
-        nodes,
-    )
-    .await;
-    f.sync.sync_from_source(BUCKET, &url).await
-}
-
 #[tokio::test]
-async fn unreachable_primary_is_a_transport_error() {
-    let f = fixture();
-    let url = dead_address().await;
+async fn a_fresh_replica_copies_the_bucket_and_installs_the_target() {
+    let (source, _dir, target) = source_bucket(&[3, 1, 5]);
+    let node = spawn_node_source(Arc::clone(&source), NodeSourceConfig::default()).await;
+    let replica = replica(u64::MAX);
 
-    assert_err!(
-        f.sync.sync_from_source(BUCKET, &url).await,
-        Error::SourceRequest {
-            what: "mmr peaks",
-            ..
-        }
-    );
-}
-
-#[tokio::test]
-async fn peaks_error_status_is_reported_with_the_status_code() {
-    assert_err!(
-        sync_serving_peaks(status(StatusCode::SERVICE_UNAVAILABLE)).await,
-        Error::SourceUnavailable {
-            what: "mmr peaks",
-            status: 503
-        }
-    );
-}
-
-#[tokio::test]
-async fn malformed_peaks_body_is_a_decode_error() {
-    assert_err!(
-        sync_serving_peaks(body("not json at all")).await,
-        Error::Decode {
-            what: "mmr peaks response",
-            ..
-        }
-    );
-}
-
-#[tokio::test]
-async fn non_hex_mmr_root_is_a_decode_error() {
-    assert_err!(
-        sync_serving_peaks(peaks_body("0xnothex", &[])).await,
-        Error::Decode {
-            what: "mmr_root",
-            ..
-        }
-    );
-}
-
-#[tokio::test]
-async fn non_hex_peak_is_a_decode_error() {
-    assert_err!(
-        sync_serving_peaks(peaks_body(
-            &hex_hash(unheld_root()),
-            &["0xnothex".to_string()]
-        ))
-        .await,
-        Error::Decode {
-            what: "peak hash",
-            ..
-        }
-    );
-}
-
-#[tokio::test]
-async fn node_error_status_is_reported_with_the_status_code() {
-    assert_err!(
-        sync_serving_node(
-            H256::repeat_byte(0x11),
-            status(StatusCode::INTERNAL_SERVER_ERROR)
-        )
-        .await,
-        Error::SourceUnavailable {
-            what: "node",
-            status: 500
-        }
-    );
-}
-
-#[tokio::test]
-async fn malformed_node_body_is_a_decode_error() {
-    assert_err!(
-        sync_serving_node(H256::repeat_byte(0x11), body("{")).await,
-        Error::Decode {
-            what: "node response",
-            ..
-        }
-    );
-}
-
-#[tokio::test]
-async fn non_base64_node_data_is_a_decode_error() {
-    let peak = H256::repeat_byte(0x11);
-    assert_err!(
-        sync_serving_node(
-            peak,
-            node_body(&hex_hash(peak), Some("not base64 !!"), None)
-        )
-        .await,
-        Error::Decode {
-            what: "node data",
-            ..
-        }
-    );
-}
-
-/// An old primary sends an internal node's `data` next to its `children`;
-/// a node has exactly one of the two.
-#[tokio::test]
-async fn a_node_with_data_and_children_is_rejected() {
-    let peak = H256::repeat_byte(0x11);
-    let reply = node_body(
-        &hex_hash(peak),
-        Some(&base64(&[0u8; 64])),
-        Some(vec![
-            hex_hash(H256::repeat_byte(0x22)),
-            hex_hash(H256::repeat_byte(0x33)),
-        ]),
-    );
-    assert_err!(
-        sync_serving_node(peak, reply).await,
-        Error::Decode { what: "node", .. }
-    );
-}
-
-#[tokio::test]
-async fn a_node_with_neither_data_nor_children_is_rejected() {
-    let peak = H256::repeat_byte(0x11);
-    assert_err!(
-        sync_serving_node(peak, node_body(&hex_hash(peak), None, None)).await,
-        Error::Decode { what: "node", .. }
-    );
-}
-
-#[tokio::test]
-async fn child_hash_of_wrong_length_is_a_decode_error() {
-    let peak = H256::repeat_byte(0x11);
-    let reply = node_body(
-        &hex_hash(peak),
-        None,
-        Some(vec![format!("0x{}", "ab".repeat(31))]),
-    );
-    assert_err!(
-        sync_serving_node(peak, reply).await,
-        Error::Decode {
-            what: "child hash",
-            ..
-        }
-    );
-}
-
-#[tokio::test]
-async fn non_hex_child_hash_is_a_decode_error() {
-    let peak = H256::repeat_byte(0x11);
-    let reply = node_body(&hex_hash(peak), None, Some(vec!["0xnothex".to_string()]));
-    assert_err!(
-        sync_serving_node(peak, reply).await,
-        Error::Decode {
-            what: "child hash",
-            ..
-        }
-    );
-}
-
-#[tokio::test]
-async fn a_node_whose_hash_does_not_match_its_data_is_rejected() {
-    let claimed = H256::repeat_byte(0x11);
-    let reply = chunk_body(claimed, b"payload hashing to something else");
-    assert_err!(
-        sync_serving_node(claimed, reply).await,
-        Error::NodeHashMismatch { expected, actual }
-            if expected == claimed && actual == hash_leaf(b"payload hashing to something else")
-    );
-}
-
-#[tokio::test]
-async fn an_internal_node_with_the_wrong_hash_is_rejected_before_its_children_are_stored() {
-    let left_data = b"left-chunk".to_vec();
-    let left = hash_leaf(&left_data);
-    let right_data = b"right-chunk".to_vec();
-    let right = hash_leaf(&right_data);
-    // The primary serves a well-formed internal node under a hash that is not
-    // the hash of its children.
-    let requested = H256::repeat_byte(0x11);
-    assert_ne!(requested, hash_children(left, right));
-
-    let nodes = HashMap::from([
-        (hex_hash(requested), internal_body(requested, left, right)),
-        (hex_hash(left), chunk_body(left, &left_data)),
-        (hex_hash(right), chunk_body(right, &right_data)),
-    ]);
-    let f = fixture();
-    let url = spawn_primary_with_nodes(
-        peaks_body(&hex_hash(unheld_root()), &[hex_hash(requested)]),
-        nodes,
-    )
-    .await;
-
-    assert_err!(
-        f.sync.sync_from_source(BUCKET, &url).await,
-        Error::NodeHashMismatch { expected, actual }
-            if expected == requested && actual == hash_children(left, right)
-    );
-    assert_eq!(
-        f.storage.get_node(&left),
-        None,
-        "children must not be stored"
-    );
-    assert_eq!(
-        f.storage.get_node(&right),
-        None,
-        "children must not be stored"
-    );
-}
-
-/// KNOWN DEFECT: `/mmr_peaks` answers with MMR hashes - the provider builds
-/// them as `hash_leaf(MmrLeaf.encode())` plus internal MMR hashes that are
-/// never persisted - while `/node` is keyed by chunk-data hash. So every sync
-/// of a non-empty bucket ends at this 404, whatever the tree shape. Described
-/// in #392 (closed as not planned), fixed by the rework in #65, caught by the
-/// end-to-end test in #420.
-#[tokio::test]
-async fn peak_hashes_are_not_node_keys_so_every_real_sync_404s() {
-    // An MMR peak: the hash of a leaf record, not of any stored chunk, so the
-    // mock has no `/node` entry for it - exactly as a real primary would not.
-    let peak = hash_leaf(
-        &MmrLeaf {
-            leaf_version: LEAF_VERSION,
-            data_root: hash_leaf(b"chunk"),
-            data_size: 5,
-            total_size: 5,
-        }
-        .encode(),
-    );
-    let f = fixture();
-    let url = spawn_primary(peaks_body(&hex_hash(unheld_root()), &[hex_hash(peak)])).await;
-
-    assert_err!(
-        f.sync.sync_from_source(BUCKET, &url).await,
-        Error::SourceUnavailable {
-            what: "node",
-            status: 404
-        }
-    );
-}
-
-#[tokio::test]
-async fn an_internal_peak_is_stored_after_the_children_beneath_it() {
-    let left_data = b"left-chunk".to_vec();
-    let left = hash_leaf(&left_data);
-    let right_data = b"right-chunk".to_vec();
-    let right = hash_leaf(&right_data);
-    // An internal node is identified by its children; a primary serves them
-    // and no data.
-    let parent = hash_children(left, right);
-
-    let nodes = HashMap::from([
-        (hex_hash(parent), internal_body(parent, left, right)),
-        (hex_hash(left), chunk_body(left, &left_data)),
-        (hex_hash(right), chunk_body(right, &right_data)),
-    ]);
-    let f = fixture();
-    f.storage.init_bucket(BUCKET, u64::MAX).unwrap();
-    let target = unheld_root();
-    let url =
-        spawn_primary_with_nodes(peaks_body(&hex_hash(target), &[hex_hash(parent)]), nodes).await;
-
-    assert_eq!(f.sync.sync_from_source(BUCKET, &url).await.unwrap(), target);
-    assert_eq!(
-        f.storage.get_node(&parent),
-        Some(ChunkTreeNode::Internal { left, right }),
-        "the parent must be stored once its children are present"
-    );
-    assert_eq!(
-        f.storage.get_node(&left),
-        Some(ChunkTreeNode::Chunk(left_data))
-    );
-    assert_eq!(
-        f.storage.get_node(&right),
-        Some(ChunkTreeNode::Chunk(right_data))
-    );
-}
-
-#[tokio::test]
-async fn a_root_we_already_hold_returns_without_fetching_any_node() {
-    let f = fixture();
-    let data = b"already stored".to_vec();
-    let leaf = hash_leaf(&data);
-    f.storage.init_bucket(BUCKET, u64::MAX).unwrap();
-    f.storage
-        .store_node(BUCKET, leaf, ChunkTreeNode::Chunk(data))
-        .unwrap();
-    let local_root = f.storage.commit(BUCKET, vec![leaf]).unwrap().mmr_root;
-
-    // Answering the leaf with an error proves `/node` is never requested.
-    let nodes = HashMap::from([(hex_hash(leaf), status(StatusCode::INTERNAL_SERVER_ERROR))]);
-    let url =
-        spawn_primary_with_nodes(peaks_body(&hex_hash(local_root), &[hex_hash(leaf)]), nodes).await;
-
-    assert_eq!(
-        f.sync.sync_from_source(BUCKET, &url).await.unwrap(),
-        local_root
-    );
-}
-
-#[tokio::test]
-async fn a_node_we_already_hold_is_not_refetched() {
-    let f = fixture();
-    let data = b"cached payload".to_vec();
-    let leaf = hash_leaf(&data);
-    f.storage.init_bucket(BUCKET, u64::MAX).unwrap();
-    f.storage
-        .store_node(BUCKET, leaf, ChunkTreeNode::Chunk(data))
+    sync(&replica, &target, &mut sources(&[&node.url]))
+        .await
         .unwrap();
 
-    let nodes = HashMap::from([(hex_hash(leaf), status(StatusCode::INTERNAL_SERVER_ERROR))]);
-    let target = unheld_root();
-    let url =
-        spawn_primary_with_nodes(peaks_body(&hex_hash(target), &[hex_hash(leaf)]), nodes).await;
-
-    assert_eq!(f.sync.sync_from_source(BUCKET, &url).await.unwrap(), target);
+    assert_synced(source.as_ref(), replica.0.as_ref(), &target);
+    let leaf = source
+        .get_leaves(BUCKET, 0, 3, usize::MAX, usize::MAX)
+        .unwrap()
+        .leaves[2]
+        .data_root;
+    assert_eq!(replica.0.collect_chunks(leaf), source.collect_chunks(leaf));
 }
 
-/// Covers `fetch_subtree`'s fetch-decode-store path. The mock serves a peak
-/// hash that is also a key in the node store, which a real primary cannot do
-/// - see `peak_hashes_are_not_node_keys_so_every_real_sync_404s` and #392.
 #[tokio::test]
-async fn a_peak_naming_a_stored_node_is_fetched_and_stored() {
-    let f = fixture();
-    let data = b"leaf payload".to_vec();
-    let leaf = hash_leaf(&data);
-    let target = unheld_root();
+async fn data_deleted_from_the_target_is_not_fetched() {
+    let (source, _dir, _) = source_bucket(&[2, 2, 2]);
+    let deleted_root = source
+        .get_leaves(BUCKET, 0, 1, usize::MAX, usize::MAX)
+        .unwrap()
+        .leaves[0]
+        .data_root;
+    source.delete_before(BUCKET, 1).unwrap();
+    let target = commitment_of(source.as_ref());
+    assert_eq!(target.start_seq, 1);
+    let node = spawn_node_source(Arc::clone(&source), NodeSourceConfig::default()).await;
+    let replica = replica(u64::MAX);
 
-    let nodes = HashMap::from([(hex_hash(leaf), chunk_body(leaf, &data))]);
-    let url =
-        spawn_primary_with_nodes(peaks_body(&hex_hash(target), &[hex_hash(leaf)]), nodes).await;
+    sync(&replica, &target, &mut sources(&[&node.url]))
+        .await
+        .unwrap();
 
-    // `sync_from_source` reports the root the primary claims; it never
-    // recomputes one, which is why the coordinator verifies afterwards.
-    assert_eq!(f.sync.sync_from_source(BUCKET, &url).await.unwrap(), target);
-    assert_eq!(
-        f.storage.get_node(&leaf),
-        Some(ChunkTreeNode::Chunk(b"leaf payload".to_vec()))
+    assert_eq!(replica.0.get_bucket(BUCKET).unwrap().start_seq, 1);
+    assert!(!node.requested().contains(&deleted_root));
+    assert!(replica.0.get_node(&deleted_root).is_none());
+}
+
+#[tokio::test]
+async fn each_request_holds_one_level_and_the_levels_go_down_the_tree() {
+    let (source, _dir, target) = source_bucket(&[8]);
+    let depths = tree_depths(source.as_ref());
+    let node = spawn_node_source(Arc::clone(&source), NodeSourceConfig::default()).await;
+    let replica = replica(u64::MAX);
+
+    sync(&replica, &target, &mut sources(&[&node.url]))
+        .await
+        .unwrap();
+
+    let levels: Vec<HashSet<usize>> = node
+        .node_requests()
+        .iter()
+        .map(|hashes| hashes.iter().map(|hash| depths[hash]).collect())
+        .collect();
+    let expected: Vec<HashSet<usize>> = (0..4).map(|depth| HashSet::from([depth])).collect();
+    assert_eq!(levels, expected);
+}
+
+#[tokio::test]
+async fn an_interrupted_sync_resumes_without_fetching_stored_nodes() {
+    let (source, _dir, target) = source_bucket(&[4, 4, 4]);
+    let replica = replica(u64::MAX);
+
+    // Pages of three nodes, and the source fails after six requests: part of
+    // the trees is stored.
+    let flaky = spawn_node_source(
+        Arc::clone(&source),
+        NodeSourceConfig {
+            max_items: 3,
+            max_node_requests: 6,
+            ..Default::default()
+        },
+    )
+    .await;
+    let err = sync(&replica, &target, &mut sources(&[&flaky.url]))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NoSourceLeft { .. }), "{err:?}");
+    assert!(replica.0.get_bucket(BUCKET).unwrap().leaf_count == 0);
+
+    let stored: HashSet<H256> = tree_depths(source.as_ref())
+        .into_keys()
+        .filter(|hash| replica.0.get_node(hash).is_some())
+        .collect();
+    assert!(!stored.is_empty(), "the interrupted sync stored nothing");
+
+    let steady = spawn_node_source(Arc::clone(&source), NodeSourceConfig::default()).await;
+    sync(&replica, &target, &mut sources(&[&steady.url]))
+        .await
+        .unwrap();
+
+    assert_synced(source.as_ref(), replica.0.as_ref(), &target);
+    assert!(
+        steady.requested().is_disjoint(&stored),
+        "stored nodes were requested again"
     );
+}
+
+#[tokio::test]
+async fn a_source_serving_wrong_data_is_dropped_for_the_next_one() {
+    let (source, _dir, target) = source_bucket(&[3, 3]);
+    let liar = spawn_node_source(
+        Arc::clone(&source),
+        NodeSourceConfig {
+            tamper: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let honest = spawn_node_source(Arc::clone(&source), NodeSourceConfig::default()).await;
+    let replica = replica(u64::MAX);
+    let mut set = sources(&[&liar.url, &honest.url]);
+
+    sync(&replica, &target, &mut set).await.unwrap();
+
+    assert_synced(source.as_ref(), replica.0.as_ref(), &target);
+    assert_eq!(set.current(), Some(honest.url.as_str()));
+    // The liar served the internal levels and was dropped at the chunks.
+    assert!(!liar.node_requests().is_empty());
+}
+
+#[tokio::test]
+async fn a_hash_missing_from_one_source_is_fetched_from_the_next() {
+    let (source, _dir, target) = source_bucket(&[4]);
+    let depths = tree_depths(source.as_ref());
+    let hidden = *depths.iter().find(|(_, depth)| **depth == 2).unwrap().0;
+    let partial = spawn_node_source(
+        Arc::clone(&source),
+        NodeSourceConfig {
+            hidden: HashSet::from([hidden]),
+            ..Default::default()
+        },
+    )
+    .await;
+    let complete = spawn_node_source(Arc::clone(&source), NodeSourceConfig::default()).await;
+    let replica = replica(u64::MAX);
+
+    sync(
+        &replica,
+        &target,
+        &mut sources(&[&partial.url, &complete.url]),
+    )
+    .await
+    .unwrap();
+
+    assert_synced(source.as_ref(), replica.0.as_ref(), &target);
+    // Only the hidden hash needed the second source.
+    assert_eq!(complete.requested(), HashSet::from([hidden]));
+}
+
+#[tokio::test]
+async fn a_hash_missing_from_every_source_fails_the_sync() {
+    let (source, _dir, target) = source_bucket(&[4]);
+    let hidden = *tree_depths(source.as_ref())
+        .iter()
+        .find(|(_, depth)| **depth == 2)
+        .unwrap()
+        .0;
+    let config = NodeSourceConfig {
+        hidden: HashSet::from([hidden]),
+        ..Default::default()
+    };
+    let (a, b) = (
+        spawn_node_source(Arc::clone(&source), config.clone()).await,
+        spawn_node_source(Arc::clone(&source), config).await,
+    );
+    let replica = replica(u64::MAX);
+
+    let err = sync(&replica, &target, &mut sources(&[&a.url, &b.url]))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::NoSourceLeft { .. }), "{err:?}");
+    assert_eq!(replica.0.get_bucket(BUCKET).unwrap().leaf_count, 0);
+}
+
+#[tokio::test]
+async fn hashes_a_source_did_not_process_are_requested_from_it_again() {
+    let (source, _dir, target) = source_bucket(&[4, 4]);
+    let limited = spawn_node_source(
+        Arc::clone(&source),
+        NodeSourceConfig {
+            max_items: 2,
+            ..Default::default()
+        },
+    )
+    .await;
+    let spare = spawn_node_source(Arc::clone(&source), NodeSourceConfig::default()).await;
+    let replica = replica(u64::MAX);
+
+    sync(&replica, &target, &mut sources(&[&limited.url, &spare.url]))
+        .await
+        .unwrap();
+
+    assert_synced(source.as_ref(), replica.0.as_ref(), &target);
+    assert!(limited.node_requests().len() > 2);
+    assert!(spare.node_requests().is_empty());
+}
+
+#[tokio::test]
+async fn a_source_cannot_choose_the_target() {
+    let (other, _dir, _) = source_bucket(&[2, 2]);
+    let (_, _chain_dir, chain_target) = source_bucket(&[3]);
+    let node = spawn_node_source(Arc::clone(&other), NodeSourceConfig::default()).await;
+    let replica = replica(u64::MAX);
+
+    let err = sync(&replica, &chain_target, &mut sources(&[&node.url]))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, Error::NoSourceLeft { .. }), "{err:?}");
+    assert_eq!(replica.0.get_bucket(BUCKET).unwrap().leaf_count, 0);
+    assert_eq!(replica.0.total_nodes(), 0);
+    assert!(node.node_requests().is_empty());
+}
+
+#[tokio::test]
+async fn running_out_of_quota_stops_the_sync_without_blaming_the_source() {
+    let (source, _dir, target) = source_bucket(&[3]);
+    let node = spawn_node_source(Arc::clone(&source), NodeSourceConfig::default()).await;
+    let replica = replica(100);
+    let mut set = sources(&[&node.url]);
+
+    let err = sync(&replica, &target, &mut set).await.unwrap_err();
+
+    assert!(
+        matches!(
+            err,
+            Error::Backend(provider_storage::Error::QuotaExceeded { .. })
+        ),
+        "{err:?}"
+    );
+    assert_eq!(set.current(), Some(node.url.as_str()));
+    assert_eq!(replica.0.get_bucket(BUCKET).unwrap().leaf_count, 0);
 }
