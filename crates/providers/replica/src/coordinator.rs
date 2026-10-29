@@ -24,7 +24,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, Commitment};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 /// Configuration for the replica sync coordinator.
@@ -149,13 +149,21 @@ pub struct ReplicaAgreementInfo {
     pub sync_price: u128,
     pub min_sync_interval: u64,
     pub last_sync: Option<(H256, u64)>,
+    /// Bytes the agreement allows the replica to store for the bucket.
+    pub max_bytes: u64,
+    /// Anchor block at which the agreement expires.
+    pub expires_at: u64,
 }
 
-/// Bucket snapshot from chain.
-#[derive(Clone, Debug)]
-pub struct BucketSnapshot {
-    pub mmr_root: H256,
-    pub leaf_count: u64,
+/// The commitments the chain holds for a bucket.
+#[derive(Clone, Debug, Default)]
+pub struct BucketCommitments {
+    /// The latest checkpoint's commitment. All zero until the first checkpoint.
+    pub snapshot: Commitment,
+    /// The six historical commitments, each with the quotient
+    /// `anchor_block / prime` of the checkpoint that wrote it. Entries no
+    /// checkpoint has written are all zero.
+    pub historical_roots: [(u32, Commitment); 6],
 }
 
 /// Trait abstracting chain interactions for the replica sync coordinator.
@@ -164,18 +172,19 @@ pub trait ReplicaSyncChainClient: Send + Sync {
     /// Get the current block number.
     async fn get_current_block(&self) -> Result<u64, ChainClientError>;
 
-    /// Fetch replica agreements for this provider.
+    /// Fetch replica agreements for this provider, including those for
+    /// buckets it does not store yet.
     async fn fetch_replica_agreements(
         &self,
         provider_account: &str,
-        local_buckets: Vec<BucketId>,
     ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError>;
 
-    /// Fetch the bucket snapshot (latest checkpoint state) from chain.
-    async fn fetch_bucket_snapshot(
+    /// Fetch the bucket's snapshot and historical commitments from chain. A
+    /// bucket without a snapshot returns the default (all zero) commitments.
+    async fn fetch_bucket_commitments(
         &self,
         bucket_id: BucketId,
-    ) -> Result<BucketSnapshot, ChainClientError>;
+    ) -> Result<BucketCommitments, ChainClientError>;
 
     /// Fetch primary provider HTTP endpoints for a bucket.
     async fn fetch_primary_endpoints(
@@ -193,11 +202,15 @@ pub trait ReplicaSyncChainClient: Send + Sync {
     /// Submit a confirm_replica_sync extrinsic carrying the replica's
     /// signed roots attestation — the pallet verifies it against the
     /// registered `public_key`.
+    ///
+    /// Returns the matched position and the payment from the `ReplicaSynced`
+    /// event, or `None` when the confirmation was already on chain from an
+    /// earlier attempt and the event was not observed.
     async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
-    ) -> Result<(u8, u128), ChainClientError>;
+    ) -> Result<Option<(u8, u128)>, ChainClientError>;
 }
 
 #[async_trait::async_trait]
@@ -209,18 +222,17 @@ impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
     async fn fetch_replica_agreements(
         &self,
         provider_account: &str,
-        local_buckets: Vec<BucketId>,
     ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError> {
         self.as_ref()
-            .fetch_replica_agreements(provider_account, local_buckets)
+            .fetch_replica_agreements(provider_account)
             .await
     }
 
-    async fn fetch_bucket_snapshot(
+    async fn fetch_bucket_commitments(
         &self,
         bucket_id: BucketId,
-    ) -> Result<BucketSnapshot, ChainClientError> {
-        self.as_ref().fetch_bucket_snapshot(bucket_id).await
+    ) -> Result<BucketCommitments, ChainClientError> {
+        self.as_ref().fetch_bucket_commitments(bucket_id).await
     }
 
     async fn fetch_primary_endpoints(
@@ -241,7 +253,7 @@ impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
         &self,
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
-    ) -> Result<(u8, u128), ChainClientError> {
+    ) -> Result<Option<(u8, u128)>, ChainClientError> {
         self.as_ref()
             .submit_sync_confirmation(bucket_id, attestation)
             .await
@@ -544,11 +556,9 @@ impl ReplicaSyncCoordinator {
 
         let anchor_block = self.chain_client.get_current_block().await?;
 
-        let local_buckets: Vec<u64> = self.storage.bucket_ids();
-
         let agreements = self
             .chain_client
-            .fetch_replica_agreements(&self.provider_id, local_buckets)
+            .fetch_replica_agreements(&self.provider_id)
             .await?;
 
         for agreement in agreements {
@@ -577,8 +587,9 @@ impl ReplicaSyncCoordinator {
 
             let snapshot = self
                 .chain_client
-                .fetch_bucket_snapshot(agreement.bucket_id)
-                .await?;
+                .fetch_bucket_commitments(agreement.bucket_id)
+                .await?
+                .snapshot;
 
             if snapshot.mmr_root == H256::zero() {
                 continue;
@@ -629,7 +640,11 @@ impl ReplicaSyncCoordinator {
 
     /// Get sync duty for a specific bucket.
     async fn get_sync_duty(&self, bucket_id: BucketId) -> Result<Option<SyncDuty>, Error> {
-        let snapshot = self.chain_client.fetch_bucket_snapshot(bucket_id).await?;
+        let snapshot = self
+            .chain_client
+            .fetch_bucket_commitments(bucket_id)
+            .await?
+            .snapshot;
 
         let source_endpoints = self.fetch_source_endpoints(bucket_id).await?;
 
@@ -778,11 +793,15 @@ impl ReplicaSyncCoordinator {
             .submit_sync_confirmation(duty.bucket_id, attestation)
             .await
         {
-            Ok((position, payment)) => SyncResult::Success {
+            Ok(Some((position, payment))) => SyncResult::Success {
                 bucket_id: duty.bucket_id,
                 mmr_root: duty.target_mmr_root,
                 position_matched: position,
                 payment,
+            },
+            Ok(None) => SyncResult::AlreadySynced {
+                bucket_id: duty.bucket_id,
+                mmr_root: duty.target_mmr_root,
             },
             Err(e) => SyncResult::SubmissionFailed {
                 bucket_id: duty.bucket_id,

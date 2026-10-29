@@ -5,7 +5,7 @@
 mod common;
 
 use common::{hex_hash, peaks_body, spawn_primary};
-use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
+use provider_replica::coordinator::{BucketCommitments, ReplicaAgreementInfo};
 use provider_replica::{
     ChainClientError, Error, ReplicaSyncChainClient, ReplicaSyncCoordinator,
     ReplicaSyncCoordinatorConfig, SignedSyncRoots, SyncDuty, SyncResult, SyncRoots,
@@ -16,7 +16,7 @@ use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_primitives::{hash_leaf, BucketId};
+use storage_primitives::{hash_leaf, BucketId, Commitment};
 
 /// Full Alice SS58 address (substrate prefix 42).
 const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
@@ -76,11 +76,11 @@ fn coordinator_with_signer(
 struct MockReplicaSyncChainClient {
     block: Mutex<u64>,
     agreements: Mutex<Vec<ReplicaAgreementInfo>>,
-    snapshots: Mutex<HashMap<BucketId, BucketSnapshot>>,
+    snapshots: Mutex<HashMap<BucketId, BucketCommitments>>,
     endpoints: Mutex<HashMap<BucketId, Vec<String>>>,
     confirmations: Mutex<Vec<BucketId>>,
     attestations: Mutex<Vec<SignedSyncRoots>>,
-    confirm_result: Mutex<Result<(u8, u128), ChainClientError>>,
+    confirm_result: Mutex<Result<Option<(u8, u128)>, ChainClientError>>,
     replica_endpoints: Mutex<Result<Vec<String>, ChainClientError>>,
 }
 
@@ -93,7 +93,7 @@ impl MockReplicaSyncChainClient {
             endpoints: Mutex::new(HashMap::new()),
             confirmations: Mutex::new(Vec::new()),
             attestations: Mutex::new(Vec::new()),
-            confirm_result: Mutex::new(Ok((0, 1000))),
+            confirm_result: Mutex::new(Ok(Some((0, 1000)))),
             replica_endpoints: Mutex::new(Ok(Vec::new())),
         }
     }
@@ -105,7 +105,7 @@ impl MockReplicaSyncChainClient {
         }
     }
 
-    fn with_snapshot(self, bucket_id: BucketId, snapshot: BucketSnapshot) -> Self {
+    fn with_snapshot(self, bucket_id: BucketId, snapshot: BucketCommitments) -> Self {
         let mut map = self.snapshots.into_inner().unwrap();
         map.insert(bucket_id, snapshot);
         Self {
@@ -140,22 +140,25 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
     async fn fetch_replica_agreements(
         &self,
         _provider_account: &str,
-        _local_buckets: Vec<BucketId>,
     ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError> {
         Ok(self.agreements.lock().unwrap().clone())
     }
 
-    async fn fetch_bucket_snapshot(
+    async fn fetch_bucket_commitments(
         &self,
         bucket_id: BucketId,
-    ) -> Result<BucketSnapshot, ChainClientError> {
+    ) -> Result<BucketCommitments, ChainClientError> {
         let snapshots = self.snapshots.lock().unwrap();
         Ok(snapshots
             .get(&bucket_id)
             .cloned()
-            .unwrap_or(BucketSnapshot {
-                mmr_root: H256::zero(),
-                leaf_count: 0,
+            .unwrap_or(BucketCommitments {
+                snapshot: Commitment {
+                    mmr_root: H256::zero(),
+                    start_seq: 0,
+                    leaf_count: 0,
+                },
+                ..Default::default()
             }))
     }
 
@@ -183,7 +186,7 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         &self,
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
-    ) -> Result<(u8, u128), ChainClientError> {
+    ) -> Result<Option<(u8, u128)>, ChainClientError> {
         self.confirmations.lock().unwrap().push(bucket_id);
         self.attestations.lock().unwrap().push(attestation);
         let result = &*self.confirm_result.lock().unwrap();
@@ -191,6 +194,19 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
             Ok(v) => Ok(*v),
             Err(e) => Err(ChainClientError::tx_rejected("confirm_replica_sync", e)),
         }
+    }
+}
+
+fn mock_duty(bucket_id: BucketId) -> SyncDuty {
+    SyncDuty {
+        bucket_id,
+        target_mmr_root: H256::repeat_byte(0xAB),
+        target_leaf_count: 10,
+        source_endpoints: vec![],
+        sync_balance: 1_000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
     }
 }
 
@@ -256,6 +272,49 @@ async fn confirm_on_chain_attests_roots_with_signing_key() {
         "attestation must verify under //Alice's key"
     );
     assert_eq!(mock.confirmations.lock().unwrap().as_slice(), &[42]);
+}
+
+#[tokio::test]
+async fn confirm_on_chain_reports_the_matched_position_and_payment() {
+    let mock = Arc::new(MockReplicaSyncChainClient::new());
+    *mock.confirm_result.lock().unwrap() = Ok(Some((3, 250)));
+    let (storage, _dir) = temp_rocksdb();
+    let coordinator = coordinator_with_signer(
+        ReplicaSyncCoordinatorConfig::default(),
+        storage,
+        mock,
+        Some(AliceSigner::new()),
+    );
+
+    let result = coordinator.confirm_on_chain(&mock_duty(42)).await;
+    assert!(matches!(
+        result,
+        SyncResult::Success {
+            bucket_id: 42,
+            position_matched: 3,
+            payment: 250,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn confirm_on_chain_treats_an_earlier_confirmation_as_already_synced() {
+    let mock = Arc::new(MockReplicaSyncChainClient::new());
+    *mock.confirm_result.lock().unwrap() = Ok(None);
+    let (storage, _dir) = temp_rocksdb();
+    let coordinator = coordinator_with_signer(
+        ReplicaSyncCoordinatorConfig::default(),
+        storage,
+        mock,
+        Some(AliceSigner::new()),
+    );
+
+    let result = coordinator.confirm_on_chain(&mock_duty(42)).await;
+    assert!(matches!(
+        result,
+        SyncResult::AlreadySynced { bucket_id: 42, .. }
+    ));
 }
 
 #[tokio::test]
@@ -541,15 +600,21 @@ async fn test_duties_filter_insufficient_balance() {
         sync_price: 100,
         min_sync_interval: 0,
         last_sync: None,
+        max_bytes: 1024 * 1024,
+        expires_at: 10_000,
     };
 
     let mock = MockReplicaSyncChainClient::new()
         .with_agreements(vec![agreement])
         .with_snapshot(
             1,
-            BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xAA),
-                leaf_count: 5,
+            BucketCommitments {
+                snapshot: Commitment {
+                    mmr_root: H256::repeat_byte(0xAA),
+                    start_seq: 0,
+                    leaf_count: 5,
+                },
+                ..Default::default()
             },
         );
 
@@ -569,15 +634,21 @@ async fn test_duties_filter_sync_interval_not_elapsed() {
         sync_price: 100,
         min_sync_interval: 200,
         last_sync: Some((H256::repeat_byte(0xBB), 50)),
+        max_bytes: 1024 * 1024,
+        expires_at: 10_000,
     };
 
     let mock = MockReplicaSyncChainClient::new()
         .with_agreements(vec![agreement])
         .with_snapshot(
             1,
-            BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xAA),
-                leaf_count: 5,
+            BucketCommitments {
+                snapshot: Commitment {
+                    mmr_root: H256::repeat_byte(0xAA),
+                    start_seq: 0,
+                    leaf_count: 5,
+                },
+                ..Default::default()
             },
         );
 
@@ -600,15 +671,21 @@ async fn test_duties_filter_zero_snapshot_root() {
         sync_price: 100,
         min_sync_interval: 0,
         last_sync: None,
+        max_bytes: 1024 * 1024,
+        expires_at: 10_000,
     };
 
     let mock = MockReplicaSyncChainClient::new()
         .with_agreements(vec![agreement])
         .with_snapshot(
             1,
-            BucketSnapshot {
-                mmr_root: H256::zero(),
-                leaf_count: 0,
+            BucketCommitments {
+                snapshot: Commitment {
+                    mmr_root: H256::zero(),
+                    start_seq: 0,
+                    leaf_count: 0,
+                },
+                ..Default::default()
             },
         );
 
@@ -640,15 +717,21 @@ async fn test_duties_filter_already_synced() {
         sync_price: 100,
         min_sync_interval: 0,
         last_sync: None,
+        max_bytes: 1024 * 1024,
+        expires_at: 10_000,
     };
 
     let mock = MockReplicaSyncChainClient::new()
         .with_agreements(vec![agreement])
         .with_snapshot(
             1,
-            BucketSnapshot {
-                mmr_root,
-                leaf_count: 1,
+            BucketCommitments {
+                snapshot: Commitment {
+                    mmr_root,
+                    start_seq: 0,
+                    leaf_count: 1,
+                },
+                ..Default::default()
             },
         );
 
@@ -670,12 +753,18 @@ fn mock_with_bucket_42_duty() -> MockReplicaSyncChainClient {
             sync_price: 100,
             min_sync_interval: 0,
             last_sync: None,
+            max_bytes: 1024 * 1024,
+            expires_at: 10_000,
         }])
         .with_snapshot(
             42,
-            BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xCC),
-                leaf_count: 10,
+            BucketCommitments {
+                snapshot: Commitment {
+                    mmr_root: H256::repeat_byte(0xCC),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
+                ..Default::default()
             },
         )
         .with_endpoints(42, vec!["http://primary:3333".to_string()])
@@ -688,6 +777,8 @@ async fn test_duties_happy_path_returns_duty() {
 
     let config = ReplicaSyncCoordinatorConfig::default();
     let (storage, _dir) = temp_rocksdb();
+    // A fresh replica has no local bucket yet and still gets the duty.
+    assert!(storage.get_bucket(42).is_none());
     let coordinator = coordinator(config, storage, mock);
 
     let duties = coordinator.get_active_replica_duties().await.unwrap();
