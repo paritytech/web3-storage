@@ -17,8 +17,8 @@ use sp_runtime::{transaction_validity, ApplyExtrinsicResult, BuildStorage};
 use storage_paseo_runtime::{
     paseo_constants::currency::UNIT, xcm_config::LocationToAccountId, AllPalletsWithoutSystem,
     Balance, Balances, Block, BlockNumber, Runtime, RuntimeCall, RuntimeEvent,
-    RuntimeGenesisConfig, RuntimeHoldReason, RuntimeOrigin, SessionKeys, StorageProvider,
-    System, TxExtension, UncheckedExtrinsic, WeightToFee,
+    RuntimeGenesisConfig, RuntimeHoldReason, RuntimeOrigin, SessionKeys, StorageProvider, System,
+    TxExtension, UncheckedExtrinsic, WeightToFee,
 };
 use storage_primitives::AgreementTerms;
 use xcm::latest::prelude::*;
