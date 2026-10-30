@@ -41,8 +41,10 @@ fn add_replica_provider_works() {
             agreement.role,
             storage_primitives::ProviderRole::Replica { .. }
         ));
-        // sync_balance (price is 0, so only the sync balance) is reserved.
-        assert_eq!(Balances::free_balance(1), balance_before - 100);
+        // sync_balance (price is 0, so only the sync balance) is escrowed and
+        // the agreement's storage deposit is held.
+        assert_eq!(held(HoldReason::AgreementPayment, 1), 100);
+        assert_eq!(Balances::free_balance(1), balance_before - 100 - 10);
     });
 }
 
