@@ -18,7 +18,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage_primitives::{
-    build_merkle_proofs, merkle_root, merkle_tree, BucketId, DEFAULT_CHUNK_SIZE,
+    build_merkle_proofs, merkle_root, merkle_tree, mmr::MmrLeaf, BucketId, DEFAULT_CHUNK_SIZE,
 };
 
 /// A chunk's hash, its data and its Merkle proof (sibling hashes up to the
@@ -81,11 +81,26 @@ pub struct BucketInfo {
     pub leaf_count: u64,
 }
 
+/// A run of consecutive MMR leaves returned by [`StorageBackend::get_leaves`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeafPage {
+    /// Leaves from the requested `from_seq`, in sequence order.
+    pub leaves: Vec<MmrLeaf>,
+    /// First sequence number not in `leaves`. Equals the requested `to_seq`
+    /// once the range is complete.
+    pub next_seq: u64,
+}
+
 /// Storage engine interface. Callers hold an `Arc<dyn StorageBackend>` rather
 /// than a concrete engine.
 pub trait StorageBackend: Send + Sync {
     /// Initialize a bucket with the given quota.
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
+
+    /// Set the quota of an existing bucket. Fails with `BucketNotFound` if the
+    /// bucket does not exist. Stored nodes stay; later `store_node` calls are
+    /// checked against the new quota.
+    fn set_max_bytes(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
 
     /// Get bucket information.
     fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo>;
@@ -237,6 +252,36 @@ pub trait StorageBackend: Send + Sync {
 
     /// Get MMR peaks.
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
+
+    /// Read the leaves with sequence numbers in `[from_seq, to_seq)`.
+    ///
+    /// Returns at most `max_count` leaves and at most `max_bytes` of encoded
+    /// leaf data, but always at least one leaf when the range is not empty.
+    /// Fails with `LeavesDeleted` when `from_seq` is below the bucket's
+    /// `start_seq`, and with `LeavesBeyondEnd` when `to_seq` is past the last
+    /// leaf.
+    fn get_leaves(
+        &self,
+        bucket_id: BucketId,
+        from_seq: u64,
+        to_seq: u64,
+        max_count: usize,
+        max_bytes: usize,
+    ) -> Result<LeafPage, Error>;
+
+    /// Replace the bucket's leaves with `leaves`, the leaves of `commitment`
+    /// starting at `commitment.start_seq`, in one write.
+    ///
+    /// Rejects the call and leaves the bucket unchanged unless there are
+    /// `commitment.leaf_count` leaves, every `data_root` is stored, and the
+    /// MMR root over `leaves` equals `commitment.mmr_root`. Quota usage does
+    /// not change: nodes are charged when stored.
+    fn import_commitment(
+        &self,
+        bucket_id: BucketId,
+        commitment: &storage_primitives::Commitment,
+        leaves: Vec<MmrLeaf>,
+    ) -> Result<(), Error>;
 }
 
 /// Leaf hashes of the tree under `data_root`, in chunk order.

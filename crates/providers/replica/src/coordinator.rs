@@ -11,20 +11,22 @@
 //! 4. Submits `confirm_replica_sync` transactions to receive payment
 //! 5. Handles historical roots matching for late syncs
 
+use crate::source::SourceSet;
 use crate::sync::ReplicaSync;
 use crate::sync_roots::{SignedSyncRoots, SyncRootsSigner};
+use crate::target::{position_of, select_target, SyncTarget};
 use crate::Error;
 use provider_events::{BlockEvent, BlockEventRx};
 use provider_storage::StorageBackend;
 use provider_types::ChainClientError;
 use sp_core::H256;
 use sp_runtime::AccountId32;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, Commitment};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 /// Configuration for the replica sync coordinator.
@@ -57,10 +59,11 @@ impl Default for ReplicaSyncCoordinatorConfig {
 pub struct SyncDuty {
     /// Bucket needing sync.
     pub bucket_id: BucketId,
-    /// Target MMR root from the latest checkpoint.
-    pub target_mmr_root: H256,
-    /// Target leaf count.
-    pub target_leaf_count: u64,
+    /// The commitment to sync to and the position `confirm_replica_sync`
+    /// finds it at.
+    pub target: SyncTarget,
+    /// Bytes the agreement allows the replica to store for the bucket.
+    pub max_bytes: u64,
     /// Provider endpoints to sync from, in try order: primaries first, then
     /// the bucket's other replicas (see the `replica_sync` module docs for
     /// why replicas are a source at all).
@@ -103,12 +106,63 @@ pub enum SyncResult {
     },
     /// Local state doesn't match expected root after sync.
     VerificationFailed { bucket_id: BucketId, reason: String },
+    /// The local storage engine rejected the sync, for example because the
+    /// bucket would exceed the agreement's `max_bytes`.
+    StorageFailed { bucket_id: BucketId, error: String },
     /// Failed to submit confirm_replica_sync transaction.
     SubmissionFailed { bucket_id: BucketId, error: String },
     /// Already synced to this root.
     AlreadySynced { bucket_id: BucketId, mmr_root: H256 },
     /// No data to sync yet.
     NoDataToSync { bucket_id: BucketId },
+    /// The data sync did not finish within `sync_timeout`. Nodes stored so far
+    /// remain, and the next sync of the bucket skips them.
+    TimedOut { bucket_id: BucketId },
+}
+
+/// The buckets with a sync in progress. Clones share one set.
+#[derive(Clone, Debug, Default)]
+pub struct SyncingBuckets(Arc<Mutex<HashSet<BucketId>>>);
+
+impl SyncingBuckets {
+    /// Whether a sync of `bucket_id` is in progress.
+    pub fn is_syncing(&self, bucket_id: BucketId) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&bucket_id)
+    }
+
+    /// Mark `bucket_id` as syncing until the returned guard is dropped. Hold
+    /// one guard per bucket: dropping any guard clears the mark.
+    pub fn begin(&self, bucket_id: BucketId) -> SyncGuard {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(bucket_id);
+        SyncGuard {
+            buckets: self.clone(),
+            bucket_id,
+        }
+    }
+}
+
+/// Keeps a bucket marked as syncing. The mark clears when the guard drops,
+/// including when the sync task is aborted.
+#[derive(Debug)]
+pub struct SyncGuard {
+    buckets: SyncingBuckets,
+    bucket_id: BucketId,
+}
+
+impl Drop for SyncGuard {
+    fn drop(&mut self) {
+        self.buckets
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.bucket_id);
+    }
 }
 
 /// Commands for controlling the coordinator.
@@ -116,11 +170,13 @@ pub enum SyncResult {
 pub enum SyncCommand {
     /// Stop the coordinator.
     Stop,
-    /// Pause automatic syncs.
+    /// Pause automatic syncs. Running syncs stop.
     Pause,
     /// Resume automatic syncs.
     Resume,
-    /// Force sync for a specific bucket.
+    /// Force sync for a specific bucket. Ignores `min_sync_interval`,
+    /// `max_concurrent_syncs` and Pause, but not the agreement's expiry or
+    /// sync balance.
     ForceSync { bucket_id: BucketId },
     /// Get current status.
     Status {
@@ -149,13 +205,21 @@ pub struct ReplicaAgreementInfo {
     pub sync_price: u128,
     pub min_sync_interval: u64,
     pub last_sync: Option<(H256, u64)>,
+    /// Bytes the agreement allows the replica to store for the bucket.
+    pub max_bytes: u64,
+    /// Anchor block at which the agreement expires.
+    pub expires_at: u64,
 }
 
-/// Bucket snapshot from chain.
-#[derive(Clone, Debug)]
-pub struct BucketSnapshot {
-    pub mmr_root: H256,
-    pub leaf_count: u64,
+/// The commitments the chain holds for a bucket.
+#[derive(Clone, Debug, Default)]
+pub struct BucketCommitments {
+    /// The latest checkpoint's commitment. All zero until the first checkpoint.
+    pub snapshot: Commitment,
+    /// The six historical commitments, each with the quotient
+    /// `anchor_block / prime` of the checkpoint that wrote it. Entries no
+    /// checkpoint has written are all zero.
+    pub historical_roots: [(u32, Commitment); 6],
 }
 
 /// Trait abstracting chain interactions for the replica sync coordinator.
@@ -164,18 +228,23 @@ pub trait ReplicaSyncChainClient: Send + Sync {
     /// Get the current block number.
     async fn get_current_block(&self) -> Result<u64, ChainClientError>;
 
-    /// Fetch replica agreements for this provider.
+    /// Time between two anchor blocks. The coordinator uses it to convert
+    /// `sync_timeout` into anchor blocks.
+    async fn get_anchor_block_time(&self) -> Result<Duration, ChainClientError>;
+
+    /// Fetch replica agreements for this provider, including those for
+    /// buckets it does not store yet.
     async fn fetch_replica_agreements(
         &self,
         provider_account: &str,
-        local_buckets: Vec<BucketId>,
     ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError>;
 
-    /// Fetch the bucket snapshot (latest checkpoint state) from chain.
-    async fn fetch_bucket_snapshot(
+    /// Fetch the bucket's snapshot and historical commitments from chain. A
+    /// bucket without a snapshot returns the default (all zero) commitments.
+    async fn fetch_bucket_commitments(
         &self,
         bucket_id: BucketId,
-    ) -> Result<BucketSnapshot, ChainClientError>;
+    ) -> Result<BucketCommitments, ChainClientError>;
 
     /// Fetch primary provider HTTP endpoints for a bucket.
     async fn fetch_primary_endpoints(
@@ -193,11 +262,15 @@ pub trait ReplicaSyncChainClient: Send + Sync {
     /// Submit a confirm_replica_sync extrinsic carrying the replica's
     /// signed roots attestation — the pallet verifies it against the
     /// registered `public_key`.
+    ///
+    /// Returns the matched position and the payment from the `ReplicaSynced`
+    /// event, or `None` when the confirmation was already on chain from an
+    /// earlier attempt and the event was not observed.
     async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
-    ) -> Result<(u8, u128), ChainClientError>;
+    ) -> Result<Option<(u8, u128)>, ChainClientError>;
 }
 
 #[async_trait::async_trait]
@@ -206,21 +279,24 @@ impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
         self.as_ref().get_current_block().await
     }
 
+    async fn get_anchor_block_time(&self) -> Result<Duration, ChainClientError> {
+        self.as_ref().get_anchor_block_time().await
+    }
+
     async fn fetch_replica_agreements(
         &self,
         provider_account: &str,
-        local_buckets: Vec<BucketId>,
     ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError> {
         self.as_ref()
-            .fetch_replica_agreements(provider_account, local_buckets)
+            .fetch_replica_agreements(provider_account)
             .await
     }
 
-    async fn fetch_bucket_snapshot(
+    async fn fetch_bucket_commitments(
         &self,
         bucket_id: BucketId,
-    ) -> Result<BucketSnapshot, ChainClientError> {
-        self.as_ref().fetch_bucket_snapshot(bucket_id).await
+    ) -> Result<BucketCommitments, ChainClientError> {
+        self.as_ref().fetch_bucket_commitments(bucket_id).await
     }
 
     async fn fetch_primary_endpoints(
@@ -241,7 +317,7 @@ impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
         &self,
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
-    ) -> Result<(u8, u128), ChainClientError> {
+    ) -> Result<Option<(u8, u128)>, ChainClientError> {
         self.as_ref()
             .submit_sync_confirmation(bucket_id, attestation)
             .await
@@ -268,7 +344,7 @@ impl ReplicaSyncCoordinatorHandle {
             .map_err(|_| Error::ChannelClosed)
     }
 
-    /// Pause automatic syncs.
+    /// Pause automatic syncs. Running syncs stop.
     pub async fn pause(&self) -> Result<(), Error> {
         self.command_tx
             .send(SyncCommand::Pause)
@@ -305,17 +381,21 @@ impl ReplicaSyncCoordinatorHandle {
 }
 
 /// Replica sync coordinator service.
+///
+/// Clones share the chain client and storage. Each sync runs as a task on its
+/// own clone.
+#[derive(Clone)]
 pub struct ReplicaSyncCoordinator {
     config: ReplicaSyncCoordinatorConfig,
     storage: Arc<dyn StorageBackend>,
     provider_id: String,
-    chain_client: Box<dyn ReplicaSyncChainClient>,
-    replica_sync: ReplicaSync,
+    chain_client: Arc<dyn ReplicaSyncChainClient>,
+    replica_sync: Arc<ReplicaSync>,
     /// Signs sync-roots attestations. `None` in provider-id-only setups, where
     /// the coordinator syncs data but cannot confirm on-chain.
     signer: Option<Arc<dyn SyncRootsSigner>>,
-    /// Track active sync operations by bucket.
-    active_syncs: HashMap<BucketId, tokio::task::JoinHandle<SyncResult>>,
+    /// The buckets with a sync in progress.
+    syncing: SyncingBuckets,
 }
 
 impl ReplicaSyncCoordinator {
@@ -331,17 +411,24 @@ impl ReplicaSyncCoordinator {
         chain_client: Box<dyn ReplicaSyncChainClient>,
         signer: Option<Arc<dyn SyncRootsSigner>>,
     ) -> Self {
-        let replica_sync = ReplicaSync::new(storage.clone());
+        let replica_sync = Arc::new(ReplicaSync::new(storage.clone()));
 
         Self {
             config,
             storage,
             provider_id,
-            chain_client,
+            chain_client: Arc::from(chain_client),
             replica_sync,
             signer,
-            active_syncs: HashMap::new(),
+            syncing: SyncingBuckets::default(),
         }
+    }
+
+    /// Report the buckets this coordinator syncs in `syncing`, so that other
+    /// parts of the node can read them.
+    pub fn with_syncing_buckets(mut self, syncing: SyncingBuckets) -> Self {
+        self.syncing = syncing;
+        self
     }
 
     /// Start the replica sync coordinator background service.
@@ -388,13 +475,15 @@ impl ReplicaSyncCoordinator {
 
     /// Main coordinator loop.
     async fn run_loop(
-        mut self,
+        self,
         mut command_rx: mpsc::Receiver<SyncCommand>,
         mut events_rx: BlockEventRx,
         running: Arc<AtomicBool>,
         callback: Option<Arc<dyn Fn(SyncResult) + Send + Sync>>,
     ) {
         let mut paused = false;
+        // The sync tasks that were started and have not been cleaned up.
+        let mut active_syncs: HashMap<BucketId, tokio::task::JoinHandle<()>> = HashMap::new();
         // A closed broadcast channel (follower gone) yields `Closed` on every
         // poll; disarm the events select arm then, or the loop busy-spins.
         let mut events_open = true;
@@ -423,11 +512,19 @@ impl ReplicaSyncCoordinator {
                         Some(SyncCommand::Stop) | None => {
                             tracing::info!("Replica sync coordinator stopping");
                             running.store(false, Ordering::SeqCst);
+                            for sync in active_syncs.values() {
+                                sync.abort();
+                            }
                             break;
                         }
                         Some(SyncCommand::Pause) => {
                             tracing::info!("Replica sync coordinator paused");
                             paused = true;
+                            // Stored nodes remain, so a sync after Resume
+                            // continues where the stopped one was.
+                            for sync in active_syncs.values() {
+                                sync.abort();
+                            }
                         }
                         Some(SyncCommand::Resume) => {
                             tracing::info!("Replica sync coordinator resumed");
@@ -436,17 +533,17 @@ impl ReplicaSyncCoordinator {
                         Some(SyncCommand::ForceSync { bucket_id }) => {
                             tracing::info!("Force sync requested for bucket {bucket_id}");
                             if let Ok(Some(duty)) = self.get_sync_duty(bucket_id).await {
-                                let result = self.sync_and_confirm(&duty).await;
-                                if let Some(ref cb) = callback {
-                                    cb(result);
-                                }
+                                self.start_sync(&mut active_syncs, duty, &callback);
                             }
                         }
                         Some(SyncCommand::Status { response_tx }) => {
                             let status = SyncCoordinatorStatus {
                                 running: running.load(Ordering::SeqCst),
                                 paused,
-                                active_syncs: self.active_syncs.len(),
+                                active_syncs: active_syncs
+                                    .values()
+                                    .filter(|sync| !sync.is_finished())
+                                    .count(),
                                 tracked_buckets: self.storage.bucket_ids(),
                             };
                             let _ = response_tx.send(status);
@@ -471,10 +568,10 @@ impl ReplicaSyncCoordinator {
                     match event {
                         Ok(BlockEvent::Resubscribed { .. })
                         | Err(broadcast::error::RecvError::Lagged(_)) => {
-                            self.run_duty_pass(&callback).await;
+                            self.run_duty_pass(&mut active_syncs, &callback).await;
                         }
                         Ok(event) if self.is_relevant_event(&event, &our_account) => {
-                            self.run_duty_pass(&callback).await;
+                            self.run_duty_pass(&mut active_syncs, &callback).await;
                         }
                         Ok(_) | Err(broadcast::error::RecvError::Closed) => {}
                     }
@@ -483,7 +580,7 @@ impl ReplicaSyncCoordinator {
                     if paused || !self.config.auto_confirm || !safety_net {
                         continue;
                     }
-                    self.run_duty_pass(&callback).await;
+                    self.run_duty_pass(&mut active_syncs, &callback).await;
                 }
             }
         }
@@ -497,34 +594,29 @@ impl ReplicaSyncCoordinator {
     /// event: relevant events are rare (new replica agreement, checkpoint on
     /// a held bucket), so this stays off the hot path while keeping exactly
     /// one duty-discovery code path.
-    async fn run_duty_pass(&mut self, callback: &Option<Arc<dyn Fn(SyncResult) + Send + Sync>>) {
+    async fn run_duty_pass(
+        &self,
+        active_syncs: &mut HashMap<BucketId, tokio::task::JoinHandle<()>>,
+        callback: &Option<Arc<dyn Fn(SyncResult) + Send + Sync>>,
+    ) {
         // Clean up completed syncs
-        self.cleanup_completed_syncs();
+        active_syncs.retain(|_, sync| !sync.is_finished());
 
         // Get active replica duties
         match self.get_active_replica_duties().await {
             Ok(duties) => {
                 for duty in duties {
                     // Skip if already syncing this bucket
-                    if self.active_syncs.contains_key(&duty.bucket_id) {
+                    if active_syncs.contains_key(&duty.bucket_id) {
                         continue;
                     }
 
                     // Skip if at max concurrent syncs
-                    if self.active_syncs.len() >= self.config.max_concurrent_syncs {
+                    if active_syncs.len() >= self.config.max_concurrent_syncs {
                         break;
                     }
 
-                    tracing::info!(
-                        "Starting sync for bucket {} (target root: {:#x})",
-                        duty.bucket_id,
-                        duty.target_mmr_root
-                    );
-
-                    let result = self.sync_and_confirm(&duty).await;
-                    if let Some(ref cb) = callback {
-                        cb(result);
-                    }
+                    self.start_sync(active_syncs, duty, callback);
                 }
             }
             Err(e) => {
@@ -533,35 +625,127 @@ impl ReplicaSyncCoordinator {
         }
     }
 
-    /// Clean up completed sync tasks.
-    fn cleanup_completed_syncs(&mut self) {
-        self.active_syncs.retain(|_, handle| !handle.is_finished());
+    /// Run the sync of `duty` as a task, unless the bucket is already syncing.
+    /// The callback gets the result when the task ends.
+    fn start_sync(
+        &self,
+        active_syncs: &mut HashMap<BucketId, tokio::task::JoinHandle<()>>,
+        duty: SyncDuty,
+        callback: &Option<Arc<dyn Fn(SyncResult) + Send + Sync>>,
+    ) {
+        if active_syncs
+            .get(&duty.bucket_id)
+            .is_some_and(|sync| !sync.is_finished())
+        {
+            return;
+        }
+
+        tracing::info!(
+            "Starting sync for bucket {} (target root: {:#x})",
+            duty.bucket_id,
+            duty.target.commitment.mmr_root
+        );
+
+        let worker = self.clone();
+        let callback = callback.clone();
+        let guard = self.syncing.begin(duty.bucket_id);
+        let bucket_id = duty.bucket_id;
+        let sync = tokio::spawn(async move {
+            let _guard = guard;
+            let result = worker.sync_and_confirm(&duty).await;
+            if let Some(callback) = callback {
+                callback(result);
+            }
+        });
+        active_syncs.insert(bucket_id, sync);
     }
 
     /// Get replica duties for buckets where this provider is a replica.
+    ///
+    /// Creates the local bucket of every replica agreement that has not
+    /// expired, even before the chain has a commitment to sync to. A checkpoint
+    /// of a bucket the node stores starts the next duty pass, so the first
+    /// checkpoint reaches a new replica. A new bucket gets the agreement's
+    /// quota; a sync sets the quota of an existing one.
     pub async fn get_active_replica_duties(&self) -> Result<Vec<SyncDuty>, Error> {
-        let mut duties = Vec::new();
-
         let anchor_block = self.chain_client.get_current_block().await?;
-
-        let local_buckets: Vec<u64> = self.storage.bucket_ids();
-
         let agreements = self
             .chain_client
-            .fetch_replica_agreements(&self.provider_id, local_buckets)
+            .fetch_replica_agreements(&self.provider_id)
             .await?;
+        let timeout_blocks = self.timeout_blocks().await?;
 
+        let mut duties = Vec::new();
         for agreement in agreements {
-            if agreement.sync_balance < agreement.sync_price {
-                tracing::debug!(
-                    "Bucket {} has insufficient sync balance: {} < {}",
-                    agreement.bucket_id,
-                    agreement.sync_balance,
-                    agreement.sync_price
-                );
+            let bucket_id = agreement.bucket_id;
+            // A running sync keeps its bucket, so it needs no duty.
+            if self.syncing.is_syncing(bucket_id) {
                 continue;
             }
+            // One failing agreement must not hide the duties of the others.
+            match self
+                .duty_for(agreement, anchor_block, timeout_blocks, true)
+                .await
+            {
+                Ok(Some(duty)) => duties.push(duty),
+                Ok(None) => {}
+                Err(e) => tracing::warn!("Skipping bucket {bucket_id}: {e}"),
+            }
+        }
+        Ok(duties)
+    }
 
+    /// The anchor blocks a sync may take: `sync_timeout` in anchor blocks.
+    /// The confirmation transaction after the sync is not included, so an
+    /// agreement that expires within a few blocks of this margin can still
+    /// end with a rejected confirmation.
+    async fn timeout_blocks(&self) -> Result<u64, Error> {
+        let anchor_block_time = self.chain_client.get_anchor_block_time().await?;
+        let blocks = self
+            .config
+            .sync_timeout
+            .as_millis()
+            .div_ceil(anchor_block_time.as_millis().max(1));
+        Ok(u64::try_from(blocks).unwrap_or(u64::MAX))
+    }
+
+    /// The duty for `agreement`, or `None` when the replica cannot or need not
+    /// sync now. `check_interval` false ignores `min_sync_interval`, for a
+    /// forced sync.
+    async fn duty_for(
+        &self,
+        agreement: ReplicaAgreementInfo,
+        anchor_block: u64,
+        timeout_blocks: u64,
+        check_interval: bool,
+    ) -> Result<Option<SyncDuty>, Error> {
+        // `confirm_replica_sync` rejects a call at or after `expires_at`.
+        if anchor_block.saturating_add(timeout_blocks) >= agreement.expires_at {
+            tracing::debug!(
+                "Bucket {} agreement expires at block {} before a sync could finish",
+                agreement.bucket_id,
+                agreement.expires_at
+            );
+            return Ok(None);
+        }
+
+        // Create the bucket even when no sync starts now, so a checkpoint of
+        // it is relevant. Only create it: a sync task may be writing the
+        // bucket, and the task sets the quota itself.
+        self.storage
+            .init_bucket(agreement.bucket_id, agreement.max_bytes)?;
+
+        if agreement.sync_balance < agreement.sync_price {
+            tracing::debug!(
+                "Bucket {} has insufficient sync balance: {} < {}",
+                agreement.bucket_id,
+                agreement.sync_balance,
+                agreement.sync_price
+            );
+            return Ok(None);
+        }
+
+        if check_interval {
             if let Some((_, last_block)) = agreement.last_sync {
                 let elapsed = anchor_block.saturating_sub(last_block);
                 if elapsed < agreement.min_sync_interval {
@@ -571,40 +755,41 @@ impl ReplicaSyncCoordinator {
                         elapsed,
                         agreement.min_sync_interval
                     );
-                    continue;
+                    return Ok(None);
                 }
             }
-
-            let snapshot = self
-                .chain_client
-                .fetch_bucket_snapshot(agreement.bucket_id)
-                .await?;
-
-            if snapshot.mmr_root == H256::zero() {
-                continue;
-            }
-
-            if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id) {
-                if bucket.mmr_root == snapshot.mmr_root {
-                    continue;
-                }
-            }
-
-            let source_endpoints = self.fetch_source_endpoints(agreement.bucket_id).await?;
-
-            duties.push(SyncDuty {
-                bucket_id: agreement.bucket_id,
-                target_mmr_root: snapshot.mmr_root,
-                target_leaf_count: snapshot.leaf_count,
-                source_endpoints,
-                sync_balance: agreement.sync_balance,
-                sync_price: agreement.sync_price,
-                min_sync_interval: agreement.min_sync_interval,
-                last_sync: agreement.last_sync,
-            });
         }
 
-        Ok(duties)
+        let commitments = self
+            .chain_client
+            .fetch_bucket_commitments(agreement.bucket_id)
+            .await?;
+        let last_sync_root = agreement.last_sync.map(|(root, _)| root);
+        let Some(target) = select_target(&commitments, last_sync_root) else {
+            return Ok(None);
+        };
+
+        let source_endpoints = self.fetch_source_endpoints(agreement.bucket_id).await?;
+
+        Ok(Some(SyncDuty {
+            bucket_id: agreement.bucket_id,
+            target,
+            max_bytes: agreement.max_bytes,
+            source_endpoints,
+            sync_balance: agreement.sync_balance,
+            sync_price: agreement.sync_price,
+            min_sync_interval: agreement.min_sync_interval,
+            last_sync: agreement.last_sync,
+        }))
+    }
+
+    /// Create the local bucket if it does not exist and set its quota.
+    /// `init_bucket` keeps the quota of a bucket that exists, so the quota is
+    /// set afterwards.
+    fn prepare_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
+        self.storage.init_bucket(bucket_id, max_bytes)?;
+        self.storage.set_max_bytes(bucket_id, max_bytes)?;
+        Ok(())
     }
 
     /// Endpoints to sync from, in try order: primaries first (most current),
@@ -627,35 +812,29 @@ impl ReplicaSyncCoordinator {
         Ok(sources)
     }
 
-    /// Get sync duty for a specific bucket.
+    /// Get sync duty for a specific bucket, or `None` if this provider has no
+    /// replica agreement for it or cannot sync it now. Ignores
+    /// `min_sync_interval`.
     async fn get_sync_duty(&self, bucket_id: BucketId) -> Result<Option<SyncDuty>, Error> {
-        let snapshot = self.chain_client.fetch_bucket_snapshot(bucket_id).await?;
-
-        let source_endpoints = self.fetch_source_endpoints(bucket_id).await?;
-
-        Ok(Some(SyncDuty {
-            bucket_id,
-            target_mmr_root: snapshot.mmr_root,
-            target_leaf_count: snapshot.leaf_count,
-            source_endpoints,
-            sync_balance: u128::MAX,
-            sync_price: 0,
-            min_sync_interval: 0,
-            last_sync: None,
-        }))
+        let anchor_block = self.chain_client.get_current_block().await?;
+        let agreements = self
+            .chain_client
+            .fetch_replica_agreements(&self.provider_id)
+            .await?;
+        let Some(agreement) = agreements
+            .into_iter()
+            .find(|agreement| agreement.bucket_id == bucket_id)
+        else {
+            return Ok(None);
+        };
+        let timeout_blocks = self.timeout_blocks().await?;
+        self.duty_for(agreement, anchor_block, timeout_blocks, false)
+            .await
     }
 
     /// Perform sync and submit confirmation.
     pub async fn sync_and_confirm(&self, duty: &SyncDuty) -> SyncResult {
-        // Check if we already have this root
-        if let Some(bucket) = self.storage.get_bucket(duty.bucket_id) {
-            if bucket.mmr_root == duty.target_mmr_root {
-                return SyncResult::AlreadySynced {
-                    bucket_id: duty.bucket_id,
-                    mmr_root: duty.target_mmr_root,
-                };
-            }
-        }
+        let target_root = duty.target.commitment.mmr_root;
 
         // Check sync balance
         if duty.sync_balance < duty.sync_price {
@@ -667,77 +846,62 @@ impl ReplicaSyncCoordinator {
         }
 
         // No data to sync if target is zero
-        if duty.target_mmr_root == H256::zero() {
+        if target_root == H256::zero() {
             return SyncResult::NoDataToSync {
                 bucket_id: duty.bucket_id,
             };
         }
 
-        // Try syncing from each source
-        let mut tried_endpoints = Vec::new();
-        let mut sync_success = false;
-
-        for endpoint in &duty.source_endpoints {
-            tried_endpoints.push(endpoint.clone());
-
-            match self.sync_from_source(duty, endpoint).await {
-                Ok(synced_root) => {
-                    if synced_root == duty.target_mmr_root {
-                        sync_success = true;
-                        tracing::info!(
-                            "Successfully synced bucket {} from {}: root = {:#x}",
-                            duty.bucket_id,
-                            endpoint,
-                            synced_root
-                        );
-                        break;
-                    } else {
-                        tracing::warn!(
-                            "Sync mismatch for bucket {} from {}: expected {:#x}, got {:#x}",
-                            duty.bucket_id,
-                            endpoint,
-                            duty.target_mmr_root,
-                            synced_root
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to sync bucket {} from {}: {}",
-                        duty.bucket_id,
-                        endpoint,
-                        e
-                    );
-                }
-            }
-        }
-
-        if !sync_success {
-            return SyncResult::SourcesUnavailable {
+        // The agreement's quota limits what the replica stores.
+        if let Err(e) = self.prepare_bucket(duty.bucket_id, duty.max_bytes) {
+            return SyncResult::StorageFailed {
                 bucket_id: duty.bucket_id,
-                tried: tried_endpoints,
+                error: format!("cannot prepare the bucket: {e}"),
             };
         }
 
-        // Verify final state
-        let local_bucket = match self.storage.get_bucket(duty.bucket_id) {
-            Some(b) => b,
-            None => {
-                return SyncResult::VerificationFailed {
+        let mut sources = SourceSet::new(duty.source_endpoints.clone());
+        let synced = tokio::time::timeout(
+            self.config.sync_timeout,
+            self.replica_sync
+                .sync_to_target(duty.bucket_id, &duty.target.commitment, &mut sources),
+        )
+        .await;
+        match synced {
+            Err(_) => {
+                return SyncResult::TimedOut {
                     bucket_id: duty.bucket_id,
-                    reason: "Bucket not found after sync".to_string(),
                 };
             }
-        };
-
-        if local_bucket.mmr_root != duty.target_mmr_root {
-            return SyncResult::VerificationFailed {
-                bucket_id: duty.bucket_id,
-                reason: format!(
-                    "Root mismatch: expected {:#x}, got {:#x}",
-                    duty.target_mmr_root, local_bucket.mmr_root
-                ),
-            };
+            Ok(Ok(())) => tracing::info!(
+                "Synced bucket {} to root {:#x}",
+                duty.bucket_id,
+                target_root
+            ),
+            Ok(Err(Error::NoSourceLeft { .. })) => {
+                return SyncResult::SourcesUnavailable {
+                    bucket_id: duty.bucket_id,
+                    tried: duty.source_endpoints.clone(),
+                };
+            }
+            Ok(Err(Error::Backend(provider_storage::Error::CommitmentNotReproducible(reason)))) => {
+                return SyncResult::VerificationFailed {
+                    bucket_id: duty.bucket_id,
+                    reason,
+                };
+            }
+            Ok(Err(Error::Backend(e))) => {
+                return SyncResult::StorageFailed {
+                    bucket_id: duty.bucket_id,
+                    error: e.to_string(),
+                };
+            }
+            Ok(Err(e)) => {
+                return SyncResult::VerificationFailed {
+                    bucket_id: duty.bucket_id,
+                    reason: e.to_string(),
+                };
+            }
         }
 
         // Submit on-chain confirmation if auto_confirm is enabled
@@ -746,8 +910,8 @@ impl ReplicaSyncCoordinator {
         } else {
             SyncResult::Success {
                 bucket_id: duty.bucket_id,
-                mmr_root: duty.target_mmr_root,
-                position_matched: 0,
+                mmr_root: target_root,
+                position_matched: duty.target.position,
                 payment: 0,
             }
         }
@@ -764,7 +928,30 @@ impl ReplicaSyncCoordinator {
                 error: "no signing key configured; cannot attest sync roots".to_string(),
             };
         };
-        let attestation = match SignedSyncRoots::sign(signer, duty.target_mmr_root) {
+        let target_root = duty.target.commitment.mmr_root;
+
+        // A checkpoint during the sync can move the root to another position
+        // or overwrite it, so look it up again.
+        let position = match self
+            .chain_client
+            .fetch_bucket_commitments(duty.bucket_id)
+            .await
+        {
+            Ok(commitments) => position_of(&commitments, target_root),
+            Err(e) => {
+                return SyncResult::SubmissionFailed {
+                    bucket_id: duty.bucket_id,
+                    error: e.to_string(),
+                };
+            }
+        };
+        let Some(position) = position else {
+            return SyncResult::SubmissionFailed {
+                bucket_id: duty.bucket_id,
+                error: format!("root {target_root:#x} is no longer on chain"),
+            };
+        };
+        let attestation = match SignedSyncRoots::sign(signer, position, target_root) {
             Ok(attestation) => attestation,
             Err(e) => {
                 return SyncResult::SubmissionFailed {
@@ -778,23 +965,20 @@ impl ReplicaSyncCoordinator {
             .submit_sync_confirmation(duty.bucket_id, attestation)
             .await
         {
-            Ok((position, payment)) => SyncResult::Success {
+            Ok(Some((position, payment))) => SyncResult::Success {
                 bucket_id: duty.bucket_id,
-                mmr_root: duty.target_mmr_root,
+                mmr_root: target_root,
                 position_matched: position,
                 payment,
+            },
+            Ok(None) => SyncResult::AlreadySynced {
+                bucket_id: duty.bucket_id,
+                mmr_root: target_root,
             },
             Err(e) => SyncResult::SubmissionFailed {
                 bucket_id: duty.bucket_id,
                 error: e.to_string(),
             },
         }
-    }
-
-    /// Sync data from a source provider using top-down traversal.
-    async fn sync_from_source(&self, duty: &SyncDuty, source_url: &str) -> Result<H256, Error> {
-        self.replica_sync
-            .sync_from_source(duty.bucket_id, source_url)
-            .await
     }
 }

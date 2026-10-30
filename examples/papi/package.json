@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "demo": "node --import tsx full-flow.ts",
+    "demo:replica": "node --import tsx replica-flow.ts",
     "demo:provider-discovery": "node --import tsx provider-discovery.ts",
     "demo:sc-flow": "node --import tsx sc-flow.ts",
     "e2e": "node --import tsx e2e/runner.bin.ts",

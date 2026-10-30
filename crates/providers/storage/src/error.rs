@@ -12,6 +12,16 @@ pub enum Error {
     #[error("Commitment not reproducible from local leaves: {0}")]
     CommitmentNotReproducible(String),
 
+    /// The requested leaf range starts below the bucket's `start_seq`: those
+    /// leaves were deleted. Request from `start_seq` or later.
+    #[error("Leaves below seq {start_seq} were deleted (requested from {from_seq})")]
+    LeavesDeleted { from_seq: u64, start_seq: u64 },
+
+    /// The requested leaf range ends past the bucket's last leaf. Request up to
+    /// `end_seq` at most.
+    #[error("Bucket has leaves only below seq {end_seq} (requested up to {to_seq})")]
+    LeavesBeyondEnd { to_seq: u64, end_seq: u64 },
+
     #[error("Children missing: {0:?}")]
     ChildrenMissing(Vec<String>),
 
