@@ -340,8 +340,9 @@ pub struct FileChunk {
 /// File manifest tracking how to reassemble a file from chunks (SCALE-encoded, no_std compatible).
 ///
 /// `chunks` lists the hashes of the content's 256 KiB chunks in order, with
-/// `sequence` equal to the index. Empty content has one chunk: the hash of
-/// the empty chunk. The content's data root is [`FileManifest::content_root`].
+/// `sequence` equal to the index. Empty content has no chunks and no stored
+/// blob, because Layer 0 has no chunk tree for empty data. The content's data
+/// root is [`FileManifest::content_root`].
 #[derive(
     Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
@@ -415,10 +416,10 @@ impl FileManifest {
     }
 
     /// Check the rules SCALE decoding does not: `chunks` has one entry per
-    /// [`CHUNK_SIZE`] chunk of `total_size` bytes (one for empty content),
+    /// [`CHUNK_SIZE`] chunk of `total_size` bytes (none for empty content),
     /// and each chunk's `sequence` is its index.
     pub fn validate(&self) -> Result<(), FileSystemError> {
-        let expected = self.total_size.div_ceil(CHUNK_SIZE as u64).max(1);
+        let expected = self.total_size.div_ceil(CHUNK_SIZE as u64);
         if self.chunks.len() as u64 != expected {
             return Err(FileSystemError::InvalidManifest);
         }
@@ -504,20 +505,17 @@ pub enum FileSystemError {
 
 /// CID of a blob: its Layer 0 `data_root`.
 ///
-/// Splits `data` into 256 KiB chunks (empty data is one empty chunk), hashes
-/// each chunk as a Merkle leaf, and returns `storage_primitives::merkle_root`
-/// over the chunk hashes. For a blob
-/// of at most 256 KiB this is the leaf hash of the blob.
+/// Splits `data` into 256 KiB chunks, hashes each chunk as a Merkle leaf, and
+/// returns `storage_primitives::merkle_root` over the chunk hashes. For a blob
+/// of at most 256 KiB this is the leaf hash of the blob. Empty data has no
+/// chunks, so its CID is the zero hash and no blob exists for it.
 pub fn compute_cid(data: &[u8]) -> Cid {
     storage_primitives::merkle_root(&chunk_hashes(data))
 }
 
-/// Leaf hashes of the 256 KiB chunks of `data`, in order. Empty data is
-/// one empty chunk.
+/// Leaf hashes of the 256 KiB chunks of `data`, in order. Empty data has no
+/// chunks.
 pub fn chunk_hashes(data: &[u8]) -> Vec<Cid> {
-    if data.is_empty() {
-        return alloc::vec![storage_primitives::hash_leaf(&[])];
-    }
     data.chunks(CHUNK_SIZE)
         .map(storage_primitives::hash_leaf)
         .collect()
@@ -621,7 +619,7 @@ mod tests {
 
     #[test]
     fn compute_cid_is_the_data_root() {
-        assert_eq!(compute_cid(b""), h(b""));
+        assert_eq!(compute_cid(b""), H256::zero());
         assert_eq!(compute_cid(b"hello"), h(b"hello"));
         let exact = vec![1u8; CHUNK_SIZE];
         assert_eq!(compute_cid(&exact), h(&exact));
@@ -642,11 +640,10 @@ mod tests {
     }
 
     #[test]
-    fn manifest_of_empty_content_has_one_empty_chunk() {
+    fn manifest_of_empty_content_has_no_chunks() {
         let manifest = FileManifest::for_content(1, b"", DEFAULT_MIME_TYPE, vec![]).unwrap();
         assert_eq!(manifest.total_size, 0);
-        assert_eq!(manifest.chunks.len(), 1);
-        assert_eq!(manifest.chunks[0].cid, h(b""));
+        assert!(manifest.chunks.is_empty());
         assert_eq!(manifest.content_root(), compute_cid(b""));
     }
 
@@ -690,7 +687,6 @@ mod tests {
         assert_eq!(wrong_size.validate(), Err(FileSystemError::InvalidManifest));
 
         let mut no_chunks = manifest.clone();
-        no_chunks.total_size = 0;
         no_chunks.chunks = BoundedVec::default();
         assert_eq!(no_chunks.validate(), Err(FileSystemError::InvalidManifest));
 

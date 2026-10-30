@@ -387,9 +387,12 @@ impl<S: BlobStore> Tree<S> {
     /// Read the file at `path`.
     pub async fn get_file(&self, path: &str) -> Result<FileContent> {
         let stat = self.stat(path).await?;
-        let data = self
-            .read_blob(stat.content_root(), BlobLength::Exact(stat.size()))
-            .await?;
+        let data = if stat.size() == 0 {
+            Vec::new()
+        } else {
+            self.read_blob(stat.content_root(), BlobLength::Exact(stat.size()))
+                .await?
+        };
         Ok(FileContent { stat, data })
     }
 
@@ -459,7 +462,11 @@ impl<S: BlobStore> Tree<S> {
             .map_err(|e| format_error(path, e))?;
 
         let dirs = self.rewrite(chain, parents, path)?;
-        let mut blobs = vec![data, manifest_bytes.as_slice()];
+        let mut blobs = Vec::new();
+        if !data.is_empty() {
+            blobs.push(data);
+        }
+        blobs.push(manifest_bytes.as_slice());
         blobs.extend(dirs.iter().map(Vec::as_slice));
         self.write(&blobs).await?;
         Ok(FileStat { entry, manifest })
@@ -851,6 +858,26 @@ mod tests {
         assert_eq!(file.stat.content_type(), "text/plain");
         assert_eq!(file.stat.size(), 5);
         assert_eq!(file.stat.entry.size, 5);
+    }
+
+    #[tokio::test]
+    async fn empty_file_has_a_manifest_and_no_content_blob() {
+        let store = MemoryStore::default();
+        let stat = tree(&store)
+            .put_file("/empty", b"", DEFAULT, vec![])
+            .await
+            .unwrap();
+        assert!(stat.manifest.chunks.is_empty());
+
+        // Manifest, root directory, then no content blob.
+        let order = &store.commits()[0];
+        assert_eq!(order.len(), 2);
+        assert_eq!(order[0], stat.entry.cid);
+
+        // Reading it makes no store request: the store has no content blob.
+        let file = tree(&store).get_file("/empty").await.unwrap();
+        assert!(file.data.is_empty());
+        assert_eq!(file.stat.size(), 0);
     }
 
     #[tokio::test]
