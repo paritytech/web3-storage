@@ -21,7 +21,10 @@ pub mod mmr;
 
 pub use agreement_term::*;
 pub use merkle::*;
-pub use mmr::{bag_peaks, verify_mmr_proof, MmrLeaf, MmrProof, StorageMerge, LEAF_VERSION};
+pub use mmr::{
+    bag_peaks, verify_last_mmr_leaf, verify_mmr_proof, MmrLeaf, MmrProof, StorageMerge,
+    LEAF_VERSION,
+};
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
@@ -352,8 +355,8 @@ pub struct BucketSnapshot<BlockNumber> {
     /// Block at which checkpointed
     pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
-    /// Bit i is set if primary_providers[i] signed.
-    /// Uses Vec<u8> with LSB0 ordering for efficient bit manipulation.
+    /// Bit i is set if `primary_providers[i]` signed.
+    /// Uses `Vec<u8>` with LSB0 ordering for efficient bit manipulation.
     pub primary_signers: Vec<u8>,
 }
 

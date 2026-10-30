@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { asHex, base64ToBytes, bytesEq, bytesToBase64, hexToBytes, toHex } from "./bytes.js";
+import { asHex, base64ToBytes, bytesEq, bytesToBase64, concatBytes, hexToBytes, toHex } from "./bytes.js";
 
 describe("hex", () => {
   it("round-trips bytes", () => {
@@ -35,5 +35,16 @@ describe("base64", () => {
     const big = new Uint8Array(100_000);
     for (let i = 0; i < big.length; i++) big[i] = i % 251;
     expect(base64ToBytes(bytesToBase64(big))).toEqual(big);
+  });
+});
+
+describe("concatBytes", () => {
+  it("joins arrays in order", () => {
+    const out = concatBytes(new Uint8Array([1, 2]), new Uint8Array([]), new Uint8Array([3]));
+    expect(out).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  it("returns an empty array for no input", () => {
+    expect(concatBytes()).toEqual(new Uint8Array(0));
   });
 });

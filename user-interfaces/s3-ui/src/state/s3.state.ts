@@ -310,7 +310,6 @@ export function abortUpload(): void {
 export async function downloadObject(key: string): Promise<Uint8Array> {
   const bucket = selectedBucket$.getValue();
   if (!bucket) throw new Error("No bucket selected");
-  // Unverified download: see S3Client.getObject.
   let data = await client.getObject(bucket.bucketId, key);
 
   // Decrypt if encryption key is set and data looks encrypted (version byte 0x02)

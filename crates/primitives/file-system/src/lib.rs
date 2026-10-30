@@ -16,7 +16,12 @@
 //! - **Drive**: A user's logical file system, mapped to a Layer 0 bucket
 //! - **DirectoryNode**: A directory containing references to children
 //! - **FileManifest**: Metadata about a file and its chunks
-//! - **CID**: Content Identifier (Merkle leaf hash)
+//! - **CID**: Content Identifier of a blob: its Layer 0 `data_root`
+//!   (see [`compute_cid`])
+//!
+//! The file system clients store every directory and manifest as a SCALE
+//! encoded blob in the drive's bucket. The root directory is the data root of
+//! the bucket's last MMR leaf.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -36,8 +41,14 @@ use storage_primitives::BucketId;
 // SCALE-encoded types (no_std compatible, used on-chain)
 // ============================================================================
 
-/// Content Identifier (Merkle leaf hash)
+/// Content Identifier: the Layer 0 `data_root` of a blob (see [`compute_cid`]).
 pub type Cid = H256;
+
+/// Content type stored when the uploader gives none.
+pub const DEFAULT_MIME_TYPE: &str = "application/octet-stream";
+
+/// Chunk size of the [`compute_cid`] rule, in bytes (256 KiB).
+pub const CHUNK_SIZE: usize = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
 
 /// Entry type enumeration (SCALE-encoded, no_std compatible)
 #[derive(
@@ -128,7 +139,12 @@ impl Get<u32> for MaxEncryptionParamsLength {
     }
 }
 
-/// A single entry in a directory (SCALE-encoded, no_std compatible)
+/// A single entry in a directory (SCALE-encoded, no_std compatible).
+///
+/// `name` is 1..=256 bytes of UTF-8, contains no `/`, and is not `.` or `..`
+/// (see [`validate_entry_name`]). For a file, `cid` is the CID of its
+/// [`FileManifest`] and `size` the content size; for a directory, `cid` is
+/// the CID of its [`DirectoryNode`] and `size` is 0.
 #[derive(
     Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
@@ -138,25 +154,34 @@ pub struct DirectoryEntry {
     pub name: BoundedVec<u8, MaxEntryNameLength>,
     /// File or Directory
     pub entry_type: EntryType,
-    /// Content ID (Merkle leaf hash)
+    /// CID of the file's manifest or the directory's node
     pub cid: Cid,
-    /// Size in bytes
+    /// Content size in bytes for a file, 0 for a directory
     pub size: u64,
     /// Modification timestamp (Unix timestamp)
     pub mtime: u64,
 }
 
 impl DirectoryEntry {
-    /// Create a new directory entry
-    #[cfg(feature = "std")]
-    pub fn new(name: String, entry_type: EntryType, cid: Cid, size: u64, mtime: u64) -> Self {
-        Self {
-            name: BoundedVec::try_from(name.into_bytes()).unwrap_or_default(),
+    /// Create a directory entry. Fails with
+    /// [`FileSystemError::InvalidEntryName`] if `name` breaks the rules of
+    /// [`validate_entry_name`].
+    pub fn try_new(
+        name: &str,
+        entry_type: EntryType,
+        cid: Cid,
+        size: u64,
+        mtime: u64,
+    ) -> Result<Self, FileSystemError> {
+        validate_entry_name(name.as_bytes())?;
+        Ok(Self {
+            name: BoundedVec::try_from(name.as_bytes().to_vec())
+                .map_err(|_| FileSystemError::InvalidEntryName)?,
             entry_type,
             cid,
             size,
             mtime,
-        }
+        })
     }
 
     /// Get the name as a string (lossy conversion)
@@ -175,70 +200,113 @@ impl DirectoryEntry {
     }
 }
 
-/// Metadata key-value pair
+/// Metadata key-value pair: key up to 64 bytes, value up to 256 bytes.
 #[derive(
     Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct MetadataEntry {
+    /// Metadata key
     pub key: BoundedVec<u8, MaxMetadataKeyLength>,
+    /// Metadata value
     pub value: BoundedVec<u8, MaxMetadataValueLength>,
 }
 
-/// Directory node containing child references (SCALE-encoded, no_std compatible)
+impl MetadataEntry {
+    /// Create an entry. Fails with [`FileSystemError::BoundsExceeded`] if the
+    /// key is over 64 bytes or the value over 256 bytes.
+    pub fn try_new(key: &[u8], value: &[u8]) -> Result<Self, FileSystemError> {
+        Ok(Self {
+            key: BoundedVec::try_from(key.to_vec()).map_err(|_| FileSystemError::BoundsExceeded)?,
+            value: BoundedVec::try_from(value.to_vec())
+                .map_err(|_| FileSystemError::BoundsExceeded)?,
+        })
+    }
+}
+
+/// Directory node containing child references (SCALE-encoded, no_std compatible).
+///
+/// `children` are sorted by name bytes, ascending, and names are unique.
+/// `metadata` is reserved and empty. [`DirectoryNode::validate`] checks both.
 #[derive(
     Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirectoryNode {
-    /// Layer 0 bucket id of the drive
-    pub drive_id: BucketId,
-    /// Child entries
+    /// Layer 0 bucket id
+    pub bucket_id: BucketId,
+    /// Child entries, sorted by name bytes
     pub children: BoundedVec<DirectoryEntry, MaxDirectoryChildren>,
-    /// Custom metadata (tags, colors, etc.)
+    /// Reserved, empty
     pub metadata: BoundedVec<MetadataEntry, MaxMetadataEntries>,
 }
 
 impl DirectoryNode {
     /// Create a new empty directory
-    pub fn new_empty(drive_id: BucketId) -> Self {
+    pub fn new_empty(bucket_id: BucketId) -> Self {
         Self {
-            drive_id,
+            bucket_id,
             children: BoundedVec::default(),
             metadata: BoundedVec::default(),
         }
     }
 
-    /// Add a child entry
-    pub fn add_child(&mut self, entry: DirectoryEntry) -> Result<(), DirectoryEntry> {
-        self.children.try_push(entry)
+    /// Insert `entry`, or replace the child with the same name. Keeps the
+    /// children sorted. Fails with [`FileSystemError::BoundsExceeded`] if the
+    /// directory already has 1024 children.
+    pub fn upsert_child(&mut self, entry: DirectoryEntry) -> Result<(), FileSystemError> {
+        match self.position(&entry.name) {
+            Ok(pos) => {
+                self.children[pos] = entry;
+                Ok(())
+            }
+            Err(pos) => self
+                .children
+                .try_insert(pos, entry)
+                .map_err(|_| FileSystemError::BoundsExceeded),
+        }
     }
 
     /// Find a child by name
     pub fn find_child(&self, name: &str) -> Option<&DirectoryEntry> {
-        self.children
-            .iter()
-            .find(|e| e.name.as_slice() == name.as_bytes())
-    }
-
-    /// Find a child by name (mutable)
-    pub fn find_child_mut(&mut self, name: &str) -> Option<&mut DirectoryEntry> {
-        self.children
-            .iter_mut()
-            .find(|e| e.name.as_slice() == name.as_bytes())
+        self.position(name.as_bytes())
+            .ok()
+            .map(|pos| &self.children[pos])
     }
 
     /// Remove a child by name
     pub fn remove_child(&mut self, name: &str) -> Option<DirectoryEntry> {
-        if let Some(pos) = self
-            .children
-            .iter()
-            .position(|e| e.name.as_slice() == name.as_bytes())
-        {
-            Some(self.children.remove(pos))
-        } else {
-            None
+        self.position(name.as_bytes())
+            .ok()
+            .map(|pos| self.children.remove(pos))
+    }
+
+    /// Binary search for `name` in the sorted children.
+    fn position(&self, name: &[u8]) -> Result<usize, usize> {
+        self.children
+            .binary_search_by(|e| e.name.as_slice().cmp(name))
+    }
+
+    /// Check the rules SCALE decoding does not: valid, sorted, unique child
+    /// names, size 0 on directory entries, and empty `metadata`.
+    pub fn validate(&self) -> Result<(), FileSystemError> {
+        if !self.metadata.is_empty() {
+            return Err(FileSystemError::InvalidDirectory);
         }
+        for entry in self.children.iter() {
+            validate_entry_name(&entry.name)?;
+            if entry.is_directory() && entry.size != 0 {
+                return Err(FileSystemError::InvalidDirectory);
+            }
+        }
+        if self
+            .children
+            .windows(2)
+            .any(|pair| pair[0].name.as_slice() >= pair[1].name.as_slice())
+        {
+            return Err(FileSystemError::InvalidDirectory);
+        }
+        Ok(())
     }
 
     /// Serialize to SCALE bytes
@@ -251,7 +319,7 @@ impl DirectoryNode {
         Self::decode(&mut &bytes[..])
     }
 
-    /// Compute the CID (Merkle leaf hash) of this directory node
+    /// CID of the SCALE encoding (see [`compute_cid`])
     pub fn compute_cid(&self) -> Cid {
         compute_cid(&self.to_scale_bytes())
     }
@@ -263,51 +331,107 @@ impl DirectoryNode {
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileChunk {
-    /// Chunk CID (Merkle leaf hash)
+    /// Merkle leaf hash of the chunk
     pub cid: Cid,
     /// Position in the file (0-indexed)
     pub sequence: u32,
 }
 
-/// File manifest tracking how to reassemble a file from chunks (SCALE-encoded, no_std compatible)
+/// File manifest tracking how to reassemble a file from chunks (SCALE-encoded, no_std compatible).
+///
+/// `chunks` lists the hashes of the content's 256 KiB chunks in order, with
+/// `sequence` equal to the index. Empty content has no chunks and no stored
+/// blob, because Layer 0 has no chunk tree for empty data. The content's data
+/// root is [`FileManifest::content_root`].
 #[derive(
     Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileManifest {
-    /// Layer 0 bucket id of the drive
-    pub drive_id: BucketId,
-    /// MIME type (e.g., "image/png")
+    /// Layer 0 bucket id
+    pub bucket_id: BucketId,
+    /// MIME type (e.g., "image/png"); [`DEFAULT_MIME_TYPE`] if none was given
     pub mime_type: BoundedVec<u8, MaxMimeTypeLength>,
     /// Total file size in bytes
     pub total_size: u64,
     /// Ordered list of chunks
     pub chunks: BoundedVec<FileChunk, MaxFileChunks>,
-    /// Encryption parameters (optional, for W3ACL)
+    /// Encryption parameters (optional, for W3ACL); empty
     pub encryption_params: BoundedVec<u8, MaxEncryptionParamsLength>,
+    /// User metadata (for example S3 `x-amz-meta-*` values)
+    pub user_metadata: BoundedVec<MetadataEntry, MaxMetadataEntries>,
 }
 
 impl FileManifest {
-    /// Create a new file manifest
-    #[cfg(feature = "std")]
-    pub fn new(drive_id: BucketId, mime_type: String, total_size: u64) -> Self {
-        Self {
-            drive_id,
-            mime_type: BoundedVec::try_from(mime_type.into_bytes()).unwrap_or_default(),
-            total_size,
-            chunks: BoundedVec::default(),
+    /// Build the manifest of `content`: its chunk hashes, size, `mime_type`
+    /// ([`DEFAULT_MIME_TYPE`] if empty) and `user_metadata`. Fails with
+    /// [`FileSystemError::BoundsExceeded`] if
+    /// the MIME type is over 128 bytes, the content has more than 65536
+    /// chunks, or there are more than 64 metadata entries.
+    pub fn for_content(
+        bucket_id: BucketId,
+        content: &[u8],
+        mime_type: &str,
+        user_metadata: Vec<MetadataEntry>,
+    ) -> Result<Self, FileSystemError> {
+        let chunks = chunk_hashes(content)
+            .into_iter()
+            .enumerate()
+            .map(|(i, cid)| FileChunk {
+                cid,
+                sequence: i as u32,
+            })
+            .collect::<Vec<_>>();
+        let mime_type = if mime_type.is_empty() {
+            DEFAULT_MIME_TYPE
+        } else {
+            mime_type
+        };
+        Ok(Self {
+            bucket_id,
+            mime_type: BoundedVec::try_from(mime_type.as_bytes().to_vec())
+                .map_err(|_| FileSystemError::BoundsExceeded)?,
+            total_size: content.len() as u64,
+            chunks: BoundedVec::try_from(chunks).map_err(|_| FileSystemError::BoundsExceeded)?,
             encryption_params: BoundedVec::default(),
-        }
+            user_metadata: BoundedVec::try_from(user_metadata)
+                .map_err(|_| FileSystemError::BoundsExceeded)?,
+        })
     }
 
-    /// Add a chunk
-    pub fn add_chunk(&mut self, cid: Cid, sequence: u32) -> Result<(), FileChunk> {
-        self.chunks.try_push(FileChunk { cid, sequence })
+    /// Data root of the content: the Merkle root over the chunk hashes.
+    /// Equals [`compute_cid`] of the content.
+    pub fn content_root(&self) -> Cid {
+        let leaves: Vec<H256> = self.chunks.iter().map(|c| c.cid).collect();
+        storage_primitives::merkle_root(&leaves)
     }
 
-    /// Get the MIME type as a string
+    /// The MIME type as a string; [`DEFAULT_MIME_TYPE`] if the stored one is
+    /// empty.
     pub fn mime_type_str(&self) -> String {
+        if self.mime_type.is_empty() {
+            return DEFAULT_MIME_TYPE.into();
+        }
         String::from_utf8_lossy(&self.mime_type).into_owned()
+    }
+
+    /// Check the rules SCALE decoding does not: `chunks` has one entry per
+    /// [`CHUNK_SIZE`] chunk of `total_size` bytes (none for empty content),
+    /// and each chunk's `sequence` is its index.
+    pub fn validate(&self) -> Result<(), FileSystemError> {
+        let expected = self.total_size.div_ceil(CHUNK_SIZE as u64);
+        if self.chunks.len() as u64 != expected {
+            return Err(FileSystemError::InvalidManifest);
+        }
+        if self
+            .chunks
+            .iter()
+            .enumerate()
+            .any(|(i, chunk)| chunk.sequence as usize != i)
+        {
+            return Err(FileSystemError::InvalidManifest);
+        }
+        Ok(())
     }
 
     /// Serialize to SCALE bytes
@@ -320,20 +444,96 @@ impl FileManifest {
         Self::decode(&mut &bytes[..])
     }
 
-    /// Compute the CID (Merkle leaf hash) of this file manifest
+    /// CID of the SCALE encoding (see [`compute_cid`])
     pub fn compute_cid(&self) -> Cid {
         compute_cid(&self.to_scale_bytes())
     }
 }
 
 // ============================================================================
+// Error types
+// ============================================================================
+
+/// Error types for file system operations
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, TypeInfo)]
+#[cfg_attr(feature = "std", derive(thiserror::Error))]
+pub enum FileSystemError {
+    #[cfg_attr(feature = "std", error("Invalid CID format"))]
+    InvalidCid,
+
+    #[cfg_attr(feature = "std", error("Serialization failed"))]
+    SerializationError,
+
+    #[cfg_attr(feature = "std", error("Deserialization failed"))]
+    DeserializationError,
+
+    #[cfg_attr(feature = "std", error("Entry not found: {0}"))]
+    EntryNotFound(String),
+
+    #[cfg_attr(feature = "std", error("Invalid path"))]
+    InvalidPath,
+
+    #[cfg_attr(feature = "std", error("Not a directory"))]
+    NotADirectory,
+
+    #[cfg_attr(feature = "std", error("Not a file"))]
+    NotAFile,
+
+    /// An entry name is empty, over 256 bytes, not UTF-8, contains `/`, or is
+    /// `.` or `..`.
+    #[cfg_attr(feature = "std", error("Invalid entry name"))]
+    InvalidEntryName,
+
+    /// A directory node has unsorted or duplicate child names, a directory
+    /// entry with a non-zero size, or non-empty metadata.
+    #[cfg_attr(feature = "std", error("Invalid directory node"))]
+    InvalidDirectory,
+
+    /// A file manifest's chunk count does not match its `total_size`, or a
+    /// chunk's `sequence` is not its index.
+    #[cfg_attr(feature = "std", error("Invalid file manifest"))]
+    InvalidManifest,
+
+    /// A value is over one of the format's size bounds.
+    #[cfg_attr(feature = "std", error("Value exceeds a size bound"))]
+    BoundsExceeded,
+}
+
+// ============================================================================
 // Utility functions
 // ============================================================================
 
-/// Compute the CID of data: its Merkle leaf hash, which is the data root of a
-/// single-chunk blob.
+/// CID of a blob: its Layer 0 `data_root`.
+///
+/// Splits `data` into 256 KiB chunks, hashes each chunk as a Merkle leaf, and
+/// returns `storage_primitives::merkle_root` over the chunk hashes. For a blob
+/// of at most 256 KiB this is the leaf hash of the blob. Empty data has no
+/// chunks, so its CID is the zero hash and no blob exists for it.
 pub fn compute_cid(data: &[u8]) -> Cid {
-    storage_primitives::hash_leaf(data)
+    storage_primitives::merkle_root(&chunk_hashes(data))
+}
+
+/// Leaf hashes of the 256 KiB chunks of `data`, in order. Empty data has no
+/// chunks.
+pub fn chunk_hashes(data: &[u8]) -> Vec<Cid> {
+    data.chunks(CHUNK_SIZE)
+        .map(storage_primitives::hash_leaf)
+        .collect()
+}
+
+/// Check an entry name: 1..=256 bytes of UTF-8, no `/`, not `.` or `..`.
+pub fn validate_entry_name(name: &[u8]) -> Result<(), FileSystemError> {
+    let valid = !name.is_empty()
+        && name.len() <= MaxEntryNameLength::get() as usize
+        && core::str::from_utf8(name).is_ok()
+        && !name.contains(&b'/')
+        && name != b"."
+        && name != b"..";
+    if valid {
+        Ok(())
+    } else {
+        Err(FileSystemError::InvalidEntryName)
+    }
 }
 
 // ============================================================================
@@ -344,99 +544,305 @@ pub fn compute_cid(data: &[u8]) -> Cid {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_empty_directory_encoding() {
-        let dir = DirectoryNode::new_empty(2);
-        let bytes = dir.to_scale_bytes();
-        println!("Empty DirectoryNode for drive_id=2:");
-        println!("  Length: {}", bytes.len());
-        println!("  Hex: {}", array_bytes::bytes2hex("", &bytes));
-        let cid = compute_cid(&bytes);
-        println!("  CID: {cid:#x}");
+    fn h(data: &[u8]) -> H256 {
+        storage_primitives::hash_leaf(data)
+    }
 
-        // Also test roundtrip
-        let decoded = DirectoryNode::from_scale_bytes(&bytes).unwrap();
-        assert_eq!(decoded.drive_id, 2);
-        assert!(decoded.children.is_empty());
+    fn entry(name: &str, entry_type: EntryType, size: u64) -> DirectoryEntry {
+        DirectoryEntry::try_new(name, entry_type, h(name.as_bytes()), size, 1).unwrap()
+    }
+
+    /// The TypeScript client reads directory and manifest blobs up to these
+    /// sizes (`DIRECTORY_NODE_MAX_SIZE`, `FILE_MANIFEST_MAX_SIZE` in
+    /// `packages/core/src/file-system.ts`) and asserts the same values.
+    #[test]
+    fn max_encoded_len_matches_typescript() {
+        use codec::MaxEncodedLen;
+        assert_eq!(DirectoryNode::max_encoded_len(), 335_116);
+        assert_eq!(FileManifest::max_encoded_len(), 2_380_698);
+    }
+
+    /// Shared test vector: the TypeScript implementation asserts the same
+    /// encoding and CID.
+    #[test]
+    fn directory_node_test_vector() {
+        let mut dir = DirectoryNode::new_empty(7);
+        dir.upsert_child(
+            DirectoryEntry::try_new("docs", EntryType::Directory, h(b"d"), 0, 1_700_000_001)
+                .unwrap(),
+        )
+        .unwrap();
+        dir.upsert_child(
+            DirectoryEntry::try_new("a.txt", EntryType::File, h(b"a"), 1, 1_700_000_000).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(dir.children[0].name_str(), "a.txt");
+        assert_eq!(
+            array_bytes::bytes2hex("", dir.to_scale_bytes()),
+            DIRECTORY_NODE_HEX,
+            "encoding"
+        );
+        assert_eq!(
+            format!("{:#x}", dir.compute_cid()),
+            DIRECTORY_NODE_CID,
+            "cid"
+        );
+    }
+
+    /// Shared test vector: the TypeScript implementation asserts the same
+    /// encoding and CID.
+    #[test]
+    fn file_manifest_test_vector() {
+        let manifest = FileManifest::for_content(
+            7,
+            b"a",
+            "text/plain",
+            vec![MetadataEntry::try_new(b"origin", b"test").unwrap()],
+        )
+        .unwrap();
+        assert_eq!(manifest.chunks[0].cid, h(b"a"));
+        assert_eq!(manifest.content_root(), h(b"a"));
+        assert_eq!(
+            array_bytes::bytes2hex("", manifest.to_scale_bytes()),
+            FILE_MANIFEST_HEX,
+            "encoding"
+        );
+        assert_eq!(
+            format!("{:#x}", manifest.compute_cid()),
+            FILE_MANIFEST_CID,
+            "cid"
+        );
+    }
+
+    const DIRECTORY_NODE_HEX: &str = "07000000000000000814612e747874007234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686010000000000000000f153650000000010646f6373019fa96117cda5187dd7699a57a16cbf37bb3353c1385e7854ab6e131df63cc659000000000000000001f153650000000000";
+    const DIRECTORY_NODE_CID: &str =
+        "0xdc2e9cfcc2612da5c6090a9d8f1ff953ef6f14fbb19a9e32a65bdffb990e50a5";
+    const FILE_MANIFEST_HEX: &str = "070000000000000028746578742f706c61696e0100000000000000047234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686000000000004186f726967696e1074657374";
+    const FILE_MANIFEST_CID: &str =
+        "0xf7ea0f16d55dedab276a539b951c87b065a0d90c4f8c99510545bd2afc04e62e";
+
+    #[test]
+    fn compute_cid_is_the_data_root() {
+        assert_eq!(compute_cid(b""), H256::zero());
+        assert_eq!(compute_cid(b"hello"), h(b"hello"));
+        let exact = vec![1u8; CHUNK_SIZE];
+        assert_eq!(compute_cid(&exact), h(&exact));
+
+        let data: Vec<u8> = (0..CHUNK_SIZE * 2 + 5).map(|i| i as u8).collect();
+        let leaves = vec![
+            h(&data[..CHUNK_SIZE]),
+            h(&data[CHUNK_SIZE..CHUNK_SIZE * 2]),
+            h(&data[CHUNK_SIZE * 2..]),
+        ];
+        assert_eq!(chunk_hashes(&data), leaves);
+        let expected = storage_primitives::hash_children(
+            storage_primitives::hash_children(leaves[0], leaves[1]),
+            leaves[2],
+        );
+        assert_eq!(compute_cid(&data), expected);
+        assert_ne!(compute_cid(&data), h(&data));
     }
 
     #[test]
-    fn test_directory_node_scale_serialization() {
+    fn manifest_of_empty_content_has_no_chunks() {
+        let manifest = FileManifest::for_content(1, b"", DEFAULT_MIME_TYPE, vec![]).unwrap();
+        assert_eq!(manifest.total_size, 0);
+        assert!(manifest.chunks.is_empty());
+        assert_eq!(manifest.content_root(), compute_cid(b""));
+    }
+
+    #[test]
+    fn manifest_content_root_matches_content_cid() {
+        let data: Vec<u8> = (0..CHUNK_SIZE * 3 + 1).map(|i| (i % 7) as u8).collect();
+        let manifest = FileManifest::for_content(1, &data, DEFAULT_MIME_TYPE, vec![]).unwrap();
+        assert_eq!(manifest.chunks.len(), 4);
+        assert_eq!(manifest.chunks[3].sequence, 3);
+        assert_eq!(manifest.content_root(), compute_cid(&data));
+    }
+
+    #[test]
+    fn empty_mime_type_is_the_default() {
+        let manifest = FileManifest::for_content(1, b"x", "", vec![]).unwrap();
+        assert_eq!(manifest.mime_type.to_vec(), DEFAULT_MIME_TYPE.as_bytes());
+
+        let mut stored = manifest.clone();
+        stored.mime_type = BoundedVec::default();
+        assert_eq!(stored.mime_type_str(), DEFAULT_MIME_TYPE);
+    }
+
+    #[test]
+    fn manifest_validate_checks_chunks_against_size() {
+        for len in [0, 1, CHUNK_SIZE, CHUNK_SIZE + 1] {
+            let data = vec![1u8; len];
+            let manifest = FileManifest::for_content(1, &data, DEFAULT_MIME_TYPE, vec![]).unwrap();
+            assert_eq!(manifest.validate(), Ok(()));
+        }
+
+        let manifest =
+            FileManifest::for_content(1, &[1u8; CHUNK_SIZE + 1], DEFAULT_MIME_TYPE, vec![])
+                .unwrap();
+
+        let mut wrong_size = manifest.clone();
+        wrong_size.total_size = CHUNK_SIZE as u64;
+        assert_eq!(wrong_size.validate(), Err(FileSystemError::InvalidManifest));
+        wrong_size.total_size = 2 * CHUNK_SIZE as u64 + 1;
+        assert_eq!(wrong_size.validate(), Err(FileSystemError::InvalidManifest));
+        wrong_size.total_size = u64::MAX;
+        assert_eq!(wrong_size.validate(), Err(FileSystemError::InvalidManifest));
+
+        let mut no_chunks = manifest.clone();
+        no_chunks.chunks = BoundedVec::default();
+        assert_eq!(no_chunks.validate(), Err(FileSystemError::InvalidManifest));
+
+        let mut wrong_sequence = manifest;
+        wrong_sequence.chunks[1].sequence = 0;
+        assert_eq!(
+            wrong_sequence.validate(),
+            Err(FileSystemError::InvalidManifest)
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_values_over_bounds() {
+        let long_mime = "a".repeat(129);
+        assert_eq!(
+            FileManifest::for_content(1, b"x", &long_mime, vec![]),
+            Err(FileSystemError::BoundsExceeded)
+        );
+        let too_many = (0..65)
+            .map(|i| MetadataEntry::try_new(format!("k{i}").as_bytes(), b"v").unwrap())
+            .collect();
+        assert_eq!(
+            FileManifest::for_content(1, b"x", DEFAULT_MIME_TYPE, too_many),
+            Err(FileSystemError::BoundsExceeded)
+        );
+        assert!(MetadataEntry::try_new(&[b'k'; 65], b"v").is_err());
+        assert!(MetadataEntry::try_new(b"k", &[b'v'; 257]).is_err());
+    }
+
+    #[test]
+    fn scale_round_trip() {
         let mut dir = DirectoryNode::new_empty(123);
-        let entry = DirectoryEntry {
-            name: BoundedVec::try_from(b"file1.txt".to_vec()).unwrap(),
-            entry_type: EntryType::File,
-            cid: compute_cid(b"test"),
-            size: 1024,
-            mtime: 1234567890,
-        };
-        dir.add_child(entry).unwrap();
+        dir.upsert_child(entry("file1.txt", EntryType::File, 1024))
+            .unwrap();
+        let decoded = DirectoryNode::from_scale_bytes(&dir.to_scale_bytes()).unwrap();
+        assert_eq!(decoded, dir);
 
-        let bytes = dir.to_scale_bytes();
-        let decoded = DirectoryNode::from_scale_bytes(&bytes).unwrap();
-
-        assert_eq!(decoded.drive_id, 123);
-        assert_eq!(decoded.children.len(), 1);
-        assert_eq!(decoded.children[0].name_str(), "file1.txt");
+        let manifest = FileManifest::for_content(
+            123,
+            b"content",
+            "text/plain",
+            vec![MetadataEntry::try_new(b"k", b"v").unwrap()],
+        )
+        .unwrap();
+        let decoded = FileManifest::from_scale_bytes(&manifest.to_scale_bytes()).unwrap();
+        assert_eq!(decoded, manifest);
     }
 
     #[test]
-    fn test_file_manifest_scale_serialization() {
-        let mut manifest = FileManifest {
-            drive_id: 123,
-            mime_type: BoundedVec::try_from(b"text/plain".to_vec()).unwrap(),
-            total_size: 2048,
-            chunks: BoundedVec::default(),
-            encryption_params: BoundedVec::default(),
-        };
-        manifest.add_chunk(compute_cid(b"chunk1"), 0).unwrap();
-        manifest.add_chunk(compute_cid(b"chunk2"), 1).unwrap();
-
-        let bytes = manifest.to_scale_bytes();
-        let decoded = FileManifest::from_scale_bytes(&bytes).unwrap();
-
-        assert_eq!(decoded.drive_id, 123);
-        assert_eq!(decoded.total_size, 2048);
-        assert_eq!(decoded.chunks.len(), 2);
+    fn decode_enforces_bounds() {
+        // A name of 257 bytes: compact length 257 = 0x0405, then the bytes.
+        let mut bytes = Encode::encode(&7u64);
+        bytes.extend(Encode::encode(&codec::Compact(1u32)));
+        bytes.extend(Encode::encode(&codec::Compact(257u32)));
+        bytes.extend([b'a'; 257]);
+        bytes.push(0);
+        bytes.extend([0u8; 32 + 8 + 8]);
+        bytes.extend(Encode::encode(&codec::Compact(0u32)));
+        assert!(DirectoryNode::from_scale_bytes(&bytes).is_err());
     }
 
     #[test]
-    fn test_compute_cid() {
-        let data = b"hello world";
-        let cid = compute_cid(data);
-        assert_eq!(cid.as_bytes().len(), 32);
+    fn entry_name_rules() {
+        assert!(validate_entry_name(b"a").is_ok());
+        assert!(validate_entry_name(&[b'a'; 256]).is_ok());
+        assert!(validate_entry_name("ä.txt".as_bytes()).is_ok());
+        for bad in [
+            &b""[..],
+            &[b'a'; 257][..],
+            b"a/b",
+            b".",
+            b"..",
+            &[0xff, 0xfe][..],
+        ] {
+            assert_eq!(
+                validate_entry_name(bad),
+                Err(FileSystemError::InvalidEntryName)
+            );
+        }
+        assert!(DirectoryEntry::try_new("a/b", EntryType::File, h(b"x"), 0, 0).is_err());
     }
 
     #[test]
-    fn test_directory_operations() {
+    fn upsert_keeps_children_sorted_and_unique() {
         let mut dir = DirectoryNode::new_empty(1);
+        for name in ["b", "a", "c", "B", "aa"] {
+            dir.upsert_child(entry(name, EntryType::File, 1)).unwrap();
+        }
+        let names: Vec<String> = dir.children.iter().map(|e| e.name_str()).collect();
+        assert_eq!(names, ["B", "a", "aa", "b", "c"]);
 
-        // Add children
-        let folder = DirectoryEntry {
-            name: BoundedVec::try_from(b"folder1".to_vec()).unwrap(),
-            entry_type: EntryType::Directory,
-            cid: compute_cid(b"folder"),
-            size: 0,
-            mtime: 1000,
-        };
-        let file = DirectoryEntry {
-            name: BoundedVec::try_from(b"file1.txt".to_vec()).unwrap(),
-            entry_type: EntryType::File,
-            cid: compute_cid(b"file"),
-            size: 1024,
-            mtime: 2000,
-        };
-        dir.add_child(folder).unwrap();
-        dir.add_child(file).unwrap();
+        let mut replacement = entry("aa", EntryType::File, 99);
+        replacement.cid = h(b"new");
+        dir.upsert_child(replacement).unwrap();
+        assert_eq!(dir.children.len(), 5);
+        assert_eq!(dir.find_child("aa").unwrap().size, 99);
+        assert_eq!(dir.find_child("aa").unwrap().cid, h(b"new"));
 
-        // Find child
-        let found = dir.find_child("folder1");
-        assert!(found.is_some());
-        assert!(found.unwrap().is_directory());
+        assert!(dir.remove_child("a").is_some());
+        assert!(dir.remove_child("a").is_none());
+        assert!(dir.find_child("a").is_none());
+        dir.validate().unwrap();
+    }
 
-        // Remove child
-        let removed = dir.remove_child("file1.txt");
-        assert!(removed.is_some());
-        assert_eq!(dir.children.len(), 1);
+    #[test]
+    fn upsert_rejects_more_than_max_children() {
+        let mut dir = DirectoryNode::new_empty(1);
+        for i in 0..MaxDirectoryChildren::get() {
+            dir.upsert_child(entry(&format!("{i:05}"), EntryType::File, 0))
+                .unwrap();
+        }
+        assert_eq!(
+            dir.upsert_child(entry("overflow", EntryType::File, 0)),
+            Err(FileSystemError::BoundsExceeded)
+        );
+    }
+
+    #[test]
+    fn validate_rejects_bad_directories() {
+        let mut unsorted = DirectoryNode::new_empty(1);
+        unsorted.children = BoundedVec::try_from(vec![
+            entry("b", EntryType::File, 0),
+            entry("a", EntryType::File, 0),
+        ])
+        .unwrap();
+        assert_eq!(unsorted.validate(), Err(FileSystemError::InvalidDirectory));
+
+        let mut duplicate = DirectoryNode::new_empty(1);
+        duplicate.children = BoundedVec::try_from(vec![
+            entry("a", EntryType::File, 0),
+            entry("a", EntryType::Directory, 0),
+        ])
+        .unwrap();
+        assert_eq!(duplicate.validate(), Err(FileSystemError::InvalidDirectory));
+
+        let mut sized_dir = DirectoryNode::new_empty(1);
+        sized_dir.children =
+            BoundedVec::try_from(vec![entry("d", EntryType::Directory, 5)]).unwrap();
+        assert_eq!(sized_dir.validate(), Err(FileSystemError::InvalidDirectory));
+
+        let mut bad_name = DirectoryNode::new_empty(1);
+        let mut e = entry("a", EntryType::File, 0);
+        e.name = BoundedVec::try_from(b"..".to_vec()).unwrap();
+        bad_name.children = BoundedVec::try_from(vec![e]).unwrap();
+        assert_eq!(bad_name.validate(), Err(FileSystemError::InvalidEntryName));
+
+        let mut with_metadata = DirectoryNode::new_empty(1);
+        with_metadata.metadata =
+            BoundedVec::try_from(vec![MetadataEntry::try_new(b"k", b"v").unwrap()]).unwrap();
+        assert_eq!(
+            with_metadata.validate(),
+            Err(FileSystemError::InvalidDirectory)
+        );
     }
 }

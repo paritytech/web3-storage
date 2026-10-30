@@ -134,6 +134,17 @@ pub fn verify_mmr_proof(proof: MmrProof, leaf_index: u64, commitment: &Commitmen
         .unwrap_or(false)
 }
 
+/// Check that `proof` proves the last leaf of an MMR with `leaf_count`
+/// leaves and root `mmr_root`.
+pub fn verify_last_mmr_leaf(proof: MmrProof, mmr_root: &H256, leaf_count: u64) -> bool {
+    let commitment = Commitment {
+        mmr_root: *mmr_root,
+        start_seq: 0,
+        leaf_count,
+    };
+    leaf_count > 0 && verify_mmr_proof(proof, leaf_count - 1, &commitment)
+}
+
 /// Number of items in the proof for the leaf at `leaf_pos` of an MMR of
 /// `mmr_size` nodes: one per peak to the left, one per level of the leaf's
 /// peak, and one for the peaks to the right. `None` if no peak covers
@@ -379,6 +390,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn last_mmr_leaf_check_rejects_other_leaves() {
+        // Three leaves: two peaks. Four leaves: one peak.
+        for leaf_count in [3, 4] {
+            let (commitment, last) = mmr_commitment_and_proof(leaf_count, leaf_count - 1);
+            let root = commitment.mmr_root;
+            assert!(verify_last_mmr_leaf(last.clone(), &root, leaf_count));
+            assert!(!verify_last_mmr_leaf(last.clone(), &root, leaf_count + 1));
+            assert!(!verify_last_mmr_leaf(last, &root, 0));
+
+            let (_, other) = mmr_commitment_and_proof(leaf_count, 0);
+            assert!(verify_mmr_proof(other.clone(), 0, &commitment));
+            assert!(!verify_last_mmr_leaf(other, &root, leaf_count));
+        }
+    }
+
     /// The commitment of another MMR size over the same leaves rejects the
     /// proof.
     #[test]
@@ -559,5 +586,44 @@ mod tests {
                 "{leaf_count} leaves"
             );
         }
+    }
+
+    /// Proofs of every leaf of MMRs with 1, 2, 3, 7 and 11 leaves, as JSON.
+    /// `packages/core/src/merkle.test.ts` checks that the TypeScript
+    /// `verifyMmrProof` accepts each one. Set `MMR_PROOF_VECTORS` to a file
+    /// path to write them: `just mmr-proof-vectors` does that.
+    #[test]
+    fn proof_vectors() {
+        let mut vectors = Vec::new();
+        for leaf_count in [1u64, 2, 3, 7, 11] {
+            let leaves = leaves(leaf_count);
+            for leaf_index in 0..leaf_count {
+                let (root, proof) = proof(&leaves, leaf_index).unwrap().unwrap();
+                let commitment = Commitment {
+                    mmr_root: root,
+                    start_seq: 0,
+                    leaf_count,
+                };
+                assert!(verify_mmr_proof(proof.clone(), leaf_index, &commitment));
+                let items: Vec<String> =
+                    proof.items.iter().map(|h| format!("\"{h:#x}\"")).collect();
+                vectors.push(format!(
+                    "    {{ \"leaf_count\": {leaf_count}, \"leaf_index\": {leaf_index}, \"root\": \"{root:#x}\", \"items\": [{}] }}",
+                    items.join(", ")
+                ));
+            }
+        }
+        let Some(path) = std::env::var_os("MMR_PROOF_VECTORS") else {
+            return;
+        };
+        let json = format!(
+            "{{\n  \"about\": \"Written by crates/primitives/storage/src/mmr.rs; read by packages/core/src/merkle.test.ts. Leaf i: leaf_version = LEAF_VERSION, data_root = 32 bytes of i + 1, data_size = i, total_size = 2 * i.\",\n  \"vectors\": [\n{}\n  ]\n}}\n",
+            vectors.join(",\n")
+        );
+        let path = std::path::Path::new(&path);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(path, json).unwrap();
     }
 }

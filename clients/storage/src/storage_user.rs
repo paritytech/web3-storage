@@ -597,6 +597,18 @@ impl StorageUserClient {
 
     /// Get the current MMR commitment for a bucket from the provider.
     pub async fn get_commitment(&self, bucket_id: BucketId) -> ClientResult<CommitmentResponse> {
+        self.get_commitment_if_exists(bucket_id)
+            .await?
+            .ok_or_else(|| ClientError::Api("Commitment request failed: 404 Not Found".into()))
+    }
+
+    /// Like [`Self::get_commitment`], but returns `None` when the provider
+    /// answers 404 (it has no record of the bucket: it has received no data
+    /// for it yet).
+    pub async fn get_commitment_if_exists(
+        &self,
+        bucket_id: BucketId,
+    ) -> ClientResult<Option<CommitmentResponse>> {
         let provider_url = self.base.get_provider_url()?;
         let req = self
             .base
@@ -605,9 +617,44 @@ impl StorageUserClient {
             .query(&[("bucket_id", bucket_id.to_string())]);
         let response = self.sign(req, "GET", bucket_id).send().await?;
 
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            return Err(ClientError::Api(format!(
+                "Commitment request failed: {status}"
+            )));
+        }
+        response
+            .json()
+            .await
+            .map(Some)
+            .map_err(|e| ClientError::Serialization(e.to_string()))
+    }
+
+    /// Get the MMR proof of the leaf at `leaf_index` of the bucket's current
+    /// MMR (`GET /mmr_proof`). The proof is not verified here: check it with
+    /// [`storage_primitives::verify_mmr_proof`] against a trusted MMR root.
+    pub async fn get_mmr_proof(
+        &self,
+        bucket_id: BucketId,
+        leaf_index: u64,
+    ) -> ClientResult<storage_primitives::MmrProof> {
+        let provider_url = self.base.get_provider_url()?;
+        let req = self
+            .base
+            .http
+            .get(format!("{provider_url}/mmr_proof"))
+            .query(&[
+                ("bucket_id", bucket_id.to_string()),
+                ("leaf_index", leaf_index.to_string()),
+            ]);
+        let response = self.sign(req, "GET", bucket_id).send().await?;
+
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
-                "Commitment request failed: {}",
+                "MMR proof request failed: {}",
                 response.status()
             )));
         }

@@ -4,25 +4,224 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bytesToBase64,
   CidMismatchError,
+  computeCid,
+  computeDataRoot,
   concatBytes,
   DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
   LEAF_VERSION,
   toHex,
+  verifyMmrProof,
 } from "@web3-storage/core";
+
 import type { ParachainApi } from "./address.js";
-import type { ChainSigner } from "./signers.js";
+import { FakeProvider } from "./fake-provider.testing.js";
 import {
+  BlobVerificationError,
+  commitDataRoots,
   downloadChunk,
   downloadNode,
   fetchChallengeProof,
+  getCommitment,
+  getMmrProof,
   putChunk,
   putInternalNode,
+  readBlob,
+  uploadBlob,
   uploadChunk,
 } from "./provider-http.js";
+import { makeSigner, type ChainSigner } from "./signers.js";
 
 const PROVIDER = "http://provider.test";
+const BUCKET = 5n;
+const signer = makeSigner("//Alice");
+
+function blob(size: number): Uint8Array {
+  return Uint8Array.from({ length: size }, (_, i) => (i * 31 + 7) % 251);
+}
+
+describe("uploadBlob / readBlob", () => {
+  it.each([
+    ["1 chunk", 1000, 1, 0],
+    ["3 chunks", 2 * DEFAULT_CHUNK_SIZE + 5, 3, 2],
+  ])("%s", async (_name, size, chunks, internalNodes) => {
+    const provider = new FakeProvider();
+    const bytes = blob(size);
+    const r = await uploadBlob(PROVIDER, BUCKET, bytes, signer, { fetch: provider.fetch });
+    expect(r.dataRoot).toBe(toHex(computeDataRoot(bytes)));
+    expect(r.chunkHashes).toHaveLength(chunks);
+    const puts = provider.calls.filter((c) => c.method === "PUT");
+    // A node carries `data` (chunk) or `children` (internal node), never both.
+    expect(puts.filter((c) => "data" in c.body && !("children" in c.body))).toHaveLength(chunks);
+    expect(puts.filter((c) => "children" in c.body && !("data" in c.body))).toHaveLength(internalNodes);
+    // The root is uploaded last.
+    expect(puts[puts.length - 1].body.hash).toBe(r.dataRoot);
+
+    expect(await readBlob(PROVIDER, BUCKET, r.dataRoot, { fetch: provider.fetch })).toEqual(bytes);
+    expect(await readBlob(PROVIDER, BUCKET, r.dataRoot, { fetch: provider.fetch, size })).toEqual(bytes);
+  });
+
+  it("uploads a repeated chunk once", async () => {
+    const provider = new FakeProvider();
+    await uploadBlob(PROVIDER, BUCKET, new Uint8Array(2 * DEFAULT_CHUNK_SIZE), signer, { fetch: provider.fetch });
+    expect(provider.calls.filter((c) => c.method === "PUT" && "data" in c.body)).toHaveLength(1);
+  });
+
+  it("rejects empty data before any request", async () => {
+    const provider = new FakeProvider();
+    await expect(uploadBlob(PROVIDER, BUCKET, new Uint8Array(0), signer, { fetch: provider.fetch })).rejects.toThrow(
+      /empty data has no chunk tree/,
+    );
+    expect(provider.calls).toEqual([]);
+  });
+
+  it("names the bucket on every read request", async () => {
+    const provider = new FakeProvider();
+    const bytes = blob(DEFAULT_CHUNK_SIZE + 1);
+    const r = await uploadBlob(PROVIDER, BUCKET, bytes, signer, { fetch: provider.fetch });
+    provider.calls.length = 0;
+    await readBlob(PROVIDER, BUCKET, r.dataRoot, { fetch: provider.fetch });
+    await readBlob(PROVIDER, BUCKET, r.dataRoot, { fetch: provider.fetch, size: bytes.length });
+    const reads = provider.calls.filter((c) => c.method === "GET");
+    expect(reads.map((c) => c.path)).toContain("/node");
+    expect(reads.map((c) => c.path)).toContain("/read");
+    expect(reads.every((c) => c.query.bucket_id === String(BUCKET))).toBe(true);
+  });
+
+  it("rejects tampered chunks on both read paths", async () => {
+    const provider = new FakeProvider();
+    const bytes = blob(DEFAULT_CHUNK_SIZE + 10);
+    const r = await uploadBlob(PROVIDER, BUCKET, bytes, signer, { fetch: provider.fetch });
+    provider.tamper(toHex(r.chunkHashes[1]), new Uint8Array(10));
+    await expect(readBlob(PROVIDER, BUCKET, r.dataRoot, { fetch: provider.fetch })).rejects.toThrow(BlobVerificationError);
+    await expect(readBlob(PROVIDER, BUCKET, r.dataRoot, { fetch: provider.fetch, size: bytes.length })).rejects.toThrow(
+      /does not match its proof/,
+    );
+  });
+
+  it("rejects a wrong size on the /read path", async () => {
+    const provider = new FakeProvider();
+    const bytes = blob(100);
+    const r = await uploadBlob(PROVIDER, BUCKET, bytes, signer, { fetch: provider.fetch });
+    await expect(readBlob(PROVIDER, BUCKET, r.dataRoot, { fetch: provider.fetch, size: 99 })).rejects.toThrow(/expected 99 bytes/);
+  });
+
+  it("enforces maxSize on both read paths", async () => {
+    const provider = new FakeProvider();
+    const small = blob(100);
+    const s = await uploadBlob(PROVIDER, BUCKET, small, signer, { fetch: provider.fetch });
+    expect(await readBlob(PROVIDER, BUCKET, s.dataRoot, { fetch: provider.fetch, maxSize: 100 })).toEqual(small);
+    await expect(readBlob(PROVIDER, BUCKET, s.dataRoot, { fetch: provider.fetch, maxSize: 99 })).rejects.toThrow(
+      /exceeds the limit of 99 bytes/,
+    );
+    await expect(readBlob(PROVIDER, BUCKET, s.dataRoot, { fetch: provider.fetch, size: 100, maxSize: 99 })).rejects.toThrow(
+      /exceeds the limit/,
+    );
+
+    // Three chunks need depth 2; a one-chunk limit allows depth 0.
+    const big = blob(2 * DEFAULT_CHUNK_SIZE + 5);
+    const b = await uploadBlob(PROVIDER, BUCKET, big, signer, { fetch: provider.fetch });
+    await expect(readBlob(PROVIDER, BUCKET, b.dataRoot, { fetch: provider.fetch, maxSize: DEFAULT_CHUNK_SIZE })).rejects.toThrow(
+      /deeper than a blob/,
+    );
+    expect(await readBlob(PROVIDER, BUCKET, b.dataRoot, { fetch: provider.fetch, maxSize: big.length })).toEqual(big);
+  });
+});
+
+describe("commitDataRoots / getCommitment / getMmrProof", () => {
+  it("returns null for a bucket the provider has no data for", async () => {
+    const provider = new FakeProvider();
+    expect(await getCommitment(PROVIDER, BUCKET, { fetch: provider.fetch, signer })).toBeNull();
+  });
+
+  it("commits roots in order and proves the last leaf", async () => {
+    const provider = new FakeProvider();
+    const roots: string[] = [];
+    for (const size of [1, 2, 3]) {
+      roots.push((await uploadBlob(PROVIDER, BUCKET, blob(size), signer, { fetch: provider.fetch })).dataRoot);
+    }
+    const commit = await commitDataRoots(PROVIDER, BUCKET, roots, signer, { fetch: provider.fetch });
+    expect(commit.leafIndices).toEqual([0n, 1n, 2n]);
+    expect(provider.committed(BUCKET)).toEqual(roots);
+
+    const commitment = (await getCommitment(PROVIDER, BUCKET, { fetch: provider.fetch, signer }))!;
+    expect(commitment.leafCount).toBe(3n);
+    expect(toHex(commitment.mmrRoot)).toBe(commit.mmrRoot);
+    for (const index of [0n, 1n, 2n]) {
+      const proof = await getMmrProof(PROVIDER, BUCKET, index, { fetch: provider.fetch, signer });
+      expect(proof.leaf.leafVersion).toBe(LEAF_VERSION);
+      expect(toHex(proof.leaf.dataRoot)).toBe(roots[Number(index)]);
+      expect(verifyMmrProof(proof, index, commitment.mmrRoot, commitment.leafCount)).toBe(true);
+    }
+  });
+
+  it("signs the gated reads when given a signer; the provider rejects them unsigned", async () => {
+    const provider = new FakeProvider();
+    const r = await uploadBlob(PROVIDER, BUCKET, blob(1), signer, { fetch: provider.fetch });
+    await commitDataRoots(PROVIDER, BUCKET, [r.dataRoot], signer, { fetch: provider.fetch });
+    await expect(getCommitment(PROVIDER, BUCKET, { fetch: provider.fetch })).rejects.toMatchObject({ status: 401 });
+    await expect(getMmrProof(PROVIDER, BUCKET, 0, { fetch: provider.fetch })).rejects.toMatchObject({ status: 401 });
+    expect(await getCommitment(PROVIDER, BUCKET, { fetch: provider.fetch, signer })).not.toBeNull();
+    expect((await getMmrProof(PROVIDER, BUCKET, 0, { fetch: provider.fetch, signer })).items).toEqual([]);
+  });
+
+  it("rejects an /mmr_proof leaf without leaf_version", async () => {
+    stubFetch(() => ({ leaf: { data_root: toHex(new Uint8Array(32)), data_size: 1, total_size: 1 }, items: [] }));
+    await expect(getMmrProof(PROVIDER, BUCKET, 0)).rejects.toThrow(/no `leaf_version`/);
+  });
+
+  it("signs writes", async () => {
+    const provider = new FakeProvider();
+    await uploadBlob(PROVIDER, BUCKET, blob(1), signer, { fetch: provider.fetch });
+    const root = toHex(computeCid(blob(1)));
+    await commitDataRoots(PROVIDER, BUCKET, [root], signer, { fetch: provider.fetch });
+    // The fake rejects unsigned writes with 401; both calls succeeded.
+    expect(provider.calls.map((c) => `${c.method} ${c.path}`)).toEqual(["PUT /node", "POST /commit"]);
+  });
+});
+
+describe("FakeProvider", () => {
+  const auth = { Authorization: "Web3Storage test" };
+  const put = (provider: FakeProvider, body: unknown) =>
+    provider.fetch(`${PROVIDER}/node`, { method: "PUT", headers: auth, body: JSON.stringify(body) });
+
+  it("rejects a node with both data and children", async () => {
+    const provider = new FakeProvider();
+    const left = hashLeaf(new Uint8Array([1]));
+    const right = hashLeaf(new Uint8Array([2]));
+    for (const [i, c] of [left, right].entries()) {
+      await put(provider, { bucket_id: 5, hash: toHex(c), data: bytesToBase64(new Uint8Array([i + 1])) });
+    }
+    const res = await put(provider, {
+      bucket_id: 5,
+      hash: toHex(hashChildren(left, right)),
+      data: bytesToBase64(concatBytes(left, right)),
+      children: [toHex(left), toHex(right)],
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("requires bucket_id on GET /node and GET /read", async () => {
+    const provider = new FakeProvider();
+    const r = await uploadBlob(PROVIDER, BUCKET, blob(10), signer, { fetch: provider.fetch });
+    const get = async (path: string, query: string) => (await provider.fetch(`${PROVIDER}${path}?${query}`)).status;
+    expect(await get("/node", `hash=${r.dataRoot}`)).toBe(400);
+    expect(await get("/read", `data_root=${r.dataRoot}&offset=0&length=10`)).toBe(400);
+    expect(await get("/node", `bucket_id=99&hash=${r.dataRoot}`)).toBe(404);
+    expect(await get("/node", `bucket_id=${BUCKET}&hash=${r.dataRoot}`)).toBe(200);
+  });
+
+  it("rejects committing a root whose last chunk is empty", async () => {
+    const provider = new FakeProvider();
+    const empty = toHex(hashLeaf(new Uint8Array(0)));
+    expect((await put(provider, { bucket_id: 5, hash: empty, data: "" })).status).toBe(200);
+    await expect(commitDataRoots(PROVIDER, BUCKET, [empty], signer, { fetch: provider.fetch })).rejects.toMatchObject({
+      status: 400,
+    });
+  });
+});
+
 const enc = new TextEncoder();
 
 function jsonResponse(body: unknown): Response {
