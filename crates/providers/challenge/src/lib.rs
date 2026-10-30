@@ -9,6 +9,30 @@
 //! (re)subscription to catch challenges raised while the node was down, plus
 //! on a slow safety-net interval — a missed challenge means getting slashed,
 //! so the event path is backstopped rather than trusted blindly.
+//!
+//! Main types:
+//! * [`ChallengeResponder`] : the background service. [`ChallengeResponderConfig`] configures it
+//!   and [`ChallengeResponderHandle`] stops, pauses and resumes it.
+//! * [`ChallengeProofSource`] : reads MMR proofs and chunks from local storage. The provider node
+//!   implements it over its storage backend.
+//! * [`ChallengeChainClient`] : lists and reads challenges and submits responses. The provider
+//!   node implements it with its signing chain client.
+//!
+//! Inputs: [`BlockEvent`]s from the chain-state coordinator, and the challenges that
+//! [`ChallengeChainClient`] reads from chain.
+//!
+//! Outputs: a [`ChallengeResponse`] transaction for each challenge against this provider.
+//!
+//! How it works:
+//! 1. At start, or on the first `Resubscribed` when the safety-net interval is off, scan all
+//!    open challenges against this provider with [`ChallengeChainClient::poll_challenges`].
+//! 2. On each `ChallengeCreated` event, read the challenge with
+//!    [`ChallengeChainClient::fetch_challenge`]. It returns `None` for a challenge against
+//!    another provider or one already resolved.
+//! 3. Build the MMR proof for the commitment the challenge cites, then the chunk and its Merkle
+//!    proof. A chunk index past the leaf's chunk count gets the MMR proof alone.
+//! 4. Submit the response with [`ChallengeChainClient::submit_response`].
+//! 5. Scan again on `Resubscribed`, when the event receiver lags, and on every safety-net interval.
 
 use provider_events::{BlockEvent, BlockEventRx};
 use sp_core::H256;
