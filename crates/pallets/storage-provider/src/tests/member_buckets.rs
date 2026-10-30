@@ -60,8 +60,9 @@ fn member_buckets_index_on_remove_member() {
             2
         ));
 
-        let member_buckets = pallet::MemberBuckets::<Test>::get(2);
-        assert!(member_buckets.is_empty());
+        // The member deposit paid for this entry; once released, nothing
+        // pays for an empty vector, so the key must be gone.
+        assert!(!pallet::MemberBuckets::<Test>::contains_key(2));
     });
 }
 
@@ -85,10 +86,11 @@ fn member_buckets_index_on_bucket_delete() {
         // Delete the bucket via internal function
         assert_ok!(StorageProvider::cleanup_bucket_internal(0, &1));
 
-        // All members should have the bucket removed from their index
-        assert!(pallet::MemberBuckets::<Test>::get(1).is_empty());
-        assert!(pallet::MemberBuckets::<Test>::get(2).is_empty());
-        assert!(pallet::MemberBuckets::<Test>::get(3).is_empty());
+        // All members should have the bucket removed from their index, and
+        // nobody pays for an empty entry, so the keys must be gone.
+        assert!(!pallet::MemberBuckets::<Test>::contains_key(1));
+        assert!(!pallet::MemberBuckets::<Test>::contains_key(2));
+        assert!(!pallet::MemberBuckets::<Test>::contains_key(3));
     });
 }
 

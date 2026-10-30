@@ -50,13 +50,13 @@
       "type": "security",
       "label": "Fungible holds",
       "sublabel": "HoldReason",
-      "tag": "ProviderStake, AgreementPayment, ChallengeDeposit",
+      "tag": "ProviderStake, AgreementPayment, ChallengeDeposit, StorageDeposit",
       "pos": [
         20,
         30
       ],
       "size": [
-        190,
+        245,
         100
       ]
     },
@@ -341,8 +341,9 @@
       "items": [
         "ProviderInfo also has multiaddr, public_key, stats",
         "role: Primary, or Replica { sync_balance, sync_price, min_sync_interval, last_sync }",
-        "PendingChallengesByBucket also gates claim_expired_agreement",
-        "AgreementNonces: AccountId → next expected terms.nonce; redemption advances it (NonceMismatch)"
+        "PendingChallengesByBucket also gates claim_expired_agreement and delete_bucket",
+        "AgreementNonces: AccountId → next expected terms.nonce; redemption advances it (NonceMismatch)",
+        "ProviderInfo.deposit, StorageAgreement.deposit: StorageDeposit tickets; StorageAgreement.depositor opened the agreement and keeps the deposit on hold after a transfer"
       ]
     },
     {
@@ -351,7 +352,8 @@
       "items": [
         "Bucket also has visibility, frozen_start_seq, min_providers, historical_roots",
         "snapshot.primary_signers: bit i set if primary_providers[i] signed",
-        "NextBucketId allocates each BucketId"
+        "NextBucketId allocates each BucketId",
+        "Bucket.deposit on creator, Member.deposit on depositor; delete_bucket releases them"
       ]
     },
     {

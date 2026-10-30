@@ -51,7 +51,10 @@ pub mod pallet {
     use alloc::vec::Vec;
     use frame_support::{
         pallet_prelude::*,
-        traits::fungible::{BalancedHold, Inspect, Mutate, MutateHold},
+        traits::{
+            fungible::{BalancedHold, Inspect, Mutate, MutateHold},
+            Consideration, Footprint,
+        },
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
     /// The parachain block height. Re-exported so dependent pallets get the
@@ -70,6 +73,10 @@ pub mod pallet {
     /// Balance type of the configured currency.
     pub type BalanceOf<T> =
         <<T as Config>::Currency as Inspect<<T as frame_system::Config>::AccountId>>::Balance;
+
+    /// A storage-deposit ticket ([`Config::StorageDeposit`]); stored in the
+    /// record it pays for and dropped when the record is removed.
+    pub type TicketOf<T> = <T as Config>::StorageDeposit;
 
     /// The anchor clock ([`Config::BlockNumberProvider`], relay chain in
     /// production) that every duration, deadline and expiry in this pallet is
@@ -116,6 +123,9 @@ pub mod pallet {
         /// A challenger's anti-spam deposit, refunded on resolution minus the
         /// provider's response-cost share.
         ChallengeDeposit,
+        /// A deposit for a record a user created, held on the depositor until
+        /// the record is removed.
+        StorageDeposit,
     }
 
     #[pallet::hooks]
@@ -237,6 +247,13 @@ pub mod pallet {
         #[pallet::constant]
         type MaxBucketsPerMember: Get<u32>;
 
+        /// Storage deposit for records a user creates, priced from the
+        /// record's size (`Footprint`). The runtime uses a `HoldConsideration`
+        /// under `HoldReason::StorageDeposit`. The ticket must encode as the
+        /// held balance, as `HoldConsideration`'s does: `try_state` reads it
+        /// that way to check holds against records.
+        type StorageDeposit: Consideration<Self::AccountId, Footprint>;
+
         /// Minimum number of relay chain blocks between announcing a
         /// deregistration and being allowed to complete it. Must be
         /// `> ChallengeTimeout` so any
@@ -350,7 +367,8 @@ pub mod pallet {
     /// and decremented exactly once per resolution (defended in
     /// `respond_to_challenge`, or timed out in `resolve_expired_challenge`).
     /// Gates `complete_deregister`: a provider cannot exit while still
-    /// slashable for a pending challenge.
+    /// slashable for a pending challenge. An entry exists only while the
+    /// count is positive.
     #[pallet::storage]
     pub type PendingChallenges<T: Config> =
         StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
@@ -358,7 +376,10 @@ pub mod pallet {
     /// Number of unresolved challenges outstanding against a specific
     /// `(bucket, provider)` pair. Maintained in lockstep with
     /// [`PendingChallenges`] and gates that bucket's agreement teardown
-    /// (`end_agreement`, `claim_expired_agreement`, `cleanup_bucket_internal`).
+    /// (`end_agreement`, `claim_expired_agreement`) and bucket removal
+    /// (`delete_bucket`, `cleanup_bucket_internal`). An entry exists only
+    /// while the count is positive, so a bucket with no entry under its
+    /// prefix has no open challenge.
     #[pallet::storage]
     pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
         _,
@@ -395,8 +416,8 @@ pub mod pallet {
     )]
     #[serde(bound(serialize = "", deserialize = ""), rename_all = "camelCase")]
     pub struct GenesisProvider<T: Config> {
-        /// Provider account; must be endowed with at least `stake` plus the
-        /// existential deposit by the balances genesis.
+        /// Provider account; must be endowed with at least `stake`, the
+        /// storage deposit and the existential deposit by the balances genesis.
         pub account: T::AccountId,
         /// Multiaddr for connecting to this provider, hex-encoded in JSON
         /// ("0x..."); must fit `T::MaxMultiaddrLength`.
@@ -485,6 +506,10 @@ pub mod pallet {
         /// provider is still on-chain and still slashable for any pending
         /// challenge — they only get their stake back after the window.
         pub deregister_at: Option<BlockNumberFor<T>>,
+        /// Storage deposit for this record: held on the provider at
+        /// registration, separate from the stake, released by
+        /// `complete_deregister`.
+        pub deposit: TicketOf<T>,
     }
 
     /// Provider settings controlling pricing and availability.
@@ -634,6 +659,12 @@ pub mod pallet {
         pub account: T::AccountId,
         /// Role the member holds in the bucket.
         pub role: Role,
+        /// The admin that added the member and paid `deposit`. Fixed for the
+        /// lifetime of the entry.
+        pub depositor: T::AccountId,
+        /// Storage deposit for this entry and its `MemberBuckets` entry, held
+        /// on `depositor` until the member or the bucket is removed.
+        pub deposit: TicketOf<T>,
     }
 
     /// Bucket container for data with membership and storage agreements.
@@ -661,6 +692,12 @@ pub mod pallet {
         pub historical_roots: [(u32, Commitment); 6],
         /// Total snapshots created for this bucket.
         pub total_snapshots: u32,
+        /// The account that created the bucket and paid `deposit`. Fixed at
+        /// creation; it gets the deposit back even if it is no longer an admin
+        /// or a member.
+        pub creator: T::AccountId,
+        /// Storage deposit for the bucket record, held on `creator`.
+        pub deposit: TicketOf<T>,
     }
 
     /// Storage agreement between bucket and provider.
@@ -687,6 +724,13 @@ pub mod pallet {
         pub role: ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,
         /// Block when agreement became active.
         pub started_at: BlockNumberFor<T>,
+        /// The account that opened the agreement and paid `deposit`. Fixed at
+        /// creation: a transfer moves `owner`, not the deposit, so `new_owner`
+        /// pays nothing.
+        pub depositor: T::AccountId,
+        /// Storage deposit for this record, held on `depositor` until the
+        /// agreement is removed.
+        pub deposit: TicketOf<T>,
     }
 
     impl<T: Config> StorageAgreement<T> {
@@ -864,7 +908,7 @@ pub mod pallet {
             /// Start sequence of the snapshot the bucket was frozen at.
             frozen_start_seq: u64,
         },
-        /// A bucket and its agreements were torn down.
+        /// A bucket was removed, by `delete_bucket` or by deleting its drive.
         BucketDeleted {
             /// The removed bucket.
             bucket_id: BucketId,
@@ -1299,6 +1343,13 @@ pub mod pallet {
         TermsBucketMismatch,
         /// Storage agreement requested 0 byte
         InvalidMaxBytesRequest,
+        /// A challenge against a provider on this bucket is still open.
+        /// Resolve it with `respond_to_challenge` or
+        /// `resolve_expired_challenge`, then retry.
+        BucketHasPendingChallenge,
+        /// The bucket still has a storage agreement. End or claim every
+        /// agreement before deleting the bucket.
+        BucketNotEmpty,
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1461,6 +1512,7 @@ pub mod pallet {
                 Error::<T>::ProviderHasPendingChallenges
             );
 
+            provider.deposit.drop(&who)?;
             Self::release_stake(&who, provider.stake)?;
             Providers::<T>::remove(&who);
 
@@ -1644,6 +1696,32 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Admin only. Delete a bucket with no agreements (`BucketNotEmpty`)
+        /// and no open challenges (`BucketHasPendingChallenge`). Releases the
+        /// bucket deposit to its creator and each member deposit to the admin
+        /// that added the member, and removes the bucket from each member's
+        /// reverse index.
+        #[pallet::call_index(19)]
+        #[pallet::weight(T::WeightInfo::delete_bucket(T::MaxMembers::get()))]
+        pub fn delete_bucket(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+        ) -> DispatchResultWithPostInfo {
+            let who = ensure_signed(origin)?;
+            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+            Self::ensure_admin(&who, &bucket)?;
+            ensure!(
+                StorageAgreements::<T>::iter_key_prefix(bucket_id)
+                    .next()
+                    .is_none(),
+                Error::<T>::BucketNotEmpty
+            );
+            Self::ensure_no_pending_challenge(bucket_id)?;
+            let member_count = bucket.members.len() as u32;
+            Self::remove_bucket_internal(bucket_id, bucket)?;
+            Ok(Some(T::WeightInfo::delete_bucket(member_count)).into())
+        }
+
         /// Redeem provider-signed primary terms. Equivalent to
         /// [`Pallet::create_bucket`] followed by
         /// [`Pallet::add_primary_provider`], in one transaction.
@@ -1785,9 +1863,10 @@ pub mod pallet {
             })
         }
 
-        /// Admin only. Add a member or change their role. An admin may step
-        /// down themselves but cannot demote another admin, and the last
-        /// admin cannot step down.
+        /// Admin only. Add a member or change their role. Adding a member
+        /// holds a storage deposit on the caller; a role change holds nothing.
+        /// An admin may step down themselves but cannot demote another admin,
+        /// and the last admin cannot step down.
         #[pallet::call_index(13)]
         #[pallet::weight(T::WeightInfo::set_bucket_member())]
         pub fn set_member(
@@ -1797,56 +1876,11 @@ pub mod pallet {
             role: Role,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
-                let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
-
-                Self::ensure_admin(&who, bucket)?;
-
-                let (target_idx, target_is_admin, admin_count) =
-                    Self::locate_member(bucket, &member);
-                if let Some(idx) = target_idx {
-                    if target_is_admin && role != Role::Admin {
-                        // Admins can only demote themselves, never another admin.
-                        ensure!(member == who, Error::<T>::CannotDemoteAdmin);
-                        // And even self-demotion must leave at least one admin.
-                        ensure!(admin_count > 1, Error::<T>::LastAdminCannotBeRemoved);
-                    }
-                    bucket.members[idx].role = role;
-                } else {
-                    // Add new member
-                    let new_member = Member {
-                        account: member.clone(),
-                        role,
-                    };
-                    bucket
-                        .members
-                        .try_push(new_member)
-                        .map_err(|_| Error::<T>::MaxMembersReached)?;
-
-                    // Update reverse index for new member
-                    MemberBuckets::<T>::try_mutate(&member, |buckets| {
-                        if !buckets.contains(&bucket_id) {
-                            buckets
-                                .try_push(bucket_id)
-                                .map_err(|_| Error::<T>::TooManyBucketsForMember)
-                        } else {
-                            Ok(())
-                        }
-                    })?;
-                }
-
-                Self::deposit_event(Event::MemberSet {
-                    bucket_id,
-                    member,
-                    role,
-                });
-
-                Ok(())
-            })
+            Self::set_member_internal(&who, bucket_id, member, role)
         }
 
-        /// Admin only. Remove a member. Same admin protections as
+        /// Admin only. Remove a member and release the entry's storage
+        /// deposit to the admin that added them. Same admin protections as
         /// `set_member`.
         #[pallet::call_index(14)]
         #[pallet::weight(T::WeightInfo::remove_bucket_member())]
@@ -1856,41 +1890,17 @@ pub mod pallet {
             member: T::AccountId,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
-                let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
-
-                Self::ensure_admin(&who, bucket)?;
-
-                let (target_idx, target_is_admin, admin_count) =
-                    Self::locate_member(bucket, &member);
-                let member_idx = target_idx.ok_or(Error::<T>::MemberNotFound)?;
-
-                if target_is_admin {
-                    // Admins can only remove themselves, never another admin.
-                    ensure!(member == who, Error::<T>::CannotDemoteAdmin);
-                    // And even self-removal must leave at least one admin.
-                    ensure!(admin_count > 1, Error::<T>::LastAdminCannotBeRemoved);
-                }
-
-                bucket.members.remove(member_idx);
-
-                // Update reverse index: remove bucket from member's list
-                MemberBuckets::<T>::mutate(&member, |buckets| {
-                    buckets.retain(|id| *id != bucket_id);
-                });
-
-                Self::deposit_event(Event::MemberRemoved { bucket_id, member });
-
-                Ok(())
-            })
+            Self::remove_member_internal(&who, bucket_id, member)
         }
 
         /// Remove a slashed provider from a bucket (permissionless).
         ///
         /// Anyone can call this to clean up slashed providers.
         /// The provider must have zero stake (indicating they were slashed).
-        /// Returns payment to agreement owner and removes the provider from the bucket.
+        /// Returns the escrow to the agreement owner and the storage deposit
+        /// to its depositor, and removes the provider from the bucket. The
+        /// provider's own deposit is on its provider record and is released
+        /// by `complete_deregister`; slashing takes the stake only.
         #[pallet::call_index(15)]
         #[pallet::weight(T::WeightInfo::remove_slashed())]
         pub fn remove_slashed(
@@ -1908,8 +1918,7 @@ pub mod pallet {
                 Error::<T>::ProviderNotSlashed
             );
 
-            // Get and remove the agreement
-            let agreement = StorageAgreements::<T>::take(bucket_id, &provider)
+            let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
             // The provider failed their duty, so the whole escrow returns to
@@ -1945,6 +1954,8 @@ pub mod pallet {
                     reason: RemovalReason::Slashed,
                 });
             }
+
+            Self::remove_agreement(bucket_id, &provider, agreement)?;
 
             Self::deposit_event(Event::SlashedProviderRemoved {
                 bucket_id,
@@ -2040,7 +2051,7 @@ pub mod pallet {
             Self::finalize_agreement(
                 bucket_id,
                 &provider,
-                &agreement,
+                agreement,
                 action,
                 is_early_termination,
             )
@@ -2084,7 +2095,7 @@ pub mod pallet {
             );
 
             // Provider claims - treat as Pay
-            Self::finalize_agreement(bucket_id, &who, &agreement, EndAction::Pay, false)
+            Self::finalize_agreement(bucket_id, &who, agreement, EndAction::Pay, false)
         }
 
         /// Top up quota for an existing agreement (owner only).
@@ -2177,6 +2188,10 @@ pub mod pallet {
         /// balance — moves to `new_owner` and stays on hold; every later
         /// settlement and refund uses the new owner.
         ///
+        /// The agreement's storage deposit stays on the account that opened
+        /// the agreement until the agreement is removed; `new_owner` pays
+        /// nothing and decides when to settle.
+        ///
         /// Bucket membership does not move: the new owner cannot write to or
         /// administer the bucket, and the bucket admin keeps every admin
         /// power over the agreement, including early termination, which pays
@@ -2194,21 +2209,14 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
             ensure!(new_owner != who, Error::<T>::TransferToSelf);
 
-            let escrow = StorageAgreements::<T>::try_mutate(
-                bucket_id,
-                &provider,
-                |maybe_agreement| -> Result<BalanceOf<T>, DispatchError> {
-                    let agreement = maybe_agreement
-                        .as_mut()
-                        .ok_or(Error::<T>::AgreementNotFound)?;
-                    ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
+            let mut agreement = StorageAgreements::<T>::get(bucket_id, &provider)
+                .ok_or(Error::<T>::AgreementNotFound)?;
+            ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
 
-                    let escrow = agreement.escrow();
-                    Self::transfer_payment_on_hold(&who, &new_owner, escrow)?;
-                    agreement.owner = new_owner.clone();
-                    Ok(escrow)
-                },
-            )?;
+            let escrow = agreement.escrow();
+            Self::transfer_payment_on_hold(&who, &new_owner, escrow)?;
+            agreement.owner = new_owner.clone();
+            StorageAgreements::<T>::insert(bucket_id, &provider, agreement);
 
             Self::deposit_event(Event::AgreementOwnershipTransferred {
                 bucket_id,

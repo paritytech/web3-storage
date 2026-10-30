@@ -74,9 +74,37 @@ fn create_bucket_with_primary_reserves_payment() {
             storage_primitives::Visibility::Public
         ));
 
-        assert_eq!(Balances::free_balance(1), balance_before - 1000);
+        assert_eq!(
+            Balances::free_balance(1),
+            balance_before - 1000 - held(HoldReason::StorageDeposit, 1)
+        );
         let agreement = StorageAgreements::<Test>::get(0, 2).unwrap();
         assert_eq!(agreement.payment_locked, 1000);
+    });
+}
+
+/// At a zero price only the deposit makes an agreement cost anything to keep,
+/// so it applies at any price and returns on settlement.
+#[test]
+fn agreement_record_holds_a_storage_deposit_even_at_zero_price() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 100);
+        let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
+        assert_eq!(agreement.payment_locked, 0);
+
+        // Bucket, founding member and agreement: one deposit each.
+        assert_eq!(held(HoldReason::StorageDeposit, 1), 30);
+
+        run_to_block(101);
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            storage_primitives::EndAction::Pay,
+        ));
+
+        assert_eq!(held(HoldReason::StorageDeposit, 1), 20);
     });
 }
 
@@ -444,8 +472,9 @@ fn owner_with_a_paid_agreement_keeps_its_agreement_nonce() {
 fn reaped_owner_restarts_at_nonce_zero() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        setup_agreement(2, 1, 50, 100);
+        let bucket_id = setup_agreement(2, 1, 50, 100);
 
+        release_owner_records(1, bucket_id, 2);
         reap(1);
         refund(1);
 
@@ -475,6 +504,7 @@ fn quote_redeemed_before_a_reap_expires_within_request_timeout() {
             storage_primitives::Visibility::Public
         ));
 
+        release_owner_records(1, 0, 2);
         reap(1);
         refund(1);
 
