@@ -4,16 +4,18 @@
 
 use frame_support::{
     parameter_types,
-    traits::{ConstU32, Get},
+    traits::{fungible::HoldConsideration, ConstU32, Get, LinearStoragePrice},
     PalletId,
 };
 use sp_runtime::traits::AccountIdConversion;
 
 use crate::{
     constants::{
-        consensus::RELAY_CHAIN_SLOT_DURATION_MILLIS, currency::UNIT, relay_time::RC_HOURS,
+        consensus::RELAY_CHAIN_SLOT_DURATION_MILLIS,
+        currency::{MICROUNIT, UNIT},
+        relay_time::RC_HOURS,
     },
-    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent, RuntimeHoldReason,
+    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeHoldReason,
 };
 
 // Every duration below is measured in RELAY chain blocks (6s), not parachain
@@ -40,6 +42,12 @@ parameter_types! {
     /// per-deadline index allocator. Generous: only challenges created while
     /// the chain sits on the same relay parent share a deadline.
     pub const MaxChallengesPerDeadline: u16 = 1_000;
+    /// Storage deposit per record: a base per item plus a price per encoded
+    /// byte, the rates the contracts pallet charges (`revive.rs`).
+    pub const StorageDepositBase: Balance = UNIT / 10;
+    pub const StorageDepositPerByte: Balance = MICROUNIT;
+    pub const StorageDepositReason: RuntimeHoldReason =
+        RuntimeHoldReason::StorageProvider(pallet_storage_provider::HoldReason::StorageDeposit);
     /// One anchor block = one relay slot: `BlockNumberProvider` below reads
     /// the relay chain.
     pub const AnchorBlockTimeMillis: u64 = RELAY_CHAIN_SLOT_DURATION_MILLIS as u64;
@@ -57,27 +65,6 @@ impl Get<AccountId> for TreasuryAccount {
 }
 
 // --------------------------------
-// Drive Registry Pallet Config
-// --------------------------------
-
-impl pallet_drive_registry::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-    type MaxDriveNameLength = ConstU32<128>;
-    type MaxDrivesPerUser = ConstU32<100>;
-    type WeightInfo = crate::weights::pallet_drive_registry::WeightInfo<Runtime>;
-}
-
-// --------------------------------
-// S3 Registry Pallet Config
-// --------------------------------
-
-impl pallet_s3_registry::Config for Runtime {
-    type MaxBucketsPerUser = ConstU32<100>;
-    type MaxObjectsPerBucket = ConstU32<10000>;
-    type WeightInfo = crate::weights::pallet_s3_registry::WeightInfo<Runtime>;
-}
-
-// --------------------------------
 // Storage Provider Pallet Config
 // --------------------------------
 
@@ -85,6 +72,12 @@ impl pallet_storage_provider::Config for Runtime {
     type Currency = Balances;
     type RuntimeHoldReason = RuntimeHoldReason;
     type Treasury = TreasuryAccount;
+    type StorageDeposit = HoldConsideration<
+        AccountId,
+        Balances,
+        StorageDepositReason,
+        LinearStoragePrice<StorageDepositBase, StorageDepositPerByte, Balance>,
+    >;
     type MinStakePerByte = MinStakePerByte;
     type MaxMultiaddrLength = ConstU32<128>;
     type MaxMembers = ConstU32<100>;

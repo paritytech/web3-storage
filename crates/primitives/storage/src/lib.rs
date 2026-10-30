@@ -21,16 +21,15 @@ pub mod mmr;
 
 pub use agreement_term::*;
 pub use merkle::*;
-pub use mmr::{bag_peaks, verify_mmr_proof, MmrLeaf, MmrProof, StorageMerge};
+pub use mmr::{bag_peaks, verify_mmr_proof, MmrLeaf, MmrProof, StorageMerge, LEAF_VERSION};
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
 pub type BucketId = u64;
 
-/// Chunk size, 256 KiB. Every chunk of a committed data root has this size,
-/// except the last, which can be shorter. The runtime uses it as
-/// `MaxChunkSize`. The provider rejects a larger chunk on upload and replica
-/// sync.
+/// Chunk size of leaf version 1, 256 KiB (see `MmrLeaf::chunk_size`). Every
+/// chunk of a version 1 data root has this size, except the last, which can be
+/// shorter. The provider rejects a larger chunk on upload and replica sync.
 pub const DEFAULT_CHUNK_SIZE: u32 = 256 * 1024;
 
 /// Prime numbers used for historical root bucketing.
@@ -621,7 +620,7 @@ mod tests {
         const NODE_AB: &str = "ee616625a590167bc4b3dc703ab4f3f2ddecbee6b9d05fee9281f02046e6082e";
         const ROOT_3_CHUNKS: &str =
             "17321db51c1ef3ec1f77e271aa300b4e5c6091708bcba37e46025774a26142ee";
-        const MMR_LEAF: &str = "3fbff3e341e04b94439e2f793f6983fda1cb58b7e8cc09b73670245f7e816f8d";
+        const MMR_LEAF: &str = "5941e24c88492304e9bf5ba943790c6fb89bbd6afc74e08603d931e5b9ac3b5b";
 
         #[test]
         fn leaf_hash_uses_the_leaf_prefix() {
@@ -648,6 +647,7 @@ mod tests {
         #[test]
         fn mmr_leaf_hash_covers_the_encoded_leaf() {
             let leaf = MmrLeaf {
+                leaf_version: LEAF_VERSION,
                 data_root: H256::repeat_byte(0x11),
                 data_size: 1,
                 total_size: 2,

@@ -5,7 +5,7 @@
 //! Every internal node is `hash_children(left, right)`. An odd last node of a
 //! level moves up to the next level unchanged.
 
-use crate::{hash_children, DEFAULT_CHUNK_SIZE};
+use crate::hash_children;
 use alloc::vec::Vec;
 use core::ops::Range;
 use sp_core::H256;
@@ -19,14 +19,6 @@ pub struct MerkleNode {
     pub left: H256,
     /// Right child hash.
     pub right: H256,
-}
-
-/// Number of chunks (tree leaves) of data with `data_size` bytes.
-///
-/// Every chunk is `DEFAULT_CHUNK_SIZE` bytes except the last, and empty data is
-/// one empty chunk.
-pub fn chunk_count(data_size: u64) -> u64 {
-    data_size.div_ceil(DEFAULT_CHUNK_SIZE as u64).max(1)
 }
 
 /// Every level of the tree, from the leaves (first) to the root (last, one
@@ -384,16 +376,5 @@ mod tests {
         let mut extra = proof_for(&l, 2);
         extra.push(H256::from_low_u64_be(9));
         assert!(!verify_merkle_proof(l[2], 2, 5, &extra, &root));
-    }
-
-    #[test]
-    fn chunk_count_rounds_up_and_has_a_minimum_of_one() {
-        let chunk = DEFAULT_CHUNK_SIZE as u64;
-        assert_eq!(chunk_count(0), 1);
-        assert_eq!(chunk_count(1), 1);
-        assert_eq!(chunk_count(chunk), 1);
-        assert_eq!(chunk_count(chunk + 1), 2);
-        assert_eq!(chunk_count(2 * chunk), 2);
-        assert_eq!(chunk_count(2 * chunk + 10), 3);
     }
 }

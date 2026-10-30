@@ -3335,8 +3335,6 @@ version = "0.1.0"
 dependencies = [
  "array-bytes 6.2.3",
  "parity-scale-codec",
- "prost",
- "prost-build",
  "scale-info",
  "serde",
  "sp-core",
@@ -3399,12 +3397,6 @@ dependencies = [
  "rustc-hex",
  "static_assertions",
 ]
-
-[[package]]
-name = "fixedbitset"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flurry"
@@ -5230,12 +5222,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "685a9ac4b61f4e728e1d2c6a7844609c16527aeb5e6c865915c08e619c16410f"
 
 [[package]]
-name = "multimap"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
-
-[[package]]
 name = "nalgebra"
 version = "0.33.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5684,40 +5670,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pallet-drive-registry"
-version = "0.1.0"
-dependencies = [
- "file-system-primitives",
- "frame-benchmarking",
- "frame-support",
- "frame-system",
- "pallet-balances",
- "pallet-storage-provider",
- "parity-scale-codec",
- "scale-info",
- "sp-core",
- "sp-io",
- "sp-keystore",
- "sp-runtime",
- "storage-primitives",
-]
-
-[[package]]
-name = "pallet-drive-registry-precompile"
-version = "0.1.0"
-dependencies = [
- "frame-support",
- "frame-system",
- "pallet-drive-registry",
- "pallet-revive",
- "pallet-storage-provider",
- "parity-scale-codec",
- "sp-runtime",
- "storage-primitives",
- "tracing",
-]
-
-[[package]]
 name = "pallet-election-provider-multi-phase"
 version = "49.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5924,41 +5876,6 @@ dependencies = [
  "parity-scale-codec",
  "polkavm-derive 0.30.0",
  "scale-info",
-]
-
-[[package]]
-name = "pallet-s3-registry"
-version = "0.1.0"
-dependencies = [
- "frame-benchmarking",
- "frame-support",
- "frame-system",
- "pallet-balances",
- "pallet-storage-provider",
- "parity-scale-codec",
- "s3-primitives",
- "scale-info",
- "sp-core",
- "sp-io",
- "sp-keystore",
- "sp-runtime",
- "storage-primitives",
-]
-
-[[package]]
-name = "pallet-s3-registry-precompile"
-version = "0.1.0"
-dependencies = [
- "frame-support",
- "frame-system",
- "pallet-revive",
- "pallet-s3-registry",
- "pallet-storage-provider",
- "parity-scale-codec",
- "sp-core",
- "sp-runtime",
- "storage-primitives",
- "tracing",
 ]
 
 [[package]]
@@ -6418,16 +6335,6 @@ checksum = "e0848c601009d37dfa3430c4666e147e49cdcf1b92ecd3e63657d8a5f19da662"
 dependencies = [
  "memchr",
  "ucd-trie",
-]
-
-[[package]]
-name = "petgraph"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3672b37090dbd86368a4145bc067582552b29c27377cad4e0a306c97f9bd7772"
-dependencies = [
- "fixedbitset",
- "indexmap 2.13.0",
 ]
 
 [[package]]
@@ -7129,58 +7036,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost"
-version = "0.13.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2796faa41db3ec313a31f7624d9286acf277b52de526150b7e69f3debf891ee5"
-dependencies = [
- "bytes",
- "prost-derive",
-]
-
-[[package]]
-name = "prost-build"
-version = "0.13.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
-dependencies = [
- "heck 0.5.0",
- "itertools 0.14.0",
- "log",
- "multimap",
- "once_cell",
- "petgraph",
- "prettyplease",
- "prost",
- "prost-types",
- "regex",
- "syn 2.0.117",
- "tempfile",
-]
-
-[[package]]
-name = "prost-derive"
-version = "0.13.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
-dependencies = [
- "anyhow",
- "itertools 0.14.0",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "prost-types"
-version = "0.13.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52c2c1bf36ddb1a1c396b3601a3cec27c2462e45f07c386894ec3ccf5332bd16"
-dependencies = [
- "prost",
-]
-
-[[package]]
 name = "provider-auth"
 version = "0.1.0"
 dependencies = [
@@ -7352,9 +7207,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.14"
+version = "0.11.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "434b42fec591c96ef50e21e886936e66d3cc3f737104fdb9b737c40ffb94c098"
+checksum = "4fcb935c5bec503c2f0e306bdd3e58bb9029dcb14fa8d9ac76e3a5256ac0763e"
 dependencies = [
  "bytes",
  "getrandom 0.3.4",
@@ -8026,9 +7881,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.37"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "758025cb5fccfd3bc2fd74708fd4682be41d99e5dff73c377c0646c6012c73a4"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "log",
  "once_cell",
@@ -8156,18 +8011,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.23",
-]
-
-[[package]]
-name = "s3-primitives"
-version = "0.1.0"
-dependencies = [
- "array-bytes 6.2.3",
- "parity-scale-codec",
- "scale-info",
- "sp-core",
- "sp-runtime",
- "storage-primitives",
 ]
 
 [[package]]
@@ -8784,9 +8627,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
+checksum = "76a5c54c7310e7b8b9577c286d7e399ddd876c3e12b3ed917a8aabc4b96e9e8c"
 dependencies = [
  "base64",
  "bs58",
@@ -8804,9 +8647,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
+checksum = "84d57bc0c8b9a17920c178daa6bb924850d54a9c97ab45194bb8c17ad66bb660"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -10020,12 +9863,8 @@ dependencies = [
  "pallet-authorship",
  "pallet-balances",
  "pallet-collator-selection",
- "pallet-drive-registry",
- "pallet-drive-registry-precompile",
  "pallet-message-queue",
  "pallet-revive",
- "pallet-s3-registry",
- "pallet-s3-registry-precompile",
  "pallet-session",
  "pallet-storage-provider",
  "pallet-storage-provider-precompile",
@@ -10089,12 +9928,8 @@ dependencies = [
  "pallet-authorship",
  "pallet-balances",
  "pallet-collator-selection",
- "pallet-drive-registry",
- "pallet-drive-registry-precompile",
  "pallet-message-queue",
  "pallet-revive",
- "pallet-s3-registry",
- "pallet-s3-registry-precompile",
  "pallet-session",
  "pallet-storage-provider",
  "pallet-storage-provider-precompile",

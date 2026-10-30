@@ -71,6 +71,7 @@ pub trait WeightInfo {
 	fn remove_bucket_member() -> Weight;
 	fn remove_slashed() -> Weight;
 	fn create_bucket() -> Weight;
+	fn delete_bucket(m: u32, ) -> Weight;
 	fn create_bucket_with_primary() -> Weight;
 	fn add_primary_provider() -> Weight;
 	fn add_replica_provider() -> Weight;
@@ -87,6 +88,7 @@ pub trait WeightInfo {
 	fn respond_to_challenge_proof() -> Weight;
 	fn respond_to_challenge_deleted() -> Weight;
 	fn respond_to_challenge_superseded() -> Weight;
+	fn respond_to_challenge_chunk_out_of_range() -> Weight;
 	fn confirm_replica_sync() -> Weight;
 	fn top_up_replica_sync_balance() -> Weight;
 	fn resolve_expired_challenge() -> Weight;
@@ -315,6 +317,21 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 		Weight::from_parts(17_913_000, 11515)
 			.saturating_add(T::DbWeight::get().reads(2_u64))
 			.saturating_add(T::DbWeight::get().writes(3_u64))
+	}
+	// TODO: needs re-benchmarking
+	/// Storage: `StorageProvider::Buckets` (r:1 w:1)
+	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:0)
+	/// Storage: `StorageProvider::PendingChallengesByBucket` (r:1 w:0)
+	/// Storage: `StorageProvider::MemberBuckets` (r:1 w:1) per member
+	/// Storage: `Balances::Holds` (r:1 w:1) per member and for the creator
+	/// The range of component `m` is `[1, 100]`.
+	fn delete_bucket(m: u32, ) -> Weight {
+		Weight::from_parts(30_000_000, 11515)
+			.saturating_add(Weight::from_parts(10_000_000, 0).saturating_mul(m.into()))
+			.saturating_add(T::DbWeight::get().reads(4_u64))
+			.saturating_add(T::DbWeight::get().reads((2_u64).saturating_mul(m.into())))
+			.saturating_add(T::DbWeight::get().writes(2_u64))
+			.saturating_add(T::DbWeight::get().writes((2_u64).saturating_mul(m.into())))
 	}
 	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
 	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
@@ -742,6 +759,10 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 			.saturating_add(T::DbWeight::get().reads(11_u64))
 			.saturating_add(T::DbWeight::get().writes(6_u64))
 	}
+	// TODO: needs re-benchmarking
+	fn respond_to_challenge_chunk_out_of_range() -> Weight {
+		Self::respond_to_challenge_proof()
+	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(380), added: 2855, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::Buckets` (r:1 w:0)
@@ -1029,6 +1050,21 @@ impl WeightInfo for () {
 		Weight::from_parts(17_913_000, 11515)
 			.saturating_add(RocksDbWeight::get().reads(2_u64))
 			.saturating_add(RocksDbWeight::get().writes(3_u64))
+	}
+	// TODO: needs re-benchmarking
+	/// Storage: `StorageProvider::Buckets` (r:1 w:1)
+	/// Storage: `StorageProvider::StorageAgreements` (r:1 w:0)
+	/// Storage: `StorageProvider::PendingChallengesByBucket` (r:1 w:0)
+	/// Storage: `StorageProvider::MemberBuckets` (r:1 w:1) per member
+	/// Storage: `Balances::Holds` (r:1 w:1) per member and for the creator
+	/// The range of component `m` is `[1, 100]`.
+	fn delete_bucket(m: u32, ) -> Weight {
+		Weight::from_parts(30_000_000, 11515)
+			.saturating_add(Weight::from_parts(10_000_000, 0).saturating_mul(m.into()))
+			.saturating_add(RocksDbWeight::get().reads(4_u64))
+			.saturating_add(RocksDbWeight::get().reads((2_u64).saturating_mul(m.into())))
+			.saturating_add(RocksDbWeight::get().writes(2_u64))
+			.saturating_add(RocksDbWeight::get().writes((2_u64).saturating_mul(m.into())))
 	}
 	/// Storage: `ParachainSystem::ValidationData` (r:1 w:0)
 	/// Proof: `ParachainSystem::ValidationData` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
@@ -1455,6 +1491,10 @@ impl WeightInfo for () {
 		Weight::from_parts(97_423_000, 6196)
 			.saturating_add(RocksDbWeight::get().reads(11_u64))
 			.saturating_add(RocksDbWeight::get().writes(6_u64))
+	}
+	// TODO: needs re-benchmarking
+	fn respond_to_challenge_chunk_out_of_range() -> Weight {
+		Self::respond_to_challenge_proof()
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(380), added: 2855, mode: `MaxEncodedLen`)

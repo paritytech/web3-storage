@@ -6,10 +6,10 @@
 //
 // Mirrors, byte for byte:
 //   - `crates/providers/storage/src/index/fs.rs`     → `metadata_merkle_root`
-//   - `crates/primitives/storage/src/merkle.rs`      → `merkle_root`, `merkle_tree`, `chunk_count`,
-//                                                       `verify_merkle_proof`
+//   - `crates/primitives/storage/src/merkle.rs`      → `merkle_root`, `merkle_tree`, `verify_merkle_proof`
 //   - `crates/primitives/storage/src/lib.rs`         → `hash_leaf`, `hash_children`, `DEFAULT_CHUNK_SIZE`
-//   - `crates/primitives/storage/src/mmr.rs`         → `bag_peaks`, `verify_mmr_proof`
+//   - `crates/primitives/storage/src/mmr.rs`         → `bag_peaks`, `verify_mmr_proof`, `LEAF_VERSION`,
+//                                                       `MmrLeaf::chunk_count`
 //
 // Pure functions, no I/O, browser-safe.
 
@@ -19,7 +19,7 @@ import { bytesEq, concatBytes } from "./bytes.js";
 
 /**
  * Mirror of DEFAULT_CHUNK_SIZE in crates/primitives/storage/src/lib.rs: the
- * chunk size, and the largest leaf a challenge response can contain.
+ * chunk size of leaf version 1 (see {@link leafChunkSize}).
  */
 export const DEFAULT_CHUNK_SIZE = 256 * 1024;
 
@@ -131,9 +131,41 @@ export function splitChunks(bytes: Uint8Array): Uint8Array[] {
   return chunks;
 }
 
+/** Mirror of `LEAF_VERSION` in `crates/primitives/storage/src/mmr.rs`. */
+export const LEAF_VERSION = 1;
+
+/**
+ * Chunk size of MMR leaf version `version`, or undefined for an unknown
+ * version. Mirrors `MmrLeaf::chunk_size`.
+ */
+export function leafChunkSize(version: number): number | undefined {
+  switch (version) {
+    case 1:
+      return DEFAULT_CHUNK_SIZE;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Number of chunks under a committed MMR leaf: every chunk has the chunk size
+ * of the leaf's `leaf_version` except the last, which has 1 to chunk size
+ * bytes. Empty data has no chunks. Mirrors `MmrLeaf::chunk_count`. Throws for
+ * an unknown version.
+ */
+export function leafChunkCount(leaf: { leaf_version: number; data_size: number | bigint }): number {
+  const chunkSize = leafChunkSize(leaf.leaf_version);
+  if (chunkSize === undefined) {
+    throw new Error(`unknown MMR leaf version ${leaf.leaf_version}`);
+  }
+  const size = BigInt(leaf.data_size);
+  const count = (size + BigInt(chunkSize) - 1n) / BigInt(chunkSize);
+  return Number(count);
+}
+
 /**
  * Number of chunks (tree leaves) of data with `dataSize` bytes; empty data is
- * one chunk. Mirrors `chunk_count` in `crates/primitives/storage/src/merkle.rs`.
+ * one chunk.
  */
 export function chunkCount(dataSize: bigint | number): number {
   return Math.max(1, Math.ceil(Number(dataSize) / DEFAULT_CHUNK_SIZE));

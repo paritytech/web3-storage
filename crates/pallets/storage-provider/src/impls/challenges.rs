@@ -2,12 +2,37 @@
 
 use crate::*;
 use frame_support::pallet_prelude::*;
+use sp_core::H256;
 use sp_runtime::traits::Saturating;
 use storage_primitives::{
-    BucketId, ChallengeId, ChunkLocation, Commitment, ProviderRole, Visibility,
+    BucketId, ChallengeId, ChunkLocation, Commitment, MmrProof, ProviderRole, Visibility,
 };
 
 impl<T: Config> Pallet<T> {
+    /// Check that `mmr_proof` proves the challenged leaf under the challenged
+    /// commitment, and return the leaf's `data_root` and chunk count.
+    /// `InvalidProof` when the proof does not verify or the leaf's
+    /// `leaf_version` is unknown.
+    pub(crate) fn verify_challenged_leaf(
+        challenge: &Challenge<T>,
+        mmr_proof: MmrProof,
+    ) -> Result<(H256, u64), Error<T>> {
+        let data_root = mmr_proof.leaf.data_root;
+        let chunk_count = mmr_proof
+            .leaf
+            .chunk_count()
+            .ok_or(Error::<T>::InvalidProof)?;
+        ensure!(
+            storage_primitives::verify_mmr_proof(
+                mmr_proof,
+                challenge.target.leaf_index,
+                &challenge.commitment,
+            ),
+            Error::<T>::InvalidProof
+        );
+        Ok((data_root, chunk_count))
+    }
+
     /// Open a challenge against `provider`'s signature on the bucket's current
     /// snapshot and return the new challenge's id. Shared by the
     /// `challenge_checkpoint` call and the precompile, which hands the id back
@@ -110,6 +135,7 @@ impl<T: Config> Pallet<T> {
             target,
             deposit,
             authorized,
+            created_at: anchor_block,
         };
 
         // Cap the number of challenges that can share this deadline.
@@ -189,15 +215,30 @@ impl<T: Config> Pallet<T> {
         });
     }
 
-    /// Decrement both pending-challenge counters for a resolved
-    /// `(bucket, provider)` challenge. Called from the two resolution
-    /// sites — `respond_to_challenge` and `resolve_expired_challenge`, after
-    /// the `take` consumes the challenge — never from
-    /// `slash_provider_for_failed_challenge`.
-    /// `saturating_sub` keeps the counters non-negative even if invariants
-    /// are ever violated.
+    /// Marks one challenge against `provider` on `bucket_id` as resolved.
+    /// A counter that reaches 0 is deleted, so both maps only contain
+    /// providers with an open challenge.
     pub(crate) fn decrement_pending(bucket_id: BucketId, provider: &T::AccountId) {
-        PendingChallenges::<T>::mutate(provider, |n| *n = n.saturating_sub(1));
-        PendingChallengesByBucket::<T>::mutate(bucket_id, provider, |n| *n = n.saturating_sub(1));
+        PendingChallenges::<T>::mutate_exists(provider, Self::decrement_or_delete);
+        PendingChallengesByBucket::<T>::mutate_exists(
+            bucket_id,
+            provider,
+            Self::decrement_or_delete,
+        );
+    }
+
+    fn decrement_or_delete(count: &mut Option<u32>) {
+        *count = count.and_then(|n| n.checked_sub(1)).filter(|n| *n > 0);
+    }
+
+    /// Fails while any provider has an open challenge on `bucket_id`.
+    pub(crate) fn ensure_no_pending_challenge(bucket_id: BucketId) -> DispatchResult {
+        ensure!(
+            PendingChallengesByBucket::<T>::iter_key_prefix(bucket_id)
+                .next()
+                .is_none(),
+            Error::<T>::BucketHasPendingChallenge
+        );
+        Ok(())
     }
 }

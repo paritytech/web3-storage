@@ -16,7 +16,7 @@ import { signedTermsBucketId } from "@web3-storage/papi";
 export { signedTermsBucketId };
 
 import { asHex, hexToBytes, type ParachainApi } from "../address.js";
-import { getProviderNodeInfo } from "../provider-http.js";
+import { getProviderNodeInfo, type ChallengeResponse } from "../provider-http.js";
 import type { ChainSigner } from "../signers.js";
 import { READ_OPTS, requireOneEvent, submitTx, submitTxFinalized, type SubmitOpts } from "../tx.js";
 
@@ -165,7 +165,7 @@ export async function getAgreementNonce(api: ParachainApi, owner: string): Promi
 
 /**
  * Shape a provider's SignedTerms into the `{ provider, terms, sig }` argument
- * the quote-redeeming extrinsics (and create_drive / create_s3_bucket) expect.
+ * the quote-redeeming extrinsics expect.
  */
 export function buildSignedTermsArgs(
   provider: ChainSigner | { address: string },
@@ -477,17 +477,18 @@ export async function challengeCheckpoint(
   ).challenge_id;
 }
 
+/** Submit `response`, as built by `fetchChallengeProof`, for `challengeId`. */
 export async function respondToChallenge(
   api: ParachainApi,
   provider: ChainSigner,
   challengeId: any,
-  proof: any,
+  response: ChallengeResponse,
   opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.respond_to_challenge({
       challenge_id: challengeId,
-      response: Enum("Proof", proof),
+      response,
     }),
     provider.signer,
     { label: "respond_to_challenge", ...opts },
@@ -719,6 +720,28 @@ export async function freezeBucket(
     result.events,
     api.event.StorageProvider.BucketFrozen,
     "BucketFrozen",
+  );
+}
+
+/**
+ * Delete a bucket that has no agreements and no open challenges (admin only).
+ * Releases the bucket's and every member's storage deposit to whoever paid it.
+ */
+export async function deleteBucket(
+  api: ParachainApi,
+  admin: ChainSigner,
+  bucketId: bigint,
+  opts: SubmitOpts = {},
+) {
+  const result = await submitTx(
+    api.tx.StorageProvider.delete_bucket({ bucket_id: bucketId }),
+    admin.signer,
+    { label: "delete_bucket", ...opts },
+  );
+  return requireOneEvent(
+    result.events,
+    api.event.StorageProvider.BucketDeleted,
+    "BucketDeleted",
   );
 }
 

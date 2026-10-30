@@ -280,11 +280,14 @@ subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtim
         --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Deserialize" \
         --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Serialize" \
         --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Deserialize" \
+        --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=serde::Serialize" \
+        --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=serde::Deserialize" \
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Serialize" \
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Encode" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Decode" \
         --derive-for-type "pallet_storage_provider::pallet::StorageAgreement=codec::Decode" \
+        --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=codec::Decode" \
         --derive-for-type "storage_primitives::ProviderRole=codec::Decode" \
         --derive-for-type "storage_primitives::ReplicaSyncRecord=codec::Decode" \
         --derive-for-type "storage_primitives::Commitment=codec::Decode" \
@@ -416,12 +419,11 @@ e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
 # File System (Layer 1)
 # ============================================================
 
-# Test all file system components (primitives + pallet + client)
+# Test all file system components (primitives + client)
 fs-test-all:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo test -p file-system-primitives
-    cargo test -p pallet-drive-registry
     cargo test -p file-system-client
 
 # File system integration test (used by CI; assumes chain + provider already running)
@@ -432,12 +434,8 @@ fs-demo-ci:
 # S3-Compatible Interface (Layer 1)
 # ============================================================
 
-# Test all S3 components (primitives + pallet + client)
+# Test the S3 client
 s3-test-all:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cargo test -p s3-primitives
-    cargo test -p pallet-s3-registry
     cargo test -p s3-client
 
 # S3 integration test (used by CI; assumes chain + provider already running)

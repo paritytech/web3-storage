@@ -53,6 +53,70 @@ fn transfer_moves_owner_and_escrow_together() {
     });
 }
 
+/// A transfer must not take funds from an account that did not sign it, so
+/// the agreement's storage deposit stays on the account that opened it.
+#[test]
+fn transfer_leaves_the_storage_deposit_on_the_depositor() {
+    new_test_ext().execute_with(|| {
+        priced_provider(PROVIDER, 200);
+        let bucket_id = setup_agreement(PROVIDER, OWNER, 50, 100);
+        let owner_deposits = held(HoldReason::StorageDeposit, OWNER);
+
+        assert_ok!(transfer(OWNER, bucket_id, PROVIDER, NEW_OWNER));
+
+        assert_eq!(held(HoldReason::StorageDeposit, OWNER), owner_deposits);
+        assert_eq!(held(HoldReason::StorageDeposit, NEW_OWNER), 0);
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+/// The recipient pays nothing, so an account with only the existential
+/// deposit can receive an agreement.
+#[test]
+fn transfer_to_an_account_with_only_the_existential_deposit_succeeds() {
+    new_test_ext().execute_with(|| {
+        priced_provider(PROVIDER, 200);
+        let bucket_id = setup_agreement(PROVIDER, OWNER, 50, 100);
+        assert_ok!(Balances::force_set_balance(
+            RuntimeOrigin::root(),
+            NEW_OWNER,
+            1
+        ));
+
+        assert_ok!(transfer(OWNER, bucket_id, PROVIDER, NEW_OWNER));
+
+        assert_eq!(Balances::free_balance(NEW_OWNER), 1);
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+/// The deposit returns to the account that paid it, not to whoever owns the
+/// agreement when it ends.
+#[test]
+fn ending_a_transferred_agreement_refunds_the_depositor() {
+    new_test_ext().execute_with(|| {
+        priced_provider(PROVIDER, 200);
+        let bucket_id = setup_agreement(PROVIDER, OWNER, 50, 100);
+        assert_ok!(transfer(OWNER, bucket_id, PROVIDER, NEW_OWNER));
+        let owner_deposits = held(HoldReason::StorageDeposit, OWNER);
+        let expires_at = StorageAgreements::<Test>::get(bucket_id, PROVIDER)
+            .unwrap()
+            .expires_at;
+        run_to_block(expires_at + 1);
+
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(NEW_OWNER),
+            bucket_id,
+            PROVIDER,
+            storage_primitives::EndAction::Pay
+        ));
+
+        assert_eq!(held(HoldReason::StorageDeposit, OWNER), owner_deposits - 10);
+        assert_eq!(held(HoldReason::StorageDeposit, NEW_OWNER), 0);
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
 #[test]
 fn only_the_owner_can_transfer_and_only_to_someone_else() {
     new_test_ext().execute_with(|| {
@@ -116,7 +180,7 @@ fn replica_transfer_moves_the_sync_balance_too() {
     new_test_ext().execute_with(|| {
         const REPLICA: u64 = 3;
         replica_provider(REPLICA, 200);
-        let bucket_id = create_bucket(OWNER, 0);
+        let bucket_id = create_bucket(OWNER, 1);
         setup_replica_agreement(
             REPLICA,
             OWNER,
