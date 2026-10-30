@@ -273,11 +273,13 @@ jobs:
       - name: Install diff-cover
         # Drives the patch-coverage gate. Minimum version comes from
         # .github/env, shared with the local check in scripts/coverage.sh.
-        # The bullseye CI image ships an unmanaged pip and runs as root, so
-        # a plain system-wide install works.
+        # The bookworm CI image's Python is marked externally managed
+        # (PEP 668), so pip rejects a system-wide install without this flag.
+        # The container is discarded after the job, so there is nothing to
+        # break.
         run: |
           source .github/env
-          python3 -m pip install --quiet "diff-cover>=${DIFF_COVER_MIN_VERSION}"
+          python3 -m pip install --quiet --break-system-packages "diff-cover>=${DIFF_COVER_MIN_VERSION}"
 
       - name: Measure coverage
         # Package list + exclusions live in scripts/coverage.sh, shared with

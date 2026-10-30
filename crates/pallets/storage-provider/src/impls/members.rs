@@ -2,7 +2,7 @@
 
 use crate::Member;
 use crate::*;
-use frame_support::pallet_prelude::*;
+use frame_support::{pallet_prelude::*, traits::Consideration};
 use storage_primitives::{BucketId, Role};
 
 impl<T: Config> Pallet<T> {
@@ -86,9 +86,23 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
+    /// Removes `bucket_id` from `member`'s reverse index and deletes the
+    /// entry when it is the member's last bucket.
+    pub(crate) fn remove_from_member_index(member: &T::AccountId, bucket_id: BucketId) {
+        MemberBuckets::<T>::mutate_exists(member, |maybe_buckets| {
+            if let Some(buckets) = maybe_buckets {
+                buckets.retain(|id| *id != bucket_id);
+                if buckets.is_empty() {
+                    *maybe_buckets = None;
+                }
+            }
+        });
+    }
+
     /// Add or update a member's role on a bucket (callable from other pallets).
     ///
-    /// The `caller` must be an Admin of the bucket.
+    /// The `caller` must be an Admin of the bucket. Adding a member holds a
+    /// storage deposit on `caller`.
     pub fn set_member_internal(
         caller: &T::AccountId,
         bucket_id: BucketId,
@@ -113,6 +127,8 @@ impl<T: Config> Pallet<T> {
                 let new_member = Member {
                     account: member.clone(),
                     role,
+                    depositor: caller.clone(),
+                    deposit: T::StorageDeposit::new(caller, Self::member_footprint())?,
                 };
                 bucket
                     .members
@@ -142,7 +158,8 @@ impl<T: Config> Pallet<T> {
 
     /// Remove a member from a bucket (callable from other pallets).
     ///
-    /// The `caller` must be an Admin of the bucket.
+    /// The `caller` must be an Admin of the bucket. Releases the entry's
+    /// storage deposit to the admin that added the member.
     pub fn remove_member_internal(
         caller: &T::AccountId,
         bucket_id: BucketId,
@@ -163,11 +180,9 @@ impl<T: Config> Pallet<T> {
                 ensure!(admin_count > 1, Error::<T>::LastAdminCannotBeRemoved);
             }
 
-            bucket.members.remove(member_idx);
-
-            MemberBuckets::<T>::mutate(&member, |buckets| {
-                buckets.retain(|id| *id != bucket_id);
-            });
+            let removed = bucket.members.remove(member_idx);
+            removed.deposit.drop(&removed.depositor)?;
+            Self::remove_from_member_index(&member, bucket_id);
 
             Self::deposit_event(Event::MemberRemoved { bucket_id, member });
 

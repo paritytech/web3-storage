@@ -68,6 +68,69 @@ fn try_state_detects_member_index_gap() {
     });
 }
 
+/// Storage-deposit holds equal the recorded tickets; a hold released behind
+/// the pallet's back is caught.
+#[test]
+fn try_state_detects_storage_deposit_hold_mismatch() {
+    use frame_support::traits::{fungible::MutateHold, tokens::Precision};
+
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket = setup_agreement(2, 1, 100, 100);
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket,
+            3,
+            Role::Reader
+        ));
+        assert_ok!(StorageProvider::do_try_state());
+
+        assert_ok!(Balances::release(
+            &HoldReason::StorageDeposit.into(),
+            &1,
+            10,
+            Precision::Exact
+        ));
+        assert!(StorageProvider::do_try_state().is_err());
+    });
+}
+
+/// A `StorageDeposit` hold on an account with no record behind it is a
+/// ticket that was dropped from state without being released; it is caught
+/// even though no record points at the account.
+#[test]
+fn try_state_detects_a_storage_deposit_hold_without_a_record() {
+    use frame_support::traits::fungible::MutateHold;
+
+    new_test_ext().execute_with(|| {
+        create_bucket(1, 1);
+        assert_ok!(StorageProvider::do_try_state());
+
+        assert_ok!(Balances::hold(&HoldReason::StorageDeposit.into(), &5, 10));
+        assert!(StorageProvider::do_try_state().is_err());
+    });
+}
+
+/// A pending-challenge counter or a reverse-index entry left at zero is
+/// caught.
+#[test]
+fn try_state_detects_leftover_empty_entries() {
+    new_test_ext().execute_with(|| {
+        create_bucket(1, 1);
+        assert_ok!(StorageProvider::do_try_state());
+
+        PendingChallenges::<Test>::insert(2, 0);
+        assert!(StorageProvider::do_try_state().is_err());
+        PendingChallenges::<Test>::remove(2);
+
+        PendingChallengesByBucket::<Test>::insert(0, 2, 0);
+        assert!(StorageProvider::do_try_state().is_err());
+        PendingChallengesByBucket::<Test>::remove(0, 2);
+
+        MemberBuckets::<Test>::insert(5, frame_support::BoundedVec::default());
+        assert!(StorageProvider::do_try_state().is_err());
+    });
+}
 /// An `AgreementNonces` entry is legitimate while its owner exists, and is
 /// gone once the owner is reaped. An entry left behind for a missing account
 /// (a runtime without the `OnKilledAccount` hook) is caught.
@@ -75,11 +138,12 @@ fn try_state_detects_member_index_gap() {
 fn try_state_detects_agreement_nonce_of_missing_account() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        setup_agreement(2, 1, 100, 100);
+        let bucket_id = setup_agreement(2, 1, 100, 100);
         assert_eq!(AgreementNonces::<Test>::get(1), 1);
         assert_ok!(StorageProvider::do_try_state());
 
         // Reaping the owner removes the entry, so the invariant still holds.
+        release_owner_records(1, bucket_id, 2);
         reap(1);
         assert!(!AgreementNonces::<Test>::contains_key(1));
         assert_ok!(StorageProvider::do_try_state());

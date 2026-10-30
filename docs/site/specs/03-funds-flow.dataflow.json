@@ -184,10 +184,10 @@
       "from": "provider_acct",
       "to": "stake",
       "label": "register_provider, add_stake",
-      "classification": "stake + ED free",
+      "classification": "register: stake + storage deposit + ED free",
       "variant": "emphasis",
       "labelAt": [
-        208,
+        196,
         105
       ]
     },
@@ -371,11 +371,12 @@
   "cards": [
     {
       "dot": "cyan",
-      "title": "Three hold reasons",
+      "title": "Four hold reasons",
       "items": [
         "ProviderStake: provider collateral",
         "AgreementPayment: fee and sync_balance, on the owner; moves on transfer_agreement_ownership",
-        "ChallengeDeposit: challenger deposit"
+        "ChallengeDeposit: challenger deposit",
+        "StorageDeposit: one per provider, bucket, member and agreement record, on the account that created it; released when the record is removed"
       ]
     },
     {

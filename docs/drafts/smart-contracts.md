@@ -39,6 +39,7 @@ Both use `HAS_CONTRACT_INFO = false` (no storage deposits or contract metadata; 
 | `createBucket(uint32 minProviders) → uint64`                                                                        | `create_bucket`                                     |
 | `createBucketWithStorage(uint64 maxBytes, uint32 duration, uint128 maxPricePerByte) → uint64`                       | `create_bucket_with_storage` (auto-matches provider) |
 | `freezeBucket(uint64 bucketId)`                                                                                     | `freeze_bucket`                                     |
+| `deleteBucket(uint64 bucketId)`                                                                                     | `delete_bucket`                                     |
 | `setMember(uint64 bucketId, bytes32 member, uint8 role)`                                                            | `set_member`                                        |
 | `removeMember(uint64 bucketId, bytes32 member)`                                                                     | `remove_member`                                     |
 | `requestPrimaryAgreement(uint64 bucketId, bytes32 provider, uint64 maxBytes, uint32 duration, uint128 maxPayment)`  | `request_primary_agreement`                         |
