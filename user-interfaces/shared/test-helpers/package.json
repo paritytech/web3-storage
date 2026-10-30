@@ -15,7 +15,7 @@
     "@polkadot-api/substrate-bindings": "^0.21.2",
     "@polkadot-labs/hdkd-helpers": "^0.0.34",
     "@web3-storage/sdk": "workspace:*",
-    "polkadot-api": "^3.2.1"
+    "polkadot-api": "^3.3.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.5"
