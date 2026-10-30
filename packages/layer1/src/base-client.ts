@@ -74,11 +74,12 @@ export abstract class Layer1Client {
   }
 
   /**
-   * The bucket's file-system tree on its provider. Reads need no signer;
-   * `write` requires one.
+   * The bucket's file-system tree on its provider. Reads use the signer when
+   * set (finding the root of a private bucket needs Reader); `write`
+   * requires one.
    */
   protected async openTree(bucketId: bigint, opts: { write?: boolean; signal?: AbortSignal } = {}): Promise<FsTree> {
-    const signer = opts.write ? this.requireSigner() : null;
+    const signer = opts.write ? this.requireSigner() : this.signer;
     const providerUrl = await this.providers.get(bucketId);
     return new FsTree(
       providerBlobStore(providerUrl, bucketId, signer, { fetch: this.fetchOpts.fetchImpl, retries: this.fetchOpts.retries, signal: opts.signal }),

@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   bagPeaks,
-  chunkCount,
   computeDataRoot,
   DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
+  LEAF_VERSION,
+  leafChunkCount,
   merkleRoot,
   metadataMerkleRoot,
   merkleTree,
@@ -137,20 +138,36 @@ describe("merkleRoot", () => {
   });
 });
 
-describe("chunkCount", () => {
-  it("rounds up and has a minimum of one", () => {
+describe("leafChunkCount", () => {
+  it("rounds up with the chunk size of the leaf version and is zero for empty data", () => {
     const chunk = DEFAULT_CHUNK_SIZE;
-    expect(chunkCount(0)).toBe(1);
-    expect(chunkCount(1)).toBe(1);
-    expect(chunkCount(chunk)).toBe(1);
-    expect(chunkCount(chunk + 1)).toBe(2);
-    expect(chunkCount(2 * chunk + 10)).toBe(3);
+    const count = (data_size: number | bigint) =>
+      leafChunkCount({ leaf_version: LEAF_VERSION, data_size });
+    expect(count(0)).toBe(0);
+    expect(count(1)).toBe(1);
+    expect(count(chunk)).toBe(1);
+    expect(count(BigInt(chunk + 1))).toBe(2);
+    expect(count(2 * chunk + 10)).toBe(3);
+  });
+
+  it("counts a u64::MAX data size exactly", () => {
+    const max = (1n << 64n) - 1n;
+    const chunk = BigInt(DEFAULT_CHUNK_SIZE);
+    expect(leafChunkCount({ leaf_version: LEAF_VERSION, data_size: max })).toBe(
+      Number((max + chunk - 1n) / chunk),
+    );
+  });
+
+  it("throws for an unknown leaf version", () => {
+    expect(() => leafChunkCount({ leaf_version: LEAF_VERSION + 1, data_size: 1 })).toThrow(
+      "unknown MMR leaf version",
+    );
   });
 });
 
 describe("computeDataRoot", () => {
-  it("empty file hashes a single empty chunk", () => {
-    expect(toHex(computeDataRoot(new Uint8Array(0)))).toBe(toHex(hashLeaf(new Uint8Array(0))));
+  it("empty data has no chunk tree", () => {
+    expect(() => computeDataRoot(new Uint8Array(0))).toThrow("empty data has no chunk tree");
   });
 
   it("single sub-chunk file → its own chunk hash", () => {
@@ -197,8 +214,8 @@ describe("merkleTree", () => {
 });
 
 describe("splitChunks", () => {
-  it("splits at 256 KiB; empty input is one empty chunk", () => {
-    expect(splitChunks(new Uint8Array(0))).toEqual([new Uint8Array(0)]);
+  it("splits at 256 KiB; empty input has no chunks", () => {
+    expect(splitChunks(new Uint8Array(0))).toEqual([]);
     expect(splitChunks(new Uint8Array(256 * 1024 * 2 + 1)).map((c) => c.length)).toEqual([262144, 262144, 1]);
   });
 });
@@ -221,9 +238,10 @@ describe("verifyChunkProof", () => {
 });
 
 describe("verifyMmrProof", () => {
-  const leafHash = (l: { dataRoot: Uint8Array; dataSize: bigint; totalSize: bigint }) =>
-    hashLeaf(concatBytes(l.dataRoot, u64le(l.dataSize), u64le(l.totalSize)));
+  const leafHash = (l: { leafVersion: number; dataRoot: Uint8Array; dataSize: bigint; totalSize: bigint }) =>
+    hashLeaf(concatBytes(new Uint8Array([l.leafVersion]), l.dataRoot, u64le(l.dataSize), u64le(l.totalSize)));
   const leaves = [1, 2, 3].map((n) => ({
+    leafVersion: LEAF_VERSION,
     dataRoot: computeCid(new Uint8Array([n])),
     dataSize: 1n,
     totalSize: BigInt(n),
@@ -242,7 +260,7 @@ describe("verifyMmrProof", () => {
 
   it("bags the peaks right of the leaf's peak into one item", () => {
     // 7 leaves: peaks of 4, 2 and 1 leaves. Leaf 0 has one item for the two right peaks.
-    const more = [4, 5, 6, 7].map((n) => leafHash({ dataRoot: computeCid(new Uint8Array([n])), dataSize: 1n, totalSize: 0n }));
+    const more = [4, 5, 6, 7].map((n) => leafHash({ leafVersion: LEAF_VERSION, dataRoot: computeCid(new Uint8Array([n])), dataSize: 1n, totalSize: 0n }));
     const all = [...hashes, ...more];
     const p4 = hashChildren(hashChildren(all[0], all[1]), hashChildren(all[2], all[3]));
     const p2 = hashChildren(all[4], all[5]);
@@ -269,10 +287,14 @@ describe("verifyMmrProof", () => {
     expect(verifyLastMmrLeaf({ leaf: leaves[0], items: [hashes[1]] }, root2, 2n)).toBe(false);
   });
 
-  it("accepts every proof in the Rust fixture, only at its own leaf index", () => {
-    // Written by `crates/primitives/storage/src/mmr.rs` (`proof_fixture_is_current`).
-    const url = new URL("../../../crates/primitives/storage/fixtures/mmr-proofs.json", import.meta.url);
-    const fixture = JSON.parse(readFileSync(url, "utf8")) as {
+  // Written by `crates/primitives/storage/src/mmr.rs` (`proof_vectors`): run
+  // `just mmr-proof-vectors`, and again after `mmr.rs` changes. Skipped
+  // locally if missing; required in CI.
+  const vectorsUrl = new URL("../../../.test-vectors/mmr-proofs.json", import.meta.url);
+  const vectorsMissing = !process.env.CI && !existsSync(vectorsUrl);
+  it.skipIf(vectorsMissing)("accepts every proof from Rust, only at its own leaf index", () => {
+    expect(existsSync(vectorsUrl), "MMR proof vectors missing; run `just mmr-proof-vectors`").toBe(true);
+    const fixture = JSON.parse(readFileSync(vectorsUrl, "utf8")) as {
       vectors: { leaf_count: number; leaf_index: number; root: string; items: string[] }[];
     };
     expect(fixture.vectors).toHaveLength(24);
@@ -280,7 +302,12 @@ describe("verifyMmrProof", () => {
       const index = BigInt(v.leaf_index);
       const count = BigInt(v.leaf_count);
       const proof = {
-        leaf: { dataRoot: new Uint8Array(32).fill(v.leaf_index + 1), dataSize: index, totalSize: 2n * index },
+        leaf: {
+          leafVersion: LEAF_VERSION,
+          dataRoot: new Uint8Array(32).fill(v.leaf_index + 1),
+          dataSize: index,
+          totalSize: 2n * index,
+        },
         items: v.items.map(hexToBytes),
       };
       const root = hexToBytes(v.root);

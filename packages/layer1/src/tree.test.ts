@@ -11,7 +11,7 @@ import {
 } from "@web3-storage/core";
 import { commitDataRoots, makeSigner, uploadBlob } from "@web3-storage/layer0";
 
-import { FakeProvider } from "../../layer0/src/fake-provider.testing.js";
+import { FakeProvider } from "@web3-storage/layer0/testing";
 import { commitOrder, FileSystemError, FsTree, parsePath, providerBlobStore } from "./tree.js";
 
 const PROVIDER = "http://provider.test";
@@ -61,10 +61,10 @@ describe("root discovery", () => {
     await commitDataRoots(PROVIDER, BUCKET, [dataRoot], signer, { fetch: provider.fetch });
   }
 
-  it("rejects a root directory of another drive", async () => {
+  it("rejects a root directory of another bucket", async () => {
     const { provider, tree } = setup();
-    await commitRoot(provider, encodeDirectoryNode({ driveId: BUCKET + 1n, children: [], metadata: [] }));
-    await expect(tree.rootCid()).rejects.toThrow(/belongs to drive 4/);
+    await commitRoot(provider, encodeDirectoryNode({ bucketId: BUCKET + 1n, children: [], metadata: [] }));
+    await expect(tree.rootCid()).rejects.toThrow(/belongs to bucket 4/);
   });
 
   it("rejects a root directory that breaks the format rules", async () => {
@@ -76,7 +76,7 @@ describe("root discovery", () => {
       size: 0n,
       mtime: 0n,
     });
-    await commitRoot(provider, encodeDirectoryNode({ driveId: BUCKET, children: [entry("b"), entry("a")], metadata: [] }));
+    await commitRoot(provider, encodeDirectoryNode({ bucketId: BUCKET, children: [entry("b"), entry("a")], metadata: [] }));
     await expect(tree.list("/")).rejects.toMatchObject({ code: "NotAFileSystem" });
   });
 
@@ -119,12 +119,41 @@ describe("FS operations", () => {
     expect((await tree.getFile("/empty")).bytes).toEqual(new Uint8Array(0));
   });
 
+  it("stores an empty file as a manifest with no chunks and no content blob", async () => {
+    const { provider, tree } = setup();
+    const r = await tree.putFile("/empty", new Uint8Array(0));
+    // Manifest and root directory only.
+    const commit = provider.calls.filter((c) => c.method === "POST" && c.path === "/commit").at(-1)!;
+    expect(commit.body.data_roots).toHaveLength(2);
+    expect(commit.body.data_roots[0]).toBe(r.manifestCid);
+    provider.calls.length = 0;
+    const file = await tree.getFile("/empty");
+    expect(file.bytes).toEqual(new Uint8Array(0));
+    expect(file.size).toBe(0n);
+    // Reading the content makes no request for it.
+    expect(provider.calls.map((c) => c.path)).not.toContain("/read");
+    expect(provider.calls.some((c) => c.query.hash === r.contentRoot || c.query.data_root === r.contentRoot)).toBe(false);
+  });
+
   it("put onto a directory and through a file fail", async () => {
     const { tree } = setup();
     await tree.mkdir("/d");
     await tree.putFile("/f", te.encode("x"));
     await expect(tree.putFile("/d", te.encode("x"))).rejects.toMatchObject({ code: "IsADirectory" });
     await expect(tree.putFile("/f/x", te.encode("x"))).rejects.toMatchObject({ code: "NotADirectory" });
+  });
+
+  it("listNonEmpty drops directories without files", async () => {
+    const { tree } = setup();
+    await tree.putFile("/f", te.encode("x"));
+    await tree.putFile("/deep/a/b/f", te.encode("x"));
+    await tree.mkdir("/deep/empty");
+    await tree.mkdir("/nested/empty");
+    const names = async (path: string) => (await tree.listNonEmpty(path)).map((e) => e.name);
+    expect(await names("/")).toEqual(["deep", "f"]);
+    expect(await names("/deep")).toEqual(["a"]);
+    expect(await names("/nested")).toEqual([]);
+    await expect(tree.listNonEmpty("/missing")).rejects.toMatchObject({ code: "NotFound" });
   });
 
   it("mkdir creates parents and fails when the path exists", async () => {
@@ -202,7 +231,7 @@ describe("writes", () => {
     expect(toHex(e.children[0].cid)).toBe(r.manifestCid);
     expect(toHex(d.children[0].cid)).toBe(roots[2]);
     expect(toHex(root.children[0].cid)).toBe(roots[3]);
-    expect(root.driveId).toBe(BUCKET);
+    expect(root.bucketId).toBe(BUCKET);
   });
 
   it("dedupes CIDs within one commit and keeps the root last", () => {

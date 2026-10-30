@@ -7,6 +7,7 @@
  * its `data_root` ({@link computeDataRoot}).
  */
 
+import { compareBytes } from "./bytes.js";
 import { computeDataRoot } from "./merkle.js";
 import { ScaleError, ScaleReader, ScaleWriter } from "./scale.js";
 
@@ -85,12 +86,6 @@ export function isValidEntryName(name: Uint8Array): boolean {
   }
 }
 
-function compareNames(a: Uint8Array, b: Uint8Array): number {
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return a.length - b.length;
-}
-
 /**
  * Check the rules a decoder does not, like Rust `DirectoryNode::validate`:
  * `metadata` is empty, every child name is valid ({@link isValidEntryName}),
@@ -105,7 +100,7 @@ export function validateDirectoryNode(node: DirectoryNode): void {
   node.children.forEach((e, i) => {
     if (!isValidEntryName(e.name)) throw new Error(`child ${i} has an invalid name`);
     if (e.entryType === "directory" && e.size !== 0n) throw new Error(`directory child ${i} has size ${e.size}`);
-    if (i > 0 && compareNames(node.children[i - 1].name, e.name) >= 0) {
+    if (i > 0 && compareBytes(node.children[i - 1].name, e.name) >= 0) {
       throw new Error(`children are not sorted by name with unique names at ${i}`);
     }
   });
@@ -133,7 +128,7 @@ export interface DirectoryEntry {
 
 export interface DirectoryNode {
   /** The Layer 0 bucket id. */
-  driveId: bigint;
+  bucketId: bigint;
   /** Sorted by name bytes ascending; names are unique. */
   children: DirectoryEntry[];
   /** Reserved; always empty. */
@@ -147,10 +142,10 @@ export interface FileChunk {
 }
 
 export interface FileManifest {
-  driveId: bigint;
+  bucketId: bigint;
   mimeType: Uint8Array;
   totalSize: bigint;
-  /** Content chunk hashes in order. Empty content has one chunk: the hash of the empty chunk. */
+  /** Content chunk hashes in order. Empty content has no chunks. */
   chunks: FileChunk[];
   /** Always empty. */
   encryptionParams: Uint8Array;
@@ -173,7 +168,7 @@ function readMetadata(r: ScaleReader, field: string): MetadataEntry[] {
 
 export function encodeDirectoryNode(node: DirectoryNode): Uint8Array {
   const w = new ScaleWriter();
-  w.u64(node.driveId);
+  w.u64(node.bucketId);
   w.vec(node.children, FS_LIMITS.maxDirectoryChildren, "directory children", (w, e) => {
     w.bytes(e.name, FS_LIMITS.maxEntryNameLength, "entry name");
     w.u8(e.entryType === "file" ? 0 : 1);
@@ -187,7 +182,7 @@ export function encodeDirectoryNode(node: DirectoryNode): Uint8Array {
 
 export function decodeDirectoryNode(bytes: Uint8Array): DirectoryNode {
   const r = new ScaleReader(bytes);
-  const driveId = r.u64();
+  const bucketId = r.u64();
   const children = r.vec(FS_LIMITS.maxDirectoryChildren, "directory children", (r) => {
     const name = r.bytes(FS_LIMITS.maxEntryNameLength, "entry name");
     const tag = r.u8();
@@ -202,12 +197,12 @@ export function decodeDirectoryNode(bytes: Uint8Array): DirectoryNode {
   });
   const metadata = readMetadata(r, "directory metadata");
   r.end();
-  return { driveId, children, metadata };
+  return { bucketId, children, metadata };
 }
 
 export function encodeFileManifest(manifest: FileManifest): Uint8Array {
   const w = new ScaleWriter();
-  w.u64(manifest.driveId);
+  w.u64(manifest.bucketId);
   w.bytes(manifest.mimeType, FS_LIMITS.maxMimeTypeLength, "mime type");
   w.u64(manifest.totalSize);
   w.vec(manifest.chunks, FS_LIMITS.maxFileChunks, "file chunks", (w, c) => {
@@ -221,14 +216,14 @@ export function encodeFileManifest(manifest: FileManifest): Uint8Array {
 
 export function decodeFileManifest(bytes: Uint8Array): FileManifest {
   const r = new ScaleReader(bytes);
-  const driveId = r.u64();
+  const bucketId = r.u64();
   const mimeType = r.bytes(FS_LIMITS.maxMimeTypeLength, "mime type");
   const totalSize = r.u64();
   const chunks = r.vec(FS_LIMITS.maxFileChunks, "file chunks", (r) => ({ cid: r.h256(), sequence: r.u32() }));
   const encryptionParams = r.bytes(FS_LIMITS.maxEncryptionParamsLength, "encryption params");
   const userMetadata = readMetadata(r, "user metadata");
   r.end();
-  return { driveId, mimeType, totalSize, chunks, encryptionParams, userMetadata };
+  return { bucketId, mimeType, totalSize, chunks, encryptionParams, userMetadata };
 }
 
 /** CID of an encoded `DirectoryNode`: the `data_root` of its encoding. */

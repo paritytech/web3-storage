@@ -40,9 +40,11 @@ them in one `POST /commit` with the new root last.
   (`NotAFileSystemBucket`).
 - **Prefix deletes.** An Admin `POST /delete` with a new `start_seq` can let
   the provider drop blobs the current tree still references.
-- **Reads are unauthenticated.** Layer 0 reads need no signature: anyone who
-  knows a CID can read the blob (#383, #396). Bucket visibility does not
-  protect file contents. Use client-side encryption for confidential data.
+- **Blob reads by CID are unauthenticated.** Layer 0 blob reads need no
+  signature: anyone who knows a CID and a bucket id can read the blob (#383,
+  #396). Bucket visibility does not protect file contents. Root discovery
+  (`GET /commitment`, `GET /mmr_proof`) needs Reader on a private bucket. Use
+  client-side encryption for confidential data.
 
 ## Prerequisites
 

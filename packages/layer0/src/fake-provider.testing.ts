@@ -5,8 +5,9 @@
  * blob helpers and the file-system tree use (`PUT/GET /node`, `POST
  * /commit`, `GET /read`, `GET /commitment`, `GET /mmr_proof`) with the same
  * checks and JSON shapes as `provider-node/src/api.rs`. Signatures are not
- * verified; a write only needs an `Authorization` header. Test-only: not
- * exported from the package.
+ * verified; a write and a Reader-gated read (`GET /commitment`, `GET
+ * /mmr_proof`) only need an `Authorization` header, as on a private bucket.
+ * Test-only: not exported from the package.
  */
 
 import {
@@ -17,7 +18,9 @@ import {
   DEFAULT_CHUNK_SIZE,
   hashChildren,
   hexToBytes,
+  LEAF_VERSION,
   nodeHash,
+  parseNode,
   toHex,
   u64le,
 } from "@web3-storage/core";
@@ -45,10 +48,11 @@ function json(status: number, body: unknown): Response {
 }
 
 function leafHash(leaf: Leaf): Uint8Array {
-  const bytes = new Uint8Array(48);
-  bytes.set(hexToBytes(leaf.dataRoot), 0);
-  bytes.set(u64le(leaf.dataSize), 32);
-  bytes.set(u64le(leaf.totalSize), 40);
+  const bytes = new Uint8Array(49);
+  bytes[0] = LEAF_VERSION;
+  bytes.set(hexToBytes(leaf.dataRoot), 1);
+  bytes.set(u64le(leaf.dataSize), 33);
+  bytes.set(u64le(leaf.totalSize), 41);
   return computeCid(bytes);
 }
 
@@ -113,28 +117,28 @@ export class FakeProvider {
       case "POST /commit":
         return authed ? this.commit(body) : json(401, { error: "unauthorized" });
       case "GET /node":
-        return this.getNode(query.hash);
+        return this.getNode(query);
       case "GET /read":
-        return this.read(query.data_root, BigInt(query.offset), BigInt(query.length));
+        return this.read(query);
       case "GET /commitment":
-        return this.commitment(query.bucket_id);
+        return authed ? this.commitment(query.bucket_id) : json(401, { error: "unauthorized" });
       case "GET /mmr_proof":
-        return this.mmrProof(query.bucket_id, Number(query.leaf_index));
+        return authed ? this.mmrProof(query.bucket_id, Number(query.leaf_index)) : json(401, { error: "unauthorized" });
       default:
         return json(404, { error: `no route ${route}` });
     }
   }) as typeof fetch;
 
-  private putNode(body: { bucket_id: number; hash: string; data: string; children: string[] | null }): Response {
+  private putNode(body: { bucket_id: number; hash: string; data?: string | null; children?: string[] | null }): Response {
     const hash = body.hash.toLowerCase();
-    const data = base64ToBytes(body.data);
-    const children = body.children?.map((c) => c.toLowerCase()) ?? null;
-    const actual = nodeHash(data, children);
-    if (!actual || toHex(actual) !== hash) return json(400, { error: "invalid_hash" });
+    const parsed = parseNode(body);
+    if (!parsed) return json(400, { error: "invalid_node" });
+    if (toHex(nodeHash(parsed)) !== hash) return json(400, { error: "invalid_hash" });
+    const children = "children" in parsed ? parsed.children.map(toHex) : null;
     const missing = (children ?? []).filter((c) => !this.nodes.has(c));
     if (missing.length) return json(400, { error: "children_missing", details: { missing } });
     if (!this.buckets.has(String(body.bucket_id))) this.buckets.set(String(body.bucket_id), []);
-    if (!this.nodes.has(hash)) this.nodes.set(hash, { data, children });
+    if (!this.nodes.has(hash)) this.nodes.set(hash, { data: "data" in parsed ? parsed.data : new Uint8Array(0), children });
     return json(200, { stored: true });
   }
 
@@ -154,6 +158,9 @@ export class FakeProvider {
     const roots = body.data_roots.map((r) => r.toLowerCase());
     const missing = roots.find((r) => !this.nodes.has(r));
     if (missing) return json(404, { error: "root_not_found", details: { data_root: missing } });
+    // Empty data has no chunk tree: a root whose last chunk is empty is rejected.
+    const emptyRoot = roots.find((r) => this.nodes.get(this.chunkHashes(r).at(-1)!)!.data.length === 0);
+    if (emptyRoot) return json(400, { error: "empty_data", details: { data_root: emptyRoot } });
     const leaves = this.buckets.get(String(body.bucket_id));
     if (!leaves) return json(404, { error: "bucket_not_found" });
     const start = leaves.length;
@@ -175,10 +182,22 @@ export class FakeProvider {
     return bagPeaks(mmrPeaks(leaves.map(leafHash)).map((p) => p.levels[p.levels.length - 1][0]));
   }
 
-  private getNode(hash: string): Response {
+  /** `require_bucket`: the query names a bucket, and the provider has data for it. */
+  private requireBucket(bucketId: string | undefined): Response | null {
+    if (bucketId === undefined) return json(400, { error: "bucket_id_required" });
+    return this.buckets.has(bucketId) ? null : json(404, { error: "bucket_not_found" });
+  }
+
+  private getNode(query: Record<string, string>): Response {
+    const hash = query.hash;
+    const bucketError = this.requireBucket(query.bucket_id);
+    if (bucketError) return bucketError;
     const node = this.nodes.get(hash.toLowerCase());
     if (!node) return json(404, { error: "not_found" });
-    return json(200, { hash, data: bytesToBase64(node.data), children: node.children });
+    return json(
+      200,
+      node.children ? { hash, data: null, children: node.children } : { hash, data: bytesToBase64(node.data), children: null },
+    );
   }
 
   /** Chunk hashes under `root` in order (`collect_leaves`). */
@@ -195,7 +214,12 @@ export class FakeProvider {
     return out;
   }
 
-  private read(dataRoot: string, offset: bigint, length: bigint): Response {
+  private read(query: Record<string, string>): Response {
+    const bucketError = this.requireBucket(query.bucket_id);
+    if (bucketError) return bucketError;
+    const dataRoot = query.data_root;
+    const offset = BigInt(query.offset);
+    const length = BigInt(query.length);
     const hashes = this.chunkHashes(dataRoot.toLowerCase());
     const size = BigInt(DEFAULT_CHUNK_SIZE);
     const start = Number(offset / size);
@@ -244,7 +268,12 @@ export class FakeProvider {
     }
     if (peakIndex + 1 < peaks.length) items.push(bagPeaks(peakRoots.slice(peakIndex + 1)));
     return json(200, {
-      leaf: { data_root: leaf.dataRoot, data_size: Number(leaf.dataSize), total_size: Number(leaf.totalSize) },
+      leaf: {
+        leaf_version: LEAF_VERSION,
+        data_root: leaf.dataRoot,
+        data_size: Number(leaf.dataSize),
+        total_size: Number(leaf.totalSize),
+      },
       items: items.map(toHex),
     });
   }

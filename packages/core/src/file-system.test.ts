@@ -24,7 +24,7 @@ const te = new TextEncoder();
 
 // Shared with the Rust implementation (spec section 6).
 const VECTOR_DIRECTORY: DirectoryNode = {
-  driveId: 7n,
+  bucketId: 7n,
   children: [
     { name: te.encode("a.txt"), entryType: "file", cid: hashLeaf(te.encode("a")), size: 1n, mtime: 1700000000n },
     { name: te.encode("docs"), entryType: "directory", cid: hashLeaf(te.encode("d")), size: 0n, mtime: 1700000001n },
@@ -38,7 +38,7 @@ const VECTOR_DIRECTORY_HEX =
 const VECTOR_DIRECTORY_CID = "0xdc2e9cfcc2612da5c6090a9d8f1ff953ef6f14fbb19a9e32a65bdffb990e50a5";
 
 const VECTOR_MANIFEST: FileManifest = {
-  driveId: 7n,
+  bucketId: 7n,
   mimeType: te.encode("text/plain"),
   totalSize: 1n,
   chunks: [{ cid: hashLeaf(te.encode("a")), sequence: 0 }],
@@ -109,7 +109,7 @@ describe("validateDirectoryNode", () => {
     mtime: 0n,
   });
   const node = (children: ReturnType<typeof entry>[], metadata: DirectoryNode["metadata"] = []): DirectoryNode => ({
-    driveId: 1n,
+    bucketId: 1n,
     children,
     metadata,
   });

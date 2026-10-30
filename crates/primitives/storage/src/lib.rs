@@ -21,16 +21,18 @@ pub mod mmr;
 
 pub use agreement_term::*;
 pub use merkle::*;
-pub use mmr::{bag_peaks, verify_mmr_proof, MmrLeaf, MmrProof, StorageMerge};
+pub use mmr::{
+    bag_peaks, verify_last_mmr_leaf, verify_mmr_proof, MmrLeaf, MmrProof, StorageMerge,
+    LEAF_VERSION,
+};
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
 pub type BucketId = u64;
 
-/// Chunk size, 256 KiB. Every chunk of a committed data root has this size,
-/// except the last, which can be shorter. The runtime uses it as
-/// `MaxChunkSize`. The provider rejects a larger chunk on upload and replica
-/// sync.
+/// Chunk size of leaf version 1, 256 KiB (see `MmrLeaf::chunk_size`). Every
+/// chunk of a version 1 data root has this size, except the last, which can be
+/// shorter. The provider rejects a larger chunk on upload and replica sync.
 pub const DEFAULT_CHUNK_SIZE: u32 = 256 * 1024;
 
 /// Prime numbers used for historical root bucketing.
@@ -353,8 +355,8 @@ pub struct BucketSnapshot<BlockNumber> {
     /// Block at which checkpointed
     pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
-    /// Bit i is set if primary_providers[i] signed.
-    /// Uses Vec<u8> with LSB0 ordering for efficient bit manipulation.
+    /// Bit i is set if `primary_providers[i]` signed.
+    /// Uses `Vec<u8>` with LSB0 ordering for efficient bit manipulation.
     pub primary_signers: Vec<u8>,
 }
 
@@ -444,13 +446,8 @@ pub(crate) const PEAK_PREFIX: u8 = 0x02;
 /// Leaves and internal nodes use different prefixes, so the bytes of an
 /// internal node never hash to the same value as a leaf.
 pub fn hash_leaf(data: &[u8]) -> H256 {
-    hash_prefixed(LEAF_PREFIX, data)
-}
-
-/// `blake2_256(prefix ++ data)`.
-fn hash_prefixed(prefix: u8, data: &[u8]) -> H256 {
     let mut preimage = Vec::with_capacity(1 + data.len());
-    preimage.push(prefix);
+    preimage.push(LEAF_PREFIX);
     preimage.extend_from_slice(data);
     blake2_256(&preimage)
 }
@@ -626,11 +623,7 @@ mod tests {
         const NODE_AB: &str = "ee616625a590167bc4b3dc703ab4f3f2ddecbee6b9d05fee9281f02046e6082e";
         const ROOT_3_CHUNKS: &str =
             "17321db51c1ef3ec1f77e271aa300b4e5c6091708bcba37e46025774a26142ee";
-        const MMR_LEAF: &str = "3fbff3e341e04b94439e2f793f6983fda1cb58b7e8cc09b73670245f7e816f8d";
-        const BAG_2_PEAKS: &str =
-            "39ffd1718a7a2d0f61de8f7902cb47d9661392d004d5b91e835ccd3d475cd035";
-        const BAG_3_PEAKS: &str =
-            "de6b5def5927714c7e957d45b39ba6b3cb1b24c08d3d72e038387f46268eb23f";
+        const MMR_LEAF: &str = "5941e24c88492304e9bf5ba943790c6fb89bbd6afc74e08603d931e5b9ac3b5b";
 
         #[test]
         fn leaf_hash_uses_the_leaf_prefix() {
@@ -657,25 +650,12 @@ mod tests {
         #[test]
         fn mmr_leaf_hash_covers_the_encoded_leaf() {
             let leaf = MmrLeaf {
+                leaf_version: LEAF_VERSION,
                 data_root: H256::repeat_byte(0x11),
                 data_size: 1,
                 total_size: 2,
             };
             assert_eq!(hash_leaf(&leaf.encode()), h(MMR_LEAF));
-        }
-
-        #[test]
-        fn peaks_bag_right_to_left_with_the_peak_prefix() {
-            let peaks: Vec<H256> = (1..=3).map(H256::repeat_byte).collect();
-            assert_eq!(bag_peaks(&peaks[..2]), h(BAG_2_PEAKS));
-            assert_eq!(bag_peaks(&peaks), h(BAG_3_PEAKS));
-        }
-
-        #[test]
-        fn one_peak_is_the_root_and_no_peaks_give_zero() {
-            let peak = H256::repeat_byte(7);
-            assert_eq!(bag_peaks(&[peak]), peak);
-            assert_eq!(bag_peaks(&[]), H256::zero());
         }
     }
 

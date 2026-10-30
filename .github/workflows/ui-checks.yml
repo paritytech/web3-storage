@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ui: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || steps.filter.outputs.ui == 'true' }}
+      mmr: ${{ steps.filter.outputs.mmr == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
@@ -44,11 +45,17 @@ jobs:
               - 'package.json'
               - '.github/actions/setup-pnpm/**'
               - '.github/workflows/ui-checks.yml'
+            # Inputs of the MMR proof vectors that packages/core/src/merkle.test.ts reads
+            mmr:
+              - 'crates/primitives/storage/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
 
   unit-tests:
     name: Unit tests (Vitest)
     needs: changes
-    if: needs.changes.outputs.ui == 'true'
+    if: needs.changes.outputs.ui == 'true' || needs.changes.outputs.mmr == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -68,6 +75,26 @@ jobs:
 
       - name: Typecheck sdk packages + examples
         run: pnpm run typecheck:packages
+
+      # Written by `crates/primitives/storage/src/mmr.rs`, read by
+      # packages/core/src/merkle.test.ts. Cached so a hit skips the Rust
+      # toolchain install and build.
+      - name: Cache MMR proof vectors
+        id: mmr-proof-vectors
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: .test-vectors/mmr-proofs.json
+          key: mmr-proof-vectors-${{ hashFiles('crates/primitives/storage/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
+
+      - name: Write MMR proof vectors
+        if: steps.mmr-proof-vectors.outputs.cache-hit != 'true'
+        # Install only rustc and cargo: the pinned toolchain also lists a wasm
+        # target and components that this host test does not use.
+        run: |
+          toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$toolchain" --profile minimal
+          MMR_PROOF_VECTORS="$PWD/.test-vectors/mmr-proofs.json" RUSTUP_TOOLCHAIN="$toolchain" \
+            cargo test -q -p storage-primitives mmr::tests::proof_vectors
 
       - name: Run unit tests
         run: pnpm run test:unit

@@ -40,7 +40,7 @@ describe("FileSystemClient", () => {
       bytes: te.encode("hello"),
       contentType: "text/plain",
     });
-    expect(await client.downloadByCid("http://provider.test", up.dataRoot)).toEqual(te.encode("hello"));
+    expect(await client.downloadByCid("http://provider.test", BUCKET, up.dataRoot)).toEqual(te.encode("hello"));
 
     const paths = new Set(provider.calls.map((c) => c.path));
     expect([...paths].every((p) => !p.startsWith("/fs") && !p.startsWith("/s3"))).toBe(true);
@@ -63,7 +63,7 @@ describe("FileSystemClient", () => {
     await expect(client.downloadFile(BUCKET, "/f")).rejects.toThrow(/No such file/);
   });
 
-  it("reads need no signer; writes do", async () => {
+  it("finding the root is signed when a signer is set; writes need one", async () => {
     const { client, provider } = makeClient();
     await client.uploadFile(BUCKET, "/f", te.encode("x"));
     const reader = new FileSystemClient({
@@ -71,8 +71,10 @@ describe("FileSystemClient", () => {
       providerUrl: "http://provider.test",
       fetch: provider.fetch,
     });
-    expect(await reader.downloadFile(BUCKET, "/f")).toEqual(te.encode("x"));
+    // The fake provider's bucket is private: /commitment needs an Authorization header.
+    await expect(reader.downloadFile(BUCKET, "/f")).rejects.toThrow(/401/);
     await expect(reader.uploadFile(BUCKET, "/g", te.encode("y"))).rejects.toThrow(/Signer not set/);
+    expect(await client.downloadFile(BUCKET, "/f")).toEqual(te.encode("x"));
   });
 
   it("reports a provider HTTP error with the action and status", async () => {

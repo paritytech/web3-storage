@@ -19,8 +19,10 @@
 //! - **Prefix deletes.** An Admin `POST /delete` that moves `start_seq` past
 //!   the leaves of blobs the current tree still references lets the provider
 //!   drop those blobs.
-//! - **Reads are unauthenticated.** Anyone who knows a CID can read the blob
-//!   (#383, #396). Confidential data needs client-side encryption.
+//! - **Blob reads by CID are unauthenticated.** Anyone who knows a CID and a
+//!   bucket id can read the blob (#383, #396). Root discovery
+//!   (`GET /commitment`, `GET /mmr_proof`) needs Reader on a private bucket.
+//!   Confidential data needs client-side encryption.
 //! - A key cannot also be a prefix directory of another key: `a` and `a/b`
 //!   cannot both exist ([`S3ClientError::KeyConflict`]).
 //! - No bucket deletion: Layer 0 has no bucket deletion.
@@ -32,7 +34,9 @@ pub use storage_primitives::{BucketId, Role, Visibility};
 pub use substrate::SubstrateClient;
 
 use file_system_client::{BlobStore, EmptyParents, FileStat, FsClientError, Tree};
-use file_system_primitives::{validate_entry_name, MetadataEntry, DEFAULT_MIME_TYPE};
+use file_system_primitives::{
+    validate_entry_name, DirectoryEntry, MetadataEntry, DEFAULT_MIME_TYPE,
+};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
@@ -290,75 +294,18 @@ impl ObjectClient {
 
     /// List objects in a bucket, sorted by key bytes.
     ///
-    /// Reads the root and every directory under the deepest directory the
-    /// prefix names. Reads no manifests, so `etag` is not set.
+    /// Reads the root and the deepest directory the prefix names. With
+    /// delimiter `/`, reads each of its subdirectories only until it finds an
+    /// object, unless `start_after` is a key inside one of them. With any
+    /// other delimiter or none, reads every directory under it. Reads no
+    /// manifests, so `etag` is not set.
     pub async fn list_objects_v2(
         &self,
         bucket_id: BucketId,
         params: ListObjectsParams,
     ) -> Result<ListObjectsResponse> {
         debug!("Listing objects in bucket: {}", bucket_id);
-        let prefix = params.prefix.unwrap_or_default();
-        let tree = self.tree(bucket_id);
-
-        // `a/b/c` lists under `/a/b`; `a/b/` lists under `/a/b`; `a` lists
-        // under `/`.
-        let dir_key = prefix.rfind('/').map_or("", |i| &prefix[..i]);
-        let objects = if dir_key.is_empty() {
-            tree.files_under("/").await?
-        } else {
-            match key_to_path(dir_key) {
-                Ok(dir_path) => match tree.files_under(&dir_path).await {
-                    Ok(files) => files
-                        .into_iter()
-                        .map(|(rel, entry)| (format!("{dir_key}/{rel}"), entry))
-                        .collect(),
-                    Err(FsClientError::PathNotFound(_) | FsClientError::NotADirectory(_)) => {
-                        Vec::new()
-                    }
-                    Err(e) => return Err(e.into()),
-                },
-                // No valid key starts with an invalid directory key.
-                Err(_) => Vec::new(),
-            }
-        };
-
-        let mut objects = objects;
-        objects.sort_by(|a, b| a.0.cmp(&b.0));
-        let keys: Vec<&str> = objects.iter().map(|(k, _)| k.as_str()).collect();
-        let max_keys = params
-            .max_keys
-            .unwrap_or(DEFAULT_MAX_KEYS)
-            .clamp(1, DEFAULT_MAX_KEYS) as usize;
-        let page = list_page(
-            &keys,
-            &prefix,
-            params.delimiter.as_deref().filter(|d| !d.is_empty()),
-            params.start_after.as_deref(),
-            max_keys,
-        );
-
-        let contents: Vec<ObjectSummary> = page
-            .contents
-            .iter()
-            .map(|&i| {
-                let (key, entry) = &objects[i];
-                ObjectSummary {
-                    key: key.clone(),
-                    size: entry.size,
-                    last_modified: entry.mtime,
-                    etag: None,
-                }
-            })
-            .collect();
-
-        Ok(ListObjectsResponse {
-            key_count: (contents.len() + page.common_prefixes.len()) as u32,
-            contents,
-            common_prefixes: page.common_prefixes,
-            is_truncated: page.is_truncated,
-            next_start_after: page.next_start_after,
-        })
+        list_objects_in(&self.tree(bucket_id), params).await
     }
 }
 
@@ -538,6 +485,103 @@ async fn head_object_in<S: BlobStore>(tree: &Tree<S>, key: &str) -> Result<HeadO
         .await
         .map_err(|e| object_error(e, tree.bucket_id(), key))?;
     Ok(to_head(&stat))
+}
+
+/// [`ObjectClient::list_objects_v2`] on `tree`.
+async fn list_objects_in<S: BlobStore>(
+    tree: &Tree<S>,
+    params: ListObjectsParams,
+) -> Result<ListObjectsResponse> {
+    let prefix = params.prefix.unwrap_or_default();
+    let delimiter = params.delimiter.as_deref().filter(|d| !d.is_empty());
+    let start_after = params.start_after.as_deref();
+
+    // `a/b/c` lists under `/a/b`; `a/b/` lists under `/a/b`; `a` lists
+    // under `/`.
+    let dir_key = prefix.rfind('/').map_or("", |i| &prefix[..i]);
+    let key_prefix = if dir_key.is_empty() {
+        String::new()
+    } else {
+        format!("{dir_key}/")
+    };
+    // With delimiter `/`, each subdirectory of the listed directory that
+    // contains an object is one common prefix. If `start_after` is a key
+    // inside a subdirectory, the page shows that common prefix only if the
+    // subdirectory has a later key, so read every directory.
+    let start_after_in_subdir = start_after
+        .and_then(|after| after.strip_prefix(key_prefix.as_str()))
+        .is_some_and(|rel| rel.find('/').is_some_and(|i| i + 1 < rel.len()));
+    let dir_only = delimiter == Some("/") && !start_after_in_subdir;
+
+    let dir_path = if dir_key.is_empty() {
+        Ok("/".to_string())
+    } else {
+        key_to_path(dir_key)
+    };
+    let mut objects: Vec<(String, DirectoryEntry)> = match dir_path {
+        Ok(dir_path) => {
+            let listed = if dir_only {
+                // A subdirectory gets the key `name/`, which `list_page`
+                // turns into a common prefix.
+                tree.list_non_empty(&dir_path).await.map(|entries| {
+                    entries
+                        .into_iter()
+                        .map(|entry| {
+                            let name = entry.name_str();
+                            let rel = if entry.is_directory() {
+                                format!("{name}/")
+                            } else {
+                                name
+                            };
+                            (rel, entry)
+                        })
+                        .collect()
+                })
+            } else {
+                tree.files_under(&dir_path).await
+            };
+            match listed {
+                Ok(entries) => entries
+                    .into_iter()
+                    .map(|(rel, entry)| (format!("{key_prefix}{rel}"), entry))
+                    .collect(),
+                Err(FsClientError::PathNotFound(_) | FsClientError::NotADirectory(_)) => Vec::new(),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        // No valid key starts with an invalid directory key.
+        Err(_) => Vec::new(),
+    };
+
+    objects.sort_by(|a, b| a.0.cmp(&b.0));
+    let keys: Vec<&str> = objects.iter().map(|(k, _)| k.as_str()).collect();
+    let max_keys = params
+        .max_keys
+        .unwrap_or(DEFAULT_MAX_KEYS)
+        .clamp(1, DEFAULT_MAX_KEYS) as usize;
+    let page = list_page(&keys, &prefix, delimiter, start_after, max_keys);
+
+    let contents: Vec<ObjectSummary> = page
+        .contents
+        .iter()
+        .map(|&i| {
+            let (key, entry) = &objects[i];
+            ObjectSummary {
+                key: key.clone(),
+                size: entry.size,
+                last_modified: entry.mtime,
+                etag: None,
+            }
+        })
+        .collect();
+
+    Ok(ListObjectsResponse {
+        key_count: (contents.len() + page.common_prefixes.len()) as u32,
+        contents,
+        common_prefixes: page.common_prefixes,
+        is_truncated: page.is_truncated,
+        next_start_after: page.next_start_after,
+    })
 }
 
 fn etag(content_root: H256) -> String {
@@ -801,5 +845,105 @@ mod tests {
 
         let exact = list_page(KEYS, "", None, None, KEYS.len());
         assert!(!exact.is_truncated);
+    }
+
+    #[tokio::test]
+    async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
+        use std::sync::atomic::Ordering;
+
+        let store = fixtures::MemoryStore::default();
+        let t = fixtures::tree(&store);
+        let keys = [
+            "a.txt",
+            "b/1.txt",
+            "b/c/3.txt",
+            "b0.txt",
+            "photos/2024/01/01/img.jpg",
+            "photos/2024/01/02/img.jpg",
+            "photos/2024/02/01/img.jpg",
+            "photos/2025/01/01/img.jpg",
+        ];
+        for key in keys {
+            put_object_in(&t, key, b"x", PutObjectOptions::default())
+                .await
+                .unwrap();
+        }
+        // File-system writes can leave directories without objects.
+        t.mkdir("/b/empty").await.unwrap();
+        t.mkdir("/e/f").await.unwrap();
+        let mut all: Vec<String> = t
+            .files_under("/")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        all.sort();
+        let all: Vec<&str> = all.iter().map(String::as_str).collect();
+
+        for prefix in [
+            "",
+            "b",
+            "b/",
+            "b/c",
+            "photos/",
+            "photos/2024/",
+            "photos/2024/0",
+            "x/",
+            "a.txt/",
+        ] {
+            for start_after in [
+                None,
+                Some("a.txt"),
+                Some("b/"),
+                Some("b/1.txt"),
+                Some("b/c/3.txt"),
+                Some("photos/2024/"),
+                Some("photos/2024/01/01/img.jpg"),
+                Some("photos/2024/01/02/img.jpg"),
+                Some("zzz"),
+            ] {
+                for max_keys in [1, 2, 1000] {
+                    let listed = list_objects_in(
+                        &t,
+                        ListObjectsParams {
+                            prefix: Some(prefix.to_string()),
+                            delimiter: Some("/".to_string()),
+                            start_after: start_after.map(str::to_string),
+                            max_keys: Some(max_keys),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                    let walked = list_page(&all, prefix, Some("/"), start_after, max_keys as usize);
+                    let context = format!("{prefix:?} after {start_after:?} max {max_keys}");
+                    let listed_keys: Vec<&str> =
+                        listed.contents.iter().map(|o| o.key.as_str()).collect();
+                    let walked_keys: Vec<&str> = walked.contents.iter().map(|&i| all[i]).collect();
+                    assert_eq!(listed_keys, walked_keys, "{context}");
+                    assert_eq!(listed.common_prefixes, walked.common_prefixes, "{context}");
+                    assert_eq!(listed.is_truncated, walked.is_truncated, "{context}");
+                    assert_eq!(
+                        listed.next_start_after, walked.next_start_after,
+                        "{context}"
+                    );
+                }
+            }
+        }
+
+        // The root, `b`, `e` and `e/f`, and one path down `photos` to a
+        // file: 8 of the 15 directories.
+        store.reads.store(0, Ordering::Relaxed);
+        let listed = list_objects_in(
+            &t,
+            ListObjectsParams {
+                delimiter: Some("/".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed.common_prefixes, ["b/", "photos/"]);
+        assert_eq!(store.reads.load(Ordering::Relaxed), 8);
     }
 }

@@ -34,6 +34,12 @@ RELAY_PORT := "9900"
 CHAIN_PORT := "2222"
 PROVIDER_PORT := "3333"
 
+# Provider node settings (override with: just PROVIDER_STORAGE_PATH=/tmp/p2 start-provider)
+PROVIDER_BACKEND := "rocksdb"
+PROVIDER_STORAGE_PATH := "./provider-data"
+PROVIDER_KEYFILE := ""
+PROVIDER_KEY_SCHEME := ""
+
 # Network URLs (constructed from ports)
 RELAY_WS := "ws://127.0.0.1:" + RELAY_PORT
 CHAIN_WS := "ws://127.0.0.1:" + CHAIN_PORT
@@ -185,12 +191,12 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
 
 # Start the storage provider node (without registering on-chain)
 # Examples:
-#   just start-provider                                            # default backend in ./provider-data, //Alice key, port 3333
-#   just start-provider BACKEND=rocksdb STORAGE_PATH=/tmp/rocks    # pick the engine and where it stores
-#   just start-provider PORT=3334 STORAGE_PATH=/tmp/p2             # second provider, separate data dir
-#   just start-provider KEYFILE=/path/to/seed                      # custom key from file
-#   just start-provider KEY_SCHEME=ed25519                         # non-sr25519 signing key
-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="": build-provider
+#   just start-provider                                                   # rocksdb in ./provider-data, //Alice key, port 3333
+#   just PROVIDER_STORAGE_PATH=/tmp/rocks start-provider                  # pick where it stores
+#   just PROVIDER_PORT=3334 PROVIDER_STORAGE_PATH=/tmp/p2 start-provider  # second provider, separate data dir
+#   just PROVIDER_KEYFILE=/path/to/seed start-provider                    # custom key from file
+#   just PROVIDER_KEY_SCHEME=ed25519 start-provider                       # non-sr25519 signing key
+start-provider BACKEND=PROVIDER_BACKEND PORT=PROVIDER_PORT STORAGE_PATH=PROVIDER_STORAGE_PATH KEYFILE=PROVIDER_KEYFILE KEY_SCHEME=PROVIDER_KEY_SCHEME: build-provider
     #!/usr/bin/env bash
     set -euo pipefail
     echo ""
@@ -220,18 +226,10 @@ start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-dat
         --bind-addr "0.0.0.0:{{PORT}}" \
         --chain-rpc "{{ CHAIN_WS }}"
 
-# Register on-chain then start the provider node (original behavior)
-# Registration is a chain-only extrinsic, so it must run first: start-provider
-# runs in the foreground and never returns.
-register-then-start-provider BACKEND="rocksdb" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" KEY_SCHEME="":
-    just register-provider "{{KEYFILE}}" "{{KEY_SCHEME}}"
-    just start-provider BACKEND="{{BACKEND}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}" KEY_SCHEME="{{KEY_SCHEME}}"
-
 # Register provider on-chain (idempotent). Requires a running chain.
-# Called automatically by register-then-start-provider, or run standalone.
 # KEY_SCHEME registers a non-sr25519 signing key (the node's --key-scheme
 # must match); extrinsics are still submitted from the sr25519 account.
-register-provider KEYFILE="" KEY_SCHEME="":
+register-provider KEYFILE=PROVIDER_KEYFILE KEY_SCHEME=PROVIDER_KEY_SCHEME:
     #!/usr/bin/env bash
     set -euo pipefail
     ARGS=("{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_MULTI_ADDR }}")
@@ -282,11 +280,14 @@ subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtim
         --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Deserialize" \
         --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Serialize" \
         --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Deserialize" \
+        --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=serde::Serialize" \
+        --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=serde::Deserialize" \
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Serialize" \
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Encode" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Decode" \
         --derive-for-type "pallet_storage_provider::pallet::StorageAgreement=codec::Decode" \
+        --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=codec::Decode" \
         --derive-for-type "storage_primitives::ProviderRole=codec::Decode" \
         --derive-for-type "storage_primitives::ReplicaSyncRecord=codec::Decode" \
         --derive-for-type "storage_primitives::Commitment=codec::Decode" \
@@ -418,12 +419,11 @@ e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
 # File System (Layer 1)
 # ============================================================
 
-# Test all file system components (primitives + pallet + client)
+# Test all file system components (primitives + client)
 fs-test-all:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo test -p file-system-primitives
-    cargo test -p pallet-drive-registry
     cargo test -p file-system-client
 
 # File system integration test (used by CI; assumes chain + provider already running)
@@ -434,24 +434,25 @@ fs-demo-ci:
 # S3-Compatible Interface (Layer 1)
 # ============================================================
 
-# Test all S3 components (primitives + pallet + client)
+# Test the S3 client
 s3-test-all:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cargo test -p s3-primitives
-    cargo test -p pallet-s3-registry
     cargo test -p s3-client
 
 # S3 integration test (used by CI; assumes chain + provider already running)
 s3-demo-ci:
     cargo run --release -p s3-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+
+# Write the MMR proof vectors that packages/core/src/merkle.test.ts reads
+mmr-proof-vectors:
+    MMR_PROOF_VECTORS="{{justfile_directory()}}/.test-vectors/mmr-proofs.json" cargo test -q -p storage-primitives mmr::tests::proof_vectors
+
 # ─── UI Tests ─────────────────────────────────────────────────────────────────
 #
 # Unit tests + Playwright e2e for drive-ui, provider, and explorer.
 # Requires a running local chain + provider node.
 
 # Run all UI unit tests (Vitest)
-test-ui-unit:
+test-ui-unit: mmr-proof-vectors
     pnpm run test:unit
 
 # Run drive-ui Playwright e2e (requires chain + provider running)

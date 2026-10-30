@@ -24,14 +24,16 @@
  * and both commit lose one change (the last commit wins). Each operation
  * loads the root again right before it writes.
  *
- * Reads are unauthenticated and checked against the CIDs. A blob's hash is
- * enough to read it (#383/#396); confidentiality needs client-side
- * encryption.
+ * Blob reads are unauthenticated and checked against the CIDs. A blob's hash
+ * and bucket id are enough to read it (#383/#396); confidentiality needs
+ * client-side encryption. Finding the root (`/commitment`, `/mmr_proof`)
+ * needs Reader on a private bucket, so it is signed when a signer is set.
  */
 
 import {
   bytesEq,
   chunkCount,
+  compareBytes,
   decodeDirectoryNode,
   decodeFileManifest,
   DIRECTORY_NODE_MAX_SIZE,
@@ -40,6 +42,7 @@ import {
   FILE_MANIFEST_MAX_SIZE,
   FS_LIMITS,
   hexToBytes,
+  isValidEntryName,
   isWellFormedString,
   merkleRoot,
   toHex,
@@ -107,7 +110,7 @@ export interface BlobStore {
 
 /**
  * {@link BlobStore} over the provider's Layer 0 HTTP routes. `signer` is
- * needed only for writes.
+ * needed for writes and for finding the root of a private bucket.
  */
 export function providerBlobStore(
   providerUrl: string,
@@ -121,7 +124,7 @@ export function providerBlobStore(
   };
   return {
     bucketId,
-    readBlob: (cid, opts = {}) => readBlob(providerUrl, cid, { ...http, ...opts }),
+    readBlob: (cid, opts = {}) => readBlob(providerUrl, bucketId, cid, { ...http, ...opts }),
     async uploadBlob(bytes) {
       const r = await uploadBlob(providerUrl, bucketId, bytes, requireSigner(), http);
       return { cid: hexToBytes(r.dataRoot), chunkHashes: r.chunkHashes };
@@ -130,9 +133,10 @@ export function providerBlobStore(
       await commitDataRoots(providerUrl, bucketId, cids, requireSigner(), http);
     },
     async lastCommittedRoot() {
-      const commitment = await getCommitment(providerUrl, bucketId, http);
+      const reads = { ...http, signer: signer ?? undefined };
+      const commitment = await getCommitment(providerUrl, bucketId, reads);
       if (!commitment || commitment.leafCount === 0n) return null;
-      const proof = await getMmrProof(providerUrl, bucketId, commitment.leafCount - 1n, http);
+      const proof = await getMmrProof(providerUrl, bucketId, commitment.leafCount - 1n, reads);
       // The proof ties the last leaf to the provider's MMR root. That root is
       // the provider's claim until compared with an on-chain checkpoint; the
       // commitment signature is not checked here.
@@ -206,24 +210,14 @@ export interface DeleteOptions {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-function compareBytes(a: Uint8Array, b: Uint8Array): number {
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return a.length - b.length;
-}
-
 /**
  * Throw unless `name` is a valid entry name: well-formed UTF-16 (no lone
  * surrogate), 1..=256 UTF-8 bytes, no `/`, not `.` or `..`.
  */
 export function validateEntryName(name: string): void {
-  if (!isWellFormedString(name)) throw new FileSystemError("InvalidPath", "Name contains a lone UTF-16 surrogate");
-  const len = encoder.encode(name).length;
-  if (len < 1 || len > FS_LIMITS.maxEntryNameLength) {
-    throw new FileSystemError("InvalidPath", `Name must be 1-${FS_LIMITS.maxEntryNameLength} bytes: "${name}"`);
+  if (!isWellFormedString(name) || !isValidEntryName(encoder.encode(name))) {
+    throw new FileSystemError("InvalidPath", `Invalid entry name: "${name}"`);
   }
-  if (name.includes("/")) throw new FileSystemError("InvalidPath", `Name must not contain "/": "${name}"`);
-  if (name === "." || name === "..") throw new FileSystemError("InvalidPath", `Name must not be "${name}"`);
 }
 
 /**
@@ -297,7 +291,7 @@ export class FsTree {
   ) {}
 
   private emptyDirectory(): DirectoryNode {
-    return { driveId: this.store.bucketId, children: [], metadata: [] };
+    return { bucketId: this.store.bucketId, children: [], metadata: [] };
   }
 
   /**
@@ -349,8 +343,8 @@ export class FsTree {
       }
       throw err;
     }
-    if (node.driveId !== this.store.bucketId) {
-      throw this.notAFileSystem(cid, `the root directory belongs to drive ${node.driveId}`);
+    if (node.bucketId !== this.store.bucketId) {
+      throw this.notAFileSystem(cid, `the root directory belongs to bucket ${node.bucketId}`);
     }
     return { cid, node };
   }
@@ -445,6 +439,30 @@ export class FsTree {
   }
 
   /**
+   * List a directory without the subdirectories that contain no file at any
+   * depth. Reads each subdirectory only until it finds a file.
+   */
+  async listNonEmpty(path: string): Promise<TreeEntry[]> {
+    const out: TreeEntry[] = [];
+    for (const entry of await this.list(path)) {
+      if (entry.entryType === "file" || (await this.containsFile(hexToBytes(entry.cid), entry.path))) out.push(entry);
+    }
+    return out;
+  }
+
+  /** Whether the directory `cid` at `path` contains a file at any depth. */
+  private async containsFile(cid: Uint8Array, path: string): Promise<boolean> {
+    const pending = [{ cid, path }];
+    while (pending.length > 0) {
+      const dir = pending.pop()!;
+      const node = await this.readDirectory(dir.cid, dir.path);
+      if (node.children.some((e) => e.entryType === "file")) return true;
+      for (const e of node.children) pending.push({ cid: e.cid, path: `${dir.path}/${decoder.decode(e.name)}` });
+    }
+    return false;
+  }
+
+  /**
    * Every file under `path` (recursively), with its path relative to `path`
    * (e.g. `a/b.txt`). Returns an empty list when `path` does not exist or is
    * a file.
@@ -534,7 +552,11 @@ export class FsTree {
   /** A file's content and metadata. The content is checked against the manifest. */
   async getFile(path: string): Promise<FileRead> {
     const { manifest, info } = await this.loadFile(path);
-    const bytes = await this.store.readBlob(hexToBytes(info.contentRoot), { size: manifest.totalSize });
+    // Empty content has no blob to read.
+    const bytes =
+      manifest.totalSize === 0n
+        ? new Uint8Array(0)
+        : await this.store.readBlob(hexToBytes(info.contentRoot), { size: manifest.totalSize });
     return { ...info, bytes };
   }
 
@@ -553,7 +575,7 @@ export class FsTree {
     if (existing?.entryType === "directory") throw new FileSystemError("IsADirectory", `Is a directory: ${path}`);
 
     const manifestBase = {
-      driveId: this.store.bucketId,
+      bucketId: this.store.bucketId,
       mimeType: encoder.encode(opts.contentType || DEFAULT_CONTENT_TYPE),
       totalSize: BigInt(bytes.length),
       encryptionParams: new Uint8Array(0),
@@ -566,10 +588,11 @@ export class FsTree {
       throw new FileSystemError("FileTooLarge", `${path}: file exceeds ${FS_LIMITS.maxFileChunks} chunks`);
     }
 
-    const content = await this.store.uploadBlob(bytes);
+    // Empty content has no blob to upload.
+    const chunkHashes = bytes.length === 0 ? [] : (await this.store.uploadBlob(bytes)).chunkHashes;
     const manifest: FileManifest = {
       ...manifestBase,
-      chunks: content.chunkHashes.map((cid, sequence) => ({ cid, sequence })),
+      chunks: chunkHashes.map((cid, sequence) => ({ cid, sequence })),
     };
     const { cid: manifestCid } = await this.store.uploadBlob(encodeFileManifest(manifest));
     setEntry(
@@ -583,8 +606,10 @@ export class FsTree {
       },
       joinPath(dirNames),
     );
-    const rootCid = await this.writePath(nodes, names, nodes.length - 1, [content.cid, manifestCid]);
-    return { rootCid, contentRoot: toHex(content.cid), manifestCid: toHex(manifestCid), size: bytes.length };
+    const contentRoot = merkleRoot(chunkHashes);
+    const blobs = bytes.length === 0 ? [manifestCid] : [contentRoot, manifestCid];
+    const rootCid = await this.writePath(nodes, names, nodes.length - 1, blobs);
+    return { rootCid, contentRoot: toHex(contentRoot), manifestCid: toHex(manifestCid), size: bytes.length };
   }
 
   /** Create a directory and any missing parents. Throws `AlreadyExists` when `path` exists. */

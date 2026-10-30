@@ -10,7 +10,7 @@
 //! 4. Upload files
 //! 5. List directories
 //! 6. Download and verify files
-//! 7. Read the drive from a second client instance
+//! 7. Read the drive, including an empty file, from a second client instance
 //! 8. Delete a file and an empty directory
 //!
 //! Usage: cargo run --example ci_integration_test <chain_ws> <provider_url>
@@ -229,6 +229,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "  Root CID: {:?}",
         second_client.get_root_cid(bucket_id).await?
     );
+
+    // An empty file has a manifest and no content blob.
+    fs_client
+        .upload_file(bucket_id, "/empty.txt", b"", None)
+        .await?;
+    let empty = second_client.get_file(bucket_id, "/empty.txt").await?;
+    assert!(empty.data.is_empty(), "empty.txt must read back empty");
+    assert_eq!(empty.stat.size(), 0);
+    println!("  Uploaded and read back /empty.txt (0 bytes)");
 
     // Step 9: Delete a file and an empty directory
     println!();

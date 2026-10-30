@@ -43,8 +43,10 @@ Limits:
 - A key cannot also be a prefix directory of another key: `a` and `a/b`
   cannot both exist (`KeyConflict`).
 - `list_objects_v2` reads every directory under the prefix's deepest
-  directory and no manifests, so listed objects have no ETag (`head_object`
-  returns it). Page with `next_start_after`.
+  directory (with delimiter `/`, each subdirectory only until it finds an
+  object) and no manifests, so
+  listed objects have no ETag (`head_object` returns it). Page with
+  `next_start_after`.
 - **No bucket deletion.** Layer 0 has no bucket deletion.
 - `list_buckets` returns every bucket the account is a member of. The chain
   does not record which buckets contain S3 objects.

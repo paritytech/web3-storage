@@ -197,8 +197,8 @@ export class FileSystemClient extends Layer1Client {
    * checked against the CID. Without it, a 64-byte result is not verified
    * (see `ReadBlobOpts.size` in @web3-storage/layer0).
    */
-  async downloadByCid(providerUrl: string, cid: string, size?: bigint | number): Promise<Uint8Array> {
-    return readBlob(providerUrl, cid, { fetch: this.fetchOpts.fetchImpl, size });
+  async downloadByCid(providerUrl: string, bucketId: bigint, cid: string, size?: bigint | number): Promise<Uint8Array> {
+    return readBlob(providerUrl, bucketId, cid, { fetch: this.fetchOpts.fetchImpl, size });
   }
 
   /** Remove a file or an empty directory. Requires a Writer or Admin role. */

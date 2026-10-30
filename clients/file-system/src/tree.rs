@@ -44,8 +44,10 @@
 //!   the type's maximum SCALE encoded size. A provider that returns the two
 //!   child hashes of an internal Merkle node as a 64-byte blob, and denies
 //!   the node's children on `GET /node`, is not detected.
-//! - **Reads are unauthenticated.** Anyone who knows a CID can read the blob
-//!   (#383, #396). Confidential data needs client-side encryption.
+//! - **Blob reads by CID are unauthenticated.** Anyone who knows a CID and a
+//!   bucket id can read the blob (#383, #396). Root discovery
+//!   (`GET /commitment`, `GET /mmr_proof`) needs Reader on a private bucket.
+//!   Confidential data needs client-side encryption.
 
 use crate::{FsClientError, Result};
 use codec::MaxEncodedLen;
@@ -55,7 +57,7 @@ use file_system_primitives::{
 };
 use std::collections::HashSet;
 use storage_client::{ChunkingStrategy, StorageUserClient};
-use storage_primitives::BucketId;
+use storage_primitives::{verify_last_mmr_leaf, BucketId};
 
 /// The length of a blob to read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +79,7 @@ pub trait BlobStore: Send + Sync {
     async fn put_blob(&self, bucket_id: BucketId, data: &[u8]) -> Result<Cid>;
 
     /// Read the blob with data root `cid`.
-    async fn get_blob(&self, cid: Cid, length: BlobLength) -> Result<Vec<u8>>;
+    async fn get_blob(&self, bucket_id: BucketId, cid: Cid, length: BlobLength) -> Result<Vec<u8>>;
 
     /// Append `data_roots` to the bucket's MMR, in order.
     async fn commit(&self, bucket_id: BucketId, data_roots: Vec<Cid>) -> Result<()>;
@@ -93,8 +95,8 @@ impl<T: BlobStore + ?Sized> BlobStore for &T {
         (**self).put_blob(bucket_id, data).await
     }
 
-    async fn get_blob(&self, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
-        (**self).get_blob(cid, length).await
+    async fn get_blob(&self, bucket_id: BucketId, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
+        (**self).get_blob(bucket_id, cid, length).await
     }
 
     async fn commit(&self, bucket_id: BucketId, data_roots: Vec<Cid>) -> Result<()> {
@@ -118,12 +120,14 @@ impl BlobStore for StorageUserClient {
 
     /// With [`BlobLength::AtMost`], the read requests one byte more than
     /// the maximum.
-    async fn get_blob(&self, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
+    async fn get_blob(&self, bucket_id: BucketId, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
         let max = match length {
             BlobLength::Exact(size) => size,
             BlobLength::AtMost(max) => max.saturating_add(1),
         };
-        self.download(&cid, 0, max).await.map_err(storage_error)
+        self.download(bucket_id, &cid, 0, max)
+            .await
+            .map_err(storage_error)
     }
 
     async fn commit(&self, bucket_id: BucketId, data_roots: Vec<Cid>) -> Result<()> {
@@ -158,21 +162,6 @@ impl BlobStore for StorageUserClient {
         }
         Ok(Some(data_root))
     }
-}
-
-/// Check that `proof` proves the last leaf of an MMR with `leaf_count`
-/// leaves and root `mmr_root`.
-pub fn verify_last_mmr_leaf(
-    proof: storage_primitives::MmrProof,
-    mmr_root: &Cid,
-    leaf_count: u64,
-) -> bool {
-    let commitment = storage_primitives::Commitment {
-        mmr_root: *mmr_root,
-        start_seq: 0,
-        leaf_count,
-    };
-    leaf_count > 0 && storage_primitives::verify_mmr_proof(proof, leaf_count - 1, &commitment)
 }
 
 fn storage_error(e: storage_client::ClientError) -> FsClientError {
@@ -322,7 +311,10 @@ impl<S: BlobStore> Tree<S> {
             reason,
         };
         let max = max_len::<DirectoryNode>();
-        let bytes = self.store.get_blob(cid, BlobLength::AtMost(max)).await?;
+        let bytes = self
+            .store
+            .get_blob(self.bucket_id, cid, BlobLength::AtMost(max))
+            .await?;
         if bytes.len() as u64 > max {
             return Err(not_fs(format!(
                 "last leaf is larger than a directory node can be ({max} bytes)"
@@ -333,10 +325,10 @@ impl<S: BlobStore> Tree<S> {
             .map_err(|e| not_fs(format!("last leaf is not a directory node: {e}")))?;
         node.validate()
             .map_err(|e| not_fs(format!("last leaf is not a valid directory node: {e}")))?;
-        if node.drive_id != self.bucket_id {
+        if node.bucket_id != self.bucket_id {
             return Err(not_fs(format!(
-                "root directory belongs to drive {}",
-                node.drive_id
+                "root directory belongs to bucket {}",
+                node.bucket_id
             )));
         }
         Ok(Root {
@@ -355,6 +347,22 @@ impl<S: BlobStore> Tree<S> {
             .next_back()
             .map(|dir| dir.children.into_inner())
             .unwrap_or_default())
+    }
+
+    /// List the entries of the directory at `path`, sorted by name, without
+    /// the subdirectories that contain no file at any depth. Reads each
+    /// subdirectory only until it finds a file.
+    pub async fn list_non_empty(&self, path: &str) -> Result<Vec<DirectoryEntry>> {
+        let names = parse_path(path)?;
+        let base = join(&names);
+        let mut entries = Vec::new();
+        for entry in self.list(path).await? {
+            let child = format!("{}/{}", base.trim_end_matches('/'), entry.name_str());
+            if entry.is_file() || self.contains_file(&child, entry.cid).await? {
+                entries.push(entry);
+            }
+        }
+        Ok(entries)
     }
 
     /// Read the entry and manifest of the file at `path`.
@@ -380,9 +388,12 @@ impl<S: BlobStore> Tree<S> {
     /// Read the file at `path`.
     pub async fn get_file(&self, path: &str) -> Result<FileContent> {
         let stat = self.stat(path).await?;
-        let data = self
-            .read_blob(stat.content_root(), BlobLength::Exact(stat.size()))
-            .await?;
+        let data = if stat.size() == 0 {
+            Vec::new()
+        } else {
+            self.read_blob(stat.content_root(), BlobLength::Exact(stat.size()))
+                .await?
+        };
         Ok(FileContent { stat, data })
     }
 
@@ -452,7 +463,11 @@ impl<S: BlobStore> Tree<S> {
             .map_err(|e| format_error(path, e))?;
 
         let dirs = self.rewrite(chain, parents, path)?;
-        let mut blobs = vec![data, manifest_bytes.as_slice()];
+        let mut blobs = Vec::new();
+        if !data.is_empty() {
+            blobs.push(data);
+        }
+        blobs.push(manifest_bytes.as_slice());
         blobs.extend(dirs.iter().map(Vec::as_slice));
         self.write(&blobs).await?;
         Ok(FileStat { entry, manifest })
@@ -589,7 +604,7 @@ impl<S: BlobStore> Tree<S> {
 
     /// Read a blob and check its length and that its CID is `cid`.
     async fn read_blob(&self, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
-        let bytes = self.store.get_blob(cid, length).await?;
+        let bytes = self.store.get_blob(self.bucket_id, cid, length).await?;
         let len = bytes.len() as u64;
         let length_ok = match length {
             BlobLength::Exact(size) => len == size,
@@ -613,6 +628,24 @@ impl<S: BlobStore> Tree<S> {
         })?;
         node.validate().map_err(|e| format_error(path, e))?;
         Ok(node)
+    }
+
+    /// Whether the directory `cid` at `path` contains a file at any depth.
+    async fn contains_file(&self, path: &str, cid: Cid) -> Result<bool> {
+        let mut pending = vec![(path.to_string(), cid)];
+        while let Some((path, cid)) = pending.pop() {
+            let dir = self.read_dir(&path, cid).await?;
+            if dir.children.iter().any(DirectoryEntry::is_file) {
+                return Ok(true);
+            }
+            pending.extend(
+                dir.children
+                    .into_inner()
+                    .into_iter()
+                    .map(|entry| (format!("{path}/{}", entry.name_str()), entry.cid)),
+            );
+        }
+        Ok(false)
     }
 
     async fn read_manifest(&self, path: &str, cid: Cid) -> Result<FileManifest> {
@@ -688,7 +721,12 @@ mod tests {
             Ok(cid)
         }
 
-        async fn get_blob(&self, cid: Cid, _length: BlobLength) -> Result<Vec<u8>> {
+        async fn get_blob(
+            &self,
+            _bucket_id: BucketId,
+            cid: Cid,
+            _length: BlobLength,
+        ) -> Result<Vec<u8>> {
             if let Some((tampered, bytes)) = self.tampered.lock().unwrap().clone() {
                 if tampered == cid {
                     return Ok(bytes);
@@ -754,38 +792,6 @@ mod tests {
     }
 
     #[test]
-    fn last_mmr_leaf_check_rejects_other_leaves() {
-        use storage_primitives::{mmr, verify_mmr_proof, Commitment};
-        let leaves: Vec<_> = (0..4u8)
-            .map(|n| storage_primitives::MmrLeaf {
-                data_root: storage_primitives::hash_leaf(&[n]),
-                data_size: 1,
-                total_size: n as u64,
-            })
-            .collect();
-        let proof =
-            |count: usize, index: u64| mmr::proof(&leaves[..count], index).unwrap().unwrap();
-
-        // Three leaves: two peaks. Four leaves: one peak.
-        for count in [3, 4] {
-            let (root, last) = proof(count, count as u64 - 1);
-            let leaf_count = count as u64;
-            assert!(verify_last_mmr_leaf(last.clone(), &root, leaf_count));
-            assert!(!verify_last_mmr_leaf(last.clone(), &root, leaf_count + 1));
-            assert!(!verify_last_mmr_leaf(last, &root, 0));
-
-            let (_, other) = proof(count, 0);
-            let commitment = Commitment {
-                mmr_root: root,
-                start_seq: 0,
-                leaf_count,
-            };
-            assert!(verify_mmr_proof(other.clone(), 0, &commitment));
-            assert!(!verify_last_mmr_leaf(other, &root, leaf_count));
-        }
-    }
-
-    #[test]
     fn commit_order_dedupes_and_puts_root_last() {
         let [x, y, root] = [&b"x"[..], b"y", b"root"].map(compute_cid);
         assert_eq!(commit_order(&[x, y, x, root, y, root]), vec![x, y, root]);
@@ -804,6 +810,26 @@ mod tests {
             Err(FsClientError::PathNotFound(_))
         ));
         assert!(store.commits().is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_non_empty_drops_directories_without_files() {
+        let store = MemoryStore::default();
+        let t = tree(&store);
+        t.put_file("/f", b"x", DEFAULT, vec![]).await.unwrap();
+        t.put_file("/deep/a/b/f", b"x", DEFAULT, vec![])
+            .await
+            .unwrap();
+        t.mkdir("/deep/empty").await.unwrap();
+        t.mkdir("/nested/empty").await.unwrap();
+
+        assert_eq!(names(&t.list_non_empty("/").await.unwrap()), ["deep", "f"]);
+        assert_eq!(names(&t.list_non_empty("/deep").await.unwrap()), ["a"]);
+        assert!(t.list_non_empty("/nested").await.unwrap().is_empty());
+        assert!(matches!(
+            t.list_non_empty("/missing").await,
+            Err(FsClientError::PathNotFound(_))
+        ));
     }
 
     #[tokio::test]
@@ -838,6 +864,26 @@ mod tests {
         assert_eq!(file.stat.content_type(), "text/plain");
         assert_eq!(file.stat.size(), 5);
         assert_eq!(file.stat.entry.size, 5);
+    }
+
+    #[tokio::test]
+    async fn empty_file_has_a_manifest_and_no_content_blob() {
+        let store = MemoryStore::default();
+        let stat = tree(&store)
+            .put_file("/empty", b"", DEFAULT, vec![])
+            .await
+            .unwrap();
+        assert!(stat.manifest.chunks.is_empty());
+
+        // Manifest, root directory, then no content blob.
+        let order = &store.commits()[0];
+        assert_eq!(order.len(), 2);
+        assert_eq!(order[0], stat.entry.cid);
+
+        // Reading it makes no store request: the store has no content blob.
+        let file = tree(&store).get_file("/empty").await.unwrap();
+        assert!(file.data.is_empty());
+        assert_eq!(file.stat.size(), 0);
     }
 
     #[tokio::test]

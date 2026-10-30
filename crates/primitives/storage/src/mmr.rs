@@ -16,18 +16,47 @@ use sp_core::H256;
 /// Error of the MMR library.
 pub use mmr_lib::Error;
 
+/// The `MmrLeaf` format this build writes into every leaf it commits.
+///
+/// A verifier reads `leaf_version` first and checks the rest of the leaf under
+/// that version's rules: its fields, its chunk size and the chunk tree shape.
+/// A format change bumps this constant; leaves of different versions share one
+/// MMR and each verifies under its own version.
+pub const LEAF_VERSION: u8 = 1;
+
 /// MMR leaf containing data root and size information.
 #[derive(
     Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MmrLeaf {
+    /// Leaf format version, see [`LEAF_VERSION`]. First field, so the leaf
+    /// hash preimage is `0x00 ++ leaf_version ++ ...`.
+    pub leaf_version: u8,
     /// Merkle root of chunk tree
     pub data_root: H256,
     /// Size of content under this data_root
     pub data_size: u64,
     /// Cumulative unique bytes in MMR at this point
     pub total_size: u64,
+}
+
+impl MmrLeaf {
+    /// Chunk size of this leaf's version. `None` for an unknown version.
+    pub fn chunk_size(&self) -> Option<u32> {
+        match self.leaf_version {
+            1 => Some(crate::DEFAULT_CHUNK_SIZE),
+            _ => None,
+        }
+    }
+
+    /// Number of chunks under `data_root`: every chunk has this leaf's chunk
+    /// size except the last, which has 1 to chunk size bytes. Empty data has
+    /// no chunks. `None` for an unknown version.
+    pub fn chunk_count(&self) -> Option<u64> {
+        let chunk_size = u64::from(self.chunk_size()?);
+        Some(self.data_size.div_ceil(chunk_size))
+    }
 }
 
 /// MMR proof for verifying leaf inclusion.
@@ -103,6 +132,17 @@ pub fn verify_mmr_proof(proof: MmrProof, leaf_index: u64, commitment: &Commitmen
     mmr_lib::MerkleProof::<H256, StorageMerge>::new(mmr_size, proof.items)
         .verify(commitment.mmr_root, alloc::vec![leaf])
         .unwrap_or(false)
+}
+
+/// Check that `proof` proves the last leaf of an MMR with `leaf_count`
+/// leaves and root `mmr_root`.
+pub fn verify_last_mmr_leaf(proof: MmrProof, mmr_root: &H256, leaf_count: u64) -> bool {
+    let commitment = Commitment {
+        mmr_root: *mmr_root,
+        start_seq: 0,
+        leaf_count,
+    };
+    leaf_count > 0 && verify_mmr_proof(proof, leaf_count - 1, &commitment)
 }
 
 /// Number of items in the proof for the leaf at `leaf_pos` of an MMR of
@@ -184,6 +224,7 @@ mod tests {
 
     fn leaf(i: u64) -> MmrLeaf {
         MmrLeaf {
+            leaf_version: LEAF_VERSION,
             data_root: H256::repeat_byte(i as u8 + 1),
             data_size: i,
             total_size: 2 * i,
@@ -198,6 +239,29 @@ mod tests {
         hex.parse().unwrap()
     }
 
+    #[test]
+    fn chunk_count_uses_the_chunk_size_of_the_leaf_version() {
+        let chunk = crate::DEFAULT_CHUNK_SIZE as u64;
+        let with_size = |data_size| MmrLeaf {
+            data_size,
+            ..leaf(0)
+        };
+        assert_eq!(with_size(0).chunk_size(), Some(crate::DEFAULT_CHUNK_SIZE));
+        assert_eq!(with_size(0).chunk_count(), Some(0));
+        assert_eq!(with_size(1).chunk_count(), Some(1));
+        assert_eq!(with_size(chunk).chunk_count(), Some(1));
+        assert_eq!(with_size(chunk + 1).chunk_count(), Some(2));
+        assert_eq!(with_size(2 * chunk).chunk_count(), Some(2));
+        assert_eq!(with_size(2 * chunk + 10).chunk_count(), Some(3));
+
+        let unknown = MmrLeaf {
+            leaf_version: LEAF_VERSION + 1,
+            ..with_size(chunk)
+        };
+        assert_eq!(unknown.chunk_size(), None);
+        assert_eq!(unknown.chunk_count(), None);
+    }
+
     /// Roots of the same leaves computed independently of both the library
     /// and `bag_peaks`: blake2b-256 over `0x00 ++ SCALE(leaf)` for leaves,
     /// `0x01 ++ left ++ right` for nodes and `0x02 ++ peak ++ rest` when
@@ -207,27 +271,27 @@ mod tests {
         let expected = [
             (
                 1,
-                "0x492a3842089489aa28f0fe1588d7650b853cdb731be096d851211f084c8194db",
+                "0xb8313af17d8c37fcd9be77773ae701b0804a13ef03f07275fc17177a515e814c",
             ),
             (
                 2,
-                "0x9e3fe480f4f2facf999ab0642e8fb29eecfb559fac575bd3ade8ada6d78a5e9d",
+                "0xd96aa7a3e6a79256d673d1edb6ad575027fe10a5198315890f4c080f071bf061",
             ),
             (
                 3,
-                "0x8b526e54af4123d6109cc800d29933849860c451cc3864afae832cd5b656bb51",
+                "0xb03e69026d561142a025323fc22412b887c55bd33aa2a00df1f45158573c20bc",
             ),
             (
                 5,
-                "0x43e36aab7e51c967b222311383bab2932a2342afa1888d839584f79ccfc5ebab",
+                "0x392587284baaec20f8b5341c1313e5ee1f48e802dc65c7e480dca35d063abf86",
             ),
             (
                 8,
-                "0x11be9655168f9f2ed092b07a70d75446b2443eea897a4fc8092294d9af4212e3",
+                "0xbb5a199cf97a8c7baea198b4ec4436e1d2fb9e346603ae9dcc367639932f388e",
             ),
             (
                 33,
-                "0xf2a0ab0144b76bfa739a49df9f07c5f6d31e06d1faa5f8b3e2ac160e374a6a78",
+                "0x38e22e5fd9000bbf2bc63d7d3e6b687d662e59d95190377088426f85833ce0f8",
             ),
         ];
         for (count, expected_root) in expected {
@@ -255,25 +319,27 @@ mod tests {
         }
     }
 
+    /// Expected values come from an independent blake2b-256 computation over
+    /// `0x02 ++ peak ++ rest`, folding from the right.
+    /// `packages/core/src/merkle.test.ts` asserts the same values.
     #[test]
-    fn proofs_verify_for_every_leaf() {
-        for leaf_count in 1..=33u64 {
-            let all = leaves(leaf_count);
-            let commitment = Commitment {
-                mmr_root: root(&all).unwrap(),
-                start_seq: 0,
-                leaf_count,
-            };
-            for leaf_index in 0..leaf_count {
-                let (mmr_root, mmr_proof) = proof(&all, leaf_index).unwrap().unwrap();
-                assert_eq!(mmr_root, commitment.mmr_root);
-                assert_eq!(mmr_proof.leaf, all[leaf_index as usize]);
-                assert!(
-                    verify_mmr_proof(mmr_proof, leaf_index, &commitment),
-                    "leaf {leaf_index} of {leaf_count}"
-                );
-            }
-        }
+    fn peaks_bag_right_to_left_with_the_peak_prefix() {
+        let peaks: Vec<H256> = (1..=3).map(H256::repeat_byte).collect();
+        assert_eq!(
+            bag_peaks(&peaks[..2]),
+            h("39ffd1718a7a2d0f61de8f7902cb47d9661392d004d5b91e835ccd3d475cd035")
+        );
+        assert_eq!(
+            bag_peaks(&peaks),
+            h("de6b5def5927714c7e957d45b39ba6b3cb1b24c08d3d72e038387f46268eb23f")
+        );
+    }
+
+    #[test]
+    fn one_peak_is_the_root_and_no_peaks_give_zero() {
+        let peak = H256::repeat_byte(7);
+        assert_eq!(bag_peaks(&[peak]), peak);
+        assert_eq!(bag_peaks(&[]), H256::zero());
     }
 
     #[test]
@@ -301,8 +367,18 @@ mod tests {
     #[test]
     fn mmr_proof_verifies_only_for_its_leaf_index() {
         for leaf_count in 1u64..=33 {
+            let all = leaves(leaf_count);
             for index in 0..leaf_count {
                 let (commitment, proof) = mmr_commitment_and_proof(leaf_count, index);
+                assert_eq!(
+                    commitment.mmr_root,
+                    root(&all).unwrap(),
+                    "leaf {index} of {leaf_count}"
+                );
+                assert_eq!(
+                    proof.leaf, all[index as usize],
+                    "leaf {index} of {leaf_count}"
+                );
                 for other in 0..leaf_count {
                     assert_eq!(
                         verify_mmr_proof(proof.clone(), other, &commitment),
@@ -311,6 +387,22 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn last_mmr_leaf_check_rejects_other_leaves() {
+        // Three leaves: two peaks. Four leaves: one peak.
+        for leaf_count in [3, 4] {
+            let (commitment, last) = mmr_commitment_and_proof(leaf_count, leaf_count - 1);
+            let root = commitment.mmr_root;
+            assert!(verify_last_mmr_leaf(last.clone(), &root, leaf_count));
+            assert!(!verify_last_mmr_leaf(last.clone(), &root, leaf_count + 1));
+            assert!(!verify_last_mmr_leaf(last, &root, 0));
+
+            let (_, other) = mmr_commitment_and_proof(leaf_count, 0);
+            assert!(verify_mmr_proof(other.clone(), 0, &commitment));
+            assert!(!verify_last_mmr_leaf(other, &root, leaf_count));
         }
     }
 
@@ -496,19 +588,23 @@ mod tests {
         }
     }
 
-    const UPDATE_ENV: &str = "UPDATE_MMR_FIXTURES";
-
-    /// `fixtures/mmr-proofs.json` contains the proof of every leaf of MMRs
-    /// with 1, 2, 3, 7 and 11 leaves. `packages/core/src/merkle.test.ts`
-    /// checks that the TypeScript `verifyMmrProof` accepts each one.
-    /// Regenerate with `UPDATE_MMR_FIXTURES=1 cargo test -p storage-primitives mmr`.
+    /// Proofs of every leaf of MMRs with 1, 2, 3, 7 and 11 leaves, as JSON.
+    /// `packages/core/src/merkle.test.ts` checks that the TypeScript
+    /// `verifyMmrProof` accepts each one. Set `MMR_PROOF_VECTORS` to a file
+    /// path to write them: `just mmr-proof-vectors` does that.
     #[test]
-    fn proof_fixture_is_current() {
+    fn proof_vectors() {
         let mut vectors = Vec::new();
         for leaf_count in [1u64, 2, 3, 7, 11] {
             let leaves = leaves(leaf_count);
             for leaf_index in 0..leaf_count {
                 let (root, proof) = proof(&leaves, leaf_index).unwrap().unwrap();
+                let commitment = Commitment {
+                    mmr_root: root,
+                    start_seq: 0,
+                    leaf_count,
+                };
+                assert!(verify_mmr_proof(proof.clone(), leaf_index, &commitment));
                 let items: Vec<String> =
                     proof.items.iter().map(|h| format!("\"{h:#x}\"")).collect();
                 vectors.push(format!(
@@ -517,21 +613,17 @@ mod tests {
                 ));
             }
         }
-        let produced = format!(
-            "{{\n  \"about\": \"Written by crates/primitives/storage/src/mmr.rs; read by packages/core/src/merkle.test.ts. Leaf i: data_root = 32 bytes of i + 1, data_size = i, total_size = 2 * i. Regenerate: {UPDATE_ENV}=1 cargo test -p storage-primitives mmr\",\n  \"vectors\": [\n{}\n  ]\n}}\n",
+        let Some(path) = std::env::var_os("MMR_PROOF_VECTORS") else {
+            return;
+        };
+        let json = format!(
+            "{{\n  \"about\": \"Written by crates/primitives/storage/src/mmr.rs; read by packages/core/src/merkle.test.ts. Leaf i: leaf_version = LEAF_VERSION, data_root = 32 bytes of i + 1, data_size = i, total_size = 2 * i.\",\n  \"vectors\": [\n{}\n  ]\n}}\n",
             vectors.join(",\n")
         );
-
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/mmr-proofs.json");
-        if std::env::var_os(UPDATE_ENV).is_some() {
-            std::fs::write(&path, &produced).unwrap();
+        let path = std::path::Path::new(&path);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).unwrap();
         }
-        let checked_in = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            checked_in == produced,
-            "{} is out of date; regenerate it with {UPDATE_ENV}=1",
-            path.display()
-        );
+        std::fs::write(path, json).unwrap();
     }
 }
