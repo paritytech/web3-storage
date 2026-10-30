@@ -119,6 +119,22 @@ describe("FS operations", () => {
     expect((await tree.getFile("/empty")).bytes).toEqual(new Uint8Array(0));
   });
 
+  it("stores an empty file as a manifest with no chunks and no content blob", async () => {
+    const { provider, tree } = setup();
+    const r = await tree.putFile("/empty", new Uint8Array(0));
+    // Manifest and root directory only.
+    const commit = provider.calls.filter((c) => c.method === "POST" && c.path === "/commit").at(-1)!;
+    expect(commit.body.data_roots).toHaveLength(2);
+    expect(commit.body.data_roots[0]).toBe(r.manifestCid);
+    provider.calls.length = 0;
+    const file = await tree.getFile("/empty");
+    expect(file.bytes).toEqual(new Uint8Array(0));
+    expect(file.size).toBe(0n);
+    // Reading the content makes no request for it.
+    expect(provider.calls.map((c) => c.path)).not.toContain("/read");
+    expect(provider.calls.some((c) => c.query.hash === r.contentRoot || c.query.data_root === r.contentRoot)).toBe(false);
+  });
+
   it("put onto a directory and through a file fail", async () => {
     const { tree } = setup();
     await tree.mkdir("/d");

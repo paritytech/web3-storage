@@ -153,7 +153,7 @@ async function fixture(provider: FakeProvider): Promise<string> {
   const blobs: Record<string, string> = {};
   const generated: Json[] = [];
   for (const cid of [...new Set(commits.flat())].sort()) {
-    const bytes = await readBlob(PROVIDER, cid, { fetch: provider.fetch });
+    const bytes = await readBlob(PROVIDER, BUCKET, cid, { fetch: provider.fetch });
     if (bytes.length > DEFAULT_CHUNK_SIZE) {
       expect(bytes, "only generated blobs span chunks").toEqual(generate(bytes.length));
       generated.push({

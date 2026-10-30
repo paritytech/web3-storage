@@ -24,9 +24,10 @@
  * and both commit lose one change (the last commit wins). Each operation
  * loads the root again right before it writes.
  *
- * Reads are unauthenticated and checked against the CIDs. A blob's hash is
- * enough to read it (#383/#396); confidentiality needs client-side
- * encryption.
+ * Blob reads are unauthenticated and checked against the CIDs. A blob's hash
+ * and bucket id are enough to read it (#383/#396); confidentiality needs
+ * client-side encryption. Finding the root (`/commitment`, `/mmr_proof`)
+ * needs Reader on a private bucket, so it is signed when a signer is set.
  */
 
 import {
@@ -107,7 +108,7 @@ export interface BlobStore {
 
 /**
  * {@link BlobStore} over the provider's Layer 0 HTTP routes. `signer` is
- * needed only for writes.
+ * needed for writes and for finding the root of a private bucket.
  */
 export function providerBlobStore(
   providerUrl: string,
@@ -121,7 +122,7 @@ export function providerBlobStore(
   };
   return {
     bucketId,
-    readBlob: (cid, opts = {}) => readBlob(providerUrl, cid, { ...http, ...opts }),
+    readBlob: (cid, opts = {}) => readBlob(providerUrl, bucketId, cid, { ...http, ...opts }),
     async uploadBlob(bytes) {
       const r = await uploadBlob(providerUrl, bucketId, bytes, requireSigner(), http);
       return { cid: hexToBytes(r.dataRoot), chunkHashes: r.chunkHashes };
@@ -130,9 +131,10 @@ export function providerBlobStore(
       await commitDataRoots(providerUrl, bucketId, cids, requireSigner(), http);
     },
     async lastCommittedRoot() {
-      const commitment = await getCommitment(providerUrl, bucketId, http);
+      const reads = { ...http, signer: signer ?? undefined };
+      const commitment = await getCommitment(providerUrl, bucketId, reads);
       if (!commitment || commitment.leafCount === 0n) return null;
-      const proof = await getMmrProof(providerUrl, bucketId, commitment.leafCount - 1n, http);
+      const proof = await getMmrProof(providerUrl, bucketId, commitment.leafCount - 1n, reads);
       // The proof ties the last leaf to the provider's MMR root. That root is
       // the provider's claim until compared with an on-chain checkpoint; the
       // commitment signature is not checked here.
@@ -534,7 +536,11 @@ export class FsTree {
   /** A file's content and metadata. The content is checked against the manifest. */
   async getFile(path: string): Promise<FileRead> {
     const { manifest, info } = await this.loadFile(path);
-    const bytes = await this.store.readBlob(hexToBytes(info.contentRoot), { size: manifest.totalSize });
+    // Empty content has no blob to read.
+    const bytes =
+      manifest.totalSize === 0n
+        ? new Uint8Array(0)
+        : await this.store.readBlob(hexToBytes(info.contentRoot), { size: manifest.totalSize });
     return { ...info, bytes };
   }
 
@@ -566,10 +572,11 @@ export class FsTree {
       throw new FileSystemError("FileTooLarge", `${path}: file exceeds ${FS_LIMITS.maxFileChunks} chunks`);
     }
 
-    const content = await this.store.uploadBlob(bytes);
+    // Empty content has no blob to upload.
+    const chunkHashes = bytes.length === 0 ? [] : (await this.store.uploadBlob(bytes)).chunkHashes;
     const manifest: FileManifest = {
       ...manifestBase,
-      chunks: content.chunkHashes.map((cid, sequence) => ({ cid, sequence })),
+      chunks: chunkHashes.map((cid, sequence) => ({ cid, sequence })),
     };
     const { cid: manifestCid } = await this.store.uploadBlob(encodeFileManifest(manifest));
     setEntry(
@@ -583,8 +590,10 @@ export class FsTree {
       },
       joinPath(dirNames),
     );
-    const rootCid = await this.writePath(nodes, names, nodes.length - 1, [content.cid, manifestCid]);
-    return { rootCid, contentRoot: toHex(content.cid), manifestCid: toHex(manifestCid), size: bytes.length };
+    const contentRoot = merkleRoot(chunkHashes);
+    const blobs = bytes.length === 0 ? [manifestCid] : [contentRoot, manifestCid];
+    const rootCid = await this.writePath(nodes, names, nodes.length - 1, blobs);
+    return { rootCid, contentRoot: toHex(contentRoot), manifestCid: toHex(manifestCid), size: bytes.length };
   }
 
   /** Create a directory and any missing parents. Throws `AlreadyExists` when `path` exists. */

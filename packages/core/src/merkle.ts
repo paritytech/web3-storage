@@ -119,11 +119,10 @@ export function merkleTree(leaves: Uint8Array[]): { root: Uint8Array; nodes: Mer
 }
 
 /**
- * Split bytes into `DEFAULT_CHUNK_SIZE` chunks. Empty input is one empty
- * chunk. The chunks are views into `bytes`.
+ * Split bytes into `DEFAULT_CHUNK_SIZE` chunks. Empty input has no chunks.
+ * The chunks are views into `bytes`.
  */
 export function splitChunks(bytes: Uint8Array): Uint8Array[] {
-  if (bytes.length === 0) return [new Uint8Array(0)];
   const chunks: Uint8Array[] = [];
   for (let off = 0; off < bytes.length; off += DEFAULT_CHUNK_SIZE) {
     chunks.push(bytes.subarray(off, Math.min(off + DEFAULT_CHUNK_SIZE, bytes.length)));
@@ -164,20 +163,21 @@ export function leafChunkCount(leaf: { leaf_version: number; data_size: number |
 }
 
 /**
- * Number of chunks (tree leaves) of data with `dataSize` bytes; empty data is
- * one chunk.
+ * Number of chunks (tree leaves) of data with `dataSize` bytes; empty data has
+ * none.
  */
 export function chunkCount(dataSize: bigint | number): number {
-  return Math.max(1, Math.ceil(Number(dataSize) / DEFAULT_CHUNK_SIZE));
+  return Math.ceil(Number(dataSize) / DEFAULT_CHUNK_SIZE);
 }
 
 /**
  * A blob's `data_root`, which is also its CID: chunk the bytes at
  * `DEFAULT_CHUNK_SIZE`, leaf-hash each chunk, then `merkleRoot` over the chunk
- * hashes. An empty blob hashes a single empty chunk; a single chunk yields its
- * own hash. Mirrors `fs_put_file`.
+ * hashes. A single chunk yields its own hash. Empty data has no chunk tree, so
+ * it throws. Mirrors `fs_put_file`.
  */
 export function computeDataRoot(bytes: Uint8Array): Uint8Array {
+  if (bytes.length === 0) throw new Error("empty data has no chunk tree");
   return merkleRoot(splitChunks(bytes).map(hashLeaf));
 }
 
@@ -215,6 +215,8 @@ export function verifyChunkProof(
 
 /** `MmrLeaf` of `storage_primitives`. */
 export interface MmrLeaf {
+  /** Leaf format version, see {@link LEAF_VERSION}. */
+  leafVersion: number;
   dataRoot: Uint8Array;
   dataSize: bigint;
   totalSize: bigint;
@@ -265,7 +267,12 @@ export function verifyMmrProof(proof: MmrProof, leafIndex: bigint, mmrRoot: Uint
   const hasRightPeaks = remaining > 1n << BigInt(height);
   if (proof.items.length !== peakIndex + height + (hasRightPeaks ? 1 : 0)) return false;
 
-  const leafBytes = concatBytes(proof.leaf.dataRoot, u64le(proof.leaf.dataSize), u64le(proof.leaf.totalSize));
+  const leafBytes = concatBytes(
+    new Uint8Array([proof.leaf.leafVersion]),
+    proof.leaf.dataRoot,
+    u64le(proof.leaf.dataSize),
+    u64le(proof.leaf.totalSize),
+  );
   let current = hashLeaf(leafBytes);
   for (let k = 0; k < height; k++) {
     const sibling = proof.items[peakIndex + k];

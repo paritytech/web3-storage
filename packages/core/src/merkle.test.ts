@@ -214,8 +214,8 @@ describe("merkleTree", () => {
 });
 
 describe("splitChunks", () => {
-  it("splits at 256 KiB; empty input is one empty chunk", () => {
-    expect(splitChunks(new Uint8Array(0))).toEqual([new Uint8Array(0)]);
+  it("splits at 256 KiB; empty input has no chunks", () => {
+    expect(splitChunks(new Uint8Array(0))).toEqual([]);
     expect(splitChunks(new Uint8Array(256 * 1024 * 2 + 1)).map((c) => c.length)).toEqual([262144, 262144, 1]);
   });
 });
@@ -238,9 +238,10 @@ describe("verifyChunkProof", () => {
 });
 
 describe("verifyMmrProof", () => {
-  const leafHash = (l: { dataRoot: Uint8Array; dataSize: bigint; totalSize: bigint }) =>
-    hashLeaf(concatBytes(l.dataRoot, u64le(l.dataSize), u64le(l.totalSize)));
+  const leafHash = (l: { leafVersion: number; dataRoot: Uint8Array; dataSize: bigint; totalSize: bigint }) =>
+    hashLeaf(concatBytes(new Uint8Array([l.leafVersion]), l.dataRoot, u64le(l.dataSize), u64le(l.totalSize)));
   const leaves = [1, 2, 3].map((n) => ({
+    leafVersion: LEAF_VERSION,
     dataRoot: computeCid(new Uint8Array([n])),
     dataSize: 1n,
     totalSize: BigInt(n),
@@ -259,7 +260,7 @@ describe("verifyMmrProof", () => {
 
   it("bags the peaks right of the leaf's peak into one item", () => {
     // 7 leaves: peaks of 4, 2 and 1 leaves. Leaf 0 has one item for the two right peaks.
-    const more = [4, 5, 6, 7].map((n) => leafHash({ dataRoot: computeCid(new Uint8Array([n])), dataSize: 1n, totalSize: 0n }));
+    const more = [4, 5, 6, 7].map((n) => leafHash({ leafVersion: LEAF_VERSION, dataRoot: computeCid(new Uint8Array([n])), dataSize: 1n, totalSize: 0n }));
     const all = [...hashes, ...more];
     const p4 = hashChildren(hashChildren(all[0], all[1]), hashChildren(all[2], all[3]));
     const p2 = hashChildren(all[4], all[5]);
@@ -301,7 +302,12 @@ describe("verifyMmrProof", () => {
       const index = BigInt(v.leaf_index);
       const count = BigInt(v.leaf_count);
       const proof = {
-        leaf: { dataRoot: new Uint8Array(32).fill(v.leaf_index + 1), dataSize: index, totalSize: 2n * index },
+        leaf: {
+          leafVersion: LEAF_VERSION,
+          dataRoot: new Uint8Array(32).fill(v.leaf_index + 1),
+          dataSize: index,
+          totalSize: 2n * index,
+        },
         items: v.items.map(hexToBytes),
       };
       const root = hexToBytes(v.root);

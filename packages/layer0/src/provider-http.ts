@@ -363,8 +363,8 @@ export async function fetchChallengeProof(
 // ── Blobs: upload, commit, read ─────────────────────────────────────────────
 // A blob of any size is stored as its 256 KiB chunks plus the internal nodes
 // of its Merkle tree (`storage_primitives::merkle_tree`). Its
-// CID is the tree root (`computeDataRoot`). Reads are unauthenticated: a
-// blob's hash is enough to read it (#383/#396).
+// CID is the tree root (`computeDataRoot`). Blob reads are unauthenticated:
+// a blob's hash and its bucket id are enough to read it (#383/#396).
 
 /** Parallel requests per batch in the blob helpers. */
 const BLOB_CONCURRENCY = 4;
@@ -385,8 +385,7 @@ async function putNode(
   providerUrl: string,
   bucketId: bigint | number,
   hash: Uint8Array,
-  data: Uint8Array,
-  children: [Uint8Array, Uint8Array] | null,
+  node: TreeNode,
   signer: ChainSigner,
   opts: ProviderHttpOpts,
 ): Promise<void> {
@@ -395,8 +394,9 @@ async function putNode(
     body: {
       bucket_id: Number(bucketId),
       hash: toHex(hash),
-      data: bytesToBase64(data),
-      children: children ? children.map((c) => toHex(c)) : null,
+      ...("data" in node
+        ? { data: bytesToBase64(node.data) }
+        : { children: node.children.map((c) => toHex(c)) }),
     },
     sign: { signer: signer.signer, bucketId },
     retries: opts.retries ?? IDEMPOTENT_RETRIES,
@@ -418,7 +418,8 @@ export interface UploadBlobResult {
  * nodes of its Merkle tree, bottom-up. Does not commit; pass the
  * returned `dataRoot` to {@link commitDataRoots}.
  *
- * `signer` must hold a Writer or Admin role on `bucketId`.
+ * `signer` must hold a Writer or Admin role on `bucketId`. Throws for empty
+ * `bytes` before any request: empty data has no chunk tree.
  */
 export async function uploadBlob(
   providerUrl: string,
@@ -427,6 +428,7 @@ export async function uploadBlob(
   signer: ChainSigner,
   opts: ProviderHttpOpts = {},
 ): Promise<UploadBlobResult> {
+  if (bytes.length === 0) throw new Error("empty data has no chunk tree");
   const chunks = splitChunks(bytes);
   const hashes = chunks.map((c) => computeCid(c));
   const { root, nodes } = merkleTree(hashes);
@@ -444,7 +446,7 @@ export async function uploadBlob(
     (c) => c.hash,
   );
   await runLimited(leaves, BLOB_CONCURRENCY, (c) =>
-    putNode(providerUrl, bucketId, c.hash, c.data, null, signer, opts),
+    putNode(providerUrl, bucketId, c.hash, { data: c.data }, signer, opts),
   );
   // `nodes` is level by level; a level can go up once the one below is stored.
   // A level of `width` hashes has `floor(width / 2)` nodes; an odd last hash
@@ -455,15 +457,7 @@ export async function uploadBlob(
     const level = once(nodes.slice(offset, offset + count), (n) => n.hash);
     offset += count;
     await runLimited(level, BLOB_CONCURRENCY, (n) =>
-      putNode(
-        providerUrl,
-        bucketId,
-        n.hash,
-        concatBytes(n.left, n.right),
-        [n.left, n.right],
-        signer,
-        opts,
-      ),
+      putNode(providerUrl, bucketId, n.hash, { children: [n.left, n.right] }, signer, opts),
     );
   }
   return { dataRoot: toHex(root), size: bytes.length, chunkHashes: hashes };
@@ -519,16 +513,20 @@ export interface BucketCommitment {
 /**
  * `GET /commitment`: the provider's current MMR commitment for the bucket.
  * Returns `null` when the provider has no data for the bucket yet (404).
+ *
+ * The read is Reader-gated on a private bucket: pass a member as `opts.signer`.
+ * Anonymous works only while the bucket is public.
  */
 export async function getCommitment(
   providerUrl: string,
   bucketId: bigint | number,
-  opts: ProviderHttpOpts = {},
+  opts: ProviderHttpOpts & { signer?: ChainSigner } = {},
 ): Promise<BucketCommitment | null> {
   let res: any;
   try {
     res = await providerFetch(providerUrl, "/commitment", {
       params: { bucket_id: bucketId },
+      sign: opts.signer ? { signer: opts.signer.signer, bucketId } : undefined,
       retries: opts.retries ?? IDEMPOTENT_RETRIES,
       fetch: opts.fetch,
       signal: opts.signal,
@@ -548,24 +546,29 @@ export async function getCommitment(
 /**
  * `GET /mmr_proof`: the MMR leaf at `leafIndex` (counted from the bucket's
  * current `start_seq`) and its inclusion proof. Check it with
- * `verifyMmrProof` against a trusted MMR root.
+ * `verifyMmrProof` against a trusted MMR root. Reader-gated like
+ * {@link getCommitment}: pass a member as `opts.signer` on a private bucket.
  */
 export async function getMmrProof(
   providerUrl: string,
   bucketId: bigint | number,
   leafIndex: bigint | number,
-  opts: ProviderHttpOpts = {},
+  opts: ProviderHttpOpts & { signer?: ChainSigner } = {},
 ): Promise<MmrProof> {
   const res = await providerFetch(providerUrl, "/mmr_proof", {
     params: { bucket_id: bucketId, leaf_index: leafIndex },
+    sign: opts.signer ? { signer: opts.signer.signer, bucketId } : undefined,
     retries: opts.retries ?? IDEMPOTENT_RETRIES,
     fetch: opts.fetch,
     signal: opts.signal,
   });
   if (!Array.isArray(res.items))
     throw new Error("Provider /mmr_proof response has no `items`: the provider node is older than this client");
+  if (typeof res.leaf?.leaf_version !== "number")
+    throw new Error("Provider /mmr_proof leaf has no `leaf_version`: the provider node is older than this client");
   return {
     leaf: {
+      leafVersion: res.leaf.leaf_version,
       dataRoot: hexToBytes(res.leaf.data_root),
       dataSize: BigInt(res.leaf.data_size),
       totalSize: BigInt(res.leaf.total_size),
@@ -613,6 +616,7 @@ export interface ReadBlobOpts extends ProviderHttpOpts {
  */
 export async function readBlob(
   providerUrl: string,
+  bucketId: bigint,
   dataRoot: string | Uint8Array,
   opts: ReadBlobOpts = {},
 ): Promise<Uint8Array> {
@@ -622,8 +626,8 @@ export async function readBlob(
   }
   const chunks =
     opts.size === undefined
-      ? await walkBlob(providerUrl, root, opts)
-      : await readBlobWithProofs(providerUrl, root, opts.size, opts);
+      ? await walkBlob(providerUrl, bucketId, root, opts)
+      : await readBlobWithProofs(providerUrl, bucketId, root, opts.size, opts);
   const rootHex = toHex(root);
   chunks.forEach((c, i) => {
     const last = i === chunks.length - 1;
@@ -637,6 +641,7 @@ export async function readBlob(
 /** `GET /read` in windows; each chunk is checked against its Merkle proof. */
 async function readBlobWithProofs(
   providerUrl: string,
+  bucketId: bigint,
   root: Uint8Array,
   size: bigint | number,
   opts: ProviderHttpOpts,
@@ -648,6 +653,7 @@ async function readBlobWithProofs(
     const count = Math.min(READ_WINDOW_CHUNKS, total - start);
     const res = await providerFetch(providerUrl, "/read", {
       params: {
+        bucket_id: bucketId,
         data_root: rootHex,
         offset: BigInt(start) * BigInt(DEFAULT_CHUNK_SIZE),
         length: BigInt(count) * BigInt(DEFAULT_CHUNK_SIZE),
@@ -679,10 +685,10 @@ async function readBlobWithProofs(
 
 /**
  * Walk the blob's tree with `GET /node`. Every node must hash to its id (a
- * chunk as a leaf, an internal node over its two children, which must be its
- * data), and the chunks must rebuild `root`.
+ * chunk as a leaf, an internal node over its two children), and the chunks
+ * must rebuild `root`.
  */
-async function walkBlob(providerUrl: string, root: Uint8Array, opts: ReadBlobOpts): Promise<Uint8Array[]> {
+async function walkBlob(providerUrl: string, bucketId: bigint, root: Uint8Array, opts: ReadBlobOpts): Promise<Uint8Array[]> {
   const rootHex = toHex(root);
   const limit = createLimiter(BLOB_CONCURRENCY);
   const maxSize = opts.maxSize === undefined ? undefined : BigInt(opts.maxSize);
@@ -699,28 +705,26 @@ async function walkBlob(providerUrl: string, root: Uint8Array, opts: ReadBlobOpt
     if (depth > maxDepth) {
       throw new BlobTooLargeError(rootHex, `tree is deeper than a blob of ${maxSize} bytes`);
     }
-    const node = await limit(() =>
+    const body = await limit(() =>
       providerFetch(providerUrl, "/node", {
-        params: { hash: hashHex },
+        params: { bucket_id: bucketId, hash: hashHex },
         retries: opts.retries ?? IDEMPOTENT_RETRIES,
         fetch: opts.fetch,
         signal: opts.signal,
       }),
     );
-    const data = base64ToBytes(node.data);
-    const actual = nodeHash(data, node.children ?? null);
-    if (!actual || !bytesEq(actual, hash)) {
+    const node = parseNode(body);
+    if (!node || !bytesEq(nodeHash(node), hash)) {
       throw new BlobVerificationError(rootHex, `node ${hashHex} does not match its hash`);
     }
-    if (!node.children) {
-      received += BigInt(data.length);
+    if ("data" in node) {
+      received += BigInt(node.data.length);
       if (maxSize !== undefined && received > maxSize) {
         throw new BlobTooLargeError(rootHex, `blob exceeds the limit of ${maxSize} bytes`);
       }
-      return [data];
+      return [node.data];
     }
-    const children = (node.children as string[]).map(hexToBytes);
-    const parts = await Promise.all(children.map((c) => walk(c, depth + 1)));
+    const parts = await Promise.all(node.children.map((c) => walk(c, depth + 1)));
     return parts.flat();
   };
   const chunks = await walk(root, 0);

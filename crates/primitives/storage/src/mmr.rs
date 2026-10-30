@@ -590,7 +590,7 @@ mod tests {
             return;
         };
         let json = format!(
-            "{{\n  \"about\": \"Written by crates/primitives/storage/src/mmr.rs; read by packages/core/src/merkle.test.ts. Leaf i: data_root = 32 bytes of i + 1, data_size = i, total_size = 2 * i.\",\n  \"vectors\": [\n{}\n  ]\n}}\n",
+            "{{\n  \"about\": \"Written by crates/primitives/storage/src/mmr.rs; read by packages/core/src/merkle.test.ts. Leaf i: leaf_version = LEAF_VERSION, data_root = 32 bytes of i + 1, data_size = i, total_size = 2 * i.\",\n  \"vectors\": [\n{}\n  ]\n}}\n",
             vectors.join(",\n")
         );
         let path = std::path::Path::new(&path);
