@@ -131,16 +131,23 @@ impl DiskStorage {
     }
 
     /// Get bucket state (internal, returns full BucketState).
-    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketState> {
-        let cf = self.db.cf_handle(CF_BUCKETS)?;
+    ///
+    /// `Ok(None)` means the bucket genuinely does not exist. `Err` means the
+    /// backend itself failed (a RocksDB read error, or a stored record that
+    /// could not be decoded) - the bucket may still be there.
+    fn get_bucket(&self, bucket_id: BucketId) -> Result<Option<BucketState>, Error> {
+        let cf = self
+            .db
+            .cf_handle(CF_BUCKETS)
+            .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
         let key = bucket_id.to_le_bytes();
-        let value = self.db.get_cf(&cf, key).ok()??;
+        let value = match self.db.get_cf(&cf, key)? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
         match BucketState::decode_all(&mut &value[..]) {
-            Ok(state) => Some(state),
-            Err(e) => {
-                tracing::warn!(bucket_id, error = %e, "Failed to deserialize bucket state");
-                None
-            }
+            Ok(state) => Ok(Some(state)),
+            Err(e) => Err(Error::Serialization(e.to_string())),
         }
     }
 
@@ -225,8 +232,8 @@ impl DiskStorage {
         let actual_hash = node.hash();
         if actual_hash != expected_hash {
             return Err(Error::InvalidHash {
-                expected: format!("{:#x}", expected_hash),
-                actual: format!("{:#x}", actual_hash),
+                expected: expected_hash,
+                actual: actual_hash,
             });
         }
 
@@ -237,7 +244,7 @@ impl DiskStorage {
                 .cf_handle(CF_NODES)
                 .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
 
-            let missing: Vec<String> = [left, right]
+            let missing: Vec<H256> = [left, right]
                 .into_iter()
                 .filter(|h| {
                     self.db
@@ -246,7 +253,7 @@ impl DiskStorage {
                         .flatten()
                         .is_none()
                 })
-                .map(|h| format!("{:#x}", h))
+                .copied()
                 .collect();
 
             if !missing.is_empty() {
@@ -256,7 +263,7 @@ impl DiskStorage {
 
         // Check quota.
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let charge = node.size();
@@ -290,16 +297,22 @@ impl DiskStorage {
     }
 
     /// Get a node by hash.
-    pub fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode> {
-        let cf = self.db.cf_handle(CF_NODES)?;
+    ///
+    /// `Ok(None)` means the node genuinely does not exist. `Err` means the
+    /// backend itself failed - the node may still be there.
+    pub fn get_node(&self, hash: &H256) -> Result<Option<ChunkTreeNode>, Error> {
+        let cf = self
+            .db
+            .cf_handle(CF_NODES)
+            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
         let key = hash.as_bytes();
-        let value = self.db.get_cf(&cf, key).ok()??;
+        let value = match self.db.get_cf(&cf, key)? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
         match ChunkTreeNode::decode_all(&mut &value[..]) {
-            Ok(node) => Some(node),
-            Err(e) => {
-                tracing::warn!(hash = %format!("{:#x}", hash), error = %e, "Failed to deserialize node");
-                None
-            }
+            Ok(node) => Ok(Some(node)),
+            Err(e) => Err(Error::Serialization(e.to_string())),
         }
     }
 
@@ -340,7 +353,7 @@ impl DiskStorage {
         for root in &data_roots {
             let key = root.as_bytes();
             if self.db.get_cf(&cf_nodes, key)?.is_none() {
-                return Err(Error::RootNotFound(format!("{:#x}", root)));
+                return Err(Error::RootNotFound(*root));
             }
         }
 
@@ -352,7 +365,7 @@ impl DiskStorage {
 
         // Get bucket and update MMR
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let start_seq = bucket.start_seq;
@@ -401,7 +414,7 @@ impl DiskStorage {
         new_start_seq: u64,
     ) -> Result<(H256, u64, u64), Error> {
         let mut bucket = self
-            .get_bucket(bucket_id)
+            .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         // Remove leaves before new_start_seq
@@ -425,9 +438,9 @@ impl DiskStorage {
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, Error> {
         let bucket = self
-            .get_bucket(bucket_id)
+            .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
-        Ok(leaf_proof(&bucket.leaves, leaf_index)?.1)
+        Ok(leaf_proof(bucket_id, &bucket.leaves, leaf_index)?.1)
     }
 
     /// See [`StorageBackend::get_mmr_proof_for_commitment`].
@@ -438,7 +451,7 @@ impl DiskStorage {
         leaf_index: u64,
     ) -> Result<storage_primitives::MmrProof, Error> {
         let bucket = self
-            .get_bucket(bucket_id)
+            .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         if leaf_index >= commitment.leaf_count {
@@ -467,7 +480,7 @@ impl DiskStorage {
             )));
         }
 
-        let (root, proof) = leaf_proof(&bucket.leaves[offset..end], leaf_index)?;
+        let (root, proof) = leaf_proof(bucket_id, &bucket.leaves[offset..end], leaf_index)?;
         // The rebuilt prefix must reproduce the cited root; a mismatch means
         // the local history diverged from what was signed, and any proof from
         // it would fail on-chain verification anyway.
@@ -483,7 +496,7 @@ impl DiskStorage {
     /// Get MMR peaks.
     pub fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         let bucket = self
-            .get_bucket(bucket_id)
+            .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         Ok(mmr::peaks(&bucket.leaves)?)
@@ -495,13 +508,13 @@ impl StorageBackend for DiskStorage {
         self.init_bucket(bucket_id, max_bytes)
     }
 
-    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo> {
+    fn get_bucket(&self, bucket_id: BucketId) -> Result<Option<BucketInfo>, Error> {
         let state = DiskStorage::get_bucket(self, bucket_id)?;
-        Some(BucketInfo {
+        Ok(state.map(|state| BucketInfo {
             mmr_root: state.mmr_root,
             start_seq: state.start_seq,
             leaf_count: state.leaf_count(),
-        })
+        }))
     }
 
     fn bucket_ids(&self) -> Vec<BucketId> {
@@ -525,7 +538,7 @@ impl StorageBackend for DiskStorage {
         self.store_node(bucket_id, expected_hash, node)
     }
 
-    fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode> {
+    fn get_node(&self, hash: &H256) -> Result<Option<ChunkTreeNode>, Error> {
         self.get_node(hash)
     }
 
@@ -572,8 +585,15 @@ impl StorageBackend for DiskStorage {
 }
 
 /// Root of the MMR over `leaves` and the proof for the leaf at `leaf_index`.
-fn leaf_proof(leaves: &[MmrLeaf], leaf_index: u64) -> Result<(H256, MmrProof), Error> {
-    mmr::proof(leaves, leaf_index)?.ok_or_else(|| Error::NodeNotFound(format!("leaf_{leaf_index}")))
+fn leaf_proof(
+    bucket_id: BucketId,
+    leaves: &[MmrLeaf],
+    leaf_index: u64,
+) -> Result<(H256, MmrProof), Error> {
+    mmr::proof(leaves, leaf_index)?.ok_or(Error::LeafNotFound {
+        bucket_id,
+        leaf_index,
+    })
 }
 
 #[cfg(test)]
@@ -705,10 +725,10 @@ mod tests {
     }
 
     fn assert_rejected_and_bucket_unchanged(storage: &DiskStorage, root: H256) {
-        let before = storage.get_bucket(BUCKET).unwrap();
+        let before = storage.get_bucket(BUCKET).unwrap().unwrap();
         let err = storage.commit(BUCKET, vec![root]).unwrap_err();
         assert!(matches!(err, Error::NonCanonicalTree(_)), "got {err:?}");
-        let after = storage.get_bucket(BUCKET).unwrap();
+        let after = storage.get_bucket(BUCKET).unwrap().unwrap();
         assert_eq!(after.leaves, before.leaves);
         assert_eq!(after.mmr_root, before.mmr_root);
     }
@@ -735,7 +755,7 @@ mod tests {
             storage_primitives::hash_children(storage_primitives::hash_children(c0, c1), c2)
         );
         storage.commit(BUCKET, vec![root, c0]).unwrap();
-        let leaves = storage.get_bucket(BUCKET).unwrap().leaves;
+        let leaves = storage.get_bucket(BUCKET).unwrap().unwrap().leaves;
         assert_eq!(leaves.len(), 2);
         assert_eq!(leaves[0].data_size, 3 * DEFAULT_CHUNK_SIZE as u64);
     }
@@ -747,7 +767,7 @@ mod tests {
         let c2 = store_chunk_of_len(&storage, 3, 10);
         let root = build_merkle_tree(&storage, BUCKET, &[c0, c1, c2]).unwrap();
         storage.commit(BUCKET, vec![root]).unwrap();
-        let leaves = storage.get_bucket(BUCKET).unwrap().leaves;
+        let leaves = storage.get_bucket(BUCKET).unwrap().unwrap().leaves;
         assert_eq!(leaves[0].data_size, 2 * DEFAULT_CHUNK_SIZE as u64 + 10);
     }
 
@@ -820,11 +840,11 @@ mod tests {
     fn internal_node_charges_64_bytes() {
         let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         let [left, right] = [1, 2].map(|b| store_chunk_of_len(&storage, b, 10));
-        let used = storage.get_bucket(BUCKET).unwrap().used_bytes;
+        let used = storage.get_bucket(BUCKET).unwrap().unwrap().used_bytes;
 
         store_parent(&storage, left, right);
 
-        let bucket = storage.get_bucket(BUCKET).unwrap();
+        let bucket = storage.get_bucket(BUCKET).unwrap().unwrap();
         assert_eq!(bucket.used_bytes, used + 64);
     }
 
@@ -861,7 +881,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            storage.get_node(&chunk_hash),
+            storage.get_node(&chunk_hash).unwrap(),
             Some(ChunkTreeNode::Chunk(chunk_data))
         );
 
@@ -885,7 +905,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            storage.get_node(&internal_hash),
+            storage.get_node(&internal_hash).unwrap(),
             Some(ChunkTreeNode::Internal { left, right })
         );
     }
@@ -1006,8 +1026,156 @@ mod tests {
         }
     }
 
+    /// Overwrite a node's raw record with bytes that can't be decoded,
+    /// standing in for a disk-level corruption (partial write, bit flip)
+    /// rather than the node simply never having been written.
+    fn corrupt_node(storage: &DiskStorage, hash: H256) {
+        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+        storage
+            .db
+            .put_cf(&cf, hash.as_bytes(), b"not a valid bincode record")
+            .unwrap();
+    }
+
+    /// Remove a node's raw record entirely, standing in for the node
+    /// genuinely never having been written (or having been pruned) rather
+    /// than corrupted - `store_node`'s children-exist check would otherwise
+    /// make it impossible to reference a missing child through the public
+    /// API alone.
+    fn delete_node(storage: &DiskStorage, hash: H256) {
+        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+        storage.db.delete_cf(&cf, hash.as_bytes()).unwrap();
+    }
+
+    /// Overwrite a bucket's raw record with bytes that can't be decoded,
+    /// same standing-in as [`corrupt_node`] but for `CF_BUCKETS`.
+    fn corrupt_bucket(storage: &DiskStorage, bucket_id: BucketId) {
+        let cf = storage.db.cf_handle(CF_BUCKETS).unwrap();
+        storage
+            .db
+            .put_cf(&cf, bucket_id.to_le_bytes(), b"not a valid bincode record")
+            .unwrap();
+    }
+
     #[test]
-    fn proof_for_a_missing_leaf_is_node_not_found() {
+    fn get_mmr_proof_for_a_bucket_that_was_never_created_reports_absence() {
+        // Stands for: the client asked about a bucket id that genuinely
+        // does not exist.
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+
+        let err = storage.get_mmr_proof(42, 0).unwrap_err();
+        assert!(matches!(err, Error::BucketNotFound(42)));
+    }
+
+    #[test]
+    fn get_mmr_proof_for_a_corrupt_bucket_record_reports_a_backend_failure_not_absence() {
+        // Stands for: an operator's disk has a corrupted record (partial
+        // write, bit flip) for a bucket that really was created. This must
+        // not be reported the same way as "bucket does not exist" - that
+        // would tell a challenge responder its own committed data is gone.
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(7, 1024 * 1024).unwrap();
+
+        corrupt_bucket(&storage, 7);
+
+        let err = storage.get_mmr_proof(7, 0).unwrap_err();
+        assert!(
+            matches!(err, Error::Serialization(_)),
+            "expected Serialization, got {err:?}"
+        );
+    }
+
+    /// A bucket holding a root over two stored chunks. Returns the root and
+    /// the first chunk's hash.
+    fn two_chunk_tree() -> (TempDir, DiskStorage, H256, H256) {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, 1024 * 1024).unwrap();
+
+        let c0 = hash_leaf(b"chunk-0");
+        let c1 = hash_leaf(b"chunk-1");
+        storage
+            .store_node(1, c0, ChunkTreeNode::Chunk(b"chunk-0".to_vec()))
+            .unwrap();
+        storage
+            .store_node(1, c1, ChunkTreeNode::Chunk(b"chunk-1".to_vec()))
+            .unwrap();
+
+        let root = storage_primitives::hash_children(c0, c1);
+        storage
+            .store_node(
+                1,
+                root,
+                ChunkTreeNode::Internal {
+                    left: c0,
+                    right: c1,
+                },
+            )
+            .unwrap();
+
+        (dir, storage, root, c0)
+    }
+
+    #[test]
+    fn get_chunk_at_index_past_the_end_of_a_healthy_root_reports_absence() {
+        // Stands for: the client asked for a chunk index that was never
+        // part of this data root.
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, 1024 * 1024).unwrap();
+
+        let chunk_hash = hash_leaf(b"only-chunk");
+        storage
+            .store_node(1, chunk_hash, ChunkTreeNode::Chunk(b"only-chunk".to_vec()))
+            .unwrap();
+
+        let err = storage.get_chunk_at_index(chunk_hash, 5).unwrap_err();
+        assert!(matches!(err, Error::ChunkIndexOutOfRange { .. }));
+    }
+
+    #[test]
+    fn get_chunk_at_index_with_a_corrupt_node_mid_traversal_reports_a_backend_failure_not_a_short_list(
+    ) {
+        // Stands for: an operator's disk has a corrupted record for one
+        // chunk of a multi-chunk file. A failed read mid-traversal must not
+        // shorten the chunk list: asking for a chunk that is still there
+        // would trip the "index past the end" guard and be reported as
+        // absent, a false "you will be slashed" signal.
+        let (_dir, storage, root, c0) = two_chunk_tree();
+
+        corrupt_node(&storage, c0);
+
+        // Chunk index 1 (chunk-1) is healthy and was never actually removed,
+        // but a traversal that silently skips the unreadable c0 would only
+        // see one chunk and report index 1 as past the end.
+        let err = storage.get_chunk_at_index(root, 1).unwrap_err();
+        assert!(
+            matches!(err, Error::Serialization(_)),
+            "expected Serialization, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn get_chunk_at_index_with_a_missing_node_mid_traversal_reports_node_not_found() {
+        // Stands for: a node the tree references was never written (or was
+        // pruned) rather than corrupted. Traversal must surface the gap, not
+        // treat the node as an empty subtree.
+        let (_dir, storage, root, c0) = two_chunk_tree();
+
+        // c0 is now gone, e.g. pruned, even though the root still references it.
+        delete_node(&storage, c0);
+
+        let err = storage.get_chunk_at_index(root, 1).unwrap_err();
+        assert!(
+            matches!(err, Error::NodeNotFound(_)),
+            "expected NodeNotFound, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn proof_for_a_missing_leaf_is_leaf_not_found() {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
         bucket_with_leaves(&storage, 1, 0);
@@ -1015,11 +1183,11 @@ mod tests {
 
         assert!(matches!(
             storage.get_mmr_proof(1, 0),
-            Err(Error::NodeNotFound(_))
+            Err(Error::LeafNotFound { .. })
         ));
         assert!(matches!(
             storage.get_mmr_proof(2, 4),
-            Err(Error::NodeNotFound(_))
+            Err(Error::LeafNotFound { .. })
         ));
         assert!(storage.get_mmr_proof(2, 3).is_ok());
     }
@@ -1110,7 +1278,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
         bucket_with_leaves(&storage, 1, 3);
-        let expected = storage.get_bucket(1).unwrap().leaves[2].clone();
+        let expected = storage.get_bucket(1).unwrap().unwrap().leaves[2].clone();
 
         let (post_prune_root, start_seq, _) = storage.delete_before(1, 1).unwrap();
         assert_eq!(start_seq, 1);
@@ -1132,7 +1300,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
         bucket_with_leaves(&storage, 1, 2);
-        let old_root = storage.get_bucket(1).unwrap().mmr_root;
+        let old_root = storage.get_bucket(1).unwrap().unwrap().mmr_root;
 
         storage.delete_before(1, 2).unwrap();
 

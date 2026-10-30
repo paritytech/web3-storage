@@ -88,7 +88,10 @@ pub trait StorageBackend: Send + Sync {
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
 
     /// Get bucket information.
-    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo>;
+    ///
+    /// `Ok(None)` means the bucket genuinely does not exist. `Err` means the
+    /// backend itself failed - the bucket may still be there.
+    fn get_bucket(&self, bucket_id: BucketId) -> Result<Option<BucketInfo>, Error>;
 
     /// Ids of every locally-held bucket.
     fn bucket_ids(&self) -> Vec<BucketId>;
@@ -108,7 +111,10 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<(), Error>;
 
     /// Get a node by hash.
-    fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode>;
+    ///
+    /// `Ok(None)` means the node genuinely does not exist. `Err` means the
+    /// backend itself failed - the node may still be there.
+    fn get_node(&self, hash: &H256) -> Result<Option<ChunkTreeNode>, Error>;
 
     /// Check which hashes exist in storage.
     fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>);
@@ -117,12 +123,15 @@ pub trait StorageBackend: Send + Sync {
     fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
 
     /// Collect actual chunk data under a data root (DFS, leaf data in order).
+    ///
+    /// Skips nodes it cannot read. Use [`Self::collect_leaves`] where a short
+    /// result must be an error.
     fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
         let mut chunks = Vec::new();
         let mut stack = vec![root];
 
         while let Some(hash) = stack.pop() {
-            if let Some(node) = self.get_node(&hash) {
+            if let Ok(Some(node)) = self.get_node(&hash) {
                 match node {
                     ChunkTreeNode::Internal { left, right } => {
                         stack.push(right);
@@ -136,25 +145,28 @@ pub trait StorageBackend: Send + Sync {
         chunks
     }
 
-    /// Hash and byte size of each chunk under `root`, in leaf order. Skips
-    /// nodes missing from storage.
-    fn collect_leaves(&self, root: H256) -> Vec<(H256, usize)> {
+    /// Hash and byte size of each chunk under `root`, in leaf order.
+    ///
+    /// Unlike [`Self::collect_chunks`], a missing node or a read failure here
+    /// must not silently shorten the result: this backs
+    /// [`Self::get_chunk_at_index`], the challenge proof path, where a
+    /// shortened list would make a transient backend failure
+    /// indistinguishable from the chunk actually being missing.
+    fn collect_leaves(&self, root: H256) -> Result<Vec<(H256, usize)>, Error> {
         let mut leaves = Vec::new();
         let mut stack = vec![root];
 
         while let Some(hash) = stack.pop() {
-            if let Some(node) = self.get_node(&hash) {
-                match node {
-                    ChunkTreeNode::Internal { left, right } => {
-                        stack.push(right);
-                        stack.push(left);
-                    }
-                    ChunkTreeNode::Chunk(data) => leaves.push((hash, data.len())),
+            match self.get_node(&hash)?.ok_or(Error::NodeNotFound(hash))? {
+                ChunkTreeNode::Internal { left, right } => {
+                    stack.push(right);
+                    stack.push(left);
                 }
+                ChunkTreeNode::Chunk(data) => leaves.push((hash, data.len())),
             }
         }
 
-        leaves
+        Ok(leaves)
     }
 
     /// Byte size of the data under `root`. Fails with `NonCanonicalTree` unless
@@ -162,7 +174,7 @@ pub trait StorageBackend: Send + Sync {
     /// the last, which has 1 to `DEFAULT_CHUNK_SIZE` bytes.
     fn canonical_data_size(&self, root: H256) -> Result<u64, Error> {
         let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) =
-            self.collect_leaves(root).into_iter().unzip();
+            self.collect_leaves(root)?.into_iter().unzip();
         let chunk_size = DEFAULT_CHUNK_SIZE as usize;
         let fixed_sizes = match chunk_sizes.split_last() {
             None => false,
@@ -183,7 +195,7 @@ pub trait StorageBackend: Send + Sync {
         data_root: H256,
         chunk_index: u64,
     ) -> Result<(Vec<u8>, Vec<H256>), Error> {
-        let chunk_hashes = chunk_hashes(self, data_root);
+        let chunk_hashes = chunk_hashes(self, data_root)?;
         let chunk_count = chunk_hashes.len() as u64;
         if chunk_index >= chunk_count {
             return Err(Error::ChunkIndexOutOfRange {
@@ -193,18 +205,23 @@ pub trait StorageBackend: Send + Sync {
         }
         let (_, data, proof) = proven_chunks(self, &chunk_hashes, chunk_index..chunk_index + 1)?
             .pop()
-            .ok_or_else(|| Error::NodeNotFound(format!("chunk_{chunk_index}")))?;
+            .ok_or(Error::NodeNotFound(chunk_hashes[chunk_index as usize]))?;
         Ok((data, proof))
     }
 
     /// Hash, data and Merkle proof of each chunk of `data_root` with an index
-    /// in `range`. Leaves out indices past the last chunk.
+    /// in `range`. Leaves out indices past the last chunk. An unknown
+    /// `data_root` has no chunks.
     fn get_chunks_in_range(
         &self,
         data_root: H256,
         range: Range<u64>,
     ) -> Result<Vec<ProvenChunk>, Error> {
-        proven_chunks(self, &chunk_hashes(self, data_root), range)
+        let chunk_hashes = match chunk_hashes(self, data_root) {
+            Err(Error::NodeNotFound(hash)) if hash == data_root => return Ok(Vec::new()),
+            result => result?,
+        };
+        proven_chunks(self, &chunk_hashes, range)
     }
 
     /// Delete data before a sequence number.
@@ -240,12 +257,15 @@ pub trait StorageBackend: Send + Sync {
 }
 
 /// Leaf hashes of the tree under `data_root`, in chunk order.
-fn chunk_hashes<B: StorageBackend + ?Sized>(backend: &B, data_root: H256) -> Vec<H256> {
-    backend
-        .collect_leaves(data_root)
+fn chunk_hashes<B: StorageBackend + ?Sized>(
+    backend: &B,
+    data_root: H256,
+) -> Result<Vec<H256>, Error> {
+    Ok(backend
+        .collect_leaves(data_root)?
         .into_iter()
         .map(|(hash, _)| hash)
-        .collect()
+        .collect())
 }
 
 /// Hash, data and Merkle proof of the chunks of `chunk_hashes` with an index
@@ -262,10 +282,9 @@ fn proven_chunks<B: StorageBackend + ?Sized>(
     chunk_hashes[start..]
         .iter()
         .zip(proofs)
-        .enumerate()
-        .map(|(i, (hash, proof))| match backend.get_node(hash) {
+        .map(|(hash, proof)| match backend.get_node(hash)? {
             Some(ChunkTreeNode::Chunk(data)) => Ok((*hash, data, proof)),
-            _ => Err(Error::NodeNotFound(format!("chunk_data_{}", start + i))),
+            _ => Err(Error::NodeNotFound(*hash)),
         })
         .collect()
 }

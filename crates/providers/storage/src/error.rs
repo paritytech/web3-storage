@@ -2,18 +2,23 @@
 
 //! Error types for the storage engine.
 
+use sp_core::H256;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Node not found: {0}")]
-    NodeNotFound(String),
+    #[error("Node not found: {0:?}")]
+    NodeNotFound(H256),
+
+    /// A leaf index past the end of a bucket's leaf list.
+    #[error("Leaf not found: index {leaf_index} in bucket {bucket_id}")]
+    LeafNotFound { bucket_id: u64, leaf_index: u64 },
 
     #[error("Commitment not reproducible from local leaves: {0}")]
     CommitmentNotReproducible(String),
 
     #[error("Children missing: {0:?}")]
-    ChildrenMissing(Vec<String>),
+    ChildrenMissing(Vec<H256>),
 
     /// An internal node arrived with a child list that is not exactly two
     /// hashes. Send the left and right child hashes.
@@ -45,11 +50,11 @@ pub enum Error {
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
 
-    #[error("Root not found: {0}")]
-    RootNotFound(String),
+    #[error("Root not found: {0:?}")]
+    RootNotFound(H256),
 
-    #[error("Invalid hash: expected {expected}, got {actual}")]
-    InvalidHash { expected: String, actual: String },
+    #[error("Invalid hash: expected {expected:?}, got {actual:?}")]
+    InvalidHash { expected: H256, actual: H256 },
 
     /// The tree under a data root is not `merkle_tree` over chunks of
     /// `DEFAULT_CHUNK_SIZE` bytes, with only the last chunk shorter. Split the

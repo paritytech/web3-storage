@@ -220,7 +220,7 @@ struct GetNodeQuery {
 fn require_bucket(state: &ProviderState, bucket_id: BucketId) -> Result<BucketInfo, Error> {
     Ok(state
         .storage
-        .get_bucket(bucket_id)
+        .get_bucket(bucket_id)?
         .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?)
 }
 
@@ -233,8 +233,8 @@ async fn get_node(
 
     let node = state
         .storage
-        .get_node(&hash)
-        .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
+        .get_node(&hash)?
+        .ok_or(provider_storage::Error::NodeNotFound(hash))?;
 
     Ok(Json(DownloadNodeResponse::new(hash, &node)))
 }
@@ -578,7 +578,7 @@ async fn fetch_nodes(
     for hash_str in &request.hashes {
         let hash = decode_hash(hash_str)?;
 
-        if let Some(node) = state.storage.get_node(&hash) {
+        if let Ok(Some(node)) = state.storage.get_node(&hash) {
             nodes.push(DownloadNodeResponse::new(hash, &node));
         }
     }

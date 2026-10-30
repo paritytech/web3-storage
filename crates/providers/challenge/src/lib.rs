@@ -19,18 +19,71 @@ use std::time::Duration;
 use storage_primitives::{BucketId, ChunkLocation, Commitment, MmrProof};
 use tokio::sync::{broadcast, mpsc};
 
+/// What proof data a failure was about.
+///
+/// `get_mmr_proof` and `get_chunk_at_index` identify what they're looking
+/// for differently (a bucket and leaf index vs. a data root and chunk
+/// index), so a single error payload can't share fields across both without
+/// fields that don't apply to one side or the other.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ProofTarget {
+    /// A leaf of a bucket's MMR commitment.
+    MmrLeaf {
+        bucket_id: BucketId,
+        leaf_index: u64,
+    },
+    /// A chunk under a data root.
+    Chunk { data_root: H256, chunk_index: u64 },
+}
+
 /// Errors surfaced by the challenge responder.
+///
+/// Each variant names one condition and implies one response to it, rather
+/// than only naming which layer the failure came from.
+/// [`ChallengeError::risks_slashing`] lets a caller act on that meaning
+/// without matching every variant.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ChallengeError {
-    /// Chain interaction failed (polling or submitting).
-    #[error("chain error: {0}")]
-    Chain(String),
-    /// Local storage could not produce the requested proof data.
-    #[error("storage error: {0}")]
-    Storage(String),
-    /// Internal service error (e.g. control channel closed).
-    #[error("internal error: {0}")]
-    Internal(String),
+    /// The requested proof data is provably absent from local storage. The
+    /// challenge cannot be answered; unless the data is restored before the
+    /// deadline, the provider's entire stake is slashed. Retrying will not
+    /// help.
+    #[error("proof data is provably missing: {target:?}")]
+    ProofDataMissing {
+        /// What could not be found.
+        target: ProofTarget,
+    },
+    /// The storage backend itself failed - a database read errored, or a
+    /// stored record could not be decoded. The proof data may still be
+    /// present. Operator action: inspect, restart, or restore the backend,
+    /// then retry.
+    #[error("storage backend unavailable for {target:?}: {detail}")]
+    StorageUnavailable {
+        /// What was being looked up when the backend failed.
+        target: ProofTarget,
+        /// The backend's own error, as text.
+        detail: String,
+    },
+    /// A chain call failed: the chain was unreachable, rejected the call, or
+    /// returned a value that could not be decoded.
+    #[error("chain call failed: {detail}")]
+    Chain {
+        /// The failure, as text.
+        detail: String,
+    },
+    /// The responder is shutting down; its control channel is closed.
+    #[error("challenge responder is shutting down")]
+    Shutdown,
+}
+
+impl ChallengeError {
+    /// Whether this failure, left unresolved, leads to the provider's stake
+    /// being slashed at the challenge deadline.
+    pub fn risks_slashing(&self) -> bool {
+        matches!(self, Self::ProofDataMissing { .. })
+    }
 }
 
 /// Local proof data the responder needs to answer a challenge.
@@ -109,7 +162,9 @@ pub enum ChallengeResponseResult {
         challenge_id: (u32, u16),
         block_hash: H256,
     },
-    /// Failed to gather proof data.
+    /// Gathering proof data failed for a reason other than the data being
+    /// provably absent (e.g. the storage backend itself errored). Retryable -
+    /// the next safety-net scan will try again.
     ProofGenerationFailed {
         challenge_id: (u32, u16),
         error: String,
@@ -119,7 +174,8 @@ pub enum ChallengeResponseResult {
         challenge_id: (u32, u16),
         error: String,
     },
-    /// Challenge data not found locally.
+    /// The proof data is provably absent from local storage. Unless it is
+    /// restored before the deadline, the provider's stake is slashed.
     DataNotFound {
         challenge_id: (u32, u16),
         bucket_id: BucketId,
@@ -219,7 +275,7 @@ impl ChallengeResponderHandle {
         self.command_tx
             .send(ResponderCommand::Stop)
             .await
-            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Shutdown)
     }
 
     /// Pause automatic responses.
@@ -227,7 +283,7 @@ impl ChallengeResponderHandle {
         self.command_tx
             .send(ResponderCommand::Pause)
             .await
-            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Shutdown)
     }
 
     /// Resume automatic responses.
@@ -235,7 +291,7 @@ impl ChallengeResponderHandle {
         self.command_tx
             .send(ResponderCommand::Resume)
             .await
-            .map_err(|_| ChallengeError::Internal("Responder channel closed".to_string()))
+            .map_err(|_| ChallengeError::Shutdown)
     }
 }
 
@@ -448,13 +504,7 @@ impl ChallengeResponder {
             challenge.target.leaf_index,
         ) {
             Ok(proof) => proof,
-            Err(e) => {
-                tracing::error!("Failed to generate MMR proof: {}", e);
-                return ChallengeResponseResult::ProofGenerationFailed {
-                    challenge_id,
-                    error: e.to_string(),
-                };
-            }
+            Err(e) => return proof_failure(challenge, "Failed to generate MMR proof", &e),
         };
 
         // Step 2: a chunk index at or past the leaf's chunk count has no chunk
@@ -476,14 +526,7 @@ impl ChallengeResponder {
                 .get_chunk_at_index(mmr_proof.leaf.data_root, challenge.target.chunk_index)
             {
                 Ok(data) => data,
-                Err(e) => {
-                    tracing::error!("Failed to get chunk data: {}", e);
-                    return ChallengeResponseResult::DataNotFound {
-                        challenge_id,
-                        bucket_id: challenge.bucket_id,
-                        leaf_index: challenge.target.leaf_index,
-                    };
-                }
+                Err(e) => return proof_failure(challenge, "Failed to get chunk data", &e),
             };
             ChallengeResponse::Proof {
                 chunk_data,
@@ -517,5 +560,239 @@ impl ChallengeResponder {
                 }
             }
         }
+    }
+}
+
+/// Log a proof-gathering failure and map it to the result to report, at a
+/// level that matches what the failure means: [`ChallengeError::risks_slashing`]
+/// failures are an emergency (the stake is on the line at `deadline`
+/// regardless of which step failed), everything else is a routine failure
+/// the safety-net scan will retry.
+fn proof_failure(
+    challenge: &DetectedChallenge,
+    what: &str,
+    e: &ChallengeError,
+) -> ChallengeResponseResult {
+    let challenge_id = (challenge.deadline, challenge.index);
+    macro_rules! log {
+        ($level:ident) => {
+            tracing::$level!(
+                bucket_id = challenge.bucket_id,
+                leaf_index = challenge.target.leaf_index,
+                chunk_index = challenge.target.chunk_index,
+                deadline = challenge.deadline,
+                "{what}: {e}"
+            )
+        };
+    }
+    if e.risks_slashing() {
+        log!(error);
+        ChallengeResponseResult::DataNotFound {
+            challenge_id,
+            bucket_id: challenge.bucket_id,
+            leaf_index: challenge.target.leaf_index,
+        }
+    } else {
+        log!(warn);
+        ChallengeResponseResult::ProofGenerationFailed {
+            challenge_id,
+            error: e.to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use storage_primitives::{MmrLeaf, DEFAULT_CHUNK_SIZE, LEAF_VERSION};
+
+    fn data_root() -> H256 {
+        H256::repeat_byte(0xda)
+    }
+
+    fn challenge(index: u16) -> DetectedChallenge {
+        DetectedChallenge {
+            bucket_id: 5,
+            deadline: 100,
+            index,
+            commitment: Commitment {
+                mmr_root: H256::repeat_byte(0x11),
+                start_seq: 0,
+                leaf_count: 8,
+            },
+            target: ChunkLocation {
+                leaf_index: 7,
+                chunk_index: 3,
+            },
+        }
+    }
+
+    /// What a proof lookup does when the responder asks for it.
+    #[derive(Clone, Copy)]
+    enum Lookup {
+        /// The data is there.
+        Found,
+        /// The data is provably absent - the slashing case.
+        Missing,
+        /// The backend itself failed; the data may well still be there.
+        BackendFailed,
+    }
+
+    struct MockProofSource {
+        mmr: Lookup,
+        chunk: Lookup,
+    }
+
+    impl ChallengeProofSource for MockProofSource {
+        fn get_mmr_proof_for_commitment(
+            &self,
+            bucket_id: BucketId,
+            _commitment: &Commitment,
+            leaf_index: u64,
+        ) -> Result<MmrProof, ChallengeError> {
+            let target = ProofTarget::MmrLeaf {
+                bucket_id,
+                leaf_index,
+            };
+            match self.mmr {
+                // Four chunks, so the challenged chunk index 3 is in range.
+                Lookup::Found => Ok(MmrProof {
+                    leaf: MmrLeaf {
+                        leaf_version: LEAF_VERSION,
+                        data_root: data_root(),
+                        data_size: 4 * u64::from(DEFAULT_CHUNK_SIZE),
+                        total_size: 4 * u64::from(DEFAULT_CHUNK_SIZE),
+                    },
+                    items: vec![H256::repeat_byte(0x22)],
+                }),
+                Lookup::Missing => Err(ChallengeError::ProofDataMissing { target }),
+                Lookup::BackendFailed => Err(ChallengeError::StorageUnavailable {
+                    target,
+                    detail: "rocksdb read failed".to_string(),
+                }),
+            }
+        }
+
+        fn get_chunk_at_index(
+            &self,
+            data_root: H256,
+            chunk_index: u64,
+        ) -> Result<(Vec<u8>, Vec<H256>), ChallengeError> {
+            let target = ProofTarget::Chunk {
+                data_root,
+                chunk_index,
+            };
+            match self.chunk {
+                Lookup::Found => Ok((b"chunk bytes".to_vec(), vec![H256::repeat_byte(0x33)])),
+                Lookup::Missing => Err(ChallengeError::ProofDataMissing { target }),
+                Lookup::BackendFailed => Err(ChallengeError::StorageUnavailable {
+                    target,
+                    detail: "chunk file unreadable".to_string(),
+                }),
+            }
+        }
+    }
+
+    /// Records every submitted response; the chain accepts all of them.
+    #[derive(Default)]
+    struct MockChainClient {
+        submitted: Mutex<Vec<(u32, u16)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChallengeChainClient for MockChainClient {
+        async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
+            Ok(Vec::new())
+        }
+
+        async fn fetch_challenge(
+            &self,
+            _deadline: u32,
+            _index: u16,
+        ) -> Result<Option<DetectedChallenge>, ChallengeError> {
+            Ok(None)
+        }
+
+        async fn submit_response(
+            &self,
+            challenge_id: (u32, u16),
+            _response: ChallengeResponse,
+        ) -> Result<H256, ChallengeError> {
+            self.submitted.lock().expect("lock").push(challenge_id);
+            Ok(H256::repeat_byte(0xbb))
+        }
+    }
+
+    /// Runs `respond_to_challenge` against `mmr` and `chunk` lookups, and
+    /// returns the result with the responses the chain received.
+    async fn respond(
+        mmr: Lookup,
+        chunk: Lookup,
+        c: &DetectedChallenge,
+    ) -> (ChallengeResponseResult, Vec<(u32, u16)>) {
+        let chain = Arc::new(MockChainClient::default());
+        let responder = ChallengeResponder::new(
+            ChallengeResponderConfig::new(AccountId32::new([1u8; 32])),
+            Arc::new(MockProofSource { mmr, chunk }),
+            Box::new(chain.clone()),
+        );
+        let result = responder.respond_to_challenge(c).await;
+        let submitted = chain.submitted.lock().expect("lock").clone();
+        (result, submitted)
+    }
+
+    #[tokio::test]
+    async fn missing_mmr_leaf_reports_data_not_found_and_submits_nothing() {
+        let c = challenge(1);
+
+        let (result, submitted) = respond(Lookup::Missing, Lookup::Found, &c).await;
+
+        assert!(
+            matches!(
+                result,
+                ChallengeResponseResult::DataNotFound { challenge_id, bucket_id, leaf_index }
+                    if challenge_id == (100, 1) && bucket_id == 5 && leaf_index == c.target.leaf_index
+            ),
+            "unexpected result: {result:?}"
+        );
+        assert!(submitted.is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_chunk_reports_data_not_found_rather_than_a_retryable_failure() {
+        // The MMR leaf is intact but the chunk under it is gone: still the
+        // slashing case, and reporting it as retryable would have the operator
+        // wait for a scan that can never succeed.
+        let c = challenge(2);
+
+        let (result, submitted) = respond(Lookup::Found, Lookup::Missing, &c).await;
+
+        assert!(
+            matches!(
+                result,
+                ChallengeResponseResult::DataNotFound { challenge_id, bucket_id, leaf_index }
+                    if challenge_id == (100, 2) && bucket_id == 5 && leaf_index == c.target.leaf_index
+            ),
+            "unexpected result: {result:?}"
+        );
+        assert!(submitted.is_empty());
+    }
+
+    #[tokio::test]
+    async fn storage_backend_failure_reports_proof_generation_failed_not_data_loss() {
+        let c = challenge(3);
+
+        let (result, submitted) = respond(Lookup::BackendFailed, Lookup::Found, &c).await;
+
+        assert!(
+            matches!(
+                result,
+                ChallengeResponseResult::ProofGenerationFailed { challenge_id, ref error }
+                    if challenge_id == (100, 3) && error.contains("storage backend unavailable")
+            ),
+            "unexpected result: {result:?}"
+        );
+        assert!(submitted.is_empty());
     }
 }

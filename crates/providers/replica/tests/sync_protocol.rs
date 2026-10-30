@@ -116,7 +116,20 @@ async fn non_hex_mmr_root_is_a_decode_error() {
     assert_err!(
         sync_serving_peaks(peaks_body("0xnothex", &[])).await,
         Error::Decode {
-            what: "mmr_root",
+            what: "mmr peaks response",
+            ..
+        }
+    );
+}
+
+/// Well-formed hex, but not 32 bytes: rejected while deserializing the
+/// response rather than reaching a `H256::from_slice` that would panic.
+#[tokio::test]
+async fn wrong_length_mmr_root_is_a_decode_error() {
+    assert_err!(
+        sync_serving_peaks(peaks_body("0xab", &[])).await,
+        Error::Decode {
+            what: "mmr peaks response",
             ..
         }
     );
@@ -131,7 +144,7 @@ async fn non_hex_peak_is_a_decode_error() {
         ))
         .await,
         Error::Decode {
-            what: "peak hash",
+            what: "mmr peaks response",
             ..
         }
     );
@@ -218,7 +231,7 @@ async fn child_hash_of_wrong_length_is_a_decode_error() {
     assert_err!(
         sync_serving_node(peak, reply).await,
         Error::Decode {
-            what: "child hash",
+            what: "node response",
             ..
         }
     );
@@ -231,7 +244,7 @@ async fn non_hex_child_hash_is_a_decode_error() {
     assert_err!(
         sync_serving_node(peak, reply).await,
         Error::Decode {
-            what: "child hash",
+            what: "node response",
             ..
         }
     );
@@ -277,12 +290,12 @@ async fn an_internal_node_with_the_wrong_hash_is_rejected_before_its_children_ar
             if expected == requested && actual == hash_children(left, right)
     );
     assert_eq!(
-        f.storage.get_node(&left),
+        f.storage.get_node(&left).unwrap(),
         None,
         "children must not be stored"
     );
     assert_eq!(
-        f.storage.get_node(&right),
+        f.storage.get_node(&right).unwrap(),
         None,
         "children must not be stored"
     );
@@ -342,16 +355,16 @@ async fn an_internal_peak_is_stored_after_the_children_beneath_it() {
 
     assert_eq!(f.sync.sync_from_source(BUCKET, &url).await.unwrap(), target);
     assert_eq!(
-        f.storage.get_node(&parent),
+        f.storage.get_node(&parent).unwrap(),
         Some(ChunkTreeNode::Internal { left, right }),
         "the parent must be stored once its children are present"
     );
     assert_eq!(
-        f.storage.get_node(&left),
+        f.storage.get_node(&left).unwrap(),
         Some(ChunkTreeNode::Chunk(left_data))
     );
     assert_eq!(
-        f.storage.get_node(&right),
+        f.storage.get_node(&right).unwrap(),
         Some(ChunkTreeNode::Chunk(right_data))
     );
 }
@@ -414,7 +427,7 @@ async fn a_peak_naming_a_stored_node_is_fetched_and_stored() {
     // recomputes one, which is why the coordinator verifies afterwards.
     assert_eq!(f.sync.sync_from_source(BUCKET, &url).await.unwrap(), target);
     assert_eq!(
-        f.storage.get_node(&leaf),
+        f.storage.get_node(&leaf).unwrap(),
         Some(ChunkTreeNode::Chunk(b"leaf payload".to_vec()))
     );
 }
