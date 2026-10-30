@@ -7,9 +7,6 @@ license = "Apache-2.0"
 repository.workspace = true
 
 [dependencies]
-# Serialization (std only - for protobuf)
-prost = { workspace = true, optional = true }
-
 # Substrate/Polkadot primitives
 codec = { workspace = true }
 scale-info = { workspace = true }
@@ -18,24 +15,16 @@ sp-runtime = { workspace = true }
 storage-primitives = { workspace = true }
 serde = { workspace = true, optional = true }
 
-# Utilities
+[dev-dependencies]
 array-bytes = { workspace = true }
-
-# Error handling (std only)
-thiserror = { workspace = true, optional = true }
-
-[build-dependencies]
-prost-build = { workspace = true }
 
 [features]
 default = ["std"]
 std = [
 	"codec/std",
-	"prost",
 	"scale-info/std",
 	"serde/std",
 	"sp-core/std",
 	"sp-runtime/std",
 	"storage-primitives/std",
-	"thiserror",
 ]

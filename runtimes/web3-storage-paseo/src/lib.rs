@@ -195,8 +195,9 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 6 for `leaf_version`, the new first field of the `MmrLeaf` inside that
     //   `MmrProof`;
     // * 7 for the `ChunkOutOfRange` variant of `ChallengeResponse`, which moves
-    //   `Deleted` and `Superseded` to the next variant index.
-    transaction_version: 7,
+    //   `Deleted` and `Superseded` to the next variant index;
+    // * 8 for removing `DriveRegistry` and `S3Registry` with all their calls (#475).
+    transaction_version: 8,
     system_version: 1,
 };
 
@@ -576,14 +577,6 @@ mod runtime {
     #[runtime::pallet_index(50)]
     pub type StorageProvider = pallet_storage_provider;
 
-    // Drive Registry (Layer 1: File System)
-    #[runtime::pallet_index(51)]
-    pub type DriveRegistry = pallet_drive_registry;
-
-    // S3 Registry (Layer 1: S3-Compatible Interface)
-    #[runtime::pallet_index(52)]
-    pub type S3Registry = pallet_s3_registry;
-
     // Smart contracts (PolkaVM + EVM-compatible)
     #[runtime::pallet_index(60)]
     pub type Revive = pallet_revive;
@@ -607,8 +600,6 @@ mod benches {
         [pallet_session, SessionBench::<Runtime>]
         [pallet_sudo, Sudo]
         [pallet_storage_provider, StorageProvider]
-        [pallet_drive_registry, DriveRegistry]
-        [pallet_s3_registry, S3Registry]
         [pallet_revive, Revive]
         [pallet_utility, Utility]
         [cumulus_pallet_xcmp_queue, XcmpQueue]
