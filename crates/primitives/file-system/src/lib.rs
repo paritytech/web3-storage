@@ -582,7 +582,11 @@ mod tests {
             DIRECTORY_NODE_HEX,
             "encoding"
         );
-        assert_eq!(format!("{:#x}", dir.compute_cid()), DIRECTORY_NODE_CID, "cid");
+        assert_eq!(
+            format!("{:#x}", dir.compute_cid()),
+            DIRECTORY_NODE_CID,
+            "cid"
+        );
     }
 
     /// Shared test vector: the TypeScript implementation asserts the same

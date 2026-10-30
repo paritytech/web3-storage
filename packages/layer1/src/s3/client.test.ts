@@ -43,6 +43,16 @@ describe("S3Client objects", () => {
     expect(provider.calls.every((c) => !c.path.startsWith("/s3") && !c.path.startsWith("/fs"))).toBe(true);
   });
 
+  it("stores an empty object without a content blob", async () => {
+    const { client } = makeClient();
+    const put = await client.putObject(BUCKET, "empty", new Uint8Array(0));
+    // Empty content has no chunk tree: its root, and so its etag, is the zero hash.
+    expect(put.etag).toBe(`0x${"00".repeat(32)}`);
+    const got = await client.getObject(BUCKET, "empty");
+    expect(got).toMatchObject({ size: 0, etag: put.etag });
+    expect(got.data).toEqual(new Uint8Array(0));
+  });
+
   it("stores metadata lowercased and sorted, like the Rust client", async () => {
     const { client } = makeClient();
     await client.putObject(BUCKET, "k", te.encode("x"), { metadata: { Zeta: "2", alpha: "1" } });
