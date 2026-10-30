@@ -1338,9 +1338,9 @@ pub mod api {
                         "bucket_info",
                         (bucket_id,),
                         [
-                            144u8, 7u8, 105u8, 242u8, 113u8, 125u8, 110u8, 159u8, 92u8, 249u8,
-                            124u8, 10u8, 216u8, 9u8, 168u8, 4u8, 49u8, 28u8, 247u8, 196u8, 95u8,
-                            129u8, 60u8, 118u8, 192u8, 75u8, 119u8, 23u8, 104u8, 31u8, 13u8, 138u8,
+                            138u8, 167u8, 78u8, 223u8, 164u8, 214u8, 92u8, 21u8, 210u8, 210u8,
+                            102u8, 200u8, 2u8, 242u8, 194u8, 123u8, 23u8, 136u8, 165u8, 3u8, 13u8,
+                            52u8, 238u8, 55u8, 230u8, 100u8, 103u8, 193u8, 232u8, 5u8, 158u8, 68u8,
                         ],
                     )
                 }
@@ -3466,9 +3466,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                7u8, 249u8, 185u8, 227u8, 4u8, 157u8, 179u8, 4u8, 24u8, 180u8, 226u8, 10u8, 156u8,
-                28u8, 220u8, 233u8, 192u8, 108u8, 228u8, 68u8, 140u8, 74u8, 234u8, 209u8, 102u8,
-                46u8, 250u8, 215u8, 108u8, 92u8, 102u8, 102u8,
+                99u8, 221u8, 18u8, 148u8, 122u8, 132u8, 138u8, 113u8, 34u8, 242u8, 194u8, 27u8,
+                16u8, 169u8, 56u8, 22u8, 238u8, 61u8, 197u8, 158u8, 126u8, 88u8, 219u8, 190u8,
+                56u8, 151u8, 245u8, 245u8, 43u8, 155u8, 252u8, 2u8,
             ]
     }
     pub mod system {
@@ -16089,7 +16089,10 @@ pub mod api {
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Writer or admin. Add signatures from primary providers that signed"]
-            #[doc = "the current snapshot late."]
+            #[doc = "the current snapshot late. A primary added after the checkpoint"]
+            #[doc = "becomes challengeable for this snapshot once its signature is added"]
+            #[doc = "here. Signers already in the bitfield are skipped without"]
+            #[doc = "verification."]
             pub struct ExtendCheckpoint {
                 pub bucket_id: extend_checkpoint::BucketId,
                 pub additional_signatures: extend_checkpoint::AdditionalSignatures,
@@ -17059,7 +17062,10 @@ pub mod api {
                         )
                     }
                     #[doc = "Writer or admin. Add signatures from primary providers that signed"]
-                    #[doc = "the current snapshot late."]
+                    #[doc = "the current snapshot late. A primary added after the checkpoint"]
+                    #[doc = "becomes challengeable for this snapshot once its signature is added"]
+                    #[doc = "here. Signers already in the bitfield are skipped without"]
+                    #[doc = "verification."]
                     pub fn extend_checkpoint(
                         &self,
                         bucket_id: super::extend_checkpoint::BucketId,
@@ -18299,9 +18305,9 @@ pub mod api {
                         "StorageProvider",
                         "Buckets",
                         [
-                            141u8, 156u8, 183u8, 90u8, 131u8, 215u8, 195u8, 26u8, 202u8, 45u8,
-                            240u8, 201u8, 7u8, 202u8, 135u8, 21u8, 252u8, 189u8, 97u8, 24u8, 216u8,
-                            190u8, 89u8, 57u8, 128u8, 239u8, 200u8, 21u8, 156u8, 6u8, 234u8, 83u8,
+                            132u8, 146u8, 27u8, 164u8, 233u8, 219u8, 110u8, 54u8, 93u8, 168u8,
+                            66u8, 251u8, 125u8, 6u8, 94u8, 212u8, 140u8, 183u8, 132u8, 92u8, 22u8,
+                            221u8, 69u8, 15u8, 72u8, 254u8, 99u8, 118u8, 40u8, 6u8, 186u8, 220u8,
                         ],
                     )
                 }
@@ -21460,10 +21466,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            202u8, 196u8, 178u8, 139u8, 1u8, 79u8, 215u8, 113u8, 139u8, 234u8,
-                            105u8, 11u8, 114u8, 125u8, 179u8, 184u8, 101u8, 241u8, 61u8, 46u8,
-                            177u8, 3u8, 62u8, 253u8, 150u8, 226u8, 95u8, 14u8, 70u8, 21u8, 24u8,
-                            24u8,
+                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
+                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
+                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
                         ],
                     )
                 }
@@ -26541,7 +26546,10 @@ pub mod api {
                     },
                     #[codec(index = 31)]
                     #[doc = "Writer or admin. Add signatures from primary providers that signed"]
-                    #[doc = "the current snapshot late."]
+                    #[doc = "the current snapshot late. A primary added after the checkpoint"]
+                    #[doc = "becomes challengeable for this snapshot once its signature is added"]
+                    #[doc = "here. Signers already in the bitfield are skipped without"]
+                    #[doc = "verification."]
                     extend_checkpoint {
                         bucket_id: ::core::primitive::u64,
                         additional_signatures:
@@ -26891,7 +26899,9 @@ pub mod api {
                     #[codec(index = 52)]
                     #[doc = "The provider did not sign the bucket's current snapshot, so there"]
                     #[doc = "is no on-chain commitment to challenge; use `challenge_offchain`"]
-                    #[doc = "with a signed commitment instead."]
+                    #[doc = "with a signed commitment instead. `checkpoint` and"]
+                    #[doc = "`extend_checkpoint` return it when a signer is not a primary of"]
+                    #[doc = "the bucket."]
                     ProviderNotInSnapshot,
                     #[codec(index = 53)]
                     #[doc = "`target.leaf_index` is not below the commitment's `leaf_count`: the"]
@@ -31867,7 +31877,10 @@ pub mod api {
             pub struct BucketSnapshot<_0> {
                 pub commitment: runtime_types::storage_primitives::Commitment,
                 pub checkpoint_block: _0,
-                pub primary_signers: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
+                pub primary_signers: ::subxt::utils::bits::DecodedBits<
+                    ::core::primitive::u8,
+                    ::subxt::utils::bits::Lsb0,
+                >,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,
