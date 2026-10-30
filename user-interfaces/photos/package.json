@@ -26,13 +26,13 @@
     "@web3-storage/sdk": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "lucide-react": "^1.57.0",
-    "polkadot-api": "^3.2.1",
+    "lucide-react": "^1.61.0",
+    "polkadot-api": "^3.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "rxjs": "^7.8.2",
     "tailwind-merge": "^3.7.0",
-    "viem": "^2.57.7",
+    "viem": "^2.57.10",
     "ws": "^8.22.0"
   },
   "devDependencies": {
@@ -42,10 +42,10 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "autoprefixer": "^10.6.1",
-    "postcss": "^8.5.30",
+    "postcss": "^8.5.31",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4"
+    "vite": "^8.3.5"
   }
 }

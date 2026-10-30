@@ -17,8 +17,8 @@
     "@polkadot-labs/hdkd-helpers": "^0.0.34",
     "@web3-storage/sdk": "workspace:*",
     "@web3-storage/test-helpers": "workspace:*",
-    "polkadot-api": "^3.2.1",
-    "viem": "^2.57.7",
+    "polkadot-api": "^3.3.0",
+    "viem": "^2.57.10",
     "ws": "^8.22.0"
   },
   "devDependencies": {
