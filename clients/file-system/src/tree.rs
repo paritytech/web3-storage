@@ -44,8 +44,10 @@
 //!   the type's maximum SCALE encoded size. A provider that returns the two
 //!   child hashes of an internal Merkle node as a 64-byte blob, and denies
 //!   the node's children on `GET /node`, is not detected.
-//! - **Reads are unauthenticated.** Anyone who knows a CID can read the blob
-//!   (#383, #396). Confidential data needs client-side encryption.
+//! - **Blob reads by CID are unauthenticated.** Anyone who knows a CID and a
+//!   bucket id can read the blob (#383, #396). Root discovery
+//!   (`GET /commitment`, `GET /mmr_proof`) needs Reader on a private bucket.
+//!   Confidential data needs client-side encryption.
 
 use crate::{FsClientError, Result};
 use codec::MaxEncodedLen;
@@ -77,7 +79,7 @@ pub trait BlobStore: Send + Sync {
     async fn put_blob(&self, bucket_id: BucketId, data: &[u8]) -> Result<Cid>;
 
     /// Read the blob with data root `cid`.
-    async fn get_blob(&self, cid: Cid, length: BlobLength) -> Result<Vec<u8>>;
+    async fn get_blob(&self, bucket_id: BucketId, cid: Cid, length: BlobLength) -> Result<Vec<u8>>;
 
     /// Append `data_roots` to the bucket's MMR, in order.
     async fn commit(&self, bucket_id: BucketId, data_roots: Vec<Cid>) -> Result<()>;
@@ -93,8 +95,8 @@ impl<T: BlobStore + ?Sized> BlobStore for &T {
         (**self).put_blob(bucket_id, data).await
     }
 
-    async fn get_blob(&self, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
-        (**self).get_blob(cid, length).await
+    async fn get_blob(&self, bucket_id: BucketId, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
+        (**self).get_blob(bucket_id, cid, length).await
     }
 
     async fn commit(&self, bucket_id: BucketId, data_roots: Vec<Cid>) -> Result<()> {
@@ -118,12 +120,14 @@ impl BlobStore for StorageUserClient {
 
     /// With [`BlobLength::AtMost`], the read requests one byte more than
     /// the maximum.
-    async fn get_blob(&self, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
+    async fn get_blob(&self, bucket_id: BucketId, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
         let max = match length {
             BlobLength::Exact(size) => size,
             BlobLength::AtMost(max) => max.saturating_add(1),
         };
-        self.download(&cid, 0, max).await.map_err(storage_error)
+        self.download(bucket_id, &cid, 0, max)
+            .await
+            .map_err(storage_error)
     }
 
     async fn commit(&self, bucket_id: BucketId, data_roots: Vec<Cid>) -> Result<()> {
@@ -322,7 +326,10 @@ impl<S: BlobStore> Tree<S> {
             reason,
         };
         let max = max_len::<DirectoryNode>();
-        let bytes = self.store.get_blob(cid, BlobLength::AtMost(max)).await?;
+        let bytes = self
+            .store
+            .get_blob(self.bucket_id, cid, BlobLength::AtMost(max))
+            .await?;
         if bytes.len() as u64 > max {
             return Err(not_fs(format!(
                 "last leaf is larger than a directory node can be ({max} bytes)"
@@ -589,7 +596,7 @@ impl<S: BlobStore> Tree<S> {
 
     /// Read a blob and check its length and that its CID is `cid`.
     async fn read_blob(&self, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
-        let bytes = self.store.get_blob(cid, length).await?;
+        let bytes = self.store.get_blob(self.bucket_id, cid, length).await?;
         let len = bytes.len() as u64;
         let length_ok = match length {
             BlobLength::Exact(size) => len == size,
@@ -688,7 +695,12 @@ mod tests {
             Ok(cid)
         }
 
-        async fn get_blob(&self, cid: Cid, _length: BlobLength) -> Result<Vec<u8>> {
+        async fn get_blob(
+            &self,
+            _bucket_id: BucketId,
+            cid: Cid,
+            _length: BlobLength,
+        ) -> Result<Vec<u8>> {
             if let Some((tampered, bytes)) = self.tampered.lock().unwrap().clone() {
                 if tampered == cid {
                     return Ok(bytes);
@@ -758,6 +770,7 @@ mod tests {
         use storage_primitives::{mmr, verify_mmr_proof, Commitment};
         let leaves: Vec<_> = (0..4u8)
             .map(|n| storage_primitives::MmrLeaf {
+                leaf_version: storage_primitives::LEAF_VERSION,
                 data_root: storage_primitives::hash_leaf(&[n]),
                 data_size: 1,
                 total_size: n as u64,

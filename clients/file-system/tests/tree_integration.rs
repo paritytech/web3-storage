@@ -151,7 +151,7 @@ async fn sizeless_read_of_internal_node_fails_the_cid_check() {
         .upload(BUCKET, &data, ChunkingStrategy::Fixed(32))
         .await
         .unwrap();
-    if let Ok(bytes) = client.get_blob(root, BlobLength::AtMost(MAX)).await {
+    if let Ok(bytes) = client.get_blob(BUCKET, root, BlobLength::AtMost(MAX)).await {
         assert_ne!(compute_cid(&bytes), root);
     }
 
@@ -159,7 +159,7 @@ async fn sizeless_read_of_internal_node_fails_the_cid_check() {
     assert_eq!(leaf, compute_cid(&data));
     assert_eq!(
         client
-            .get_blob(leaf, BlobLength::AtMost(MAX))
+            .get_blob(BUCKET, leaf, BlobLength::AtMost(MAX))
             .await
             .unwrap(),
         data

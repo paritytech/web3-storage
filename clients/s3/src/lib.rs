@@ -19,8 +19,10 @@
 //! - **Prefix deletes.** An Admin `POST /delete` that moves `start_seq` past
 //!   the leaves of blobs the current tree still references lets the provider
 //!   drop those blobs.
-//! - **Reads are unauthenticated.** Anyone who knows a CID can read the blob
-//!   (#383, #396). Confidential data needs client-side encryption.
+//! - **Blob reads by CID are unauthenticated.** Anyone who knows a CID and a
+//!   bucket id can read the blob (#383, #396). Root discovery
+//!   (`GET /commitment`, `GET /mmr_proof`) needs Reader on a private bucket.
+//!   Confidential data needs client-side encryption.
 //! - A key cannot also be a prefix directory of another key: `a` and `a/b`
 //!   cannot both exist ([`S3ClientError::KeyConflict`]).
 //! - No bucket deletion: Layer 0 has no bucket deletion.

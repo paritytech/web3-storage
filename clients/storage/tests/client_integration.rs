@@ -44,18 +44,14 @@ async fn test_upload_returns_nonzero_root() {
 }
 
 #[tokio::test]
-async fn test_upload_empty_data_is_one_empty_chunk() {
+async fn test_upload_empty_data_returns_error() {
     let url = start_test_provider().await;
     let client = make_client(url);
 
-    let data_root = client
-        .upload(1, b"", ChunkingStrategy::default())
-        .await
-        .unwrap();
+    let result = client.upload(1, b"", ChunkingStrategy::default()).await;
 
-    // Same as the provider and the TS SDK: empty data is a single empty chunk.
-    assert_eq!(data_root, storage_primitives::hash_leaf(b""));
-    client.commit(1, vec![data_root]).await.unwrap();
+    // Empty data has no Merkle leaves — the client should surface a clear error.
+    assert!(result.is_err(), "expected error for empty upload, got Ok");
 }
 
 #[tokio::test]

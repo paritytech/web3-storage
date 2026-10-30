@@ -644,16 +644,15 @@ impl StorageUserClient {
         leaf_index: u64,
     ) -> ClientResult<storage_primitives::MmrProof> {
         let provider_url = self.base.get_provider_url()?;
-        let response = self
+        let req = self
             .base
             .http
             .get(format!("{provider_url}/mmr_proof"))
             .query(&[
                 ("bucket_id", bucket_id.to_string()),
                 ("leaf_index", leaf_index.to_string()),
-            ])
-            .send()
-            .await?;
+            ]);
+        let response = self.sign(req, "GET", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(

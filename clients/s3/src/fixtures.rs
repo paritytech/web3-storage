@@ -65,7 +65,12 @@ impl BlobStore for MemoryStore {
         Ok(cid)
     }
 
-    async fn get_blob(&self, cid: Cid, _length: BlobLength) -> file_system_client::Result<Vec<u8>> {
+    async fn get_blob(
+        &self,
+        _bucket_id: BucketId,
+        cid: Cid,
+        _length: BlobLength,
+    ) -> file_system_client::Result<Vec<u8>> {
         self.blobs
             .lock()
             .unwrap()
