@@ -11,7 +11,7 @@ import {
 } from "@web3-storage/core";
 import { commitDataRoots, makeSigner, uploadBlob } from "@web3-storage/layer0";
 
-import { FakeProvider } from "../../layer0/src/fake-provider.testing.js";
+import { FakeProvider } from "@web3-storage/layer0/testing";
 import { commitOrder, FileSystemError, FsTree, parsePath, providerBlobStore } from "./tree.js";
 
 const PROVIDER = "http://provider.test";
@@ -141,6 +141,19 @@ describe("FS operations", () => {
     await tree.putFile("/f", te.encode("x"));
     await expect(tree.putFile("/d", te.encode("x"))).rejects.toMatchObject({ code: "IsADirectory" });
     await expect(tree.putFile("/f/x", te.encode("x"))).rejects.toMatchObject({ code: "NotADirectory" });
+  });
+
+  it("listNonEmpty drops directories without files", async () => {
+    const { tree } = setup();
+    await tree.putFile("/f", te.encode("x"));
+    await tree.putFile("/deep/a/b/f", te.encode("x"));
+    await tree.mkdir("/deep/empty");
+    await tree.mkdir("/nested/empty");
+    const names = async (path: string) => (await tree.listNonEmpty(path)).map((e) => e.name);
+    expect(await names("/")).toEqual(["deep", "f"]);
+    expect(await names("/deep")).toEqual(["a"]);
+    expect(await names("/nested")).toEqual([]);
+    await expect(tree.listNonEmpty("/missing")).rejects.toMatchObject({ code: "NotFound" });
   });
 
   it("mkdir creates parents and fails when the path exists", async () => {

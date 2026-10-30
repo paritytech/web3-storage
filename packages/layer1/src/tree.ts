@@ -42,6 +42,7 @@ import {
   FILE_MANIFEST_MAX_SIZE,
   FS_LIMITS,
   hexToBytes,
+  isValidEntryName,
   isWellFormedString,
   merkleRoot,
   toHex,
@@ -214,13 +215,9 @@ const decoder = new TextDecoder();
  * surrogate), 1..=256 UTF-8 bytes, no `/`, not `.` or `..`.
  */
 export function validateEntryName(name: string): void {
-  if (!isWellFormedString(name)) throw new FileSystemError("InvalidPath", "Name contains a lone UTF-16 surrogate");
-  const len = encoder.encode(name).length;
-  if (len < 1 || len > FS_LIMITS.maxEntryNameLength) {
-    throw new FileSystemError("InvalidPath", `Name must be 1-${FS_LIMITS.maxEntryNameLength} bytes: "${name}"`);
+  if (!isWellFormedString(name) || !isValidEntryName(encoder.encode(name))) {
+    throw new FileSystemError("InvalidPath", `Invalid entry name: "${name}"`);
   }
-  if (name.includes("/")) throw new FileSystemError("InvalidPath", `Name must not contain "/": "${name}"`);
-  if (name === "." || name === "..") throw new FileSystemError("InvalidPath", `Name must not be "${name}"`);
 }
 
 /**
@@ -439,6 +436,30 @@ export class FsTree {
     };
     await visit(nodes[nodes.length - 1], names);
     return out;
+  }
+
+  /**
+   * List a directory without the subdirectories that contain no file at any
+   * depth. Reads each subdirectory only until it finds a file.
+   */
+  async listNonEmpty(path: string): Promise<TreeEntry[]> {
+    const out: TreeEntry[] = [];
+    for (const entry of await this.list(path)) {
+      if (entry.entryType === "file" || (await this.containsFile(hexToBytes(entry.cid), entry.path))) out.push(entry);
+    }
+    return out;
+  }
+
+  /** Whether the directory `cid` at `path` contains a file at any depth. */
+  private async containsFile(cid: Uint8Array, path: string): Promise<boolean> {
+    const pending = [{ cid, path }];
+    while (pending.length > 0) {
+      const dir = pending.pop()!;
+      const node = await this.readDirectory(dir.cid, dir.path);
+      if (node.children.some((e) => e.entryType === "file")) return true;
+      for (const e of node.children) pending.push({ cid: e.cid, path: `${dir.path}/${decoder.decode(e.name)}` });
+    }
+    return false;
   }
 
   /**

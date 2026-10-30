@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { makeSigner } from "@web3-storage/layer0";
 
 import { FakeProvider } from "../../../layer0/src/fake-provider.testing.js";
+import { FileSystemClient } from "../fs/client.js";
 import { paginateKeys, S3Client } from "./client.js";
 
 const BUCKET = 9n;
@@ -133,6 +134,62 @@ describe("S3Client.listObjects", () => {
     const after = await client.listObjects(BUCKET, { startAfter: "photos/2025/c.jpg" });
     expect(after.objects.map((o) => o.key)).toEqual(["photos/x.jpg", "readme", "é"]);
     expect((await client.listObjects(BUCKET, { prefix: "nothing/here" })).objects).toEqual([]);
+  });
+
+  it("with delimiter / matches a full walk with fewer directory reads", async () => {
+    const { client, provider } = makeClient();
+    const deep = [
+      "a.txt",
+      "b/1.txt",
+      "b/c/3.txt",
+      "b0.txt",
+      "photos/2024/01/01/img.jpg",
+      "photos/2024/01/02/img.jpg",
+      "photos/2024/02/01/img.jpg",
+      "photos/2025/01/01/img.jpg",
+    ];
+    for (const key of deep) await client.putObject(BUCKET, key, te.encode(key));
+    // File-system writes can leave directories without objects.
+    const fs = new FileSystemClient({
+      api: {} as never,
+      signer: makeSigner("//Alice"),
+      providerUrl: "http://provider.test",
+      fetch: provider.fetch,
+    });
+    await fs.createDirectory(BUCKET, "/b/empty");
+    await fs.createDirectory(BUCKET, "/e/f");
+    const all = (await client.listAllObjects(BUCKET)).objects;
+
+    const prefixes = ["", "b", "b/", "b/c", "e/", "photos/", "photos/2024/", "photos/2024/0", "x/", "a.txt/"];
+    const startAfters = [
+      undefined,
+      "a.txt",
+      "b/",
+      "b/1.txt",
+      "b/c/3.txt",
+      "photos/2024/",
+      "photos/2024/01/01/img.jpg",
+      "photos/2024/01/02/img.jpg",
+      "zzz",
+    ];
+    for (const prefix of prefixes) {
+      for (const startAfter of startAfters) {
+        for (const maxKeys of [1, 2, 1000]) {
+          const opts = { prefix, delimiter: "/", startAfter, maxKeys };
+          const listed = await client.listObjects(BUCKET, opts);
+          const walked = paginateKeys(all, opts);
+          expect(listed, JSON.stringify(opts)).toEqual(walked);
+        }
+      }
+    }
+
+    // The root, `b`, `e` and `e/f`, and one path down `photos` to a file:
+    // 8 of the 15 directories.
+    const nodeReads = () => provider.calls.filter((c) => c.method === "GET" && c.path === "/node").length;
+    const before = nodeReads();
+    const top = await client.listObjects(BUCKET, { delimiter: "/" });
+    expect(top.commonPrefixes).toEqual(["b/", "photos/"]);
+    expect(nodeReads() - before).toBe(8);
   });
 
   it("pages with maxKeys and nextStartAfter", async () => {

@@ -19,7 +19,7 @@
  * concurrently can lose one of the changes (the last commit wins).
  */
 
-import { compareBytes, isWellFormedString } from "@web3-storage/core";
+import { compareBytes, FS_LIMITS, isValidEntryName, isWellFormedString } from "@web3-storage/core";
 import {
   createBucketWithPrimary as createBucketWithPrimaryTx,
   type WaitOpts,
@@ -63,14 +63,8 @@ export class S3Client extends Layer1Client {
     const len = encoder.encode(key).length;
     if (len < 1 || len > 1024) throw new Error(`Object key must be 1-1024 bytes: "${key}"`);
     for (const segment of key.split("/")) {
-      if (segment === "") {
-        throw new Error(`Object key must not have empty segments (leading, trailing or double "/"): "${key}"`);
-      }
-      if (segment === "." || segment === "..") {
-        throw new Error(`Object key must not have "." or ".." segments: "${key}"`);
-      }
-      if (encoder.encode(segment).length > 256) {
-        throw new Error(`Object key must have segments of at most 256 bytes: "${key}"`);
+      if (!isValidEntryName(encoder.encode(segment))) {
+        throw new Error(`Object key must have valid segments (not empty, ".", ".." or over ${FS_LIMITS.maxEntryNameLength} bytes): "${key}"`);
       }
     }
   }
@@ -204,7 +198,7 @@ export class S3Client extends Layer1Client {
     const requested = options.maxKeys ?? MAX_KEYS;
     if (Number.isNaN(requested)) throw new Error("maxKeys must be a number");
     const maxKeys = Math.min(Math.max(Math.floor(requested), 1), MAX_KEYS);
-    const objects = await this.objectsUnder(bucketId, prefix, options.signal);
+    const objects = await this.objectsUnder(bucketId, { ...options, prefix });
     return paginateKeys(objects, { ...options, prefix, maxKeys });
   }
 
@@ -218,7 +212,7 @@ export class S3Client extends Layer1Client {
     options: { prefix?: string; delimiter?: string; signal?: AbortSignal } = {},
   ): Promise<{ objects: ObjectSummary[]; commonPrefixes: string[] }> {
     const prefix = options.prefix ?? "";
-    const objects = await this.objectsUnder(bucketId, prefix, options.signal);
+    const objects = await this.objectsUnder(bucketId, { ...options, prefix });
     const { objects: page, commonPrefixes } = paginateKeys(objects, {
       prefix,
       delimiter: options.delimiter,
@@ -228,7 +222,11 @@ export class S3Client extends Layer1Client {
   }
 
   /** Every object under the deepest directory that `prefix` names, unsorted. */
-  private async objectsUnder(bucketId: bigint, prefix: string, signal?: AbortSignal): Promise<ObjectSummary[]> {
+  private async objectsUnder(
+    bucketId: bigint,
+    opts: { prefix: string; delimiter?: string; startAfter?: string; signal?: AbortSignal },
+  ): Promise<ObjectSummary[]> {
+    const { prefix, delimiter, startAfter, signal } = opts;
     const baseDir = prefix.includes("/") ? prefix.slice(0, prefix.lastIndexOf("/")) : "";
     try {
       parsePath(keyPath(baseDir));
@@ -236,10 +234,27 @@ export class S3Client extends Layer1Client {
       // No valid key lies under an invalid directory path.
       return [];
     }
+    const keyPrefix = baseDir === "" ? "" : `${baseDir}/`;
+    const relStartAfter = startAfter?.startsWith(keyPrefix) ? startAfter.slice(keyPrefix.length) : "";
+    const slash = relStartAfter.indexOf("/");
+    const startAfterInSubdir = slash >= 0 && slash + 1 < relStartAfter.length;
     const tree = await this.openTree(bucketId, { signal });
+    if (delimiter === "/" && !startAfterInSubdir) {
+      const entries = await withHttpContext("List objects failed", () =>
+        tree.listNonEmpty(keyPath(baseDir)).catch((err: unknown) => {
+          if (err instanceof FileSystemError && (err.code === "NotFound" || err.code === "NotADirectory")) return [];
+          throw err;
+        }),
+      );
+      return entries.map((entry) => ({
+        key: keyPrefix + entry.name + (entry.entryType === "directory" ? "/" : ""),
+        size: Number(entry.size),
+        lastModified: Number(entry.mtime) * 1000,
+      }));
+    }
     const files = await withHttpContext("List objects failed", () => tree.listFiles(keyPath(baseDir)));
     return files.map(({ relativePath, entry }) => ({
-      key: baseDir === "" ? relativePath : `${baseDir}/${relativePath}`,
+      key: keyPrefix + relativePath,
       size: Number(entry.size),
       lastModified: Number(entry.mtime) * 1000,
     }));

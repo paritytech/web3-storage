@@ -24,6 +24,7 @@ use file_system_client::BlobLength;
 use file_system_primitives::{chunk_hashes, compute_cid, Cid, CHUNK_SIZE};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 const BUCKET: BucketId = 7;
@@ -50,11 +51,13 @@ fn parse_cid(s: &str) -> Cid {
     s.parse().unwrap()
 }
 
-/// In-memory Layer 0: blobs by CID and the committed `data_roots`.
+/// In-memory Layer 0: blobs by CID, the committed `data_roots` and the
+/// number of blob reads.
 #[derive(Default)]
-struct MemoryStore {
+pub(crate) struct MemoryStore {
     blobs: Mutex<BTreeMap<Cid, Vec<u8>>>,
     commits: Mutex<Vec<Vec<Cid>>>,
+    pub(crate) reads: AtomicUsize,
 }
 
 #[async_trait::async_trait]
@@ -71,6 +74,7 @@ impl BlobStore for MemoryStore {
         cid: Cid,
         _length: BlobLength,
     ) -> file_system_client::Result<Vec<u8>> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
         self.blobs
             .lock()
             .unwrap()
@@ -100,7 +104,7 @@ impl BlobStore for MemoryStore {
     }
 }
 
-fn tree(store: &MemoryStore) -> Tree<&MemoryStore> {
+pub(crate) fn tree(store: &MemoryStore) -> Tree<&MemoryStore> {
     Tree::with_clock(store, BUCKET, || MTIME)
 }
 

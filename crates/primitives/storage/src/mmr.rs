@@ -134,6 +134,17 @@ pub fn verify_mmr_proof(proof: MmrProof, leaf_index: u64, commitment: &Commitmen
         .unwrap_or(false)
 }
 
+/// Check that `proof` proves the last leaf of an MMR with `leaf_count`
+/// leaves and root `mmr_root`.
+pub fn verify_last_mmr_leaf(proof: MmrProof, mmr_root: &H256, leaf_count: u64) -> bool {
+    let commitment = Commitment {
+        mmr_root: *mmr_root,
+        start_seq: 0,
+        leaf_count,
+    };
+    leaf_count > 0 && verify_mmr_proof(proof, leaf_count - 1, &commitment)
+}
+
 /// Number of items in the proof for the leaf at `leaf_pos` of an MMR of
 /// `mmr_size` nodes: one per peak to the left, one per level of the leaf's
 /// peak, and one for the peaks to the right. `None` if no peak covers
@@ -376,6 +387,22 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn last_mmr_leaf_check_rejects_other_leaves() {
+        // Three leaves: two peaks. Four leaves: one peak.
+        for leaf_count in [3, 4] {
+            let (commitment, last) = mmr_commitment_and_proof(leaf_count, leaf_count - 1);
+            let root = commitment.mmr_root;
+            assert!(verify_last_mmr_leaf(last.clone(), &root, leaf_count));
+            assert!(!verify_last_mmr_leaf(last.clone(), &root, leaf_count + 1));
+            assert!(!verify_last_mmr_leaf(last, &root, 0));
+
+            let (_, other) = mmr_commitment_and_proof(leaf_count, 0);
+            assert!(verify_mmr_proof(other.clone(), 0, &commitment));
+            assert!(!verify_last_mmr_leaf(other, &root, leaf_count));
         }
     }
 

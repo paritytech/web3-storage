@@ -57,7 +57,7 @@ use file_system_primitives::{
 };
 use std::collections::HashSet;
 use storage_client::{ChunkingStrategy, StorageUserClient};
-use storage_primitives::BucketId;
+use storage_primitives::{verify_last_mmr_leaf, BucketId};
 
 /// The length of a blob to read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,21 +162,6 @@ impl BlobStore for StorageUserClient {
         }
         Ok(Some(data_root))
     }
-}
-
-/// Check that `proof` proves the last leaf of an MMR with `leaf_count`
-/// leaves and root `mmr_root`.
-pub fn verify_last_mmr_leaf(
-    proof: storage_primitives::MmrProof,
-    mmr_root: &Cid,
-    leaf_count: u64,
-) -> bool {
-    let commitment = storage_primitives::Commitment {
-        mmr_root: *mmr_root,
-        start_seq: 0,
-        leaf_count,
-    };
-    leaf_count > 0 && storage_primitives::verify_mmr_proof(proof, leaf_count - 1, &commitment)
 }
 
 fn storage_error(e: storage_client::ClientError) -> FsClientError {
@@ -362,6 +347,22 @@ impl<S: BlobStore> Tree<S> {
             .next_back()
             .map(|dir| dir.children.into_inner())
             .unwrap_or_default())
+    }
+
+    /// List the entries of the directory at `path`, sorted by name, without
+    /// the subdirectories that contain no file at any depth. Reads each
+    /// subdirectory only until it finds a file.
+    pub async fn list_non_empty(&self, path: &str) -> Result<Vec<DirectoryEntry>> {
+        let names = parse_path(path)?;
+        let base = join(&names);
+        let mut entries = Vec::new();
+        for entry in self.list(path).await? {
+            let child = format!("{}/{}", base.trim_end_matches('/'), entry.name_str());
+            if entry.is_file() || self.contains_file(&child, entry.cid).await? {
+                entries.push(entry);
+            }
+        }
+        Ok(entries)
     }
 
     /// Read the entry and manifest of the file at `path`.
@@ -629,6 +630,24 @@ impl<S: BlobStore> Tree<S> {
         Ok(node)
     }
 
+    /// Whether the directory `cid` at `path` contains a file at any depth.
+    async fn contains_file(&self, path: &str, cid: Cid) -> Result<bool> {
+        let mut pending = vec![(path.to_string(), cid)];
+        while let Some((path, cid)) = pending.pop() {
+            let dir = self.read_dir(&path, cid).await?;
+            if dir.children.iter().any(DirectoryEntry::is_file) {
+                return Ok(true);
+            }
+            pending.extend(
+                dir.children
+                    .into_inner()
+                    .into_iter()
+                    .map(|entry| (format!("{path}/{}", entry.name_str()), entry.cid)),
+            );
+        }
+        Ok(false)
+    }
+
     async fn read_manifest(&self, path: &str, cid: Cid) -> Result<FileManifest> {
         let bytes = self
             .read_blob(cid, BlobLength::AtMost(max_len::<FileManifest>()))
@@ -773,39 +792,6 @@ mod tests {
     }
 
     #[test]
-    fn last_mmr_leaf_check_rejects_other_leaves() {
-        use storage_primitives::{mmr, verify_mmr_proof, Commitment};
-        let leaves: Vec<_> = (0..4u8)
-            .map(|n| storage_primitives::MmrLeaf {
-                leaf_version: storage_primitives::LEAF_VERSION,
-                data_root: storage_primitives::hash_leaf(&[n]),
-                data_size: 1,
-                total_size: n as u64,
-            })
-            .collect();
-        let proof =
-            |count: usize, index: u64| mmr::proof(&leaves[..count], index).unwrap().unwrap();
-
-        // Three leaves: two peaks. Four leaves: one peak.
-        for count in [3, 4] {
-            let (root, last) = proof(count, count as u64 - 1);
-            let leaf_count = count as u64;
-            assert!(verify_last_mmr_leaf(last.clone(), &root, leaf_count));
-            assert!(!verify_last_mmr_leaf(last.clone(), &root, leaf_count + 1));
-            assert!(!verify_last_mmr_leaf(last, &root, 0));
-
-            let (_, other) = proof(count, 0);
-            let commitment = Commitment {
-                mmr_root: root,
-                start_seq: 0,
-                leaf_count,
-            };
-            assert!(verify_mmr_proof(other.clone(), 0, &commitment));
-            assert!(!verify_last_mmr_leaf(other, &root, leaf_count));
-        }
-    }
-
-    #[test]
     fn commit_order_dedupes_and_puts_root_last() {
         let [x, y, root] = [&b"x"[..], b"y", b"root"].map(compute_cid);
         assert_eq!(commit_order(&[x, y, x, root, y, root]), vec![x, y, root]);
@@ -824,6 +810,26 @@ mod tests {
             Err(FsClientError::PathNotFound(_))
         ));
         assert!(store.commits().is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_non_empty_drops_directories_without_files() {
+        let store = MemoryStore::default();
+        let t = tree(&store);
+        t.put_file("/f", b"x", DEFAULT, vec![]).await.unwrap();
+        t.put_file("/deep/a/b/f", b"x", DEFAULT, vec![])
+            .await
+            .unwrap();
+        t.mkdir("/deep/empty").await.unwrap();
+        t.mkdir("/nested/empty").await.unwrap();
+
+        assert_eq!(names(&t.list_non_empty("/").await.unwrap()), ["deep", "f"]);
+        assert_eq!(names(&t.list_non_empty("/deep").await.unwrap()), ["a"]);
+        assert!(t.list_non_empty("/nested").await.unwrap().is_empty());
+        assert!(matches!(
+            t.list_non_empty("/missing").await,
+            Err(FsClientError::PathNotFound(_))
+        ));
     }
 
     #[tokio::test]
