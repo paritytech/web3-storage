@@ -7,6 +7,7 @@
  * its `data_root` ({@link computeDataRoot}).
  */
 
+import { compareBytes } from "./bytes.js";
 import { computeDataRoot } from "./merkle.js";
 import { ScaleError, ScaleReader, ScaleWriter } from "./scale.js";
 
@@ -85,12 +86,6 @@ export function isValidEntryName(name: Uint8Array): boolean {
   }
 }
 
-function compareNames(a: Uint8Array, b: Uint8Array): number {
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return a.length - b.length;
-}
-
 /**
  * Check the rules a decoder does not, like Rust `DirectoryNode::validate`:
  * `metadata` is empty, every child name is valid ({@link isValidEntryName}),
@@ -105,7 +100,7 @@ export function validateDirectoryNode(node: DirectoryNode): void {
   node.children.forEach((e, i) => {
     if (!isValidEntryName(e.name)) throw new Error(`child ${i} has an invalid name`);
     if (e.entryType === "directory" && e.size !== 0n) throw new Error(`directory child ${i} has size ${e.size}`);
-    if (i > 0 && compareNames(node.children[i - 1].name, e.name) >= 0) {
+    if (i > 0 && compareBytes(node.children[i - 1].name, e.name) >= 0) {
       throw new Error(`children are not sorted by name with unique names at ${i}`);
     }
   });
@@ -150,7 +145,7 @@ export interface FileManifest {
   bucketId: bigint;
   mimeType: Uint8Array;
   totalSize: bigint;
-  /** Content chunk hashes in order. Empty content has one chunk: the hash of the empty chunk. */
+  /** Content chunk hashes in order. Empty content has no chunks. */
   chunks: FileChunk[];
   /** Always empty. */
   encryptionParams: Uint8Array;

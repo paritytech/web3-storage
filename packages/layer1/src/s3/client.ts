@@ -19,7 +19,7 @@
  * concurrently can lose one of the changes (the last commit wins).
  */
 
-import { isWellFormedString } from "@web3-storage/core";
+import { compareBytes, isWellFormedString } from "@web3-storage/core";
 import {
   createBucketWithPrimary as createBucketWithPrimaryTx,
   type WaitOpts,
@@ -285,12 +285,6 @@ function lowercaseMetadata(metadata: Record<string, string>): Record<string, str
     lowered[key] = v;
   }
   return lowered;
-}
-
-function compareBytes(a: Uint8Array, b: Uint8Array): number {
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return a.length - b.length;
 }
 
 /**

@@ -505,8 +505,6 @@ impl StorageUserClient {
 
     fn chunk_data(data: &[u8], strategy: ChunkingStrategy) -> Vec<Vec<u8>> {
         match strategy {
-            // Empty data is one empty chunk, as on the provider and in the TS SDK.
-            ChunkingStrategy::Fixed(_) if data.is_empty() => vec![Vec::new()],
             ChunkingStrategy::Fixed(chunk_size) => {
                 data.chunks(chunk_size).map(|c| c.to_vec()).collect()
             }

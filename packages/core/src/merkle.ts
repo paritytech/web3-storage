@@ -15,7 +15,7 @@
 
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 
-import { bytesEq, concatBytes } from "./bytes.js";
+import { bytesEq, compareBytes, concatBytes } from "./bytes.js";
 
 /**
  * Mirror of DEFAULT_CHUNK_SIZE in crates/primitives/storage/src/lib.rs: the
@@ -307,11 +307,3 @@ export function u64le(value: bigint): Uint8Array {
   return out;
 }
 
-/** Lexicographic comparison of two byte arrays (Rust `[u8]`/`str` ordering). */
-function compareBytes(a: Uint8Array, b: Uint8Array): number {
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) {
-    if (a[i] !== b[i]) return a[i] - b[i];
-  }
-  return a.length - b.length;
-}

@@ -33,6 +33,7 @@
 import {
   bytesEq,
   chunkCount,
+  compareBytes,
   decodeDirectoryNode,
   decodeFileManifest,
   DIRECTORY_NODE_MAX_SIZE,
@@ -207,12 +208,6 @@ export interface DeleteOptions {
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-
-function compareBytes(a: Uint8Array, b: Uint8Array): number {
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return a.length - b.length;
-}
 
 /**
  * Throw unless `name` is a valid entry name: well-formed UTF-16 (no lone
