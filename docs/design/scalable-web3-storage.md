@@ -4,13 +4,14 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.7 |
+| **Version** | 2.8 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.8 | Introduced storage deposits and `delete_bucket`. |
 | 2.7 | Layer-0 read access spelled out: bucket-bound reads gate at Reader on primaries; hash-keyed lookups (`/node`, `/read`, `/chunk_proof`, `/fetch_nodes`) take a bucket id but are **capability reads** — possession of the hash grants the bytes, with the enumeration surfaces gated; operator self-read allowance. **Read**: "Read access at Layer 0" under Bucket Visibility & Access. |
 | 2.6 | Chunk tree fixed: a binary RFC 9162 Merkle tree over 256 KiB chunks (only the last chunk is shorter), chunk and node hashes with different prefixes, no padding, chunk count derived from the leaf's `data_size`, empty data rejected, a `chunk_index` at or beyond the chunk count answered with the leaf alone. `MmrLeaf` starts with `leaf_version`, which defines the leaf's fields, `CHUNK_SIZE` and the tree shape. Proofs carry only hashes: `MmrProof { leaf, items }` with `polkadot-ckb-merkle-mountain-range` as the reference implementation and the leaf position taken from the challenge, a chunk proof is the sibling list, `GET /mmr_proof` returns `items` and `GET /chunk_proof` a sibling list. **Read**: "Content-Addressed Chunks", "MMR Commitments"; "Hash Prefixes", "Chunk Tree", "MMR Leaf", "MMR Proof", `POST /commit`, `GET /mmr_proof`, `GET /chunk_proof` and `verify_challenge_response` in [Implementation Details](./scalable-web3-storage-implementation.md). |
 | 2.5 | Challenge resolution and slashing are lazy: an unanswered challenge is slashed by the permissionless `resolve_expired_challenge` call (no per-block sweep). A timeout is the only slash reason. **Read**: "The Challenge Game", Resolution; `resolve_expired_challenge` in [Implementation Details](./scalable-web3-storage-implementation.md). |

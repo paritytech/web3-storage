@@ -3,7 +3,10 @@
 #![cfg(test)]
 
 use frame_support::{
-    assert_ok, dispatch::GetDispatchInfo, pallet_prelude::Hooks, traits::Currency,
+    assert_ok,
+    dispatch::GetDispatchInfo,
+    pallet_prelude::Hooks,
+    traits::{fungible::InspectHold, Currency},
 };
 use pallet_storage_provider::Call as StorageProviderCall;
 use parachains_common::{AccountId, AuraId, Hash as PcHash, Signature as PcSignature};
@@ -14,8 +17,8 @@ use sp_runtime::{transaction_validity, ApplyExtrinsicResult, BuildStorage};
 use storage_paseo_runtime::{
     paseo_constants::currency::UNIT, xcm_config::LocationToAccountId, AllPalletsWithoutSystem,
     Balance, Balances, Block, BlockNumber, Runtime, RuntimeCall, RuntimeEvent,
-    RuntimeGenesisConfig, RuntimeOrigin, SessionKeys, StorageProvider, System, TxExtension,
-    UncheckedExtrinsic, WeightToFee,
+    RuntimeGenesisConfig, RuntimeHoldReason, RuntimeOrigin, SessionKeys, StorageProvider,
+    System, TxExtension, UncheckedExtrinsic, WeightToFee,
 };
 use storage_primitives::AgreementTerms;
 use xcm::latest::prelude::*;
@@ -26,6 +29,14 @@ use xcm_runtime_apis::conversions::LocationToAccountHelper;
 //
 
 const ALICE: [u8; 32] = [1u8; 32];
+
+/// The provider's stake alone; the account also holds a storage deposit.
+fn stake_on_hold(who: &AccountId) -> Balance {
+    Balances::balance_on_hold(
+        &RuntimeHoldReason::StorageProvider(pallet_storage_provider::HoldReason::ProviderStake),
+        who,
+    )
+}
 
 /// Set both clocks the runtime reads: `System` (parachain height) and the
 /// relay-chain number served by `RelaychainDataProvider`, which the storage
@@ -477,7 +488,7 @@ fn should_deregister_provider() {
         let stake = default_stake();
         register_provider_for(account, stake);
 
-        assert_eq!(Balances::reserved_balance(&who), stake);
+        assert_eq!(stake_on_hold(&who), stake);
 
         // Step 1: announce. Record stays, stake stays reserved, deregister_at stamped.
         assert_ok_ok(construct_and_apply_extrinsic(
@@ -489,7 +500,7 @@ fn should_deregister_provider() {
         let deregister_at = provider
             .deregister_at
             .expect("deregister_at must be set after announce");
-        assert_eq!(Balances::reserved_balance(&who), stake);
+        assert_eq!(stake_on_hold(&who), stake);
 
         // Step 2: premature completion is rejected.
         let result = construct_and_apply_extrinsic(
@@ -555,7 +566,7 @@ fn should_cancel_deregister_announcement() {
         assert!(provider.settings.accepting_primary);
         assert!(provider.settings.accepting_extensions);
         // Stake stays reserved throughout — never went anywhere.
-        assert_eq!(Balances::reserved_balance(&who), stake);
+        assert_eq!(stake_on_hold(&who), stake);
     });
 }
 
@@ -1085,7 +1096,7 @@ fn previewnet_preset_registers_default_provider() {
         assert!(provider.settings.accepting_extensions);
         assert_eq!(provider.settings.max_capacity, 1_099_511_627);
 
-        assert_eq!(Balances::reserved_balance(&alice), 1_200_000_000_000 * UNIT);
+        assert_eq!(stake_on_hold(&alice), 1_200_000_000_000 * UNIT);
 
         // The two genesis buckets from local_testnet are preserved.
         assert_eq!(pallet_storage_provider::NextBucketId::<Runtime>::get(), 2);

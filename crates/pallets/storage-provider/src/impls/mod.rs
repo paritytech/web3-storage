@@ -8,6 +8,10 @@ pub mod buckets;
 pub mod challenges;
 /// Snapshot root history used by checkpoints and replica sync.
 pub mod checkpoints;
+/// Storage-deposit footprints per record kind.
+pub mod deposits;
+/// Hold, release and settlement helpers, one per `HoldReason`, each with a
+/// fixed `Precision`.
 pub mod funds;
 /// Provider discovery queries: matching, capacity, challenge candidates.
 pub mod marketplace;
@@ -19,4 +23,5 @@ pub mod providers;
 pub mod queries;
 /// Signature verification for commitments and signed terms.
 pub mod signatures;
+/// Storage invariant checks, run by try-runtime and callable from tests.
 pub mod try_state;

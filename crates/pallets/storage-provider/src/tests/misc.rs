@@ -133,6 +133,7 @@ fn remove_slashed_works() {
         super::slash_provider_stake(2);
 
         let owner_balance_before = Balances::free_balance(1);
+        let owner_deposits_before = held(HoldReason::StorageDeposit, 1);
         let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
         let payment_locked = agreement.payment_locked;
 
@@ -145,10 +146,12 @@ fn remove_slashed_works() {
 
         // Agreement removed
         assert!(StorageAgreements::<Test>::get(bucket_id, 2).is_none());
-        // Payment returned to owner
+        // Payment and the agreement's storage deposit returned to owner
+        let released_deposit = owner_deposits_before - held(HoldReason::StorageDeposit, 1);
+        assert_eq!(released_deposit, 10);
         assert_eq!(
             Balances::free_balance(1),
-            owner_balance_before + payment_locked
+            owner_balance_before + payment_locked + released_deposit
         );
         // Provider removed from bucket
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
