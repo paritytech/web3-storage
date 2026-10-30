@@ -19,6 +19,10 @@
  * Workflow 06 covers the same ACL on-chain; this one is the off-chain half —
  * it is the only workflow that sends an `Authorization` header.
  *
+ * Every probe is a Layer 0 write endpoint (`PUT /node`, `POST /delete`): only
+ * those check roles. Layer 0 reads are unauthenticated, so Reader reads are not
+ * tested here (#383, #396).
+ *
  * Usage: node e2e/12-provider-http-auth.js [chain_ws] [provider_url]
  */
 
@@ -53,7 +57,7 @@ const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 const CHANGE_DEADLINE_MS = 40_000;
 
 /**
- * How many distinct bucket ids 12.13 walks. Every one is a cache miss costing
+ * How many distinct bucket ids 12.12 walks. Every one is a cache miss costing
  * the provider a chain storage query, so this stays small: CI runs the provider
  * with `--auth-cache-max-entries 64` so 200 ids cross the ceiling and exercise
  * eviction, where chasing the 10,000 default would take ~12,000 round trips and
@@ -110,9 +114,6 @@ async function signedStatus(
   return statusOf(method, path, { headers, body });
 }
 
-/** Reader-guarded endpoint: the S3 index root, which any member may read. */
-const readPath = (bucketId: bigint) => `/s3/${bucketId}/index_root`;
-
 /**
  * Body for the Writer-guarded `PUT /node`. It has to be well-formed: axum
  * parses the JSON before the role check runs, so a junk body would 400 without
@@ -127,6 +128,10 @@ function nodeBody(bucketId: bigint, text: string): string {
     children: null,
   });
 }
+
+/** Status of a signed `PUT /node` storing `text` in `bucketId`. */
+const writeStatus = (who: ChainSigner, bucketId: bigint, text: string) =>
+  signedStatus(who, "PUT", "/node", bucketId, { body: nodeBody(bucketId, text) });
 
 /**
  * Body for the Admin-guarded `POST /delete` (L0 prune). Only ever sent by a
@@ -196,21 +201,14 @@ async function main() {
   // ── Role ladder over HTTP ─────────────────────────────────────────────────
 
   tests.push({
-    name: "12.1 Admin reads",
+    name: "12.1 Admin writes",
     fn: async () => {
-      assert.strictEqual(await signedStatus(admin, "GET", readPath(bucketId), bucketId), 200);
+      assert.strictEqual(await writeStatus(admin, bucketId, "hello from the admin"), 200);
     },
   });
 
   tests.push({
-    name: "12.2 Reader reads",
-    fn: async () => {
-      assert.strictEqual(await signedStatus(reader, "GET", readPath(bucketId), bucketId), 200);
-    },
-  });
-
-  tests.push({
-    name: "12.3 Writer writes",
+    name: "12.2 Writer writes",
     fn: async () => {
       // Through the SDK rather than a raw probe: the happy path is worth
       // exercising exactly as a client drives it, header building included.
@@ -220,17 +218,15 @@ async function main() {
   });
 
   tests.push({
-    name: "12.4 Reader may not write",
+    name: "12.3 Reader may not write",
     fn: async () => {
-      const status = await signedStatus(reader, "PUT", "/node", bucketId, {
-        body: nodeBody(bucketId, "reader should not be able to store this"),
-      });
+      const status = await writeStatus(reader, bucketId, "reader should not be able to store this");
       assert.strictEqual(status, 403, "a Reader must not satisfy a Writer endpoint");
     },
   });
 
   tests.push({
-    name: "12.5 Writer may not prune",
+    name: "12.4 Writer may not prune",
     fn: async () => {
       const status = await signedStatus(writer, "POST", "/delete", bucketId, {
         body: pruneBody(bucketId),
@@ -240,9 +236,9 @@ async function main() {
   });
 
   tests.push({
-    name: "12.6 Non-member is refused",
+    name: "12.5 Non-member is refused",
     fn: async () => {
-      const status = await signedStatus(stranger, "GET", readPath(bucketId), bucketId);
+      const status = await writeStatus(stranger, bucketId, "non-member write");
       assert.strictEqual(status, 403, "a validly signed non-member must still be refused");
     },
   });
@@ -250,25 +246,39 @@ async function main() {
   // ── Signature and timestamp checks ────────────────────────────────────────
 
   tests.push({
-    name: "12.7 Unsigned request is rejected",
+    name: "12.6 Unsigned request is rejected",
     fn: async () => {
-      assert.strictEqual(await statusOf("GET", readPath(bucketId)), 401);
+      const status = await statusOf("PUT", "/node", {
+        headers: { "Content-Type": "application/json" },
+        body: nodeBody(bucketId, "unsigned write"),
+      });
+      assert.strictEqual(status, 401);
     },
   });
 
   tests.push({
-    name: "12.8 Timestamp outside max_skew is rejected",
+    name: "12.7 Timestamp outside max_skew is rejected",
     fn: async () => {
       // An hour old, against the 300s `--auth-max-skew` default: a captured
       // header must not stay replayable indefinitely.
       const anHourAgo = Date.now() - 3_600_000;
-      const headers = await signProviderRequest(reader.signer, "GET", bucketId, anHourAgo);
-      assert.strictEqual(await statusOf("GET", readPath(bucketId), { headers }), 401);
+      const headers: Record<string, string> = await signProviderRequest(
+        writer.signer,
+        "PUT",
+        bucketId,
+        anHourAgo,
+      );
+      headers["Content-Type"] = "application/json";
+      const status = await statusOf("PUT", "/node", {
+        headers,
+        body: nodeBody(bucketId, "stale signature"),
+      });
+      assert.strictEqual(status, 401);
     },
   });
 
   tests.push({
-    name: "12.9 Signature is bound to the HTTP method",
+    name: "12.8 Signature is bound to the HTTP method",
     fn: async () => {
       // Eve holds Writer, so only the method mismatch can fail this: the
       // provider rebuilds the message from the verb it actually received.
@@ -281,7 +291,7 @@ async function main() {
   });
 
   tests.push({
-    name: "12.10 Signature is bound to the bucket",
+    name: "12.9 Signature is bound to the bucket",
     fn: async () => {
       const status = await signedStatus(writer, "PUT", "/node", bucketId, {
         signBucket: bucketId + 1n,
@@ -294,52 +304,48 @@ async function main() {
   // ── Cache invalidation from chain events ──────────────────────────────────
 
   tests.push({
-    name: "12.11 Removal is honoured",
+    name: "12.10 Removal is honoured",
     fn: async () => {
-      // Establish the starting point: the reader is authorized *and* cached, so
+      // Establish the starting point: the writer is authorized *and* cached, so
       // the 403 below has to come from the removal rather than from a cold
       // cache that never held them.
       assert.strictEqual(
-        await signedStatus(reader, "GET", readPath(bucketId), bucketId),
+        await writeStatus(writer, bucketId, "before removal"),
         200,
-        "reader should still be authorized before the removal",
+        "writer should still be authorized before the removal",
       );
 
-      await removeMember(api, admin, bucketId, reader, { mode: "finalized" });
+      await removeMember(api, admin, bucketId, writer, { mode: "finalized" });
 
-      await assertChangeHonoured(403, () =>
-        signedStatus(reader, "GET", readPath(bucketId), bucketId),
-      );
+      await assertChangeHonoured(403, () => writeStatus(writer, bucketId, "after removal"));
     },
   });
 
   tests.push({
-    name: "12.12 Re-adding is honoured",
+    name: "12.11 Re-adding is honoured",
     fn: async () => {
       // The granting direction: a member added back must not have to wait out a
       // cached set that excludes them.
       assert.strictEqual(
-        await signedStatus(reader, "GET", readPath(bucketId), bucketId),
+        await writeStatus(writer, bucketId, "before re-adding"),
         403,
-        "reader should still be refused before being re-added",
+        "writer should still be refused before being re-added",
       );
 
-      await setMember(api, admin, bucketId, reader, "Reader", { mode: "finalized" });
+      await setMember(api, admin, bucketId, writer, "Writer", { mode: "finalized" });
 
-      await assertChangeHonoured(200, () =>
-        signedStatus(reader, "GET", readPath(bucketId), bucketId),
-      );
+      await assertChangeHonoured(200, () => writeStatus(writer, bucketId, "after re-adding"));
     },
   });
 
   // ── Bucket-id scan against the membership cache ───────────────────────────
 
   tests.push({
-    name: "12.13 A signed bucket-id scan is refused and leaves a member authorized",
+    name: "12.12 A signed bucket-id scan is refused and leaves a member authorized",
     fn: async () => {
       // Any keypair can walk the id space: auth runs before any
-      // bucket-existence check and the read routes are not rate limited, so
-      // each distinct id caches one membership entry. What this pins is the
+      // bucket-existence check and `PUT /node` is not rate limited, so each
+      // distinct id caches one membership entry. What this pins is the
       // wiring - every unknown bucket is refused, and a burst of them costs a
       // real member nothing. How many entries stay resident is asserted in
       // crates/providers/auth/src/membership.rs, which can size the cap; the
@@ -348,15 +354,15 @@ async function main() {
       const started = Date.now();
       for (let i = 0n; i < BigInt(SCAN_IDS); i++) {
         const scanned = base + i;
-        const status = await signedStatus(stranger, "GET", readPath(scanned), scanned);
+        const status = await writeStatus(stranger, scanned, "bucket-id scan");
         assert.strictEqual(status, 403, `scanned bucket ${scanned} should be refused`);
       }
       console.log(`          ${SCAN_IDS} ids scanned in ${Date.now() - started}ms`);
 
-      // Whether Ferdie's entry survived the burst or was dropped and refetched
-      // is invisible here, and that is fine: either way he stays authorized.
+      // Whether Eve's entry survived the burst or was dropped and refetched
+      // is invisible here, and that is fine: either way she stays authorized.
       assert.strictEqual(
-        await signedStatus(reader, "GET", readPath(bucketId), bucketId),
+        await writeStatus(writer, bucketId, "after the scan"),
         200,
         "a member must still be authorized after a bucket-id scan",
       );

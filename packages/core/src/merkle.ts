@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// TypeScript port of the Merkle functions the provider and the primitives
-// use, so a client can compute and check CIDs itself without trusting the
-// provider.
+// TypeScript port of the Merkle functions the primitives use, so a client can
+// compute and check CIDs itself without trusting the provider.
 //
 // Mirrors, byte for byte:
-//   - `crates/providers/storage/src/index/fs.rs`     → `metadata_merkle_root`
 //   - `crates/primitives/storage/src/merkle.rs`      → `merkle_root`, `merkle_tree`, `verify_merkle_proof`
 //   - `crates/primitives/storage/src/lib.rs`         → `hash_leaf`, `hash_children`, `DEFAULT_CHUNK_SIZE`
 //   - `crates/primitives/storage/src/mmr.rs`         → `bag_peaks`, `verify_mmr_proof`, `LEAF_VERSION`,
 //                                                       `MmrLeaf::chunk_count`
+//
+// `metadataMerkleRoot` has no Rust counterpart; the photos app anchors its
+// result on-chain.
 //
 // Pure functions, no I/O, browser-safe.
 
@@ -37,7 +38,7 @@ const MAX_MMR_LEAVES = (1n << 63n) - 1n;
 
 /** One drive entry as it contributes to the metadata Merkle tree. */
 export interface MerkleEntry {
-  /** Absolute path, exactly as the provider keys it (e.g. `/Beach/photo.jpg`). */
+  /** Absolute path (e.g. `/Beach/photo.jpg`). */
   path: string;
   /** 32-byte content root (zero-filled for directories). */
   dataRoot: Uint8Array;
@@ -174,7 +175,7 @@ export function chunkCount(dataSize: bigint | number): number {
  * A blob's `data_root`, which is also its CID: chunk the bytes at
  * `DEFAULT_CHUNK_SIZE`, leaf-hash each chunk, then `merkleRoot` over the chunk
  * hashes. A single chunk yields its own hash. Empty data has no chunk tree, so
- * it throws. Mirrors `fs_put_file`.
+ * it throws. Mirrors `StorageUserClient::upload` with the default chunking.
  */
 export function computeDataRoot(bytes: Uint8Array): Uint8Array {
   if (bytes.length === 0) throw new Error("empty data has no chunk tree");
@@ -287,7 +288,7 @@ export function verifyMmrProof(proof: MmrProof, leafIndex: bigint, mmrRoot: Uint
 /**
  * The drive's metadata Merkle root: one leaf per entry over
  * `utf8(path) ++ data_root[32] ++ u64_le(size)`, entries ordered by UTF-8 byte
- * value (matching Rust's `BTreeMap<String>`), folded by `merkleRoot`.
+ * value, folded by `merkleRoot`.
  * Empty drive → 32 zero bytes.
  */
 export function metadataMerkleRoot(entries: MerkleEntry[]): Uint8Array {

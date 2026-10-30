@@ -116,26 +116,6 @@ pub trait StorageBackend: Send + Sync {
     /// Commit data roots to the bucket's MMR.
     fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
 
-    /// Collect actual chunk data under a data root (DFS, leaf data in order).
-    fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
-        let mut chunks = Vec::new();
-        let mut stack = vec![root];
-
-        while let Some(hash) = stack.pop() {
-            if let Some(node) = self.get_node(&hash) {
-                match node {
-                    ChunkTreeNode::Internal { left, right } => {
-                        stack.push(right);
-                        stack.push(left);
-                    }
-                    ChunkTreeNode::Chunk(data) => chunks.push(data),
-                }
-            }
-        }
-
-        chunks
-    }
-
     /// Hash and byte size of each chunk under `root`, in leaf order. Skips
     /// nodes missing from storage.
     fn collect_leaves(&self, root: H256) -> Vec<(H256, usize)> {

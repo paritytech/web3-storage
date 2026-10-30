@@ -26,9 +26,10 @@ just fs-demo-ci
 ```
 
 `fs-demo-ci` runs `clients/file-system/examples/ci_integration_test.rs`
-against the running infrastructure: it creates a drive (a plain Layer 0 bucket,
-via `create_bucket_with_primary`), exercises directory and file operations
-through the provider's `/fs/{bucket}/...` HTTP endpoints, and asserts the
+against the running infrastructure: it creates a drive (a plain Layer 0 bucket
+with one primary agreement, via `create_bucket_with_primary`), runs directory
+and file operations that the client stores in the bucket through the
+provider's Layer 0 endpoints, and asserts the
 round-trip. It assumes the chain and provider are already up.
 
 This is the same flow exercised by CI in `.github/workflows/integration-tests.yml`,
