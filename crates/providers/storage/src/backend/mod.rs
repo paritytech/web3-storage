@@ -124,9 +124,8 @@ pub trait StorageBackend: Send + Sync {
 
     /// Collect actual chunk data under a data root (DFS, leaf data in order).
     ///
-    /// A node this cannot read is skipped rather than treated as an error:
-    /// callers use this for a best-effort listing, not for the proof path,
-    /// where a truncated result is preferable to failing the whole call.
+    /// Skips nodes it cannot read. Use [`Self::collect_leaves`] where a short
+    /// result must be an error.
     fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
         let mut chunks = Vec::new();
         let mut stack = vec![root];
@@ -218,10 +217,11 @@ pub trait StorageBackend: Send + Sync {
         data_root: H256,
         range: Range<u64>,
     ) -> Result<Vec<ProvenChunk>, Error> {
-        match chunk_hashes(self, data_root) {
-            Err(Error::NodeNotFound(hash)) if hash == data_root => Ok(Vec::new()),
-            chunk_hashes => proven_chunks(self, &chunk_hashes?, range),
-        }
+        let chunk_hashes = match chunk_hashes(self, data_root) {
+            Err(Error::NodeNotFound(hash)) if hash == data_root => return Ok(Vec::new()),
+            result => result?,
+        };
+        proven_chunks(self, &chunk_hashes, range)
     }
 
     /// Delete data before a sequence number.

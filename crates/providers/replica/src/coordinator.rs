@@ -584,7 +584,7 @@ impl ReplicaSyncCoordinator {
                 continue;
             }
 
-            if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id).ok().flatten() {
+            if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id)? {
                 if bucket.mmr_root == snapshot.mmr_root {
                     continue;
                 }

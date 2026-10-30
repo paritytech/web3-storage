@@ -73,7 +73,7 @@ impl ChallengeChainClient for MockChallengeChainClient {
             .unwrap()
             .push((challenge_id, response));
         if let Some(err) = self.submit_error.lock().unwrap().as_ref() {
-            return Err(ChallengeError::ChainUnavailable {
+            return Err(ChallengeError::Chain {
                 detail: err.clone(),
             });
         }
@@ -329,56 +329,26 @@ async fn test_data_not_found_no_bucket() {
 
 #[tokio::test(start_paused = true)]
 async fn test_proof_generation_failed_on_backend_outage_not_data_not_found() {
-    // The exact case this cycle exists for: a storage backend failure while
-    // gathering the chunk (not the data being missing) must be reported as
-    // a retryable proof-generation failure, not as data loss. Before the
-    // cause-based classification, any step-2 failure - missing or broken -
-    // was unconditionally DataNotFound, so this assertion fails against the
-    // pre-cycle code.
+    // A storage backend failure while gathering the chunk (not the data being
+    // missing) must be reported as a retryable proof-generation failure, not
+    // as data loss.
     let (state, challenge, _dir) = test_state_with_data();
-    let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
-    let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
-    let result_clone = Arc::clone(&result);
-    let callback: Arc<dyn Fn(ChallengeResponseResult) + Send + Sync> = Arc::new(move |r| {
-        let mut guard = result_clone.lock().unwrap();
-        if guard.is_none() {
-            *guard = Some(r);
-        }
-    });
+    let (result, submitted) = respond_once(
+        Arc::new(StepTwoBackendFailure(state.challenge_proof_source())),
+        challenge,
+    )
+    .await;
 
-    let config = ChallengeResponderConfig {
-        poll_interval: Duration::from_millis(50),
-        auto_respond: true,
-        ..ChallengeResponderConfig::new(alice_account())
-    };
-    let proof_source = Arc::new(StepTwoBackendFailure(state.challenge_proof_source()));
-    let responder = ChallengeResponder::new(config, proof_source, Box::new(Arc::clone(&mock)));
-    let handle = responder
-        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
-        .await
-        .unwrap();
-
-    let result_ref = Arc::clone(&result);
-    assert!(
-        wait_for(5, 10, || {
-            let r = Arc::clone(&result_ref);
-            async move { r.lock().unwrap().is_some() }
-        })
-        .await,
-        "timed out waiting for callback"
-    );
-    handle.stop().await.unwrap();
-
-    let r = result.lock().unwrap();
     assert!(
         matches!(
-            &*r,
-            Some(ChallengeResponseResult::ProofGenerationFailed { .. })
+            result,
+            ChallengeResponseResult::ProofGenerationFailed { .. }
         ),
         "expected ProofGenerationFailed, got {:?}",
-        r
+        result
     );
+    assert!(submitted.is_empty());
 }
 
 #[tokio::test(start_paused = true)]

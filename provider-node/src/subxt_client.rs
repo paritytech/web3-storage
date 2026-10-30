@@ -979,18 +979,18 @@ impl ChallengeChainClient for SubxtChainClient {
 
         let challenges = self
             .api()
-            .map_err(|e| ChallengeError::ChainUnavailable {
+            .map_err(|e| ChallengeError::Chain {
                 detail: e.to_string(),
             })?
             .at_current_block()
             .await
-            .map_err(|e| ChallengeError::ChainUnavailable {
+            .map_err(|e| ChallengeError::Chain {
                 detail: format!("Failed to get storage: {e}"),
             })?
             .runtime_apis()
             .call(payload)
             .await
-            .map_err(|e| ChallengeError::ChainUnavailable {
+            .map_err(|e| ChallengeError::Chain {
                 detail: format!("provider_challenges runtime API call failed: {e}"),
             })?;
 
@@ -1017,12 +1017,12 @@ impl ChallengeChainClient for SubxtChainClient {
             .unvalidated();
         let at = self
             .api()
-            .map_err(|e| ChallengeError::ChainUnavailable {
+            .map_err(|e| ChallengeError::Chain {
                 detail: e.to_string(),
             })?
             .at_current_block()
             .await
-            .map_err(|e| ChallengeError::ChainUnavailable {
+            .map_err(|e| ChallengeError::Chain {
                 detail: format!("Failed to get storage: {e}"),
             })?;
 
@@ -1030,16 +1030,15 @@ impl ChallengeChainClient for SubxtChainClient {
             .storage()
             .try_fetch(storage_address, (deadline, index))
             .await
-            .map_err(|e| ChallengeError::ChainUnavailable {
+            .map_err(|e| ChallengeError::Chain {
                 detail: format!("Failed to fetch challenge: {e}"),
             })?
         else {
             return Ok(None);
         };
 
-        // The chain answered, but the value it returned couldn't be decoded -
-        // a rejection of what we got, not a failure to reach it.
-        let challenge = value.decode().map_err(|e| ChallengeError::ChainRejected {
+        // The chain answered, but the value it returned couldn't be decoded.
+        let challenge = value.decode().map_err(|e| ChallengeError::Chain {
             detail: format!("Failed to decode challenge at {deadline}/{index}: {e}"),
         })?;
 
@@ -1078,7 +1077,7 @@ impl ChallengeChainClient for SubxtChainClient {
         let block_hash = self
             .submit_and_finalize(&tx, "respond_to_challenge")
             .await
-            .map_err(|e| ChallengeError::ChainUnavailable {
+            .map_err(|e| ChallengeError::Chain {
                 detail: e.to_string(),
             })?;
 

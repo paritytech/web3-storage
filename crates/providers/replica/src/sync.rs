@@ -78,7 +78,7 @@ impl ReplicaSync {
         self.storage.init_bucket(bucket_id, u64::MAX)?;
 
         // Get local state
-        let local_bucket = self.storage.get_bucket(bucket_id).ok().flatten();
+        let local_bucket = self.storage.get_bucket(bucket_id)?;
 
         // Determine what we need to fetch
         let target_root = peaks_response.mmr_root;

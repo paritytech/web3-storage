@@ -51,21 +51,10 @@ impl ChallengeProofSource for StorageProofSource {
 /// Translate a storage-layer failure into what the challenge responder needs
 /// to know: is the proof data provably gone, or did the backend itself fail?
 ///
-/// `NodeNotFound`, `BucketNotFound`, `ChunkIndexOutOfRange` and `LeafNotFound` mean
-/// the storage layer looked and found nothing there - genuine absence, once
-/// the reads underneath stopped collapsing a backend failure into the same
-/// signal (see `StorageBackend`). Everything else means the
-/// lookup didn't complete cleanly, so the data's actual presence is unknown.
-/// `RocksDb`, `ColumnFamilyMissing` and `Serialization` are the ones a read
-/// path really produces: the engine failed, the database layout is wrong, or
-/// a record decoded to garbage - in none of those did storage get to look and
-/// find nothing. It also includes variants that structurally
-/// cannot come back from either read path (`ChildrenMissing`, `QuotaExceeded`
-/// and `InvalidHash` are write-side only; `RootNotFound` is produced solely
-/// by `commit`, confirmed by grepping the backend for its only call site) -
-/// treating an impossible value as "the backend is behaving unexpectedly" is
-/// the safe direction, since the alternative would treat it as provable data
-/// loss on no real evidence.
+/// `NodeNotFound`, `BucketNotFound`, `ChunkIndexOutOfRange` and `LeafNotFound`
+/// mean storage looked and found nothing. Every other error means the lookup
+/// did not complete, so whether the data exists is unknown and the failure is
+/// not treated as data loss.
 fn classify(e: provider_storage::Error, target: ProofTarget) -> ChallengeError {
     use provider_storage::Error;
     match e {
@@ -171,7 +160,6 @@ mod tests {
             .unwrap_err();
 
         assert!(err.risks_slashing());
-        assert!(!err.is_retryable());
         match err {
             ChallengeError::ProofDataMissing { target } => assert_eq!(
                 target,
@@ -208,153 +196,52 @@ mod tests {
         }
     }
 
-    /// A backend that fails outright (not "empty", genuinely broken) must
-    /// not be reported the same way as absence - this is the
-    /// `StorageUnavailable` row of the mapping. There is no way to break a
-    /// real `DiskStorage` from outside its own crate, so this uses a bare
-    /// in-test `StorageBackend` that always errors, proving the boundary
-    /// classifies on the error returned rather than on any RocksDB detail.
-    struct AlwaysFailingBackend;
-
-    impl provider_storage::StorageBackend for AlwaysFailingBackend {
-        fn init_bucket(
-            &self,
-            _: storage_primitives::BucketId,
-            _: u64,
-        ) -> Result<(), provider_storage::Error> {
-            unimplemented!("not exercised by this test")
-        }
-        fn get_bucket(
-            &self,
-            _: storage_primitives::BucketId,
-        ) -> Result<Option<provider_storage::BucketInfo>, provider_storage::Error> {
-            unimplemented!("not exercised by this test")
-        }
-        fn bucket_ids(&self) -> Vec<storage_primitives::BucketId> {
-            unimplemented!("not exercised by this test")
-        }
-        fn total_nodes(&self) -> u64 {
-            unimplemented!("not exercised by this test")
-        }
-        fn total_bytes(&self) -> u64 {
-            unimplemented!("not exercised by this test")
-        }
-        fn store_node(
-            &self,
-            _: storage_primitives::BucketId,
-            _: sp_core::H256,
-            _: ChunkTreeNode,
-        ) -> Result<(), provider_storage::Error> {
-            unimplemented!("not exercised by this test")
-        }
-        fn get_node(
-            &self,
-            _: &sp_core::H256,
-        ) -> Result<Option<ChunkTreeNode>, provider_storage::Error> {
-            unimplemented!("not exercised by this test")
-        }
-        fn check_exists(
-            &self,
-            _: storage_primitives::BucketId,
-            hashes: &[sp_core::H256],
-        ) -> (Vec<sp_core::H256>, Vec<sp_core::H256>) {
-            (vec![], hashes.to_vec())
-        }
-        fn commit(
-            &self,
-            _: storage_primitives::BucketId,
-            _: Vec<sp_core::H256>,
-        ) -> Result<provider_storage::CommitOutcome, provider_storage::Error> {
-            unimplemented!("not exercised by this test")
-        }
-        fn delete_before(
-            &self,
-            _: storage_primitives::BucketId,
-            _: u64,
-        ) -> Result<(sp_core::H256, u64, u64), provider_storage::Error> {
-            unimplemented!("not exercised by this test")
-        }
-        fn get_mmr_proof(
-            &self,
-            _: storage_primitives::BucketId,
-            _: u64,
-        ) -> Result<storage_primitives::MmrProof, provider_storage::Error> {
-            unimplemented!("not exercised by this test")
-        }
-        fn get_mmr_proof_for_commitment(
-            &self,
-            _: storage_primitives::BucketId,
-            _: &storage_primitives::Commitment,
-            _: u64,
-        ) -> Result<storage_primitives::MmrProof, provider_storage::Error> {
-            Err(provider_storage::Error::ColumnFamilyMissing("nodes"))
-        }
-        fn get_chunk_at_index(
-            &self,
-            _: sp_core::H256,
-            _: u64,
-        ) -> Result<(Vec<u8>, Vec<sp_core::H256>), provider_storage::Error> {
-            Err(provider_storage::Error::Serialization(
-                "simulated corrupt record".to_string(),
-            ))
-        }
-        fn get_mmr_peaks(
-            &self,
-            _: storage_primitives::BucketId,
-        ) -> Result<(sp_core::H256, Vec<sp_core::H256>), provider_storage::Error> {
-            unimplemented!("not exercised by this test")
-        }
-    }
-
+    /// A backend failure must not be reported the same way as absence: only
+    /// the "nothing there" errors are `ProofDataMissing`.
     #[test]
-    fn mmr_proof_backend_failure_is_reported_as_storage_unavailable_not_missing() {
-        let source = StorageProofSource::new(Arc::new(AlwaysFailingBackend));
+    fn classify_separates_absence_from_backend_failure() {
+        use provider_storage::Error;
+        let target = ProofTarget::Chunk {
+            data_root: sp_core::H256::repeat_byte(7),
+            chunk_index: 3,
+        };
 
-        let err = source
-            .get_mmr_proof_for_commitment(1, &any_commitment(), 0)
-            .unwrap_err();
-
-        assert!(err.is_retryable());
-        assert!(!err.risks_slashing());
-        match err {
-            ChallengeError::StorageUnavailable { target, detail } => {
-                assert_eq!(
-                    target,
-                    ProofTarget::MmrLeaf {
-                        bucket_id: 1,
-                        leaf_index: 0,
-                    }
-                );
-                assert_eq!(detail, "Column family not found: nodes".to_string());
-            }
-            other => panic!("expected StorageUnavailable, got {other:?}"),
+        for absent in [
+            Error::NodeNotFound(sp_core::H256::zero()),
+            Error::BucketNotFound(1),
+            Error::ChunkIndexOutOfRange {
+                chunk_index: 3,
+                chunk_count: 1,
+            },
+            Error::LeafNotFound {
+                bucket_id: 1,
+                leaf_index: 0,
+            },
+        ] {
+            assert!(
+                matches!(
+                    classify(absent, target.clone()),
+                    ChallengeError::ProofDataMissing { .. }
+                ),
+                "absence must be ProofDataMissing"
+            );
         }
-    }
 
-    #[test]
-    fn chunk_backend_failure_is_reported_as_storage_unavailable_not_missing() {
-        let source = StorageProofSource::new(Arc::new(AlwaysFailingBackend));
-        let root = sp_core::H256::repeat_byte(7);
-
-        let err = source.get_chunk_at_index(root, 3).unwrap_err();
-
-        assert!(err.is_retryable());
-        assert!(!err.risks_slashing());
-        match err {
-            ChallengeError::StorageUnavailable { target, detail } => {
-                assert_eq!(
-                    target,
-                    ProofTarget::Chunk {
-                        data_root: root,
-                        chunk_index: 3,
-                    }
-                );
-                assert_eq!(
-                    detail,
-                    "Serialization error: simulated corrupt record".to_string()
-                );
+        for failed in [
+            Error::Serialization("simulated corrupt record".to_string()),
+            Error::ColumnFamilyMissing("nodes"),
+        ] {
+            let detail = failed.to_string();
+            match classify(failed, target.clone()) {
+                ChallengeError::StorageUnavailable {
+                    target: t,
+                    detail: d,
+                } => {
+                    assert_eq!(t, target);
+                    assert_eq!(d, detail);
+                }
+                other => panic!("expected StorageUnavailable, got {other:?}"),
             }
-            other => panic!("expected StorageUnavailable, got {other:?}"),
         }
     }
 }

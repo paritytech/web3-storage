@@ -1087,6 +1087,37 @@ mod tests {
         );
     }
 
+    /// A bucket holding a root over two stored chunks. Returns the root and
+    /// the first chunk's hash.
+    fn two_chunk_tree() -> (TempDir, DiskStorage, H256, H256) {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, 1024 * 1024).unwrap();
+
+        let c0 = hash_leaf(b"chunk-0");
+        let c1 = hash_leaf(b"chunk-1");
+        storage
+            .store_node(1, c0, ChunkTreeNode::Chunk(b"chunk-0".to_vec()))
+            .unwrap();
+        storage
+            .store_node(1, c1, ChunkTreeNode::Chunk(b"chunk-1".to_vec()))
+            .unwrap();
+
+        let root = storage_primitives::hash_children(c0, c1);
+        storage
+            .store_node(
+                1,
+                root,
+                ChunkTreeNode::Internal {
+                    left: c0,
+                    right: c1,
+                },
+            )
+            .unwrap();
+
+        (dir, storage, root, c0)
+    }
+
     #[test]
     fn get_chunk_at_index_past_the_end_of_a_healthy_root_reports_absence() {
         // Stands for: the client asked for a chunk index that was never
@@ -1108,36 +1139,11 @@ mod tests {
     fn get_chunk_at_index_with_a_corrupt_node_mid_traversal_reports_a_backend_failure_not_a_short_list(
     ) {
         // Stands for: an operator's disk has a corrupted record for one
-        // chunk of a multi-chunk file. Before this test existed, a failed
-        // read mid-traversal silently shortened the chunk list, so asking
-        // for a chunk that is genuinely still there could trip the
-        // "index past the end" guard and be reported as absent - the exact
-        // false "you will be slashed" signal this whole cycle exists to
-        // rule out.
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
-        storage.init_bucket(1, 1024 * 1024).unwrap();
-
-        let c0 = hash_leaf(b"chunk-0");
-        let c1 = hash_leaf(b"chunk-1");
-        storage
-            .store_node(1, c0, ChunkTreeNode::Chunk(b"chunk-0".to_vec()))
-            .unwrap();
-        storage
-            .store_node(1, c1, ChunkTreeNode::Chunk(b"chunk-1".to_vec()))
-            .unwrap();
-
-        let root = storage_primitives::hash_children(c0, c1);
-        storage
-            .store_node(
-                1,
-                root,
-                ChunkTreeNode::Internal {
-                    left: c0,
-                    right: c1,
-                },
-            )
-            .unwrap();
+        // chunk of a multi-chunk file. A failed read mid-traversal must not
+        // shorten the chunk list: asking for a chunk that is still there
+        // would trip the "index past the end" guard and be reported as
+        // absent, a false "you will be slashed" signal.
+        let (_dir, storage, root, c0) = two_chunk_tree();
 
         corrupt_node(&storage, c0);
 
@@ -1154,33 +1160,9 @@ mod tests {
     #[test]
     fn get_chunk_at_index_with_a_missing_node_mid_traversal_reports_node_not_found() {
         // Stands for: a node the tree references was never written (or was
-        // pruned) rather than corrupted. Before this fix, traversal treated
-        // an absent node the same as an empty subtree and silently dropped
-        // it, shortening the chunk list instead of surfacing the gap.
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
-        storage.init_bucket(1, 1024 * 1024).unwrap();
-
-        let c0 = hash_leaf(b"chunk-0");
-        let c1 = hash_leaf(b"chunk-1");
-        storage
-            .store_node(1, c0, ChunkTreeNode::Chunk(b"chunk-0".to_vec()))
-            .unwrap();
-        storage
-            .store_node(1, c1, ChunkTreeNode::Chunk(b"chunk-1".to_vec()))
-            .unwrap();
-
-        let root = storage_primitives::hash_children(c0, c1);
-        storage
-            .store_node(
-                1,
-                root,
-                ChunkTreeNode::Internal {
-                    left: c0,
-                    right: c1,
-                },
-            )
-            .unwrap();
+        // pruned) rather than corrupted. Traversal must surface the gap, not
+        // treat the node as an empty subtree.
+        let (_dir, storage, root, c0) = two_chunk_tree();
 
         // c0 is now gone, e.g. pruned, even though the root still references it.
         delete_node(&storage, c0);
