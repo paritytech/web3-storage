@@ -869,3 +869,151 @@ fn confirm_replica_sync_after_interval_with_new_root() {
         }
     });
 }
+
+/// `Superseded` is a primary-only defense. A replica is liable for exactly
+/// the root it confirmed, so a newer canonical root does not defend it, while
+/// the primary challenged on the same old root is defended by it.
+#[test]
+fn replica_cannot_answer_with_superseded() {
+    use sp_core::H256;
+    use storage_primitives::{ChallengeId, ChunkLocation};
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+
+        // Replica 2 confirms the current root 0xAB (0..10).
+        let mut roots = [None; 7];
+        roots[0] = Some(H256::repeat_byte(0xAB));
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+
+        let target = ChunkLocation {
+            leaf_index: 3,
+            chunk_index: 0,
+        };
+        // (101, 0): the replica, bound to its confirmed root 0xAB.
+        assert_ok!(StorageProvider::challenge_replica(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            2,
+            target,
+        ));
+        // (101, 1): the primary, bound to the snapshot root 0xAB.
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            3,
+            target,
+        ));
+
+        // A new checkpoint replaces 0xAB with 0xCD over the same range.
+        super::challenge::advance_snapshot_root(bucket_id);
+
+        // The primary is defended by the newer canonical root.
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(3),
+            ChallengeId {
+                deadline: 101,
+                index: 1,
+            },
+            ChallengeResponse::<Test>::Superseded,
+        ));
+        // The replica is not; its challenge stays open.
+        assert_noop!(
+            StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101,
+                    index: 0,
+                },
+                ChallengeResponse::<Test>::Superseded,
+            ),
+            Error::<Test>::InvalidSupersededClaim
+        );
+        assert!(Challenges::<Test>::get(101, 0).is_some());
+    });
+}
+
+/// `Deleted` is a primary-only defense: the same admin-signed deletion that
+/// defends the primary is rejected from a replica.
+#[test]
+fn replica_cannot_answer_with_deleted() {
+    use codec::Encode;
+    use sp_core::{Pair, H256};
+    use storage_primitives::{ChallengeId, ChunkLocation, Commitment, CommitmentPayload};
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+        // Signatures verify against a registered key, so the admin (account 1)
+        // registers one.
+        register_provider(1, 200);
+
+        let mut roots = [None; 7];
+        roots[0] = Some(H256::repeat_byte(0xAB));
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+
+        let target = ChunkLocation {
+            leaf_index: 3,
+            chunk_index: 0,
+        };
+        assert_ok!(StorageProvider::challenge_replica(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            2,
+            target,
+        ));
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            3,
+            target,
+        ));
+
+        // The admin signs a deletion of seq 0..4, which covers the challenged
+        // seq 3.
+        let deletion = Commitment {
+            mmr_root: H256::repeat_byte(0x77),
+            start_seq: 4,
+            leaf_count: 0,
+        };
+        let payload = CommitmentPayload::new(bucket_id, deletion);
+        let deleted = || ChallengeResponse::<Test>::Deleted {
+            new_mmr_root: deletion.mmr_root,
+            new_start_seq: deletion.start_seq,
+            admin: 1,
+            admin_signature: sp_runtime::MultiSignature::Sr25519(
+                provider_signer(1).sign(&payload.encode()),
+            ),
+        };
+
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(3),
+            ChallengeId {
+                deadline: 101,
+                index: 1,
+            },
+            deleted(),
+        ));
+        assert_noop!(
+            StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101,
+                    index: 0,
+                },
+                deleted(),
+            ),
+            Error::<Test>::InvalidDeletionClaim
+        );
+        assert!(Challenges::<Test>::get(101, 0).is_some());
+    });
+}

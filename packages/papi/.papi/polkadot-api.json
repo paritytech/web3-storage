@@ -5,8 +5,8 @@
     "parachain": {
       "wsUrl": "ws://127.0.0.1:2222",
       "metadata": ".papi/metadata/parachain.scale",
-      "genesis": "0x963a69591bd15911712302d6c16fa31a439aab7cd319df17b8a195a6c482467c",
-      "codeHash": "0x200f609e1bae31e65dcd023ff9ab25904472544634a24b5a821086c186a86374"
+      "genesis": "0x710c4bd8b186ebf677c8b7df2b64d387f947d74a7f29af008558cf1b65dfdb2a",
+      "codeHash": "0x488dfc421a689e58dde30d9b01e694f7d2d336f0e3800f86869f9994adc8cc8a"
     }
   }
 }

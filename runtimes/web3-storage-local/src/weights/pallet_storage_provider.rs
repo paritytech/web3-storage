@@ -259,6 +259,7 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Storage: `StorageProvider::Buckets` (r:1 w:1)
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	fn remove_slashed() -> Weight {
+		// TODO: needs re-benchmarking (one more storage read, #485)
 		// Proof Size summary in bytes:
 		//  Measured:  `1336`
 		//  Estimated: `4801`
@@ -711,6 +712,7 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Storage: `System::Account` (r:2 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	fn respond_to_challenge_deleted() -> Weight {
+		// TODO: needs re-benchmarking (one more storage read, #485)
 		// Proof Size summary in bytes:
 		//  Measured:  `1723`
 		//  Estimated: `6732`
@@ -739,6 +741,7 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(396), added: 2871, mode: `MaxEncodedLen`)
 	fn respond_to_challenge_superseded() -> Weight {
+		// TODO: needs re-benchmarking (one more storage read, #485)
 		// Proof Size summary in bytes:
 		//  Measured:  `1510`
 		//  Estimated: `6196`

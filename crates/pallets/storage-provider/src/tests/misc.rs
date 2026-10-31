@@ -453,3 +453,45 @@ fn end_agreement_emits_event() {
         assert!(found);
     });
 }
+
+/// Answering a challenge reads the responder's agreement, so `remove_slashed`
+/// keeps the agreement while a challenge on it is open.
+#[test]
+fn remove_slashed_waits_for_open_challenge() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = super::challenge::setup_with_snapshot(2, 1);
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            storage_primitives::ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        ));
+        super::slash_provider_stake(2);
+
+        assert_noop!(
+            StorageProvider::remove_slashed(RuntimeOrigin::signed(3), bucket_id, 2),
+            Error::<Test>::AgreementHasPendingChallenge
+        );
+        assert!(StorageAgreements::<Test>::get(bucket_id, 2).is_some());
+
+        // Once the challenge is resolved, the cleanup goes through.
+        run_to_block(102);
+        assert_ok!(StorageProvider::resolve_expired_challenge(
+            RuntimeOrigin::signed(3),
+            storage_primitives::ChallengeId {
+                deadline: 101,
+                index: 0,
+            },
+        ));
+        assert_ok!(StorageProvider::remove_slashed(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2
+        ));
+        assert!(StorageAgreements::<Test>::get(bucket_id, 2).is_none());
+    });
+}

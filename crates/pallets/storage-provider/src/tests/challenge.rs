@@ -2816,19 +2816,20 @@ mod challenge_tests {
         });
     }
 
-    /// After `remove_slashed` the agreement is gone but the challenge is still
-    /// open; bucket removal must stay blocked until it is resolved.
+    /// Every agreement removal, `remove_slashed` included, is blocked while a
+    /// challenge on it is open, so no call leaves a challenge without its
+    /// agreement. The prefix check in bucket removal guards that invariant;
+    /// this test removes the agreement from storage directly to reach it.
     #[test]
     fn bucket_removal_blocked_by_a_challenge_outliving_its_agreement() {
         new_test_ext().execute_with(|| {
             let id = open_challenge();
             slash_provider_stake(2);
-            assert_ok!(StorageProvider::remove_slashed(
-                RuntimeOrigin::signed(5),
-                0,
-                2
-            ));
-            assert!(StorageAgreements::<Test>::iter_prefix(0).next().is_none());
+            assert_noop!(
+                StorageProvider::remove_slashed(RuntimeOrigin::signed(5), 0, 2),
+                Error::<Test>::AgreementHasPendingChallenge
+            );
+            StorageAgreements::<Test>::remove(0, 2);
 
             assert_noop!(
                 StorageProvider::cleanup_bucket_internal(0, &1),
