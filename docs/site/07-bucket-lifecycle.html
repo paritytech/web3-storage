@@ -594,8 +594,9 @@
         </div>
         <ul>
           <li>&bull; checkpoint needs min_providers primary signatures and records primary_signers</li>
+          <li>&bull; A checkpoint never moves back: start_seq never decreases; the end advances, and after a deletion may also stay (SnapshotNotForward)</li>
           <li>&bull; freeze_bucket: admin only, irreversible, needs a snapshot with min_providers acknowledgments</li>
-          <li>&bull; Frozen: start_seq cannot decrease below frozen_start_seq</li>
+          <li>&bull; Frozen: start_seq stays at frozen_start_seq; only the end advances</li>
         </ul>
       </div>
 
