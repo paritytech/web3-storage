@@ -1350,9 +1350,6 @@ impl CheckpointManager {
         &self,
         collection: &CommitmentCollection,
     ) -> Result<H256, ClientError> {
-        let api = self.chain_client.api();
-        let signer = self.chain_client.signer()?;
-
         let tx = extrinsics::checkpoint(
             collection.bucket_id,
             Commitment {
@@ -1364,19 +1361,7 @@ impl CheckpointManager {
         );
 
         // Submit and wait for finalization
-        let tx_progress = api
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit: {e}")))?;
-
-        let _events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        self.chain_client.submit(&tx).await?;
 
         // Return a success hash (we can't easily get block hash from events in this subxt version)
         Ok(collection.mmr_root)

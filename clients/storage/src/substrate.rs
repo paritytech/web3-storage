@@ -14,6 +14,9 @@ use std::str::FromStr;
 use storage_primitives::{ChunkLocation, Commitment};
 use subxt::{OnlineClient, PolkadotConfig};
 
+/// Attempts [`SubstrateClient::submit`] makes before giving up on a stale nonce.
+const SUBMIT_ATTEMPTS: u32 = 3;
+
 /// Substrate client for chain interactions.
 #[derive(Clone)]
 pub struct SubstrateClient {
@@ -63,22 +66,45 @@ impl SubstrateClient {
 
     /// Sign `tx`, submit it and wait for finalized success. Returns the
     /// extrinsic's events.
+    ///
+    /// Retries on a stale nonce (error 1010), which happens when several
+    /// transactions are submitted in quick succession: the RPC node's cached
+    /// nonce may not yet include the previous transaction. Up to
+    /// `SUBMIT_ATTEMPTS` attempts, waiting 1s then 2s between them, give the
+    /// node time to catch up.
     pub async fn submit(
         &self,
         tx: &impl subxt::tx::Payload,
     ) -> Result<subxt::extrinsics::ExtrinsicEvents<PolkadotConfig>, ClientError> {
         let signer = self.signer()?;
-        self.api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))
+        let mut attempt = 1;
+        loop {
+            let submitted = self
+                .api()
+                .at_current_block()
+                .await
+                .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+                .transactions()
+                .sign_and_submit_then_watch_default(tx, signer)
+                .await;
+            match submitted {
+                Ok(progress) => {
+                    return progress
+                        .wait_for_finalized_success()
+                        .await
+                        .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")));
+                }
+                // 1010 is `InvalidTransaction::Stale`.
+                Err(e) if e.to_string().contains("1010") && attempt < SUBMIT_ATTEMPTS => {
+                    tracing::debug!("Stale nonce (attempt {attempt}), retrying in {attempt}s");
+                    tokio::time::sleep(std::time::Duration::from_secs(attempt as u64)).await;
+                    attempt += 1;
+                }
+                Err(e) => {
+                    return Err(ClientError::Chain(format!("Failed to submit tx: {e}")));
+                }
+            }
+        }
     }
 
     /// Get the signer if available.
