@@ -11,9 +11,7 @@
 //!
 //! Tests are skipped (not failed) when the chain is unreachable.
 
-mod common;
-
-use common::{alice_provider, bob_provider, chain_guard, chain_setup, dev_account};
+use client_test_support::{alice_provider, bob_provider, chain_guard, chain_setup, dev_account};
 use storage_client::ProviderSettings;
 
 /// After `chain_setup`, Alice is a registered provider, so `get_provider_info`

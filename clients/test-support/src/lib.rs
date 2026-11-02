@@ -27,7 +27,6 @@ pub const CHAIN_WS: &str = "ws://127.0.0.1:2222";
 /// Acquire this lock before any test that submits chain extrinsics
 /// to avoid error "Priority is too low"
 ///
-#[allow(dead_code)]
 pub async fn chain_guard() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     // Initialize tracing once per process
@@ -50,7 +49,6 @@ const MIN_STAKE: u128 = 1_000 * 1_000_000_000_000u128;
 ///
 /// Avoids hardcoding addresses in tests. Derived from the same `//Name` seed the
 /// signer uses, so the account and signer always match.
-#[allow(dead_code)]
 pub fn dev_ss58(name: &str) -> String {
     dev_account(name).to_ss58check()
 }
@@ -68,7 +66,6 @@ fn dev_suri(name: &str) -> String {
 ///
 /// Same derivation as [`dev_ss58`], just without the SS58 round-trip — useful for
 /// storage queries / parser APIs that take `&AccountId32` directly.
-#[allow(dead_code)]
 pub fn dev_account(name: &str) -> AccountId32 {
     let signer = Signer::from_seed(&dev_suri(name)).expect("valid dev seed");
     AccountId32::from(signer.keypair().public_key().0)
@@ -88,7 +85,6 @@ fn chain_config() -> ClientConfig {
 // ─── Common chain setup ───────────────────────────────────────────────────────
 
 /// State created by [`chain_setup`] and shared across each test's lifecycle.
-#[allow(dead_code)]
 pub struct ChainSetup {
     /// Alice's SS58 address (she is the admin *and* the registered provider).
     pub alice_ss58: String,
@@ -108,7 +104,6 @@ pub struct ChainSetup {
 ///
 /// Returns `None` when the chain is not reachable, allowing callers to skip
 /// the test gracefully.
-#[allow(dead_code)]
 pub async fn chain_setup() -> Option<ChainSetup> {
     let alice_ss58 = dev_ss58("alice");
     let bob_ss58 = dev_ss58("bob");
@@ -197,7 +192,6 @@ pub async fn chain_setup() -> Option<ChainSetup> {
 // ─── Per-client factories ─────────────────────────────────────────────────────
 
 /// Build an `AdminClient` signed by Alice. Returns `None` if the chain is down.
-#[allow(dead_code)]
 pub async fn alice_admin() -> Option<AdminClient> {
     let mut client = AdminClient::new(chain_config(), Signer::from_seed("//Alice").ok()?).ok()?;
     if client.connect().await.is_err() {
@@ -207,7 +201,6 @@ pub async fn alice_admin() -> Option<AdminClient> {
 }
 
 /// Build a `ChallengerClient` signed by Alice. Returns `None` if the chain is down.
-#[allow(dead_code)]
 pub async fn alice_challenger() -> Option<ChallengerClient> {
     let mut client =
         ChallengerClient::new(chain_config(), Signer::from_seed("//Alice").ok()?).ok()?;
@@ -229,20 +222,17 @@ async fn dev_provider(seed: &str) -> Option<ProviderClient> {
 
 /// Build a `ProviderClient` signed by Alice, the provider `chain_setup`
 /// registers. Returns `None` if the chain is down.
-#[allow(dead_code)]
 pub async fn alice_provider() -> Option<ProviderClient> {
     dev_provider("//Alice").await
 }
 
 /// Build a `ProviderClient` signed by Bob, who is never registered as a
 /// provider. Returns `None` if the chain is down.
-#[allow(dead_code)]
 pub async fn bob_provider() -> Option<ProviderClient> {
     dev_provider("//Bob").await
 }
 
 /// Build a read-only `DiscoveryClient`. Returns `None` if the chain is down.
-#[allow(dead_code)]
 pub async fn dev_discovery() -> Option<DiscoveryClient> {
     let mut client = DiscoveryClient::new(chain_config()).ok()?;
     if client.connect().await.is_err() {
@@ -319,7 +309,6 @@ fn publish_matching_registration(state: &ProviderState) {
 }
 
 /// Spawn `n` independent in-process provider nodes.
-#[allow(dead_code)]
 pub async fn start_providers(n: usize) -> Vec<String> {
     let mut urls = Vec::with_capacity(n);
     for _ in 0..n {
@@ -333,7 +322,6 @@ pub async fn start_providers(n: usize) -> Vec<String> {
 ///
 /// Signs provider requests as `//Alice`, matching the `Admin` member granted by
 /// [`start_test_provider`], so uploads/commits are authorized.
-#[allow(dead_code)]
 pub fn make_client(provider_url: String) -> StorageUserClient {
     StorageUserClient::new(
         ClientConfig {
