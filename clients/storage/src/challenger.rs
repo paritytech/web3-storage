@@ -10,7 +10,7 @@
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::convert;
-use crate::substrate::{extrinsics, fetch_current_anchor_block, SubstrateClient};
+use crate::substrate::{extrinsics, fetch_bucket, fetch_current_anchor_block, SubstrateClient};
 use crate::Signer;
 use sp_runtime::AccountId32;
 use storage_primitives::{BucketId, ChunkLocation, Commitment};
@@ -348,17 +348,7 @@ impl ChallengerClient {
             // height.
             let anchor_block = fetch_current_anchor_block(&at).await?;
 
-            let bucket_value = at
-                .storage()
-                .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
-                .await
-                .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?;
-
-            if let Some(value) = bucket_value {
-                let bucket = value
-                    .decode()
-                    .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
-
+            if let Some(bucket) = fetch_bucket(&at, bucket_id).await? {
                 let checkpoint_block = bucket
                     .snapshot
                     .map(|s| s.checkpoint_block)

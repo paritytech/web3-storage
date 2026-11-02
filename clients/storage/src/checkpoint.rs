@@ -33,7 +33,7 @@ use crate::checkpoint_persistence::{
     CheckpointPersistence, PersistedCheckpointState, PersistenceConfig, StateBuilder,
 };
 use crate::convert;
-use crate::substrate::{extrinsics, SubstrateClient};
+use crate::substrate::{extrinsics, fetch_bucket, SubstrateClient};
 use crate::{ClientError, CommitmentResponse};
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -860,14 +860,9 @@ impl CheckpointManager {
     ) -> Result<Vec<ProviderInfo>, ClientError> {
         let at = self.chain_client.at_current_block().await?;
 
-        let bucket = at
-            .storage()
-            .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
-            .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
+        let bucket = fetch_bucket(&at, bucket_id)
+            .await?
+            .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?;
 
         let provider_accounts: Vec<AccountId32> = convert::unbounded(bucket.primary_providers)
             .iter()
@@ -1140,18 +1135,9 @@ impl CheckpointManager {
     where
         C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
     {
-        let bucket = at
-            .storage()
-            .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?;
-
-        let Some(bucket) = bucket else {
+        let Some(bucket) = fetch_bucket(at, bucket_id).await? else {
             return Ok(None);
         };
-        let bucket = bucket
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
 
         Ok(bucket
             .snapshot

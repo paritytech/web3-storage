@@ -495,6 +495,76 @@ where
     })
 }
 
+/// The bucket id from the `BucketCreated` event that a bucket-creating
+/// extrinsic emits.
+pub fn created_bucket_id(
+    events: &subxt::extrinsics::ExtrinsicEvents<PolkadotConfig>,
+) -> Result<storage_primitives::BucketId, ClientError> {
+    let created = events
+        .find_first::<storage_subxt::api::storage_provider::events::BucketCreated>()
+        .ok_or_else(|| {
+            ClientError::Chain("BucketCreated event not found in transaction".to_string())
+        })?
+        .map_err(|e| ClientError::Chain(format!("Failed to decode BucketCreated event: {e}")))?;
+    Ok(created.bucket_id)
+}
+
+/// Read `StorageProvider::Buckets(bucket_id)` at `at`, or `None` if the bucket
+/// does not exist.
+pub async fn fetch_bucket<C>(
+    at: &subxt::client::ClientAtBlock<PolkadotConfig, C>,
+    bucket_id: storage_primitives::BucketId,
+) -> Result<
+    Option<storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket>,
+    ClientError,
+>
+where
+    C: subxt::client::OnlineClientAtBlockT<PolkadotConfig>,
+{
+    let value = at
+        .storage()
+        .try_fetch(
+            storage_subxt::api::storage().storage_provider().buckets(),
+            (bucket_id,),
+        )
+        .await
+        .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?;
+    value
+        .map(|v| {
+            v.decode()
+                .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))
+        })
+        .transpose()
+}
+
+/// Ids of the buckets `account` is a member of, owned or shared, read from
+/// `StorageProvider::MemberBuckets` at `at`. Empty if the account has none.
+pub async fn fetch_member_bucket_ids<C>(
+    at: &subxt::client::ClientAtBlock<PolkadotConfig, C>,
+    account: &AccountId32,
+) -> Result<Vec<storage_primitives::BucketId>, ClientError>
+where
+    C: subxt::client::OnlineClientAtBlockT<PolkadotConfig>,
+{
+    let value = at
+        .storage()
+        .try_fetch(
+            storage_subxt::api::storage()
+                .storage_provider()
+                .member_buckets(),
+            (crate::convert::to_subxt_account(account),),
+        )
+        .await
+        .map_err(|e| ClientError::Chain(format!("Failed to fetch member buckets: {e}")))?;
+    let Some(value) = value else {
+        return Ok(vec![]);
+    };
+    let bucket_ids = value
+        .decode()
+        .map_err(|e| ClientError::Chain(format!("Failed to decode member buckets: {e}")))?;
+    Ok(crate::convert::unbounded(bucket_ids))
+}
+
 /// Decode a provider-emitted signature — `0x`-prefixed hex of a SCALE-encoded
 /// [`sp_runtime::MultiSignature`], the wire format every provider-node signing
 /// endpoint uses — back into the typed value.
