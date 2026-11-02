@@ -13,7 +13,6 @@ codec = { workspace = true, features = ["std"] }
 file-system-primitives = { workspace = true, features = ["std"] }
 storage-client = { workspace = true }
 storage-primitives = { workspace = true, features = ["std"] }
-storage-subxt = { workspace = true }
 
 # Async runtime
 async-trait = { workspace = true }
@@ -22,7 +21,6 @@ reqwest = { workspace = true }
 
 # Substrate/Polkadot
 sp-runtime = { workspace = true, features = ["std"] }
-subxt = { workspace = true }
 
 # Utilities
 tracing = { workspace = true }
@@ -30,12 +28,7 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-axum = { workspace = true }
-provider-auth = { workspace = true }
-provider-storage = { workspace = true, features = ["test-helpers"] }
-provider-types = { workspace = true }
-sp-core = { workspace = true, features = ["std"] }
-storage-provider-node = { workspace = true }
+client-test-support = { workspace = true }
 subxt-signer = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 

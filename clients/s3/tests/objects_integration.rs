@@ -3,10 +3,7 @@
 //! S3 object operations against an in-process provider node, over Layer 0
 //! routes only. No chain is needed.
 
-#[path = "../../storage/tests/common/mod.rs"]
-mod common;
-
-use common::start_test_provider;
+use client_test_support::start_test_provider;
 use s3_client::{ListObjectsParams, ObjectClient, PutObjectOptions, S3ClientError};
 use std::collections::HashMap;
 

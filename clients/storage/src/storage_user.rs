@@ -40,6 +40,21 @@ impl StorageUserClient {
         })
     }
 
+    /// Create a storage user client that talks to one provider, with the
+    /// default configuration otherwise.
+    ///
+    /// Trailing `/` characters of `provider_url` are removed, so
+    /// `http://host:3333/` and `http://host:3333` address the same provider.
+    pub fn for_provider(provider_url: &str, auth_signer: Signer) -> ClientResult<Self> {
+        Self::new(
+            ClientConfig {
+                provider_urls: vec![provider_url.trim_end_matches('/').to_string()],
+                ..Default::default()
+            },
+            auth_signer,
+        )
+    }
+
     /// Attach the signed `Authorization` header (`method` = upper-case HTTP verb).
     fn sign(
         &self,
@@ -879,6 +894,23 @@ impl CommitmentResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn for_provider_ignores_trailing_slashes() {
+        let signer = Signer::from_seed("//Alice").unwrap();
+        for url in [
+            "http://host:3333",
+            "http://host:3333/",
+            "http://host:3333//",
+        ] {
+            let client = StorageUserClient::for_provider(url, signer.clone()).unwrap();
+            assert_eq!(
+                client.base.get_provider_url().unwrap(),
+                "http://host:3333",
+                "url {url}"
+            );
+        }
+    }
 
     #[test]
     fn node_from_wire_takes_data_or_exactly_two_children() {

@@ -5,6 +5,7 @@ members = [
 	"clients/file-system",
 	"clients/s3",
 	"clients/storage",
+	"clients/test-support",
 
 	# Storage pallet
 	"crates/pallets/storage-provider",
@@ -67,6 +68,9 @@ file-system-primitives = { path = "crates/primitives/file-system", default-featu
 
 # Storage Interfaces: S3-Compatible Interface
 s3-client = { path = "clients/s3" }
+
+# Client crates: shared test helpers
+client-test-support = { path = "clients/test-support" }
 
 # Substrate frame
 frame-benchmarking = { version = "49.0.0", default-features = false }

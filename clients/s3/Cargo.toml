@@ -21,10 +21,6 @@ sp-runtime = { workspace = true, features = ["std"] }
 
 # Async
 futures = { workspace = true }
-tokio = { workspace = true }
-
-# Subxt for chain interaction
-subxt = { workspace = true }
 
 # Utilities
 array-bytes = { workspace = true }
@@ -34,13 +30,9 @@ tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }
-axum = { workspace = true }
 base64 = { workspace = true }
-provider-auth = { workspace = true }
-provider-storage = { workspace = true, features = ["test-helpers"] }
-provider-types = { workspace = true }
+client-test-support = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
-storage-provider-node = { workspace = true }
 subxt-signer = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
