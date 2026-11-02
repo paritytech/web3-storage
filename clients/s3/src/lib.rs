@@ -27,11 +27,8 @@
 //!   cannot both exist ([`S3ClientError::KeyConflict`]).
 //! - No bucket deletion: Layer 0 has no bucket deletion.
 
-mod substrate;
-
 pub use storage_client::Signer;
 pub use storage_primitives::{BucketId, Role, Visibility};
-pub use substrate::SubstrateClient;
 
 use file_system_client::{BlobStore, EmptyParents, FileStat, FsClientError, Tree};
 use file_system_primitives::{
@@ -40,9 +37,12 @@ use file_system_primitives::{
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
-use storage_client::{ClientConfig, StorageUserClient};
+use storage_client::substrate::{
+    created_bucket_id, extrinsics, fetch_bucket, fetch_member_bucket_ids, SubstrateClient,
+};
+use storage_client::{convert, ClientError, StorageUserClient};
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Maximum object key length in bytes.
 const MAX_OBJECT_KEY_LEN: usize = 1024;
@@ -84,6 +84,15 @@ pub enum S3ClientError {
     /// Reading or writing the bucket's file tree failed.
     #[error(transparent)]
     FileSystem(#[from] FsClientError),
+}
+
+impl From<ClientError> for S3ClientError {
+    fn from(e: ClientError) -> Self {
+        match e {
+            ClientError::Chain(message) => Self::ChainError(message),
+            other => Self::FileSystem(other.into()),
+        }
+    }
 }
 
 /// Result type for S3 client operations.
@@ -225,14 +234,8 @@ impl ObjectClient {
     /// Create an object client for `provider_url`. `signer` authenticates
     /// uploads and commits; the provider checks its bucket role.
     pub fn new(provider_url: &str, signer: Signer) -> Result<Self> {
-        let storage = StorageUserClient::new(
-            ClientConfig {
-                provider_urls: vec![provider_url.trim_end_matches('/').to_string()],
-                ..Default::default()
-            },
-            signer,
-        )
-        .map_err(|e| FsClientError::Config(e.to_string()))?;
+        let storage = StorageUserClient::for_provider(provider_url, signer)
+            .map_err(|e| FsClientError::Config(e.to_string()))?;
         Ok(Self { storage })
     }
 
@@ -313,6 +316,8 @@ impl ObjectClient {
 pub struct S3Client {
     objects: ObjectClient,
     substrate_client: SubstrateClient,
+    /// The signer's account.
+    account: AccountId32,
 }
 
 impl S3Client {
@@ -326,11 +331,20 @@ impl S3Client {
             chain_url, provider_url
         );
 
-        let substrate_client = SubstrateClient::new(chain_url, signer.clone()).await?;
+        info!("Connecting to chain at {}", chain_url);
+        let account_id: [u8; 32] = signer.keypair().public_key().0;
+        let substrate_client = SubstrateClient::connect(chain_url)
+            .await?
+            .with_signer(signer.clone());
+        info!(
+            "Connected to chain, account: {}",
+            array_bytes::bytes2hex("0x", account_id)
+        );
 
         Ok(Self {
             objects: ObjectClient::new(provider_url, signer)?,
             substrate_client,
+            account: AccountId32::new(account_id),
         })
     }
 
@@ -352,10 +366,9 @@ impl S3Client {
         sig: sp_runtime::MultiSignature,
         visibility: Visibility,
     ) -> Result<BucketId> {
-        let bucket_id = self
-            .substrate_client
-            .create_bucket_with_primary(provider, &terms, &sig, visibility)
-            .await?;
+        let tx = extrinsics::create_bucket_with_primary(provider, &terms, &sig, visibility);
+        let events = self.substrate_client.submit(&tx).await?;
+        let bucket_id = created_bucket_id(&events)?;
         info!("S3 bucket created: {}", bucket_id);
         Ok(bucket_id)
     }
@@ -363,9 +376,10 @@ impl S3Client {
     /// Read a bucket from the chain. Fails with
     /// [`S3ClientError::BucketNotFound`] if it does not exist.
     pub async fn head_bucket(&self, bucket_id: BucketId) -> Result<BucketInfo> {
-        self.substrate_client
-            .get_bucket_info(bucket_id)
+        let at = self.substrate_client.at_current_block().await?;
+        fetch_bucket(&at, bucket_id)
             .await?
+            .map(|bucket| to_bucket_info(bucket_id, bucket))
             .ok_or(S3ClientError::BucketNotFound(bucket_id))
     }
 
@@ -373,8 +387,24 @@ impl S3Client {
     /// owned or shared. The chain does not record which buckets contain S3
     /// objects, so this lists all of them.
     pub async fn list_buckets(&self, account: Option<AccountId32>) -> Result<Vec<BucketInfo>> {
-        let account = account.unwrap_or_else(|| self.substrate_client.account());
-        self.substrate_client.list_member_buckets(&account).await
+        let account = account.unwrap_or_else(|| self.account.clone());
+        let at = self.substrate_client.at_current_block().await?;
+        let bucket_ids = fetch_member_bucket_ids(&at, &account).await?;
+
+        // One read per bucket, but issued together rather than in series.
+        let fetched =
+            futures::future::join_all(bucket_ids.iter().map(|id| fetch_bucket(&at, *id))).await;
+
+        let mut buckets = Vec::new();
+        for (id, result) in bucket_ids.iter().zip(fetched) {
+            match result {
+                Ok(Some(bucket)) => buckets.push(to_bucket_info(*id, bucket)),
+                Ok(None) => {}
+                Err(e) => warn!("Failed to read bucket {id}: {e}"),
+            }
+        }
+
+        Ok(buckets)
     }
 
     /// See [`ObjectClient::put_object`].
@@ -410,6 +440,33 @@ impl S3Client {
         params: ListObjectsParams,
     ) -> Result<ListObjectsResponse> {
         self.objects.list_objects_v2(bucket_id, params).await
+    }
+}
+
+/// Convert the decoded `StorageProvider::Buckets` value to [`BucketInfo`].
+fn to_bucket_info(
+    bucket_id: BucketId,
+    bucket: storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket,
+) -> BucketInfo {
+    BucketInfo {
+        bucket_id,
+        members: bucket
+            .members
+            .0
+            .iter()
+            .map(|m| BucketMember {
+                account: AccountId32::new(m.account.0),
+                role: convert::to_sp_role(&m.role),
+            })
+            .collect(),
+        primary_providers: bucket
+            .primary_providers
+            .0
+            .iter()
+            .map(|p| AccountId32::new(p.0))
+            .collect(),
+        visibility: bucket.visibility.into(),
+        frozen: bucket.frozen_start_seq.is_some(),
     }
 }
 

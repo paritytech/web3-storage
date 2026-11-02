@@ -21,10 +21,6 @@ sp-runtime = { workspace = true, features = ["std"] }
 
 # Async
 futures = { workspace = true }
-tokio = { workspace = true }
-
-# Subxt for chain interaction
-subxt = { workspace = true }
 
 # Utilities
 array-bytes = { workspace = true }

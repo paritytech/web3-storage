@@ -13,7 +13,6 @@ codec = { workspace = true, features = ["std"] }
 file-system-primitives = { workspace = true, features = ["std"] }
 storage-client = { workspace = true }
 storage-primitives = { workspace = true, features = ["std"] }
-storage-subxt = { workspace = true }
 
 # Async runtime
 async-trait = { workspace = true }
@@ -22,7 +21,6 @@ reqwest = { workspace = true }
 
 # Substrate/Polkadot
 sp-runtime = { workspace = true, features = ["std"] }
-subxt = { workspace = true }
 
 # Utilities
 tracing = { workspace = true }

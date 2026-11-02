@@ -45,23 +45,21 @@
 //! let bytes = fs_client.download_file(bucket_id, "/documents/report.pdf").await?;
 //! ```
 
-mod substrate;
 pub mod tree;
 
 use file_system_primitives::{Cid, DirectoryEntry, DEFAULT_MIME_TYPE};
 use sp_runtime::AccountId32;
 use std::sync::Arc;
+use storage_client::substrate::{created_bucket_id, SubstrateClient};
 use storage_client::{
     BatchedCheckpointConfig, BatchedInterval, CheckpointCallback, CheckpointLoopHandle,
-    CheckpointManager, ClientConfig, StorageUserClient,
+    CheckpointManager, ClientError, StorageUserClient,
 };
-use storage_subxt::api::storage_provider::events::BucketCreated;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
 pub use storage_client::{CheckpointConfig, CheckpointResult, Signer};
 pub use storage_primitives::{BucketId, Role};
-pub use substrate::SubstrateClient;
 pub use tree::{BlobLength, BlobStore, EmptyParents, FileContent, FileStat, Tree};
 
 /// File system client errors
@@ -138,6 +136,18 @@ pub enum FsClientError {
     },
 }
 
+impl From<ClientError> for FsClientError {
+    fn from(e: ClientError) -> Self {
+        match e {
+            ClientError::Http(e) => Self::Network(e),
+            ClientError::Chain(message) => Self::Blockchain(message),
+            ClientError::Config(message) => Self::Config(message),
+            ClientError::Serialization(message) => Self::Serialization(message),
+            other => Self::StorageClient(other.to_string()),
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, FsClientError>;
 
 /// High-level file system client
@@ -166,15 +176,11 @@ impl FileSystemClient {
         provider_endpoint: &str,
         signer: Signer,
     ) -> Result<Self> {
-        let storage_client = StorageUserClient::new(
-            ClientConfig {
-                provider_urls: vec![provider_endpoint.to_string()],
-                ..Default::default()
-            },
-            signer.clone(),
-        )
-        .map_err(|e| FsClientError::Config(e.to_string()))?;
-        let substrate_client = SubstrateClient::connect(chain_endpoint, signer).await?;
+        let storage_client = StorageUserClient::for_provider(provider_endpoint, signer.clone())
+            .map_err(|e| FsClientError::Config(e.to_string()))?;
+        let substrate_client = SubstrateClient::connect(chain_endpoint)
+            .await?
+            .with_signer(signer);
 
         Ok(Self {
             storage_client,
@@ -378,19 +384,7 @@ impl FileSystemClient {
         bucket_id: BucketId,
         provider_endpoints: Vec<String>,
     ) -> Result<CheckpointResult> {
-        // Get chain endpoint from our substrate client
-        let chain_endpoint = self.substrate_client.endpoint();
-
-        // Create checkpoint manager
-        let manager = CheckpointManager::new(chain_endpoint, CheckpointConfig::default())
-            .await
-            .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
-
-        // Configure with provider endpoints
-        let manager = manager.with_providers(provider_endpoints);
-
-        // Use the same signer as the file system client
-        let manager = manager.with_signer(self.substrate_client.signer().clone());
+        let manager = self.checkpoint_manager(provider_endpoints, CheckpointConfig::default());
 
         // Submit checkpoint
         Ok(manager.submit_checkpoint(bucket_id).await)
@@ -405,15 +399,7 @@ impl FileSystemClient {
         provider_endpoints: Vec<String>,
         config: CheckpointConfig,
     ) -> Result<CheckpointResult> {
-        let chain_endpoint = self.substrate_client.endpoint();
-
-        let manager = CheckpointManager::new(chain_endpoint, config)
-            .await
-            .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
-
-        let manager = manager.with_providers(provider_endpoints);
-
-        let manager = manager.with_signer(self.substrate_client.signer().clone());
+        let manager = self.checkpoint_manager(provider_endpoints, config);
 
         Ok(manager.submit_checkpoint(bucket_id).await)
     }
@@ -465,19 +451,7 @@ impl FileSystemClient {
         // Stop existing checkpoint loop if any
         self.disable_auto_checkpoints().await?;
 
-        // Get chain endpoint
-        let chain_endpoint = self.substrate_client.endpoint();
-
-        // Create checkpoint manager
-        let manager = CheckpointManager::new(chain_endpoint, CheckpointConfig::default())
-            .await
-            .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
-
-        // Configure with provider endpoints
-        let manager = manager.with_providers(provider_endpoints);
-
-        // Use the same signer as the file system client
-        let manager = manager.with_signer(self.substrate_client.signer().clone());
+        let manager = self.checkpoint_manager(provider_endpoints, CheckpointConfig::default());
 
         // Configure batched checkpoint loop
         let batched_config = BatchedCheckpointConfig {
@@ -551,6 +525,17 @@ impl FileSystemClient {
 
     // ============ Chain Interaction ============
 
+    /// A checkpoint manager that uses this client's chain connection and
+    /// signer.
+    fn checkpoint_manager(
+        &self,
+        provider_endpoints: Vec<String>,
+        config: CheckpointConfig,
+    ) -> CheckpointManager {
+        CheckpointManager::with_chain_client(self.substrate_client.clone(), config)
+            .with_providers(provider_endpoints)
+    }
+
     /// Submit `create_bucket_with_primary` and return the new bucket id from
     /// the `BucketCreated` event.
     async fn create_bucket_on_chain(
@@ -567,14 +552,9 @@ impl FileSystemClient {
             tracing::error!("create_bucket_with_primary failed: {e}");
         })?;
 
-        let created = events
-            .find_first::<BucketCreated>()
-            .ok_or(FsClientError::EventNotFound)?
-            .map_err(|e| {
-                FsClientError::Blockchain(format!("Failed to decode BucketCreated event: {e}"))
-            })?;
+        let bucket_id = created_bucket_id(&events)?;
 
-        tracing::info!("Drive created (bucket {})", created.bucket_id);
-        Ok(created.bucket_id)
+        tracing::info!("Drive created (bucket {})", bucket_id);
+        Ok(bucket_id)
     }
 }
