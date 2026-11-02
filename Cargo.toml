@@ -155,6 +155,7 @@ prost-build = "0.13"
 substrate-wasm-builder = { version = "34.0.0" }
 
 # Codec
+bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
 codec = { version = "3.7.5", default-features = false, features = [
 	"derive",
 	"max-encoded-len",

@@ -7,8 +7,8 @@
 use super::*;
 
 /// Every implemented invariant (P0 timing, P1.1 committed_bytes,
-/// P1.3 primary_providers, P1.4 MemberBuckets) holds on state produced by the
-/// pallet's own extrinsics.
+/// P1.3 primary_providers and the snapshot signer bitfield, P1.4 MemberBuckets)
+/// holds on state produced by the pallet's own extrinsics.
 #[test]
 fn try_state_holds_on_real_state() {
     new_test_ext().execute_with(|| {
@@ -51,6 +51,25 @@ fn try_state_detects_primary_providers_mismatch() {
 
         // Drop the agreement while leaving provider 2 in `primary_providers`.
         StorageAgreements::<Test>::remove(bucket, 2);
+        assert!(StorageProvider::do_try_state().is_err());
+    });
+}
+
+/// P1.3: a snapshot signer bitfield shorter than `primary_providers` is caught.
+#[test]
+fn try_state_detects_signer_bitfield_length_mismatch() {
+    new_test_ext().execute_with(|| {
+        let bucket = super::challenge::setup_with_snapshot(2, 1);
+        assert_ok!(StorageProvider::do_try_state());
+
+        Buckets::<Test>::mutate(bucket, |b| {
+            b.as_mut()
+                .unwrap()
+                .snapshot
+                .as_mut()
+                .unwrap()
+                .primary_signers = Default::default();
+        });
         assert!(StorageProvider::do_try_state().is_err());
     });
 }
