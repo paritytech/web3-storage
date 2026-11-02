@@ -269,6 +269,19 @@ pub fn sign_sync_roots(
     pair.sign(&roots.encode()).into()
 }
 
+/// Helper: `provider`'s signature over `commitment` for `bucket_id`.
+#[allow(dead_code)]
+pub fn sign_commitment_by(
+    provider: u64,
+    bucket_id: u64,
+    commitment: storage_primitives::Commitment,
+) -> sp_runtime::MultiSignature {
+    use codec::Encode;
+    use sp_core::Pair as _;
+    let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment);
+    sp_runtime::MultiSignature::Sr25519(provider_signer(provider).sign(&payload.encode()))
+}
+
 /// Helper: primary terms
 /// + at the owner's next expected nonce
 /// + valid for the current RequestTimeout window.
@@ -373,17 +386,9 @@ pub fn sign_commitment(
     commitment: storage_primitives::Commitment,
     providers: &[u64],
 ) -> frame_support::BoundedVec<(u64, sp_runtime::MultiSignature), ConstU32<5>> {
-    use codec::Encode;
-    use sp_core::Pair;
-    let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment).encode();
     providers
         .iter()
-        .map(|&p| {
-            (
-                p,
-                sp_runtime::MultiSignature::Sr25519(provider_signer(p).sign(&payload)),
-            )
-        })
+        .map(|&p| (p, sign_commitment_by(p, bucket_id, commitment)))
         .collect::<Vec<_>>()
         .try_into()
         .expect("at most MaxPrimaryProviders signers")
@@ -478,4 +483,28 @@ pub fn setup_added_primary(
         terms,
         sig
     ));
+}
+
+/// Helper: register providers 2 and 3, open a primary agreement for 2 with
+/// admin 1 and checkpoint the bucket with 2's signature. Provider 3 is free
+/// for `setup_added_primary`.
+#[allow(dead_code)]
+pub fn setup_signed_checkpoint() -> (u64, storage_primitives::Commitment) {
+    use frame_support::assert_ok;
+    run_to_block(1);
+    register_provider(2, 200);
+    register_provider(3, 200);
+    let bucket_id = setup_agreement(2, 1, 50, 100);
+    let commitment = storage_primitives::Commitment {
+        mmr_root: H256::repeat_byte(0xAB),
+        start_seq: 0,
+        leaf_count: 10,
+    };
+    assert_ok!(StorageProvider::checkpoint(
+        RuntimeOrigin::signed(1),
+        bucket_id,
+        commitment,
+        sign_commitment(bucket_id, commitment, &[2]),
+    ));
+    (bucket_id, commitment)
 }

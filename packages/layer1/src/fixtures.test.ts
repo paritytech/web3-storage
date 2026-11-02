@@ -2,8 +2,8 @@
 
 /**
  * Cross-language fixtures for the in-bucket file-system format, in
- * `crates/primitives/file-system/fixtures/`. `rust-written.json` comes from
- * `clients/s3/src/fixtures.rs`; this test loads it into a fake provider and
+ * `examples/fixtures/`. `rust-written.json` comes from
+ * `clients/s3/src/tests/fixtures.rs`; this test loads it into a fake provider and
  * reads it. It also runs the same write sequence and checks the result
  * against `ts-written.json`, which the Rust test reads. See the Rust module
  * for the fixture format.
@@ -38,9 +38,9 @@ const BIG_SIZE = 3 * DEFAULT_CHUNK_SIZE + 100;
 const UPDATE_ENV = "UPDATE_FS_FIXTURES";
 /** Hashing the multi-chunk file several times in JS takes a few seconds. */
 const TIMEOUT_MS = 60_000;
-const FIXTURES = new URL("../../../crates/primitives/file-system/fixtures/", import.meta.url);
+const FIXTURES = new URL("../../../examples/fixtures/", import.meta.url);
 const TS_ABOUT =
-  "Written by packages/layer1/src/fixtures.test.ts; read by clients/s3/src/fixtures.rs. Regenerate: UPDATE_FS_FIXTURES=1 npm run -s test:unit -- fixtures (in packages/layer1)";
+  "Written by packages/layer1/src/fixtures.test.ts; read by clients/s3/src/tests/fixtures.rs. Regenerate: UPDATE_FS_FIXTURES=1 npm run -s test:unit -- fixtures (in packages/layer1)";
 
 const signer = makeSigner("//Alice");
 const te = new TextEncoder();
@@ -78,7 +78,7 @@ function setup(provider: FakeProvider) {
   return { tree, s3 };
 }
 
-/** The write sequence of `write_sequence` in clients/s3/src/fixtures.rs. */
+/** The write sequence of `write_sequence` in clients/s3/src/tests/fixtures.rs. */
 async function writeSequence(provider: FakeProvider): Promise<void> {
   const { tree, s3 } = setup(provider);
   await tree.mkdir("/docs");

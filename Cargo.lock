@@ -5953,6 +5953,7 @@ dependencies = [
 name = "pallet-storage-provider"
 version = "0.1.0"
 dependencies = [
+ "bitvec",
  "frame-benchmarking",
  "frame-support",
  "frame-system",
@@ -9963,6 +9964,7 @@ dependencies = [
 name = "storage-primitives"
 version = "0.1.0"
 dependencies = [
+ "bitvec",
  "parity-scale-codec",
  "polkadot-ckb-merkle-mountain-range",
  "scale-info",

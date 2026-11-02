@@ -1,5 +1,5 @@
 {
-  "about": "Written by clients/s3/src/fixtures.rs; read by packages/layer1/src/fixtures.test.ts. Regenerate: UPDATE_FS_FIXTURES=1 cargo test -p s3-client fixtures",
+  "about": "Written by clients/s3/src/tests/fixtures.rs; read by packages/layer1/src/fixtures.test.ts. Regenerate: UPDATE_FS_FIXTURES=1 cargo test -p s3-client fixtures",
   "blobs": {
     "0x0b945d2a01e5fe40e150e70023c497f87133200c6c33618050ee4915c7de01f2": "BwAAAAAAAAAEEGRvY3MB8BWKBxRJVdno9EDnv+A6FSfKcvFGGbBaEJSRdq81EqoAAAAAAAAAAADxU2UAAAAAAA==",
     "0x18f004e0003e4b900b2c65eeea388963df51c3cc4cec93a4a6e817044683ced9": "aGVsbG8gZnJvbSBhLnR4dAo=",

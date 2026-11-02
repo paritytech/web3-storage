@@ -368,7 +368,7 @@ fn setup_replica_with_snapshot() -> u64 {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x01],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1],
             });
         }
     });
@@ -697,7 +697,7 @@ fn confirm_replica_sync_fails_insufficient_balance() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x01],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             }
         });
