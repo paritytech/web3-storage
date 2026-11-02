@@ -89,6 +89,8 @@ interface SignedProbe {
   signMethod?: string;
   /** Bucket to sign for, when it must differ from the one addressed (tamper case). */
   signBucket?: bigint;
+  /** Signing time in ms since the epoch; defaults to now (stale-signature case). */
+  time?: number;
   /** JSON body; sent with `Content-Type: application/json`. */
   body?: string;
 }
@@ -103,12 +105,13 @@ async function signedStatus(
   method: string,
   path: string,
   bucketId: bigint,
-  { signMethod = method, signBucket = bucketId, body }: SignedProbe = {},
+  { signMethod = method, signBucket = bucketId, time, body }: SignedProbe = {},
 ): Promise<number> {
   const headers: Record<string, string> = await signProviderRequest(
     who.signer,
     signMethod,
     signBucket,
+    time,
   );
   if (body) headers["Content-Type"] = "application/json";
   return statusOf(method, path, { headers, body });
@@ -262,15 +265,8 @@ async function main() {
       // An hour old, against the 300s `--auth-max-skew` default: a captured
       // header must not stay replayable indefinitely.
       const anHourAgo = Date.now() - 3_600_000;
-      const headers: Record<string, string> = await signProviderRequest(
-        writer.signer,
-        "PUT",
-        bucketId,
-        anHourAgo,
-      );
-      headers["Content-Type"] = "application/json";
-      const status = await statusOf("PUT", "/node", {
-        headers,
+      const status = await signedStatus(writer, "PUT", "/node", bucketId, {
+        time: anHourAgo,
         body: nodeBody(bucketId, "stale signature"),
       });
       assert.strictEqual(status, 401);
