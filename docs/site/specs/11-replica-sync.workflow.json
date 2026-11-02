@@ -29,10 +29,10 @@
     { "id": "read_chain", "lane": "replica", "col": 0, "type": "backend", "label": "Read Chain State", "sublabel": "runtime API", "width": 140 },
     { "id": "fetch_peaks", "lane": "replica", "col": 1, "type": "backend", "label": "Fetch Peaks", "sublabel": "GET /mmr_peaks", "width": 140 },
     { "id": "verify", "lane": "replica", "col": 2, "type": "security", "label": "Verify Peaks", "sublabel": "hash(peaks) == root", "width": 140 },
-    { "id": "traverse", "lane": "replica", "col": 3, "type": "backend", "label": "Top-Down Walk", "sublabel": "GET /mmr_subtree", "width": 140 },
+    { "id": "traverse", "lane": "replica", "col": 3, "type": "backend", "label": "Top-Down Walk", "sublabel": "GET /node, child links", "width": 140 },
     { "id": "fetch_nodes", "lane": "replica", "col": 4, "type": "backend", "label": "Fetch Missing Nodes", "sublabel": "POST /fetch_nodes", "width": 150 },
     { "id": "confirm", "lane": "replica", "col": 5, "type": "backend", "label": "confirm_replica_sync", "sublabel": "roots[7] + signature", "width": 150 },
-    { "id": "peak_source", "lane": "sources", "col": 1, "type": "cloud", "label": "Any Data Holder", "sublabel": "replica or data holder", "width": 150 },
+    { "id": "peak_source", "lane": "sources", "col": 1, "type": "cloud", "label": "Any Data Holder", "sublabel": "primaries, then replicas", "width": 150 },
     { "id": "node_source", "lane": "sources", "col": 4, "type": "cloud", "label": "Node Source", "sublabel": "any data holder", "width": 140 },
     { "id": "mismatch", "lane": "recovery", "col": 2, "type": "security", "label": "Peak Mismatch", "sublabel": "source rejected", "width": 140 }
   ],
@@ -54,6 +54,6 @@
     { "dot": "cyan", "title": "Chain first", "items": ["The replica reads the MMR root from the chain, not from a provider", "It checks peaks against that root before the traversal starts", "A source that serves wrong data fails the first hash check"] },
     { "dot": "emerald", "title": "Top-down walk", "items": ["A matching hash skips the whole subtree", "Unchanged subtrees are detected at their first node", "Sync state is the set of missing nodes, so a sync can resume", "POST /exists checks which nodes a provider has"] },
     { "dot": "amber", "title": "confirm_replica_sync", "items": ["roots: current snapshot plus 6 historical_roots positions (primes 3, 7, 11, 23, 47, 113)", "The first matching position is credited: position_matched 0 is current, 1-6 historical", "Rejected unless the root differs from last_sync and min_sync_interval has passed", "last_sync records the matched commitment (root, start_seq, leaf_count), for historical positions too; challenge_replica binds proofs to it", "Anyone can fund syncs with top_up_replica_sync_balance"] },
-    { "dot": "violet", "title": "Private buckets", "items": ["Primaries serve reads only to members; provider accounts are not members", "A replica syncs from other replicas or any data holder instead of the primaries", "Replicas serve everyone, on public and private buckets"] }
+    { "dot": "violet", "title": "Private buckets", "items": ["Primaries reject GET /mmr_peaks: a replica provider is not a member", "The replica syncs from other replicas or any data holder instead", "Replicas serve everyone, on public and private buckets"] }
   ]
 }

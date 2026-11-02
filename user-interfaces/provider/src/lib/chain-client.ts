@@ -9,10 +9,10 @@
  * tracked the migration from the previous dual @polkadot/api + PAPI setup.
  */
 
-import { Enum, type PolkadotClient, type Transaction, type TxFinalizedPayload } from 'polkadot-api'
+import { type PolkadotClient, type Transaction, type TxFinalizedPayload } from 'polkadot-api'
 import { type InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { BehaviorSubject } from 'rxjs'
-import { getSs58Prefix, isSameAddress, submitTx, type ChallengeProof } from '@web3-storage/sdk'
+import { getSs58Prefix, isSameAddress, submitTx, type ChallengeResponse } from '@web3-storage/sdk'
 import {
   clientReady$,
   connectToChain,
@@ -601,11 +601,12 @@ export async function submitCompleteDeregister(
 // ── Challenge proof fetching & response submission ──────────────────────────
 
 /**
- * Build and submit a `respond_to_challenge` extrinsic with a Proof response.
+ * Submit a `respond_to_challenge` extrinsic with the response that
+ * `fetchChallengeProof` built.
  */
 export async function submitRespondToChallenge(
   challengeId: { deadline: number; index: number },
-  proof: ChallengeProof,
+  response: ChallengeResponse,
   signer: InjectedPolkadotAccount,
   onProgress?: TxProgressCallback,
 ): Promise<TxFinalizedPayload> {
@@ -614,7 +615,7 @@ export async function submitRespondToChallenge(
 
   const tx = a.tx.StorageProvider.respond_to_challenge({
     challenge_id: challengeId,
-    response: Enum('Proof', proof),
+    response,
   })
 
   return submit(tx, signer, 'Challenge response', onProgress)

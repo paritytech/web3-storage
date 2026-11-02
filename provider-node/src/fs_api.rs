@@ -72,6 +72,9 @@ pub async fn fs_put_file(
     validate_fs_path(&path)?;
 
     let data = body.to_vec();
+    if data.is_empty() {
+        return Err(Error::EmptyBody);
+    }
     let size = data.len() as u64;
 
     // Initialize bucket if needed
@@ -79,15 +82,10 @@ pub async fn fs_put_file(
 
     // 1. Split into chunks (256 KiB)
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
-    let chunks: Vec<&[u8]> = if data.is_empty() {
-        vec![&[]]
-    } else {
-        data.chunks(chunk_size).collect()
-    };
 
     // 2. Hash and store each chunk
-    let chunk_hashes: Vec<H256> = chunks
-        .iter()
+    let chunk_hashes: Vec<H256> = data
+        .chunks(chunk_size)
         .map(|chunk| {
             let hash = hash_leaf(chunk);
             state

@@ -266,18 +266,20 @@ jobs:
           save-if: false
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-llvm-cov
 
       - name: Install diff-cover
         # Drives the patch-coverage gate. Minimum version comes from
         # .github/env, shared with the local check in scripts/coverage.sh.
-        # The bullseye CI image ships an unmanaged pip and runs as root, so
-        # a plain system-wide install works.
+        # The bookworm CI image's Python is marked externally managed
+        # (PEP 668), so pip rejects a system-wide install without this flag.
+        # The container is discarded after the job, so there is nothing to
+        # break.
         run: |
           source .github/env
-          python3 -m pip install --quiet "diff-cover>=${DIFF_COVER_MIN_VERSION}"
+          python3 -m pip install --quiet --break-system-packages "diff-cover>=${DIFF_COVER_MIN_VERSION}"
 
       - name: Measure coverage
         # Package list + exclusions live in scripts/coverage.sh, shared with

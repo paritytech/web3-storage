@@ -267,11 +267,9 @@ pub async fn start_test_provider() -> String {
     let _ = dir.keep();
     let deps = ProviderDeps {
         storage,
-        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![(
-            dev_account("alice"),
-            Role::Admin,
-        )
-            .into()]))),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(vec![
+            (dev_account("alice"), Role::Admin).into(),
+        ]))),
     };
     let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is a valid SURI");
     publish_matching_registration(&state);

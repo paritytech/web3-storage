@@ -4,11 +4,12 @@ import { describe, expect, it } from "vitest";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   bagPeaks,
-  chunkCount,
   computeDataRoot,
   DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
+  LEAF_VERSION,
+  leafChunkCount,
   merkleRoot,
   metadataMerkleRoot,
   u64le,
@@ -131,20 +132,36 @@ describe("merkleRoot", () => {
   });
 });
 
-describe("chunkCount", () => {
-  it("rounds up and has a minimum of one", () => {
+describe("leafChunkCount", () => {
+  it("rounds up with the chunk size of the leaf version and is zero for empty data", () => {
     const chunk = DEFAULT_CHUNK_SIZE;
-    expect(chunkCount(0)).toBe(1);
-    expect(chunkCount(1)).toBe(1);
-    expect(chunkCount(chunk)).toBe(1);
-    expect(chunkCount(chunk + 1)).toBe(2);
-    expect(chunkCount(2 * chunk + 10)).toBe(3);
+    const count = (data_size: number | bigint) =>
+      leafChunkCount({ leaf_version: LEAF_VERSION, data_size });
+    expect(count(0)).toBe(0);
+    expect(count(1)).toBe(1);
+    expect(count(chunk)).toBe(1);
+    expect(count(BigInt(chunk + 1))).toBe(2);
+    expect(count(2 * chunk + 10)).toBe(3);
+  });
+
+  it("counts a u64::MAX data size exactly", () => {
+    const max = (1n << 64n) - 1n;
+    const chunk = BigInt(DEFAULT_CHUNK_SIZE);
+    expect(leafChunkCount({ leaf_version: LEAF_VERSION, data_size: max })).toBe(
+      Number((max + chunk - 1n) / chunk),
+    );
+  });
+
+  it("throws for an unknown leaf version", () => {
+    expect(() => leafChunkCount({ leaf_version: LEAF_VERSION + 1, data_size: 1 })).toThrow(
+      "unknown MMR leaf version",
+    );
   });
 });
 
 describe("computeDataRoot", () => {
-  it("empty file hashes a single empty chunk", () => {
-    expect(toHex(computeDataRoot(new Uint8Array(0)))).toBe(toHex(hashLeaf(new Uint8Array(0))));
+  it("empty data has no chunk tree", () => {
+    expect(() => computeDataRoot(new Uint8Array(0))).toThrow("empty data has no chunk tree");
   });
 
   it("single sub-chunk file → its own chunk hash", () => {

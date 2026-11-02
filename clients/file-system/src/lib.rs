@@ -315,7 +315,7 @@ impl FileSystemClient {
         let file_cid = self.resolve_path(bucket_id, path).await?;
 
         // Fetch FileManifest
-        let manifest_bytes = self.fetch_blob(file_cid).await?;
+        let manifest_bytes = self.fetch_blob(bucket_id, file_cid).await?;
         let manifest = FileManifest::from_scale_bytes(&manifest_bytes)
             .map_err(|e| FsClientError::Serialization(format!("Invalid manifest: {e:?}")))?;
 
@@ -328,7 +328,7 @@ impl FileSystemClient {
         let mut file_data = Vec::with_capacity(manifest.total_size as usize);
 
         for chunk in manifest.chunks.iter() {
-            let chunk_data = self.fetch_blob(chunk.cid).await?;
+            let chunk_data = self.fetch_blob(bucket_id, chunk.cid).await?;
             file_data.extend_from_slice(&chunk_data);
         }
 
@@ -349,7 +349,7 @@ impl FileSystemClient {
         let dir_cid = self.resolve_path(bucket_id, path).await?;
 
         // Fetch DirectoryNode
-        let dir_bytes = self.fetch_blob(dir_cid).await?;
+        let dir_bytes = self.fetch_blob(bucket_id, dir_cid).await?;
         let dir_node = DirectoryNode::from_scale_bytes(&dir_bytes)
             .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
 
@@ -626,7 +626,7 @@ impl FileSystemClient {
 
         // Traverse path
         for component in components {
-            let dir_bytes = self.fetch_blob(current_cid).await?;
+            let dir_bytes = self.fetch_blob(bucket_id, current_cid).await?;
             let dir_node = DirectoryNode::from_scale_bytes(&dir_bytes)
                 .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
 
@@ -653,7 +653,7 @@ impl FileSystemClient {
     ) -> Result<()> {
         // Fetch parent directory
         let parent_cid = self.resolve_path(bucket_id, parent_path).await?;
-        let parent_bytes = self.fetch_blob(parent_cid).await?;
+        let parent_bytes = self.fetch_blob(bucket_id, parent_cid).await?;
         let mut parent_node = DirectoryNode::from_scale_bytes(&parent_bytes)
             .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
 
@@ -719,7 +719,7 @@ impl FileSystemClient {
 
         // Fetch parent
         let parent_cid = self.resolve_path(bucket_id, parent_path).await?;
-        let parent_bytes = self.fetch_blob(parent_cid).await?;
+        let parent_bytes = self.fetch_blob(bucket_id, parent_cid).await?;
         let mut parent_node = DirectoryNode::from_scale_bytes(&parent_bytes)
             .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
 
@@ -756,7 +756,7 @@ impl FileSystemClient {
     }
 
     /// Fetch a blob from Layer 0 storage by CID
-    async fn fetch_blob(&self, cid: Cid) -> Result<Vec<u8>> {
+    async fn fetch_blob(&self, bucket_id: BucketId, cid: Cid) -> Result<Vec<u8>> {
         // Use the read API with CID as data root
         // Note: This assumes provider maps CID to stored data
         //
@@ -768,7 +768,7 @@ impl FileSystemClient {
 
         let data = self
             .storage_client
-            .download(&cid, 0, MAX_READ_LENGTH)
+            .download(bucket_id, &cid, 0, MAX_READ_LENGTH)
             .await
             .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
 
