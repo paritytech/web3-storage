@@ -4,7 +4,7 @@
 //!
 //! `rust_written_fixture_is_current` runs a fixed sequence of FS and S3
 //! writes into an in-memory store and checks the result against
-//! `crates/primitives/file-system/fixtures/rust-written.json`, which the
+//! `examples/fixtures/rust-written.json`, which the
 //! TypeScript tests (`packages/layer1/src/fixtures.test.ts`) load and read.
 //! `reads_the_typescript_fixture` does the reverse with `ts-written.json`.
 //!
@@ -35,7 +35,7 @@ const UPDATE_ENV: &str = "UPDATE_FS_FIXTURES";
 
 fn fixture_path(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../crates/primitives/file-system/fixtures")
+        .join("../../examples/fixtures")
         .join(name)
 }
 
@@ -307,7 +307,7 @@ fn load(fixture: &Value) -> MemoryStore {
     store
 }
 
-const RUST_ABOUT: &str = "Written by clients/s3/src/fixtures.rs; read by packages/layer1/src/fixtures.test.ts. Regenerate: UPDATE_FS_FIXTURES=1 cargo test -p s3-client fixtures";
+const RUST_ABOUT: &str = "Written by clients/s3/src/tests/fixtures.rs; read by packages/layer1/src/fixtures.test.ts. Regenerate: UPDATE_FS_FIXTURES=1 cargo test -p s3-client fixtures";
 
 #[tokio::test]
 async fn rust_written_fixture_is_current() {
