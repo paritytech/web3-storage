@@ -8,6 +8,7 @@ use sp_core::crypto::Ss58Codec;
 use sp_core::Pair;
 use sp_runtime::AccountId32;
 use std::sync::{Arc, OnceLock};
+use storage_client::substrate::{fetch_current_anchor_block, SubstrateClient};
 use storage_client::{
     sign_terms, AdminClient, AgreementTermsOf, ChallengerClient, ClientConfig, DiscoveryClient,
     ProviderClient, ProviderSettings, Signer, StorageUserClient,
@@ -103,7 +104,8 @@ pub struct ChainSetup {
 /// 3. Creates a fresh bucket owned by Alice.
 ///
 /// Returns `None` when the chain is not reachable, allowing callers to skip
-/// the test gracefully.
+/// the test gracefully. Panics if creating the bucket fails on a reachable
+/// chain, so a broken setup fails the test instead of skipping it.
 pub async fn chain_setup() -> Option<ChainSetup> {
     let alice_ss58 = dev_ss58("alice");
     let bob_ss58 = dev_ss58("bob");
@@ -148,24 +150,36 @@ pub async fn chain_setup() -> Option<ChainSetup> {
 
     // ── Create a fresh bucket as Alice via signed-terms flow ──────────────────
     // Alice is both the provider (signs terms) and the bucket owner (redeems).
-    // Nonces must be unique per provider, so we pick one based on the current
-    // block-ish counter — using time-since-epoch nanos so reruns don't collide.
+    // The chain accepts only the owner's next agreement nonce, and only terms
+    // that expire within `RequestTimeout` anchor blocks.
     let mut admin = AdminClient::new(chain_config(), Signer::from_seed("//Alice").ok()?).ok()?;
     if admin.connect().await.is_err() {
         return None;
     }
 
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
+    let nonce = admin
+        .agreement_nonce(&dev_account("alice"))
+        .await
+        .expect("read Alice's agreement nonce");
+    let chain = SubstrateClient::connect(CHAIN_WS)
+        .await
+        .expect("connect to the chain");
+    let at = chain
+        .at_current_block()
+        .await
+        .expect("read the current block");
+    let anchor_block = fetch_current_anchor_block(&at)
+        .await
+        .expect("read the anchor block");
 
     let terms: AgreementTermsOf = AgreementTerms {
         owner: dev_account("alice"),
         max_bytes: 1_000_000,
         duration: 100,
         price_per_byte: 1,
-        valid_until: u32::MAX,
+        // 100 anchor blocks is well inside `RequestTimeout` and leaves time to
+        // submit the terms.
+        valid_until: anchor_block + 100,
         nonce,
         replica_params: None,
         bucket: storage_primitives::BucketTarget::New,
@@ -180,7 +194,7 @@ pub async fn chain_setup() -> Option<ChainSetup> {
             storage_client::Visibility::Public,
         )
         .await
-        .ok()?;
+        .expect("create Alice's setup bucket");
 
     Some(ChainSetup {
         alice_ss58,
