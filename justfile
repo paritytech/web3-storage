@@ -280,11 +280,14 @@ subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtim
         --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Deserialize" \
         --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Serialize" \
         --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Deserialize" \
+        --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=serde::Serialize" \
+        --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=serde::Deserialize" \
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Serialize" \
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Encode" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Decode" \
         --derive-for-type "pallet_storage_provider::pallet::StorageAgreement=codec::Decode" \
+        --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=codec::Decode" \
         --derive-for-type "storage_primitives::ProviderRole=codec::Decode" \
         --derive-for-type "storage_primitives::ReplicaSyncRecord=codec::Decode" \
         --derive-for-type "storage_primitives::Commitment=codec::Decode" \

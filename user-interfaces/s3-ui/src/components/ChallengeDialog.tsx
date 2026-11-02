@@ -23,6 +23,12 @@ interface ChallengeDialogProps {
   providers: string[];
 }
 
+function chunkIndexHint(chunkCount: number | null): string {
+  if (chunkCount === null) return "Index of the chunk within the leaf.";
+  if (chunkCount === 0) return "This leaf is empty and has no chunks.";
+  return `This leaf has ${chunkCount} chunk${chunkCount !== 1 ? "s" : ""} (valid: 0 to ${chunkCount - 1}).`;
+}
+
 export default function ChallengeDialog({ open, onOpenChange, providers }: ChallengeDialogProps) {
   const selectedBucket = useSelectedBucket();
   const info = useCheckpointInfo();
@@ -171,15 +177,13 @@ export default function ChallengeDialog({ open, onOpenChange, providers }: Chall
               data-testid="challenge-chunk-index"
               type="number"
               min="0"
-              max={chunkCount !== null ? (chunkCount - 1).toString() : undefined}
+              max={chunkCount ? (chunkCount - 1).toString() : undefined}
               value={chunkIndex}
               onChange={(e) => setChunkIndex(e.target.value)}
               placeholder="0"
             />
             <p className="text-xs text-muted-foreground">
-              {chunkCount !== null
-                ? `This leaf has ${chunkCount} chunk${chunkCount !== 1 ? "s" : ""} (valid: 0 to ${chunkCount - 1}).`
-                : "Index of the chunk within the leaf."}
+              {chunkIndexHint(chunkCount)}
             </p>
           </div>
 

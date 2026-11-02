@@ -70,7 +70,7 @@ async function main() {
       const data = "x".repeat(100);
       const { hash, commit } = await uploadChunk(PROVIDER_URL, bucketId, data, client);
       assert.ok(commit.mmr_root, "Should return mmr_root");
-      const downloaded = await downloadChunk(PROVIDER_URL, hash);
+      const downloaded = await downloadChunk(PROVIDER_URL, bucketId, hash);
       assert.deepStrictEqual(downloaded, new TextEncoder().encode(data), "Downloaded data should match");
     },
   });
@@ -80,7 +80,7 @@ async function main() {
     fn: async () => {
       const data = randomBytes(64 * 1024);
       const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, client);
-      const downloaded = await downloadChunk(PROVIDER_URL, hash);
+      const downloaded = await downloadChunk(PROVIDER_URL, bucketId, hash);
       assert.deepStrictEqual(new Uint8Array(downloaded), data, "64KB roundtrip integrity");
     },
   });
@@ -90,7 +90,7 @@ async function main() {
     fn: async () => {
       const data = randomBytes(256 * 1024);
       const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, client);
-      const downloaded = await downloadChunk(PROVIDER_URL, hash);
+      const downloaded = await downloadChunk(PROVIDER_URL, bucketId, hash);
       assert.deepStrictEqual(new Uint8Array(downloaded), data, "256KB roundtrip integrity");
     },
   });
@@ -188,7 +188,7 @@ async function main() {
     fn: async () => {
       const fakeHash = "0x" + "ab".repeat(32);
       try {
-        await downloadChunk(PROVIDER_URL, fakeHash);
+        await downloadChunk(PROVIDER_URL, bucketId, fakeHash);
         assert.fail("Expected 404 for non-existent hash");
       } catch (err) {
         assert.ok((err as Error).message.includes("404") || (err as Error).message.includes("not found"),
@@ -204,7 +204,7 @@ async function main() {
     fn: async () => {
       const binary = randomBytes(512);
       const { hash } = await uploadChunk(PROVIDER_URL, bucketId, binary, client);
-      const downloaded = await downloadChunk(PROVIDER_URL, hash);
+      const downloaded = await downloadChunk(PROVIDER_URL, bucketId, hash);
       assert.deepStrictEqual(new Uint8Array(downloaded), binary, "Binary roundtrip should match");
     },
   });

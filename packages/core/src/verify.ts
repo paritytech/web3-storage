@@ -11,7 +11,7 @@
  * implemented here; callers surface those as "unverified".
  */
 
-import { asHex, bytesEq, concatBytes, hexToBytes, toHex } from "./bytes.js";
+import { asHex, base64ToBytes, hexToBytes, toHex } from "./bytes.js";
 import { hashChildren, hashLeaf } from "./merkle.js";
 
 export class CidMismatchError extends Error {
@@ -42,14 +42,32 @@ export function verifyCid(data: Uint8Array, expectedCid: string | Uint8Array): v
   }
 }
 
+/** A chunk-tree node: a chunk's bytes, or an internal node's two child hashes. */
+export type TreeNode = { data: Uint8Array } | { children: [Uint8Array, Uint8Array] };
+
+const HASH_HEX = /^(0x)?[0-9a-fA-F]{64}$/;
+
 /**
- * Hash of a downloaded node: a leaf hash when there are no children, or a
- * node hash over exactly two children whose concatenation equals the data.
- * Returns null when children are present but do not match.
+ * Parse a provider `/node` body: base64 `data` for a chunk, or two hex
+ * `children` for an internal node. Returns null when the body has both or
+ * neither, a wrong child count, or a child that is not a 32-byte hex hash.
+ * The length check matters: `hashChildren` hashes `left ++ right`, so children
+ * with a shifted boundary would still match the parent hash.
  */
-export function nodeHash(data: Uint8Array, children: string[] | null): Uint8Array | null {
-  if (!children) return hashLeaf(data);
-  if (children.length !== 2) return null;
-  const [left, right] = children.map(hexToBytes);
-  return bytesEq(data, concatBytes(left, right)) ? hashChildren(left, right) : null;
+export function parseNode(body: {
+  data?: string | null;
+  children?: string[] | null;
+}): TreeNode | null {
+  const { data, children } = body;
+  if (data != null && children == null) return { data: base64ToBytes(data) };
+  if (data == null && children?.length === 2 && children.every((c) => HASH_HEX.test(c))) {
+    const [left, right] = children.map(hexToBytes);
+    return { children: [left, right] };
+  }
+  return null;
+}
+
+/** Hash of a node: a leaf hash over a chunk's bytes, a node hash over two children. */
+export function nodeHash(node: TreeNode): Uint8Array {
+  return "data" in node ? hashLeaf(node.data) : hashChildren(...node.children);
 }

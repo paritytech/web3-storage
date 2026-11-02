@@ -39,7 +39,9 @@ fn test_deps() -> (ProviderDeps, tempfile::TempDir) {
     let (storage, dir) = temp_rocksdb();
     let deps = ProviderDeps {
         storage,
-        auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![]))),
+        auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(
+            vec![],
+        ))),
     };
     (deps, dir)
 }

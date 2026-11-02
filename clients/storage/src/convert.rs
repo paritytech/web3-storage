@@ -135,6 +135,7 @@ pub fn challenge_id(deadline: u32, index: u16) -> rt::ChallengeId<u32> {
 pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::mmr::MmrProof {
     rt::mmr::MmrProof {
         leaf: rt::mmr::MmrLeaf {
+            leaf_version: p.leaf.leaf_version,
             data_root: p.leaf.data_root,
             data_size: p.leaf.data_size,
             total_size: p.leaf.total_size,
