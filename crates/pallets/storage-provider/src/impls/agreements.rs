@@ -94,17 +94,7 @@ impl<T: Config> Pallet<T> {
 
         // Remove from primary_providers if primary
         if matches!(agreement.role, ProviderRole::Primary) {
-            Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
-                if let Some(bucket) = maybe_bucket {
-                    // Capture the position before removal so the snapshot's
-                    // positional signer bitfield can be re-indexed to match.
-                    let pos = bucket.primary_providers.iter().position(|p| p == provider);
-                    bucket.primary_providers.retain(|p| p != provider);
-                    if let (Some(pos), Some(snapshot)) = (pos, bucket.snapshot.as_mut()) {
-                        snapshot.remove_provider_bit(pos);
-                    }
-                }
-            });
+            Self::remove_primary_from_bucket(bucket_id, provider);
 
             let reason = if is_early {
                 RemovalReason::AdminTerminated
@@ -156,6 +146,26 @@ impl<T: Config> Pallet<T> {
         Ok(bucket_id)
     }
 
+    /// Removes `provider` from `bucket.primary_providers` and its bit from the
+    /// snapshot signer bitfield, so bit `i` still refers to
+    /// `primary_providers[i]`.
+    pub(crate) fn remove_primary_from_bucket(bucket_id: BucketId, provider: &T::AccountId) {
+        Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
+            let Some(bucket) = maybe_bucket else {
+                return;
+            };
+            let Some(pos) = bucket.primary_providers.iter().position(|p| p == provider) else {
+                return;
+            };
+            bucket.primary_providers.remove(pos);
+            if let Some(snapshot) = bucket.snapshot.as_mut() {
+                if pos < snapshot.primary_signers.len() {
+                    snapshot.primary_signers.remove(pos);
+                }
+            }
+        });
+    }
+
     /// Adds a primary provider to an existing bucket. `admin` must be a bucket
     /// admin; the quote must name [`BucketTarget::Existing`] with `bucket_id`.
     pub(crate) fn add_primary_provider_internal(
@@ -171,6 +181,9 @@ impl<T: Config> Pallet<T> {
             .primary_providers
             .try_push(provider.clone())
             .map_err(|_| Error::<T>::MaxPrimaryProvidersReached)?;
+        if let Some(snapshot) = bucket.snapshot.as_mut() {
+            snapshot.primary_signers.push(false);
+        }
 
         let accepted = Self::accept_quote(
             admin,

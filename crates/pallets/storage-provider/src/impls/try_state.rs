@@ -195,7 +195,8 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Per bucket, `primary_providers` has no duplicates and equals
-    /// exactly the set of `Primary`-role agreement providers.
+    /// exactly the set of `Primary`-role agreement providers, and the
+    /// snapshot signer bitfield has one bit per primary provider.
     /// `MemberBuckets` is the correct and complete reverse index of
     /// bucket membership, with no duplicates.
     fn check_buckets_and_membership() -> Result<(), TryRuntimeError> {
@@ -235,6 +236,12 @@ impl<T: Config> Pallet<T> {
                 declared == primaries,
                 "primary_providers does not match Primary-role agreements for bucket"
             );
+            if let Some(snapshot) = bucket.snapshot.as_ref() {
+                ensure!(
+                    snapshot.primary_signers.len() == bucket.primary_providers.len(),
+                    "snapshot primary_signers length does not match primary_providers"
+                );
+            }
 
             // Forward: every member is indexed under MemberBuckets.
             for member in bucket.members.iter() {

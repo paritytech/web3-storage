@@ -3,6 +3,7 @@
 //! Tests for the storage provider pallet.
 
 use crate::{mock::*, *};
+use bitvec::prelude::Lsb0;
 use frame_support::{assert_err, assert_noop, assert_ok};
 use storage_primitives::{BucketTarget, ProviderRole, Role};
 
