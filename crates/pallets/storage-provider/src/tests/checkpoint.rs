@@ -269,6 +269,84 @@ fn zero_min_providers_in_state_still_needs_one_signature() {
     });
 }
 
+#[test]
+fn one_provider_repeating_its_signature_does_not_meet_min_providers() {
+    new_test_ext().execute_with(|| {
+        System::set_block_number(1);
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+        setup_added_primary(3, 1, bucket_id, 50, 200);
+        assert_ok!(StorageProvider::set_min_providers(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2
+        ));
+        let commitment = Commitment {
+            mmr_root: H256::repeat_byte(0xAA),
+            start_seq: 0,
+            leaf_count: 10,
+        };
+        let same_provider_twice = sign_commitment(bucket_id, commitment, &[2, 2]);
+        let both_providers = sign_commitment(bucket_id, commitment, &[2, 3]);
+
+        assert_noop!(
+            StorageProvider::checkpoint(
+                RuntimeOrigin::signed(1),
+                bucket_id,
+                commitment,
+                same_provider_twice,
+            ),
+            Error::<Test>::InsufficientSignatures
+        );
+
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            commitment,
+            both_providers,
+        ));
+        System::assert_last_event(
+            Event::BucketCheckpointed {
+                bucket_id,
+                commitment,
+                providers: vec![2, 3],
+            }
+            .into(),
+        );
+    });
+}
+
+#[test]
+fn checkpoint_event_lists_a_repeated_signer_once() {
+    new_test_ext().execute_with(|| {
+        System::set_block_number(1);
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+        let commitment = Commitment {
+            mmr_root: H256::repeat_byte(0xAA),
+            start_seq: 0,
+            leaf_count: 10,
+        };
+
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            commitment,
+            sign_commitment(bucket_id, commitment, &[2, 2]),
+        ));
+
+        System::assert_last_event(
+            Event::BucketCheckpointed {
+                bucket_id,
+                commitment,
+                providers: vec![2],
+            }
+            .into(),
+        );
+    });
+}
+
 /// Create bucket 0 with admin 1 and primary provider 2.
 fn setup_signed_bucket() {
     register_provider(2, 200);

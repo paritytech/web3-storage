@@ -1,0 +1,288 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! Setup phase of `stress-test upload`: open the buckets and agreements a run
+//! needs before the clock starts.
+//!
+//! Nothing here produces an [`crate::metrics::OpOutcome`], so the reported
+//! numbers cover uploads only. A failure aborts the run instead of counting as
+//! a failed upload.
+
+use std::fmt;
+use std::num::NonZeroUsize;
+use std::time::Instant;
+
+use anyhow::{bail, Context, Result};
+use serde::{Serialize, Serializer};
+use sp_runtime::AccountId32;
+use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Visibility};
+
+use crate::common::BucketId;
+
+/// Where `stress-test upload` takes its target buckets from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BucketSource {
+    /// Only buckets the account already has an agreement with the provider for.
+    Discover,
+    /// Only buckets prepared by this run (`--prepare-buckets` required).
+    Create,
+}
+
+impl BucketSource {
+    /// `--prepare-buckets N` means `create`, otherwise `discover`.
+    pub fn resolve(prepare_buckets: usize) -> Self {
+        if prepare_buckets == 0 {
+            Self::Discover
+        } else {
+            Self::Create
+        }
+    }
+}
+
+/// The target set of a run: buckets already usable, plus how many to prepare.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetPlan {
+    pub existing: Vec<BucketId>,
+    pub to_prepare: usize,
+}
+
+/// Decide which discovered buckets to keep and how many to prepare.
+///
+/// `--max-buckets-to-write` is applied here, before anything is created, so a
+/// bucket this run pays to open is never truncated away afterwards.
+pub fn plan_targets(
+    source: BucketSource,
+    requested: usize,
+    mut discovered: Vec<BucketId>,
+    cap: Option<NonZeroUsize>,
+) -> Result<TargetPlan> {
+    let cap = cap.map(NonZeroUsize::get);
+    match source {
+        BucketSource::Discover => {
+            if let Some(cap) = cap {
+                discovered.truncate(cap);
+            }
+            Ok(TargetPlan {
+                existing: discovered,
+                to_prepare: 0,
+            })
+        }
+        BucketSource::Create => {
+            if let Some(cap) = cap {
+                if cap < requested {
+                    bail!(
+                        "--max-buckets-to-write {cap} is below --prepare-buckets {requested}: \
+                         every prepared bucket must receive uploads"
+                    );
+                }
+            }
+            Ok(TargetPlan {
+                existing: Vec::new(),
+                to_prepare: requested,
+            })
+        }
+    }
+}
+
+/// Bytes the configured load writes to the busiest bucket. Uploads are
+/// assigned round-robin, so a bucket receives at most
+/// `ceil(total_uploads / bucket_count)` payloads.
+pub fn bytes_per_bucket(
+    total_uploads: usize,
+    payload_size: usize,
+    bucket_count: usize,
+) -> Result<u64> {
+    if bucket_count == 0 {
+        bail!("no target buckets");
+    }
+    let uploads = u64::try_from(total_uploads.div_ceil(bucket_count))?;
+    let payload = u64::try_from(payload_size)?;
+    uploads
+        .checked_mul(payload)
+        .context("configured load overflows u64 bytes")
+}
+
+/// Default agreement quota: the per-bucket load plus 10% headroom for the
+/// Merkle tree nodes the provider stores next to the chunks.
+pub fn default_max_bytes(needed: u64) -> Result<u64> {
+    needed
+        .checked_add(needed / 10)
+        .context("agreement quota overflows u64")
+}
+
+/// Terms of the agreements to open.
+pub struct PrepareParams<'a> {
+    /// Account that pays for and owns the prepared buckets.
+    pub owner: AccountId32,
+    /// Provider account as given on the command line (SS58 or `0x`-hex).
+    pub provider: &'a str,
+    pub provider_url: &'a str,
+    pub count: usize,
+    pub max_bytes: u64,
+    /// Agreement duration in anchor blocks.
+    pub duration: u32,
+    pub price_per_byte: u128,
+}
+
+/// What preparation created. Serialized as its own `preparation` object in the
+/// JSON output; `results` covers uploads only.
+#[derive(Debug, Clone, Serialize)]
+pub struct PreparationReport {
+    pub buckets: Vec<BucketId>,
+    pub max_bytes: u64,
+    pub duration: u32,
+    /// A decimal string, like the negotiation wire format, so JavaScript
+    /// readers keep full precision.
+    #[serde(serialize_with = "u128_as_string")]
+    pub price_per_byte: u128,
+    pub elapsed_secs: f64,
+}
+
+fn u128_as_string<S: Serializer>(value: &u128, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&value.to_string())
+}
+
+/// Negotiate terms with the provider node and redeem them on-chain, once per
+/// bucket. Same SDK path as the `complete_workflow` example. `admin` must be
+/// connected.
+pub async fn prepare_buckets(
+    admin: &AdminClient,
+    params: PrepareParams<'_>,
+) -> Result<PreparationReport> {
+    let started = Instant::now();
+
+    eprintln!(
+        "Preparing {} bucket(s): {} bytes x {} blocks at {} per byte-block via {}",
+        params.count, params.max_bytes, params.duration, params.price_per_byte, params.provider_url,
+    );
+
+    let mut buckets = Vec::with_capacity(params.count);
+    for i in 1..=params.count {
+        // Each redeemed quote advances the owner's nonce by one. Re-read it per
+        // bucket so an agreement opened by this owner elsewhere does not cause
+        // `NonceMismatch`.
+        let nonce = admin
+            .agreement_nonce(&params.owner)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to read the agreement nonce for bucket {i}/{}",
+                    params.count
+                )
+            })?;
+        let signed = ProviderClient::negotiate_terms(
+            params.provider_url,
+            &NegotiateRequest {
+                owner: params.owner.clone(),
+                max_bytes: params.max_bytes,
+                duration: params.duration,
+                price_per_byte: params.price_per_byte,
+                nonce,
+                replica_params: None,
+                bucket: None,
+            },
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "provider {} rejected terms for bucket {i}/{}",
+                params.provider_url, params.count
+            )
+        })?;
+
+        let bucket_id = admin
+            .create_bucket_with_primary(params.provider.to_string(), signed, Visibility::Private)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to establish agreement for bucket {i}/{}",
+                    params.count
+                )
+            })?;
+        eprintln!("  prepared bucket #{bucket_id} ({i}/{})", params.count);
+        buckets.push(bucket_id);
+    }
+
+    Ok(PreparationReport {
+        buckets,
+        max_bytes: params.max_bytes,
+        duration: params.duration,
+        price_per_byte: params.price_per_byte,
+        elapsed_secs: started.elapsed().as_secs_f64(),
+    })
+}
+
+impl fmt::Display for PreparationReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "preparation: {} bucket(s) created in {:.3}s",
+            self.buckets.len(),
+            self.elapsed_secs
+        )?;
+        let ids: Vec<String> = self.buckets.iter().map(|b| format!("#{b}")).collect();
+        writeln!(f, "  buckets:    {}", ids.join(", "))?;
+        writeln!(
+            f,
+            "  agreement:  {} bytes x {} blocks at {} per byte-block",
+            self.max_bytes, self.duration, self.price_per_byte
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cap(n: usize) -> Option<NonZeroUsize> {
+        NonZeroUsize::new(n)
+    }
+
+    #[test]
+    fn source_defaults_follow_prepare_buckets() {
+        assert_eq!(BucketSource::resolve(0), BucketSource::Discover);
+        assert_eq!(BucketSource::resolve(3), BucketSource::Create);
+    }
+
+    #[test]
+    fn discover_keeps_found_buckets_up_to_cap() {
+        let plan = plan_targets(BucketSource::Discover, 0, vec![1, 2, 3], cap(2)).unwrap();
+        assert_eq!(
+            plan,
+            TargetPlan {
+                existing: vec![1, 2],
+                to_prepare: 0
+            }
+        );
+    }
+
+    #[test]
+    fn create_prepares_exactly_requested() {
+        let plan = plan_targets(BucketSource::Create, 3, vec![9], None).unwrap();
+        assert_eq!(
+            plan,
+            TargetPlan {
+                existing: vec![],
+                to_prepare: 3
+            }
+        );
+    }
+
+    #[test]
+    fn create_rejects_cap_below_requested() {
+        assert!(plan_targets(BucketSource::Create, 3, vec![], cap(2)).is_err());
+    }
+
+    #[test]
+    fn bytes_per_bucket_uses_the_busiest_bucket() {
+        // 10 uploads over 3 buckets: round-robin gives one bucket 4 payloads.
+        assert_eq!(bytes_per_bucket(10, 1_048_576, 3).unwrap(), 4 * 1_048_576);
+        assert_eq!(bytes_per_bucket(1, 512, 1).unwrap(), 512);
+        assert!(bytes_per_bucket(1, 512, 0).is_err());
+    }
+
+    #[test]
+    fn default_quota_adds_ten_percent() {
+        assert_eq!(default_max_bytes(1_000).unwrap(), 1_100);
+        assert!(default_max_bytes(u64::MAX).is_err());
+    }
+}
