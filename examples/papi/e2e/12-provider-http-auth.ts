@@ -19,9 +19,9 @@
  * Workflow 06 covers the same ACL on-chain; this one is the off-chain half —
  * it is the only workflow that sends an `Authorization` header.
  *
- * Every probe is a Layer 0 write endpoint (`PUT /node`, `POST /delete`): only
- * those check roles. Layer 0 reads are unauthenticated, so Reader reads are not
- * tested here (#383, #396).
+ * The role ladder probes the Layer 0 write endpoints (`PUT /node`,
+ * `POST /delete`). Bucket-bound Layer 0 reads need `Reader` on a private
+ * bucket: 12.13 covers that gate, 12.14 the hash-keyed reads that stay open.
  *
  * Usage: node e2e/12-provider-http-auth.js [chain_ws] [provider_url]
  */
@@ -371,11 +371,16 @@ async function main() {
   // ── Layer-0 read gates ────────────────────────────────────────────────────
 
   tests.push({
-    name: "12.14 L0 bucket-bound reads are Reader-gated",
+    name: "12.13 L0 bucket-bound reads are Reader-gated",
     fn: async () => {
       // Unsigned: refused on the (private) bucket.
       assert.strictEqual(await statusOf("GET", `/commitment?bucket_id=${bucketId}`), 401);
       assert.strictEqual(await statusOf("GET", `/mmr_peaks?bucket_id=${bucketId}`), 401);
+      // Signed by a non-member: refused.
+      assert.strictEqual(
+        await signedStatus(stranger, "GET", `/commitment?bucket_id=${bucketId}`, bucketId),
+        403,
+      );
       // A Reader member passes the same gates.
       assert.strictEqual(
         await signedStatus(reader, "GET", `/commitment?bucket_id=${bucketId}`, bucketId),
@@ -389,11 +394,11 @@ async function main() {
   });
 
   tests.push({
-    name: "12.15 Hash-keyed L0 reads stay open (capability reads)",
+    name: "12.14 Hash-keyed L0 reads stay open (capability reads)",
     fn: async () => {
-      // The chunk workflow 12.3 stored is fetchable by hash with no signature
-      // — possession of the hash is the capability; the enumeration surfaces
-      // that would reveal it are gated (12.14).
+      // A chunk a Writer stored is fetchable by hash with no signature:
+      // possession of the hash is the capability; the enumeration surfaces
+      // that would reveal it are gated (12.13).
       const { hash } = await putChunk(PROVIDER_URL, bucketId, "capability read probe", writer);
       assert.strictEqual(await statusOf("GET", `/node?bucket_id=${bucketId}&hash=${hash}`), 200);
     },
