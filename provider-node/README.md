@@ -59,17 +59,17 @@ header:          Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<timest
 
 | Field          | Meaning                                                                 |
 | -------------- | ----------------------------------------------------------------------- |
-| `METHOD`       | Upper-case HTTP verb of the request (`PUT`, `POST`).                    |
+| `METHOD`       | Upper-case HTTP verb of the request (`GET`, `PUT`, `POST`).             |
 | `bucket_id`    | Decimal id of the bucket the request targets.                           |
 | `timestamp`    | Client Unix time in **seconds**; identical in the message and header.   |
 | `pubkey_hex`   | 32-byte sr25519 public key, hex (optional `0x` prefix).                 |
 | `signature_hex`| 64-byte signature over the message, hex (optional `0x` prefix).         |
 
 The recovered public key is mapped to the bucket's on-chain role
-(`Reader` / `Writer` / `Admin`); writes (`PUT /node`, `POST /commit`) need
-`Writer`, and pruning (`POST /delete`) needs `Admin`. The `timestamp` must be
-within the configured skew window of the provider's clock or the request is
-rejected as expired.
+(`Reader` / `Writer` / `Admin`); bucket-bound reads need `Reader`, writes
+(`PUT /node`, `POST /commit`) need `Writer`, and pruning (`POST /delete`)
+needs `Admin`. The `timestamp` must be within the configured skew window of
+the provider's clock or the request is rejected as expired.
 
 Bucket roles are cached, not read fresh on every request. A membership change
 takes effect on the first request after the finalized block that carries it.
