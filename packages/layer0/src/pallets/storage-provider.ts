@@ -165,7 +165,7 @@ export async function getAgreementNonce(api: ParachainApi, owner: string): Promi
 
 /**
  * Shape a provider's SignedTerms into the `{ provider, terms, sig }` argument
- * the quote-redeeming extrinsics (and create_drive / create_s3_bucket) expect.
+ * the quote-redeeming extrinsics expect.
  */
 export function buildSignedTermsArgs(
   provider: ChainSigner | { address: string },
@@ -720,6 +720,28 @@ export async function freezeBucket(
     result.events,
     api.event.StorageProvider.BucketFrozen,
     "BucketFrozen",
+  );
+}
+
+/**
+ * Delete a bucket that has no agreements and no open challenges (admin only).
+ * Releases the bucket's and every member's storage deposit to whoever paid it.
+ */
+export async function deleteBucket(
+  api: ParachainApi,
+  admin: ChainSigner,
+  bucketId: bigint,
+  opts: SubmitOpts = {},
+) {
+  const result = await submitTx(
+    api.tx.StorageProvider.delete_bucket({ bucket_id: bucketId }),
+    admin.signer,
+    { label: "delete_bucket", ...opts },
+  );
+  return requireOneEvent(
+    result.events,
+    api.event.StorageProvider.BucketDeleted,
+    "BucketDeleted",
   );
 }
 

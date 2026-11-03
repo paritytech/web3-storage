@@ -5,7 +5,10 @@
 
 use super::{Pallet as StorageProvider, *};
 use frame_benchmarking::v2::*;
-use frame_support::{pallet_prelude::*, traits::fungible::Mutate};
+use frame_support::{
+    pallet_prelude::*,
+    traits::{fungible::Mutate, Consideration},
+};
 use frame_system::{Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
@@ -209,7 +212,12 @@ fn add_primary_to_bucket<T: Config>(
 
     Buckets::<T>::mutate(bucket_id, |maybe| {
         if let Some(b) = maybe {
-            let _ = b.primary_providers.try_push(provider.clone());
+            b.primary_providers
+                .try_push(provider.clone())
+                .expect("bucket has room for another primary");
+            if let Some(snapshot) = b.snapshot.as_mut() {
+                snapshot.primary_signers.push(false);
+            }
         }
     });
 
@@ -222,6 +230,9 @@ fn add_primary_to_bucket<T: Config>(
         extensions_blocked: false,
         role: ProviderRole::Primary,
         started_at: anchor_block,
+        depositor: admin.clone(),
+        deposit: T::StorageDeposit::new(admin, StorageProvider::<T>::agreement_footprint())
+            .expect("benchmark admin cannot fund the agreement deposit"),
     };
     StorageAgreements::<T>::insert(bucket_id, provider, agreement);
 
@@ -550,6 +561,29 @@ mod benchmarks {
         create_bucket(RawOrigin::Signed(admin), 1, Visibility::Private);
     }
 
+    /// Worst case: a bucket with `MaxMembers` members, each with a deposit
+    /// to release and a reverse-index entry to clear.
+    #[benchmark]
+    fn delete_bucket(m: Linear<1, { T::MaxMembers::get() }>) {
+        let admin = funded_account::<T>("admin", 0);
+        let bucket_id = setup_bucket::<T>(&admin);
+        for i in 1..m {
+            let member = funded_account::<T>("member", i);
+            Pallet::<T>::set_member_internal(
+                &admin,
+                bucket_id,
+                member,
+                storage_primitives::Role::Reader,
+            )
+            .expect("benchmark admin cannot add a member");
+        }
+
+        #[extrinsic_call]
+        delete_bucket(RawOrigin::Signed(admin), bucket_id);
+
+        assert!(Buckets::<T>::get(bucket_id).is_none());
+    }
+
     /// Worst case: full signature verification + owner-nonce check and
     /// increment + bucket creation + agreement insertion.
     #[benchmark]
@@ -822,10 +856,7 @@ mod benchmarks {
                 .as_mut()
                 .and_then(|b| b.snapshot.as_mut())
                 .expect("checkpoint created the snapshot");
-            snapshot
-                .primary_signers
-                .iter_mut()
-                .for_each(|byte| *byte = 0);
+            snapshot.primary_signers.fill(false);
         });
 
         let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment);
@@ -874,10 +905,7 @@ mod benchmarks {
         Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 if let Some(snapshot) = bucket.snapshot.as_mut() {
-                    if snapshot.primary_signers.is_empty() {
-                        snapshot.primary_signers.push(0);
-                    }
-                    snapshot.primary_signers[0] |= 1; // Set bit 0
+                    snapshot.primary_signers.set(0, true);
                 }
             }
         });

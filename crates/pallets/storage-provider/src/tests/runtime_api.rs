@@ -43,7 +43,7 @@ fn query_bucket_info_returns_data() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x01],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             }
         });
@@ -316,7 +316,7 @@ fn query_challenges_at_returns_data() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x03],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1, 1],
                 });
             }
         });
@@ -375,7 +375,7 @@ fn query_challenges_at_returns_data() {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x03],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1, 1],
             });
         });
         assert_ok!(StorageProvider::respond_to_challenge(
@@ -415,7 +415,7 @@ fn setup_two_challenges() -> u64 {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x03],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1, 1],
             });
         }
     });

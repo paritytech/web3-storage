@@ -242,7 +242,7 @@ pub struct ChallengeResponse {
 
 sp_api::decl_runtime_apis! {
     /// Runtime API for the storage provider pallet.
-    #[api_version(1)]
+    #[api_version(2)]
     pub trait StorageProviderApi<AccountId, BlockNumber, Balance>
     where
         AccountId: Encode + Decode,

@@ -2,128 +2,25 @@
 
 use crate::Member;
 use crate::*;
-use alloc::vec::Vec;
-use frame_support::pallet_prelude::*;
-use sp_runtime::traits::{SaturatedConversion, Saturating, Zero};
-use storage_primitives::{BucketId, Commitment, ProviderRole, Role, Visibility};
+use frame_support::{pallet_prelude::*, traits::Consideration};
+use storage_primitives::{BucketId, Commitment, Role, Visibility};
 
 impl<T: Config> Pallet<T> {
-    /// Internal function to cleanup a bucket and all its agreements.
-    /// This is called by Layer 1 (drive-registry) when deleting a drive.
-    ///
-    /// Returns the total amount refunded to the owner.
-    pub fn cleanup_bucket_internal(
-        bucket_id: BucketId,
-        owner: &T::AccountId,
-    ) -> Result<BalanceOf<T>, DispatchError> {
-        // Verify bucket exists
-        let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
-
-        // Verify caller is an admin of the bucket
-        Self::ensure_admin(owner, &bucket)?;
-
-        let mut total_refunded: BalanceOf<T> = Zero::zero();
-
-        // End all agreements for this bucket (pay providers fairly)
-        let agreements: Vec<_> = StorageAgreements::<T>::iter_prefix(bucket_id).collect();
-
-        // Refuse to delete the bucket while any of its agreements has a
-        // pending challenge — otherwise tearing down here would let the
-        // provider escape a live slashable challenge. Checked before any
-        // state mutation/payout so the whole call is a no-op on failure.
-        for (provider, _) in &agreements {
-            ensure!(
-                PendingChallengesByBucket::<T>::get(bucket_id, provider) == 0,
-                Error::<T>::AgreementHasPendingChallenge
-            );
+    /// Removes a bucket that has no agreements left: releases every member
+    /// deposit to its depositor and clears the member's reverse-index entry,
+    /// deletes the record and releases the bucket deposit to its creator.
+    pub(crate) fn remove_bucket_internal(bucket_id: BucketId, bucket: Bucket<T>) -> DispatchResult {
+        for member in bucket.members {
+            member.deposit.drop(&member.depositor)?;
+            Self::remove_from_member_index(&member.account, bucket_id);
         }
 
-        for (provider, agreement) in agreements {
-            // Calculate prorated refund based on remaining time
-            let anchor_block = Self::current_anchor_block();
-            let remaining_blocks = agreement.expires_at.saturating_sub(anchor_block);
-
-            // If there's remaining time, calculate prorated refund
-            let refund_to_owner = if remaining_blocks > Zero::zero() {
-                let total_duration = agreement.expires_at.saturating_sub(agreement.started_at);
-                if total_duration > Zero::zero() {
-                    let remaining_u128: u128 = remaining_blocks.saturated_into();
-                    let total_u128: u128 = total_duration.saturated_into();
-                    let payment_u128: u128 = agreement.payment_locked.saturated_into();
-
-                    // refund = payment * (remaining / total)
-                    let refund_u128 = payment_u128
-                        .saturating_mul(remaining_u128)
-                        .saturating_div(total_u128);
-                    refund_u128.saturated_into()
-                } else {
-                    Zero::zero()
-                }
-            } else {
-                Zero::zero()
-            };
-
-            // Payment to provider = total locked - refund to owner
-            let payment_to_provider = agreement.payment_locked.saturating_sub(refund_to_owner);
-
-            // A replica's unspent sync balance is escrowed alongside the fee
-            // and goes back to the owner with the refund.
-            let refund_to_owner = match &agreement.role {
-                ProviderRole::Replica { sync_balance, .. } => {
-                    refund_to_owner.saturating_add(*sync_balance)
-                }
-                ProviderRole::Primary => refund_to_owner,
-            };
-
-            // Settle the earned portion straight out of escrow; the unspent
-            // remainder is released back to the owner.
-            Self::settle_payment(&agreement.owner, &provider, payment_to_provider)?;
-            Self::release_payment(&agreement.owner, refund_to_owner)?;
-
-            // Track total refunded (owner keeps the unspent portion)
-            total_refunded = total_refunded.saturating_add(refund_to_owner);
-
-            // Update provider stats
-            Providers::<T>::mutate(&provider, |maybe_provider| {
-                if let Some(provider_info) = maybe_provider {
-                    provider_info.committed_bytes = provider_info
-                        .committed_bytes
-                        .saturating_sub(agreement.max_bytes);
-                    provider_info.stats.lifetime_revenue = provider_info
-                        .stats
-                        .lifetime_revenue
-                        .saturating_add(payment_to_provider);
-                    provider_info.stats.agreements_not_extended = provider_info
-                        .stats
-                        .agreements_not_extended
-                        .saturating_add(1);
-                }
-            });
-
-            // Remove agreement
-            StorageAgreements::<T>::remove(bucket_id, &provider);
-
-            Self::deposit_event(Event::AgreementEnded {
-                bucket_id,
-                provider: provider.clone(),
-                payment_to_provider,
-                burned: Zero::zero(),
-            });
-        }
-
-        // Clean up reverse index for all members
-        for member in &bucket.members {
-            MemberBuckets::<T>::mutate(&member.account, |buckets| {
-                buckets.retain(|id| *id != bucket_id);
-            });
-        }
-
-        // Remove the bucket itself
         Buckets::<T>::remove(bucket_id);
+        bucket.deposit.drop(&bucket.creator)?;
 
         Self::deposit_event(Event::BucketDeleted { bucket_id });
 
-        Ok(total_refunded)
+        Ok(())
     }
 
     /// Creates a bucket with `admin` as its sole admin.
@@ -158,6 +55,8 @@ impl<T: Config> Pallet<T> {
         let admin_member = Member {
             account: admin.clone(),
             role: Role::Admin,
+            depositor: admin.clone(),
+            deposit: T::StorageDeposit::new(admin, Self::member_footprint())?,
         };
 
         let mut members = BoundedVec::new();
@@ -181,6 +80,8 @@ impl<T: Config> Pallet<T> {
             historical_roots: [(0, Commitment::default()); 6],
             total_snapshots: 0,
             visibility,
+            creator: admin.clone(),
+            deposit: T::StorageDeposit::new(admin, Self::bucket_footprint())?,
         };
 
         Buckets::<T>::insert(bucket_id, bucket);

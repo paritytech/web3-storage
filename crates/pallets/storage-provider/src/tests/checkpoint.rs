@@ -137,6 +137,41 @@ fn extend_checkpoint_works_after_initial_checkpoint() {
 }
 
 #[test]
+fn extend_checkpoint_skips_primary_that_already_signed() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, commitment) = setup_signed_checkpoint();
+        setup_added_primary(3, 1, bucket_id, 50, 100);
+
+        // Provider 2 already signed, so its invalid signature is not verified.
+        let other_commitment = Commitment {
+            mmr_root: H256::repeat_byte(0xCD),
+            ..commitment
+        };
+        assert_ok!(StorageProvider::extend_checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            vec![
+                (2, sign_commitment_by(2, bucket_id, other_commitment)),
+                (3, sign_commitment_by(3, bucket_id, commitment)),
+            ]
+            .try_into()
+            .unwrap(),
+        ));
+        System::assert_last_event(
+            Event::BucketCheckpointed {
+                bucket_id,
+                commitment,
+                providers: vec![3],
+            }
+            .into(),
+        );
+        let snapshot = Buckets::<Test>::get(bucket_id).unwrap().snapshot.unwrap();
+        assert!(snapshot.primary_signers[0]);
+        assert!(snapshot.primary_signers[1]);
+    });
+}
+
+#[test]
 fn checkpoint_fails_without_signatures() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
@@ -155,6 +190,41 @@ fn checkpoint_fails_without_signatures() {
             ),
             Error::<Test>::InsufficientSignatures
         );
+    });
+}
+
+#[test]
+fn extend_checkpoint_skips_duplicate_signer_in_same_call() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, commitment) = setup_signed_checkpoint();
+        setup_added_primary(3, 1, bucket_id, 50, 100);
+
+        // The first entry sets provider 3's bit, so the second (invalid) entry
+        // is skipped without verification.
+        let other_commitment = Commitment {
+            mmr_root: H256::repeat_byte(0xCD),
+            ..commitment
+        };
+        assert_ok!(StorageProvider::extend_checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            vec![
+                (3, sign_commitment_by(3, bucket_id, commitment)),
+                (3, sign_commitment_by(3, bucket_id, other_commitment)),
+            ]
+            .try_into()
+            .unwrap(),
+        ));
+        System::assert_last_event(
+            Event::BucketCheckpointed {
+                bucket_id,
+                commitment,
+                providers: vec![3],
+            }
+            .into(),
+        );
+        let snapshot = Buckets::<Test>::get(bucket_id).unwrap().snapshot.unwrap();
+        assert!(snapshot.primary_signers[1]);
     });
 }
 
@@ -189,12 +259,90 @@ fn zero_min_providers_in_state_still_needs_one_signature() {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x00],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 0],
             });
         });
         assert_noop!(
             StorageProvider::freeze_bucket(RuntimeOrigin::signed(1), bucket_id),
             Error::<Test>::MinProvidersNotMet
+        );
+    });
+}
+
+#[test]
+fn one_provider_repeating_its_signature_does_not_meet_min_providers() {
+    new_test_ext().execute_with(|| {
+        System::set_block_number(1);
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+        setup_added_primary(3, 1, bucket_id, 50, 200);
+        assert_ok!(StorageProvider::set_min_providers(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2
+        ));
+        let commitment = Commitment {
+            mmr_root: H256::repeat_byte(0xAA),
+            start_seq: 0,
+            leaf_count: 10,
+        };
+        let same_provider_twice = sign_commitment(bucket_id, commitment, &[2, 2]);
+        let both_providers = sign_commitment(bucket_id, commitment, &[2, 3]);
+
+        assert_noop!(
+            StorageProvider::checkpoint(
+                RuntimeOrigin::signed(1),
+                bucket_id,
+                commitment,
+                same_provider_twice,
+            ),
+            Error::<Test>::InsufficientSignatures
+        );
+
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            commitment,
+            both_providers,
+        ));
+        System::assert_last_event(
+            Event::BucketCheckpointed {
+                bucket_id,
+                commitment,
+                providers: vec![2, 3],
+            }
+            .into(),
+        );
+    });
+}
+
+#[test]
+fn checkpoint_event_lists_a_repeated_signer_once() {
+    new_test_ext().execute_with(|| {
+        System::set_block_number(1);
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+        let commitment = Commitment {
+            mmr_root: H256::repeat_byte(0xAA),
+            start_seq: 0,
+            leaf_count: 10,
+        };
+
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            commitment,
+            sign_commitment(bucket_id, commitment, &[2, 2]),
+        ));
+
+        System::assert_last_event(
+            Event::BucketCheckpointed {
+                bucket_id,
+                commitment,
+                providers: vec![2],
+            }
+            .into(),
         );
     });
 }
