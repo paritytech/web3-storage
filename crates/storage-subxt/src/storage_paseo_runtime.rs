@@ -3466,9 +3466,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                84u8, 201u8, 197u8, 167u8, 58u8, 65u8, 252u8, 66u8, 0u8, 33u8, 198u8, 193u8, 79u8,
-                179u8, 188u8, 168u8, 8u8, 98u8, 72u8, 56u8, 62u8, 138u8, 25u8, 164u8, 155u8, 253u8,
-                79u8, 127u8, 27u8, 163u8, 218u8, 130u8,
+                215u8, 30u8, 254u8, 135u8, 71u8, 188u8, 61u8, 250u8, 127u8, 196u8, 15u8, 213u8,
+                205u8, 12u8, 122u8, 249u8, 178u8, 32u8, 184u8, 191u8, 236u8, 92u8, 244u8, 218u8,
+                25u8, 10u8, 248u8, 185u8, 143u8, 145u8, 162u8, 110u8,
             ]
     }
     pub mod system {
@@ -16051,9 +16051,9 @@ pub mod api {
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Writer or admin. Make a provider-signed commitment the bucket's"]
             #[doc = "canonical state. Needs valid signatures from at least"]
-            #[doc = "`min_providers` of the bucket's primary providers, and at least"]
-            #[doc = "one; a frozen bucket"]
-            #[doc = "only accepts commitments that keep its `frozen_start_seq`."]
+            #[doc = "`min_providers` distinct primary providers, and at least one; a"]
+            #[doc = "repeated signature counts once. A frozen bucket only accepts"]
+            #[doc = "commitments that keep its `frozen_start_seq`."]
             #[doc = ""]
             #[doc = "A checkpoint never moves the bucket backwards. With the same start"]
             #[doc = "as the current snapshot, its end must be past the current end. A"]
@@ -17040,9 +17040,9 @@ pub mod api {
                     }
                     #[doc = "Writer or admin. Make a provider-signed commitment the bucket's"]
                     #[doc = "canonical state. Needs valid signatures from at least"]
-                    #[doc = "`min_providers` of the bucket's primary providers, and at least"]
-                    #[doc = "one; a frozen bucket"]
-                    #[doc = "only accepts commitments that keep its `frozen_start_seq`."]
+                    #[doc = "`min_providers` distinct primary providers, and at least one; a"]
+                    #[doc = "repeated signature counts once. A frozen bucket only accepts"]
+                    #[doc = "commitments that keep its `frozen_start_seq`."]
                     #[doc = ""]
                     #[doc = "A checkpoint never moves the bucket backwards. With the same start"]
                     #[doc = "as the current snapshot, its end must be past the current end. A"]
@@ -21476,9 +21476,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            68u8, 185u8, 149u8, 10u8, 68u8, 212u8, 254u8, 73u8, 41u8, 193u8, 30u8,
-                            54u8, 68u8, 55u8, 206u8, 210u8, 31u8, 213u8, 246u8, 55u8, 208u8, 159u8,
-                            116u8, 121u8, 114u8, 6u8, 226u8, 130u8, 55u8, 61u8, 58u8, 158u8,
+                            117u8, 151u8, 24u8, 139u8, 21u8, 17u8, 7u8, 196u8, 86u8, 22u8, 8u8,
+                            4u8, 47u8, 44u8, 122u8, 135u8, 237u8, 45u8, 41u8, 192u8, 232u8, 241u8,
+                            38u8, 93u8, 233u8, 45u8, 54u8, 144u8, 62u8, 185u8, 226u8, 166u8,
                         ],
                     )
                 }
@@ -26543,9 +26543,9 @@ pub mod api {
                     #[codec(index = 30)]
                     #[doc = "Writer or admin. Make a provider-signed commitment the bucket's"]
                     #[doc = "canonical state. Needs valid signatures from at least"]
-                    #[doc = "`min_providers` of the bucket's primary providers, and at least"]
-                    #[doc = "one; a frozen bucket"]
-                    #[doc = "only accepts commitments that keep its `frozen_start_seq`."]
+                    #[doc = "`min_providers` distinct primary providers, and at least one; a"]
+                    #[doc = "repeated signature counts once. A frozen bucket only accepts"]
+                    #[doc = "commitments that keep its `frozen_start_seq`."]
                     #[doc = ""]
                     #[doc = "A checkpoint never moves the bucket backwards. With the same start"]
                     #[doc = "as the current snapshot, its end must be past the current end. A"]
@@ -26954,8 +26954,8 @@ pub mod api {
                     #[doc = "signers to the current commitment, use `extend_checkpoint`."]
                     SnapshotNotForward,
                     #[codec(index = 61)]
-                    #[doc = "Fewer valid provider signatures than the bucket's `min_providers`,"]
-                    #[doc = "or none."]
+                    #[doc = "Fewer distinct primary providers signed than the bucket's"]
+                    #[doc = "`min_providers`, or none. A repeated signature counts once."]
                     InsufficientSignatures,
                     #[codec(index = 62)]
                     #[doc = "A balance or counter computation overflowed."]
