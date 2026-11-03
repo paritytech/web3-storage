@@ -1583,6 +1583,44 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
+    async fn test_read_chunks_beyond_the_limit_is_rejected(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
+
+        let valid_hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        // 64 chunks of 256 KiB is the most one request may read; one byte more
+        // needs a 65th chunk. `u64::MAX` must not overflow `offset + length`.
+        for (offset, length) in [(0, 64 * 262_144 + 1), (1, u64::MAX)] {
+            let resp = server
+                .client
+                .get(server.url(&format!(
+                    "/read?bucket_id=1&data_root={valid_hex}&offset={offset}&length={length}"
+                )))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{offset} {length}");
+            let body: Value = resp.json().await.unwrap();
+            assert_eq!(body["error"], "read_too_large");
+        }
+
+        // Exactly 64 chunks is within the limit, and an offset at the top of
+        // the range reads one chunk position without overflowing.
+        for (offset, length) in [(0, 64 * 262_144), (u64::MAX, u64::MAX)] {
+            let resp = server
+                .client
+                .get(server.url(&format!(
+                    "/read?bucket_id=1&data_root={valid_hex}&offset={offset}&length={length}"
+                )))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "{offset} {length}");
+        }
+    }
+}
+
+common::backend_tests! {
     async fn test_read_chunks_nonexistent_root(backend) {
         let server = TestServer::new(backend).await;
         upload_and_commit(&server, 1).await;

@@ -29,6 +29,13 @@ use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+/// Most chunks one `/read` returns. 64 chunks of `DEFAULT_CHUNK_SIZE` are
+/// 16 MiB, eight times the 2 MiB example in the design, and about 21 MiB once
+/// base64-encoded into the JSON response. The read is unauthenticated and the
+/// node holds the whole response in memory, so a bound is needed; a caller
+/// that wants more reads in several requests.
+const MAX_READ_CHUNKS: u64 = 64;
+
 /// Sustained `/negotiate` requests allowed per-IP / second (token refill rate).
 const NEGOTIATE_RATE_LIMIT_PER_SEC: u64 = 5;
 /// Per-IP token-bucket capacity: a single client may burst up to this many
@@ -376,7 +383,17 @@ async fn read_chunks(
     // Calculate chunk indices
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
     let start_chunk = query.offset / chunk_size;
-    let end_chunk = (query.offset + query.length).div_ceil(chunk_size);
+    let end_chunk = query
+        .offset
+        .saturating_add(query.length)
+        .div_ceil(chunk_size);
+    let requested = end_chunk - start_chunk;
+    if requested > MAX_READ_CHUNKS {
+        return Err(Error::ReadTooLarge {
+            requested,
+            max: MAX_READ_CHUNKS,
+        });
+    }
 
     let chunks = state
         .storage
