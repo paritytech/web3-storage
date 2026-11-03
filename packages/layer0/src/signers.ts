@@ -11,6 +11,7 @@ import {
   entropyToMiniSecret,
   mnemonicToEntropy,
 } from "@polkadot-labs/hdkd-helpers";
+import type { InjectedPolkadotAccount } from "polkadot-api/pjs-signer";
 import { getTxCreator } from "polkadot-api/tx-creator";
 
 import { toSs58 } from "./address.js";
@@ -26,7 +27,8 @@ export interface Keypair {
  * call sites never juggle `(signer, address, publicKey)` triples.
  */
 export interface ChainSigner {
-  signer: ReturnType<typeof getTxCreator>;
+  /** Same type as a wallet account's `txCreator`, so a wallet account can be used here. */
+  signer: InjectedPolkadotAccount["txCreator"];
   address: string;
   publicKey: Uint8Array;
   /** SURI the signer was derived from, when known (e.g. "//Alice"). */
