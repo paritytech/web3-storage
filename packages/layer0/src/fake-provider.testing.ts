@@ -12,7 +12,6 @@
 
 import {
   bagPeaks,
-  base64ToBytes,
   bytesToBase64,
   computeCid,
   DEFAULT_CHUNK_SIZE,
