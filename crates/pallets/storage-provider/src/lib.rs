@@ -47,8 +47,8 @@ mod tests;
 #[allow(clippy::too_many_arguments)]
 pub mod pallet {
     use crate::weights::WeightInfo;
-    use alloc::vec;
     use alloc::vec::Vec;
+    use bitvec::prelude::{BitVec, Lsb0};
     use frame_support::{
         pallet_prelude::*,
         traits::{
@@ -377,7 +377,7 @@ pub mod pallet {
     /// `(bucket, provider)` pair. Maintained in lockstep with
     /// [`PendingChallenges`] and gates that bucket's agreement teardown
     /// (`end_agreement`, `claim_expired_agreement`) and bucket removal
-    /// (`delete_bucket`, `cleanup_bucket_internal`). An entry exists only
+    /// (`delete_bucket`). An entry exists only
     /// while the count is positive, so a bucket with no entry under its
     /// prefix has no open challenge.
     #[pallet::storage]
@@ -1276,7 +1276,9 @@ pub mod pallet {
         InvalidSupersededClaim,
         /// The provider did not sign the bucket's current snapshot, so there
         /// is no on-chain commitment to challenge; use `challenge_offchain`
-        /// with a signed commitment instead.
+        /// with a signed commitment instead. `checkpoint` and
+        /// `extend_checkpoint` return it when a signer is not a primary of
+        /// the bucket.
         ProviderNotInSnapshot,
         /// `target.leaf_index` is not below the commitment's `leaf_count`: the
         /// leaf does not exist, so no proof could defend the challenge. Pick a
@@ -1301,8 +1303,8 @@ pub mod pallet {
         /// A frozen bucket only accepts checkpoints that keep its
         /// `frozen_start_seq`.
         SnapshotViolatesFrozen,
-        /// Fewer valid provider signatures than the bucket's `min_providers`,
-        /// or none.
+        /// Fewer distinct primary providers signed than the bucket's
+        /// `min_providers`, or none. A repeated signature counts once.
         InsufficientSignatures,
 
         // General errors
@@ -1815,7 +1817,7 @@ pub mod pallet {
 
                 // Count set bits in the bitfield. At least one, as in
                 // `checkpoint`.
-                let signer_count = snapshot.count_signers();
+                let signer_count = snapshot.primary_signers.count_ones();
                 ensure!(
                     signer_count >= bucket.min_providers.max(1) as usize,
                     Error::<T>::MinProvidersNotMet
@@ -1936,17 +1938,7 @@ pub mod pallet {
             // Remove from bucket's primary providers if primary
             // TODO(no-primary-provider-left)
             if matches!(agreement.role, ProviderRole::Primary) {
-                Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
-                    if let Some(bucket) = maybe_bucket {
-                        // Capture the position before removal so the snapshot's
-                        // positional signer bitfield can be re-indexed to match.
-                        let pos = bucket.primary_providers.iter().position(|p| p == &provider);
-                        bucket.primary_providers.retain(|p| p != &provider);
-                        if let (Some(pos), Some(snapshot)) = (pos, bucket.snapshot.as_mut()) {
-                            snapshot.remove_provider_bit(pos);
-                        }
-                    }
-                });
+                Self::remove_primary_from_bucket(bucket_id, &provider);
 
                 Self::deposit_event(Event::PrimaryProviderRemoved {
                     bucket_id,
@@ -2393,9 +2385,9 @@ pub mod pallet {
 
         /// Writer or admin. Make a provider-signed commitment the bucket's
         /// canonical state. Needs valid signatures from at least
-        /// `min_providers` of the bucket's primary providers, and at least
-        /// one; a frozen bucket
-        /// only accepts commitments that keep its `frozen_start_seq`.
+        /// `min_providers` distinct primary providers, and at least one; a
+        /// repeated signature counts once. A frozen bucket only accepts
+        /// commitments that keep its `frozen_start_seq`.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
         pub fn checkpoint(
@@ -2427,49 +2419,37 @@ pub mod pallet {
                 let payload = CommitmentPayload::new(bucket_id, commitment);
                 let encoded_payload = payload.encode();
 
-                // Create bitfield using Vec<u8>
-                let num_providers = bucket.primary_providers.len();
-                let num_bytes = num_providers.div_ceil(8);
-                let mut primary_signers = vec![0u8; num_bytes];
-                let mut signing_count = 0usize;
-                let mut signing_providers = Vec::new();
+                let mut primary_signers =
+                    BitVec::<u8, Lsb0>::repeat(false, bucket.primary_providers.len());
+                let mut providers = Vec::new();
 
-                for (signer, signature) in signatures.iter() {
-                    // Find signer in primary_providers
+                for (signer, signature) in signatures {
                     let idx = bucket
                         .primary_providers
                         .iter()
-                        .position(|p| p == signer)
+                        .position(|p| *p == signer)
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
-                    // Verify the signature using the provider's registered public key
-                    Self::verify_signature(signature, &encoded_payload, signer)?;
+                    Self::verify_signature(&signature, &encoded_payload, &signer)?;
 
-                    // Set bit at position idx using manual bit manipulation
-                    let byte_idx = idx / 8;
-                    let bit_idx = idx % 8;
-                    primary_signers[byte_idx] |= 1 << bit_idx;
-                    // TODO(#388): this counts signature entries, not distinct
-                    // providers, so one provider's signature repeated N times
-                    // satisfies `min_providers = N`. Count `primary_signers`
-                    // (which ORs, so it is duplicate-free) the way the freeze
-                    // path does, or reject a repeated signer outright.
-                    // https://github.com/paritytech/web3-storage/issues/388
-                    signing_count += 1;
-                    signing_providers.push(signer.clone());
+                    let already_signed = primary_signers
+                        .get_mut(idx)
+                        .ok_or(Error::<T>::ProviderNotInSnapshot)?
+                        .replace(true);
+                    if !already_signed {
+                        providers.push(signer);
+                    }
                 }
 
                 // At least one signature even if `min_providers` is 0 in
                 // state written before the bound existed: a snapshot no
                 // provider signed is a snapshot no provider is liable for.
                 ensure!(
-                    signing_count >= bucket.min_providers.max(1) as usize,
+                    primary_signers.count_ones() >= bucket.min_providers.max(1) as usize,
                     Error::<T>::InsufficientSignatures
                 );
 
                 let anchor_block = Self::current_anchor_block();
-
-                // Update historical roots
                 Self::update_historical_roots(bucket, anchor_block, commitment);
 
                 bucket.snapshot = Some(BucketSnapshot {
@@ -2483,7 +2463,7 @@ pub mod pallet {
                 Self::deposit_event(Event::BucketCheckpointed {
                     bucket_id,
                     commitment,
-                    providers: signing_providers,
+                    providers,
                 });
 
                 Ok(())
@@ -2491,7 +2471,10 @@ pub mod pallet {
         }
 
         /// Writer or admin. Add signatures from primary providers that signed
-        /// the current snapshot late.
+        /// the current snapshot late. A primary added after the checkpoint
+        /// becomes challengeable for this snapshot once its signature is added
+        /// here. Signers already in the bitfield are skipped without
+        /// verification.
         #[pallet::call_index(31)]
         #[pallet::weight(T::WeightInfo::extend_checkpoint())]
         pub fn extend_checkpoint(
@@ -2530,22 +2513,17 @@ pub mod pallet {
                         .position(|p| p == signer)
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
-                    // Check if already signed using bit manipulation
-                    let byte_idx = idx / 8;
-                    let bit_idx = idx % 8;
-                    if let Some(byte) = primary_signers.get(byte_idx) {
-                        if (byte & (1 << bit_idx)) != 0 {
-                            continue; // Skip already-signed providers
-                        }
+                    let mut signed = primary_signers
+                        .get_mut(idx)
+                        .ok_or(Error::<T>::ProviderNotInSnapshot)?;
+                    if *signed {
+                        continue;
                     }
 
                     // Verify signature
                     Self::verify_signature(signature, &encoded_payload, signer)?;
 
-                    // Set bit using manual bit manipulation
-                    if byte_idx < primary_signers.len() {
-                        primary_signers[byte_idx] |= 1 << bit_idx;
-                    }
+                    *signed = true;
                     added_providers.push(signer.clone());
                 }
 

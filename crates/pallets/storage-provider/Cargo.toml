@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Substrate pallet for scalable Web3 storage"
 
 [dependencies]
+bitvec = { workspace = true }
 storage-primitives = { workspace = true }
 codec = { workspace = true }
 scale-info = { workspace = true }
@@ -28,6 +29,7 @@ pallet-balances = { workspace = true, features = ["std"] }
 [features]
 default = ["std"]
 std = [
+	"bitvec/std",
 	"codec/std",
 	"frame-benchmarking?/std",
 	"frame-support/std",

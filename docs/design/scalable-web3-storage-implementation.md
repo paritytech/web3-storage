@@ -440,6 +440,9 @@ pub struct ProviderSettings<T: Config> {
     /// `committed_bytes` past this value, and the provider's stake must back
     /// it: `stake >= max_capacity * MinStakePerByte`.
     pub max_capacity: u64,
+    /// Minimum `max_bytes` per agreement, primary or replica. `0` means no
+    /// minimum. Redeem calls reject `terms.max_bytes` below this value.
+    pub min_bytes: u64,
 }
 
 /// Monotonically increasing bucket ID counter. Ensures stable, unique IDs.
@@ -550,7 +553,7 @@ pub struct Bucket<T: Config> {
     /// even if it is no longer an admin or member.
     pub creator: T::AccountId,
     /// Storage deposit for the bucket record, held on `creator` and released
-    /// when `delete_bucket` or `cleanup_bucket_internal` removes the bucket.
+    /// when `delete_bucket` removes the bucket.
     /// The ticket contains only the amount, so the record stores the
     /// depositor beside it, as `pallet-preimage` does.
     ///
@@ -570,12 +573,13 @@ pub struct BucketSnapshot<BlockNumber> {
     pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
     /// Bit i (LSB0) is set if `primary_providers[i]` signed.
-    /// Stored as `Vec<u8>` with explicit `count_signers()` / `has_provider_signed()`
-    /// helpers rather than `BitVec` to keep encoding stable and `no_std`-friendly.
-    /// `primary_providers` is bounded by `T::MaxPrimaryProviders` (e.g., 5), so
-    /// indices are stable within a checkpoint; if it changes between checkpoints
-    /// the bitfield is regenerated at the next checkpoint.
-    pub primary_signers: Vec<u8>,
+    /// `BitVec<u8, Lsb0>` whose length always equals `primary_providers.len()`
+    /// (bounded by `T::MaxPrimaryProviders`, e.g., 5). `checkpoint` builds it
+    /// from the submitted signatures. Afterwards it changes in place: adding a
+    /// primary appends an unset bit; removing a primary removes its bit, which
+    /// shifts the later bits down one index; a primary added after the
+    /// checkpoint gets its bit set when it signs via `extend_checkpoint`.
+    pub primary_signers: BitVec<u8, Lsb0>,
 }
 // Canonical range is [start_seq, start_seq + leaf_count)
 // Destructive writes (new MMR that allows pruning old) must set start_seq >= old_start_seq + old_leaf_count
@@ -614,7 +618,7 @@ pub struct StorageAgreement<T: Config> {
     pub depositor: T::AccountId,
     /// Storage deposit, held on `depositor` and released to it wherever the
     /// agreement is removed: `end_agreement`, `claim_expired_agreement`,
-    /// `remove_slashed`, `cleanup_bucket_internal`. Footprint: the record's
+    /// `remove_slashed`. Footprint: the record's
     /// maximum encoded length. Applies at any price, so a zero-price
     /// agreement still costs its depositor something to keep.
     pub deposit: T::StorageDeposit,
@@ -775,7 +779,7 @@ pub type PendingChallenges<T: Config> =
 /// `(bucket, provider)` pair. Maintained in lockstep with
 /// `PendingChallenges` and gates that bucket's agreement teardown
 /// (`end_agreement`, `claim_expired_agreement`) and bucket removal
-/// (`delete_bucket`, `cleanup_bucket_internal`). An entry exists only while
+/// (`delete_bucket`). An entry exists only while
 /// the count is positive, so a bucket with no entry under its prefix has no
 /// open challenge, and the removal gate is one `next_key` read.
 #[pallet::storage]
@@ -1261,9 +1265,9 @@ impl<T: Config> Pallet<T> {
 
     /// Update provider settings.
     /// 
-    /// Allows provider to change pricing, duration limits, capacity, and
-    /// availability. Changes apply to new agreements only; existing agreements
-    /// retain their locked terms.
+    /// Allows provider to change pricing, duration limits, capacity,
+    /// minimum agreement size, and availability. Changes apply to new
+    /// agreements only; existing agreements retain their locked terms.
     ///
     /// Validation:
     /// - `min_duration <= max_duration` (`MinDurationExceedsMaxDuration`).
@@ -1271,6 +1275,8 @@ impl<T: Config> Pallet<T> {
     ///   (`CapacityBelowCommitted`) and stake must cover it,
     ///   i.e. `stake >= max_capacity * MinStakePerByte`
     ///   (`InsufficientStakeForCapacity`).
+    /// - If `max_capacity > 0`: `min_bytes` must be `<= max_capacity`
+    ///   (`MinBytesExceedsMaxCapacity`).
     /// - Settings are frozen while a deregister announcement is in flight —
     ///   call `cancel_deregister` first.
     /// 
@@ -1341,7 +1347,6 @@ impl<T: Config> Pallet<T> {
     ///   `remove_slashed` removes a slashed provider's agreement without
     ///   checking for pending challenges, so another challenge against that
     ///   provider can still be open, and answering it reads the bucket.
-    ///   `cleanup_bucket_internal` applies the same gate.
     ///
     /// For every member (at most `MaxMembers`) releases the member deposit to
     /// its `depositor` and removes the bucket from the member's
@@ -1473,6 +1478,7 @@ impl<T: Config> Pallet<T> {
     //   its duration bounds, and the added `terms.max_bytes` must fit its
     //   declared capacity (`CapacityExceeded`) and stake
     //   (`InsufficientStakeForBytes`)
+    // - `terms.max_bytes` must be `>= settings.min_bytes` (`MaxBytesBelowMinimum`)
     //
     // Payment `terms.price_per_byte * terms.max_bytes * terms.duration` is
     // held on the owner at the price the provider signed for — the
@@ -2295,7 +2301,8 @@ to pass to `create_bucket_with_primary` (`bucket: null`),
 `add_replica_provider` (both set).
 
 The provider rejects requests below its listed price, outside its duration
-bounds, or beyond its capacity, and rejects requests while deregistering.
+bounds, below its minimum agreement size, or beyond its capacity, and rejects
+requests while deregistering.
 
 Download Node
 ─────────────

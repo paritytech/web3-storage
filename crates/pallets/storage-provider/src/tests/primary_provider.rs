@@ -5,7 +5,7 @@
 
 use super::*;
 use frame_support::traits::Get;
-use storage_primitives::{EndAction, Visibility};
+use storage_primitives::{ChunkLocation, EndAction, Visibility};
 
 /// Signed primary terms for an existing bucket. Build the quote before
 /// `assert_noop!`: `provider_signer` writes the provider's key into storage.
@@ -303,10 +303,12 @@ fn add_primary_provider_appends_without_disturbing_snapshot_bits() {
         setup_added_primary(3, 1, bucket_id, 50, 100);
 
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
-        // `primary_signers` is unchanged: the new provider at index 1 has no
-        // bit until it signs a checkpoint.
+        // The new provider at index 1 has an unset bit until it signs.
         assert_eq!(bucket.primary_providers.to_vec(), vec![2, 3]);
-        assert_eq!(bucket.snapshot.unwrap().primary_signers, vec![0x01]);
+        assert_eq!(
+            bucket.snapshot.unwrap().primary_signers,
+            bitvec::bitvec![u8, Lsb0; 1, 0]
+        );
     });
 }
 
@@ -326,5 +328,90 @@ fn add_primary_provider_works_on_a_frozen_bucket() {
         setup_added_primary(3, 1, bucket_id, 50, 100);
 
         assert!(StorageAgreements::<Test>::get(bucket_id, 3).is_some());
+    });
+}
+
+#[test]
+fn added_primary_is_challengeable_only_after_it_signs_the_snapshot() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, commitment) = setup_signed_checkpoint();
+
+        setup_added_primary(3, 1, bucket_id, 50, 100);
+        let bucket = Buckets::<Test>::get(bucket_id).unwrap();
+        assert_eq!(bucket.primary_providers.to_vec(), vec![2, 3]);
+        assert!(!bucket.snapshot.unwrap().primary_signers[1]);
+
+        let target = ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        };
+        assert_noop!(
+            StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(4), bucket_id, 3, target),
+            Error::<Test>::ProviderNotInSnapshot
+        );
+
+        assert_ok!(StorageProvider::extend_checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            sign_commitment(bucket_id, commitment, &[3]),
+        ));
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            3,
+            target
+        ));
+        assert!(System::events().iter().any(|r| matches!(
+            r.event,
+            RuntimeEvent::StorageProvider(Event::ChallengeCreated { provider: 3, .. })
+        )));
+    });
+}
+
+#[test]
+fn primary_added_after_the_only_signer_left_becomes_challengeable_after_it_signs() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, commitment) = setup_signed_checkpoint();
+
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            EndAction::Pay
+        ));
+        assert!(Buckets::<Test>::get(bucket_id)
+            .unwrap()
+            .snapshot
+            .unwrap()
+            .primary_signers
+            .is_empty());
+
+        setup_added_primary(3, 1, bucket_id, 50, 100);
+        assert_ok!(StorageProvider::extend_checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            sign_commitment(bucket_id, commitment, &[3]),
+        ));
+        System::assert_last_event(
+            Event::BucketCheckpointed {
+                bucket_id,
+                commitment,
+                providers: vec![3],
+            }
+            .into(),
+        );
+        let bucket = Buckets::<Test>::get(bucket_id).unwrap();
+        assert_eq!(bucket.primary_providers.to_vec(), vec![3]);
+        assert!(bucket.snapshot.unwrap().primary_signers[0]);
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            3,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0
+            }
+        ));
     });
 }
