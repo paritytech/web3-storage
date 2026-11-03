@@ -20,6 +20,19 @@
 //! path — and verifies the signature against the provider's registered
 //! public key, so the same payload has to be built on both sides —
 //! `sign_terms` enforces that via [`AgreementTerms::signing_payload`].
+//!
+//! Inputs: a [`NegotiateRequest`] from a bucket owner. The provider node builds the terms from
+//! the request and its current on-chain price and anchor block.
+//!
+//! Outputs: [`SignedTerms`], which the caller redeems in an on-chain extrinsic.
+//!
+//! How it works:
+//! 1. A bucket owner sends a [`NegotiateRequest`] to the provider node's `/negotiate` endpoint.
+//! 2. The provider node checks the request against its on-chain settings and builds the terms,
+//!    with an expiry relative to the current anchor block.
+//! 3. The node signs the terms and returns [`SignedTerms`].
+//! 4. The owner submits the signed terms in an agreement extrinsic. The pallet verifies the
+//!    signature against the provider's registered public key.
 
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr, PickFirst};

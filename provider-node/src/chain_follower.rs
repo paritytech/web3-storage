@@ -258,10 +258,10 @@ mod tests {
     /// Pallet whose storage, constants, and events these tests exercise.
     const PALLET_NAME: &str = "StorageProvider";
 
-    /// Tracked runtime metadata snapshot (shared with the PAPI codegen).
+    /// Tracked runtime metadata snapshot (the `storage-subxt` bindings are generated from it).
     const METADATA: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../packages/papi/.papi/metadata/parachain.scale"
+        "/../crates/storage-subxt/metadata/storage_paseo_runtime.scale"
     ));
     const BLOCK_HASH: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
     const GENESIS_HASH: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";

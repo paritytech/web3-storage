@@ -4,6 +4,27 @@
 //! commitments, plus the drive/S3 metadata indexes served over it. No HTTP or
 //! chain dependencies.
 //!
+//! Main types:
+//! * [`StorageBackend`] : the engine interface. The node holds an `Arc<dyn StorageBackend>`.
+//! * [`DiskStorage`] : the RocksDB implementation, built from a [`StorageBackendSpec`].
+//! * [`FsIndexManager`], [`S3IndexManager`] : the drive and S3 metadata indexes.
+//!
+//! Inputs: chunk tree nodes and data roots to commit, per bucket, from the HTTP handlers.
+//!
+//! Outputs: nodes, chunk data, MMR commitments ([`CommitOutcome`]) and proofs. The challenge
+//! responder reads its proofs through the same backend.
+//!
+//! How it works:
+//! 1. Uploads store chunk tree nodes under their hashes with [`StorageBackend::store_node`].
+//! 2. [`StorageBackend::commit`] appends data roots as leaves to the bucket's MMR and returns the
+//!    new root.
+//! 3. Reads walk the chunk tree down from a data root, for example
+//!    [`StorageBackend::get_chunk_at_index`] for one chunk and its Merkle proof.
+//! 4. [`StorageBackend::get_mmr_proof`] proves a leaf against the current MMR.
+//!    [`StorageBackend::get_mmr_proof_for_commitment`] rebuilds the proof for an older
+//!    commitment that a challenge cites.
+//! 5. The fs and S3 indexes map paths and object keys to data roots, and
+//!    [`StorageBackend::delete_before`] prunes leaves before a sequence number.
 pub mod backend;
 pub mod error;
 pub mod index;
