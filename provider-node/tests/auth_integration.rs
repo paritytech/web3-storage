@@ -598,6 +598,89 @@ async fn node_writer_can_upload() {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
+/// A member of a bucket this node has no agreement on cannot store anything,
+/// on any upload path.
+#[tokio::test]
+async fn upload_without_agreement_is_rejected() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let server = AuthTestServer::with_resolver(
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Admin).into()
+        ])
+        .without_agreement(),
+    )
+    .await;
+
+    let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+    let uploads = [
+        server
+            .client
+            .put(server.url("/node"))
+            .json(&node_body(1, b"no agreement")),
+        server
+            .client
+            .put(server.url("/s3/1/object?key=a.txt"))
+            .body(b"no agreement".to_vec()),
+        server
+            .client
+            .put(server.url("/fs/1/file?path=/a.txt"))
+            .body(b"no agreement".to_vec()),
+    ];
+    for upload in uploads {
+        let resp = upload
+            .header("Authorization", &header)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "no_agreement");
+    }
+    assert_eq!(
+        server
+            .client
+            .get(server.url("/stats"))
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()["total_bytes"],
+        0,
+        "nothing was written"
+    );
+}
+
+/// The agreement's `max_bytes` bounds what the bucket stores: a node that
+/// would pass it is answered `507` and nothing is written.
+#[tokio::test]
+async fn upload_beyond_agreement_quota_is_rejected() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let server = AuthTestServer::with_resolver(
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Writer).into()
+        ])
+        .with_max_bytes(10),
+    )
+    .await;
+    let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+    let upload = |data: &[u8]| {
+        server
+            .client
+            .put(server.url("/node"))
+            .header("Authorization", &header)
+            .json(&node_body(1, data))
+            .send()
+    };
+
+    assert_eq!(upload(&[1u8; 10]).await.unwrap().status(), StatusCode::OK);
+
+    let resp = upload(&[2u8; 10]).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::INSUFFICIENT_STORAGE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "quota_exceeded");
+}
+
 #[tokio::test]
 async fn node_reader_blocked() {
     let server = AuthTestServer::with_role(Role::Reader).await;

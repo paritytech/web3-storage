@@ -11,6 +11,7 @@ use provider_auth::{AuthError, MembershipError};
 use provider_types::{ChainClientError, SigningRefused};
 use serde::Serialize;
 use std::fmt;
+use storage_primitives::BucketId;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -63,6 +64,11 @@ pub enum Error {
 
     #[error(transparent)]
     Auth(#[from] AuthError),
+
+    /// An upload targets a bucket this provider has no storage agreement on.
+    /// Open an agreement with this provider for the bucket, then retry.
+    #[error("This provider has no agreement for bucket {0}")]
+    NoAgreement(BucketId),
 
     #[error("Provider is not accepting new primary agreements")]
     NotAcceptingPrimary,
@@ -343,6 +349,13 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "invalid_path".to_string(),
                     details: Some(serde_json::json!({ "message": msg })),
+                },
+            ),
+            Error::NoAgreement(bucket_id) => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "no_agreement".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
                 },
             ),
             Error::EmptyBody => (

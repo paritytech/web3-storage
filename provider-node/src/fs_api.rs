@@ -8,7 +8,7 @@
 //! File path is passed as a `?path=` query parameter on file/directory endpoints.
 //! Example: `PUT /fs/1/file?path=/docs/report.pdf`
 
-use crate::api::check_role;
+use crate::api::{check_role, ensure_bucket};
 use crate::error::Error;
 use crate::ProviderState;
 use axum::{
@@ -77,8 +77,7 @@ pub async fn fs_put_file(
     }
     let size = data.len() as u64;
 
-    // Initialize bucket if needed
-    let _ = state.storage.init_bucket(bucket_id, u64::MAX);
+    ensure_bucket(&state, bucket_id).await?;
 
     // 1. Split into chunks (256 KiB)
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;

@@ -18,7 +18,7 @@ pub mod verify;
 pub use error::{AuthError, MembershipError};
 pub use http_auth::{auth_message, build_auth_header};
 pub use membership::{
-    BucketAccess, Invalidation, Member, MembershipInvalidations, MembershipResolver, RequiredRole,
-    StaticMembershipResolver,
+    BucketAccess, Invalidation, Member, MembershipInvalidations, MembershipResolver, OwnAgreement,
+    RequiredRole, StaticMembershipResolver,
 };
 pub use verify::Authenticator;

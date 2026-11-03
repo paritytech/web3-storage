@@ -8,7 +8,7 @@
 //! Object key is passed as a `?key=` query parameter on all object endpoints.
 //! Example: `PUT /s3/1/object?key=photos/cat.jpg`
 
-use crate::api::check_role;
+use crate::api::{check_role, ensure_bucket};
 use crate::error::Error;
 use crate::ProviderState;
 use axum::{
@@ -54,8 +54,7 @@ pub async fn s3_put_object(
     }
     let size = data.len() as u64;
 
-    // Initialize bucket if needed
-    let _ = state.storage.init_bucket(bucket_id, u64::MAX);
+    ensure_bucket(&state, bucket_id).await?;
 
     // 1. Split into chunks (256 KiB)
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
