@@ -17,7 +17,7 @@
 //! - **RootCID**: The content ID of the root directory, stored on-chain
 //! - **DirectoryNode**: A directory containing references to children
 //! - **FileManifest**: Metadata about a file and its chunks
-//! - **CID**: Content Identifier (blake2-256 hash)
+//! - **CID**: Content Identifier (Merkle leaf hash)
 //!
 //! # Type System
 //!
@@ -61,7 +61,7 @@ pub type DriveId = u64;
 /// Agreement identifier from Layer 0
 pub type AgreementId = u64;
 
-/// Content Identifier (blake2-256 hash)
+/// Content Identifier (Merkle leaf hash)
 pub type Cid = H256;
 
 /// Entry type enumeration (SCALE-encoded, no_std compatible)
@@ -171,7 +171,7 @@ pub struct DirectoryEntry {
     pub name: BoundedVec<u8, MaxEntryNameLength>,
     /// File or Directory
     pub entry_type: EntryType,
-    /// Content ID (blake2-256 hash)
+    /// Content ID (Merkle leaf hash)
     pub cid: Cid,
     /// Size in bytes
     pub size: u64,
@@ -284,7 +284,7 @@ impl DirectoryNode {
         Self::decode(&mut &bytes[..])
     }
 
-    /// Compute the CID (blake2-256 hash) of this directory node
+    /// Compute the CID (Merkle leaf hash) of this directory node
     pub fn compute_cid(&self) -> Cid {
         compute_cid(&self.to_scale_bytes())
     }
@@ -296,7 +296,7 @@ impl DirectoryNode {
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileChunk {
-    /// Chunk CID (blake2-256 hash)
+    /// Chunk CID (Merkle leaf hash)
     pub cid: Cid,
     /// Position in the file (0-indexed)
     pub sequence: u32,
@@ -353,7 +353,7 @@ impl FileManifest {
         Self::decode(&mut &bytes[..])
     }
 
-    /// Compute the CID (blake2-256 hash) of this file manifest
+    /// Compute the CID (Merkle leaf hash) of this file manifest
     pub fn compute_cid(&self) -> Cid {
         compute_cid(&self.to_scale_bytes())
     }
@@ -633,26 +633,22 @@ pub struct DriveInfo<
 // Utility functions
 // ============================================================================
 
-/// Compute blake2-256 CID for data
+/// Compute the CID of data: its Merkle leaf hash, which is the data root of a
+/// single-chunk blob.
 pub fn compute_cid(data: &[u8]) -> Cid {
-    sp_crypto_hashing::blake2_256(data).into()
+    storage_primitives::hash_leaf(data)
 }
 
 /// Convert CID to hex string (for protobuf storage)
 pub fn cid_to_string(cid: &Cid) -> String {
-    alloc::format!("0x{}", hex::encode(cid.as_bytes()))
+    alloc::format!("{cid:#x}")
 }
 
 /// Parse hex string to CID
 pub fn string_to_cid(s: &str) -> Result<Cid, FileSystemError> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    let bytes = hex::decode(s).map_err(|_| FileSystemError::InvalidCid)?;
-    if bytes.len() != 32 {
-        return Err(FileSystemError::InvalidCid);
-    }
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&bytes);
-    Ok(H256::from(hash))
+    array_bytes::hex2array(s)
+        .map(H256::from)
+        .map_err(|_| FileSystemError::InvalidCid)
 }
 
 // ============================================================================
@@ -669,9 +665,9 @@ mod tests {
         let bytes = dir.to_scale_bytes();
         println!("Empty DirectoryNode for drive_id=2:");
         println!("  Length: {}", bytes.len());
-        println!("  Hex: {}", hex::encode(&bytes));
+        println!("  Hex: {}", array_bytes::bytes2hex("", &bytes));
         let cid = compute_cid(&bytes);
-        println!("  CID: 0x{}", hex::encode(cid.as_bytes()));
+        println!("  CID: {cid:#x}");
 
         // Also test roundtrip
         let decoded = DirectoryNode::from_scale_bytes(&bytes).unwrap();

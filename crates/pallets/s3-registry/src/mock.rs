@@ -5,7 +5,9 @@
 use crate as pallet_s3_registry;
 use frame_support::{
     derive_impl, parameter_types,
-    traits::{ConstU16, ConstU32, ConstU64},
+    traits::{
+        fungible::HoldConsideration, ConstU128, ConstU16, ConstU32, ConstU64, LinearStoragePrice,
+    },
 };
 use sp_core::H256;
 use sp_runtime::{
@@ -79,25 +81,33 @@ parameter_types! {
     pub const MaxMultiaddrLength: u32 = 128;
     pub const MaxMembers: u32 = 100;
     pub const MaxPrimaryProviders: u32 = 5;
-    pub const MaxChunkSize: u32 = 262144;
+    pub const MaxChunkSize: u32 = storage_primitives::DEFAULT_CHUNK_SIZE;
     pub const ChallengeTimeout: u64 = 100;
     pub const ChallengeDeposit: u64 = 100;
     pub const SettlementTimeout: u64 = 50;
     pub const RequestTimeout: u64 = 25;
     pub TreasuryAccount: u64 = 999;
+    pub const StorageDepositReason: RuntimeHoldReason =
+        RuntimeHoldReason::StorageProvider(pallet_storage_provider::HoldReason::StorageDeposit);
 }
 
 impl pallet_storage_provider::Config for Test {
     type Currency = Balances;
     type RuntimeHoldReason = RuntimeHoldReason;
     type Treasury = TreasuryAccount;
+    type StorageDeposit = HoldConsideration<
+        u64,
+        Balances,
+        StorageDepositReason,
+        LinearStoragePrice<ConstU128<10>, ConstU128<0>, Balance>,
+    >;
     type MinStakePerByte = MinStakePerByte;
     type MaxMultiaddrLength = ConstU32<128>;
     type MaxMembers = ConstU32<100>;
     type MaxPrimaryProviders = ConstU32<5>;
     type MaxBucketsPerMember = ConstU32<100>;
     type MinProviderStake = MinProviderStake;
-    type MaxChunkSize = ConstU32<262144>;
+    type MaxChunkSize = MaxChunkSize;
     type ChallengeTimeout = ChallengeTimeout;
     type ChallengeDeposit = ChallengeDeposit;
     type SettlementTimeout = SettlementTimeout;

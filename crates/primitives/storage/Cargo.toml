@@ -8,13 +8,23 @@ repository.workspace = true
 description = "Shared primitives for scalable Web3 storage"
 
 [dependencies]
-codec = { workspace = true }
-scale-info = { workspace = true }
+bitvec = { workspace = true }
+codec = { workspace = true, features = ["bit-vec"] }
+polkadot-ckb-merkle-mountain-range = { workspace = true }
+scale-info = { workspace = true, features = ["bit-vec"] }
 sp-core = { workspace = true }
-sp-crypto-hashing = { workspace = true }
+sp-io = { workspace = true }
 serde = { workspace = true, optional = true }
 
 [features]
 default = ["std"]
-std = ["codec/std", "scale-info/std", "serde/std", "sp-core/std", "sp-crypto-hashing/std"]
-serde = ["dep:serde", "sp-core/serde"]
+std = [
+	"bitvec/std",
+	"codec/std",
+	"polkadot-ckb-merkle-mountain-range/std",
+	"scale-info/std",
+	"serde/std",
+	"sp-core/std",
+	"sp-io/std",
+]
+serde = ["bitvec/serde", "dep:serde", "sp-core/serde"]

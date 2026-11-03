@@ -67,11 +67,9 @@ impl TestServer {
             .expect("backend opens");
         let deps = ProviderDeps {
             storage,
-            auth: Arc::new(Authenticator::new(StaticMembershipResolver(vec![(
-                test_member_account(),
-                Role::Admin,
-            )
-                .into()]))),
+            auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(vec![
+                (test_member_account(), Role::Admin).into(),
+            ]))),
         };
         (dir, deps)
     }

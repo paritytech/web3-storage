@@ -36,7 +36,10 @@ impl SubstrateClient {
             .map_err(|e| S3ClientError::ChainError(format!("Failed to connect to chain: {e}")))?;
 
         let account_id: [u8; 32] = signer.keypair().public_key().0;
-        info!("Connected to chain, account: 0x{}", hex::encode(account_id));
+        info!(
+            "Connected to chain, account: {}",
+            array_bytes::bytes2hex("0x", account_id)
+        );
 
         Ok(Self {
             client,

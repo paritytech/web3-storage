@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use storage_primitives::{blake2_256, hash_children, BucketId};
+use storage_primitives::{hash_leaf, merkle_root, BucketId};
 
 /// Per-entry metadata stored in the FS index.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -156,10 +156,6 @@ impl DriveIndex {
 
     /// Compute a deterministic Merkle root over sorted (path, data_root, size) entries.
     pub fn metadata_merkle_root(&self) -> H256 {
-        if self.entries.is_empty() {
-            return H256::zero();
-        }
-
         let leaves: Vec<H256> = self
             .entries
             .iter()
@@ -168,27 +164,11 @@ impl DriveIndex {
                 data.extend_from_slice(path.as_bytes());
                 data.extend_from_slice(meta.data_root.as_bytes());
                 data.extend_from_slice(&meta.size.encode());
-                blake2_256(&data)
+                hash_leaf(&data)
             })
             .collect();
 
-        if leaves.len() == 1 {
-            return leaves[0];
-        }
-
-        let padded_len = leaves.len().next_power_of_two();
-        let mut current_level = leaves;
-        current_level.resize(padded_len, H256::zero());
-
-        while current_level.len() > 1 {
-            let mut next_level = Vec::new();
-            for pair in current_level.chunks(2) {
-                next_level.push(hash_children(pair[0], pair[1]));
-            }
-            current_level = next_level;
-        }
-
-        current_level[0]
+        merkle_root(&leaves)
     }
 }
 
@@ -508,6 +488,28 @@ mod tests {
         let root2 = idx.metadata_merkle_root();
         assert_eq!(root1, root2);
         assert_ne!(root1, H256::zero());
+    }
+
+    #[test]
+    fn test_metadata_merkle_root_matches_shared_vector() {
+        let leaf_a = "7234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686";
+        let leaf_b = "b3d5dedf654e9fc853bdc5daf79330c5a1eaf2b910f2a36c72ef8ea999ccf953";
+        let mut idx = DriveIndex::default();
+        for (path, root, size) in [("/a.jpg", leaf_a, 1), ("/b.jpg", leaf_b, 2)] {
+            idx.put_file(
+                path.to_string(),
+                FsEntryMeta {
+                    data_root: root.parse().unwrap(),
+                    ..make_file_meta(size)
+                },
+            );
+        }
+        assert_eq!(
+            idx.metadata_merkle_root(),
+            "a179f8563e699338a92ca5e7836273a048160ed61ce8bd4eb9af12b5b275da94"
+                .parse::<H256>()
+                .unwrap()
+        );
     }
 
     #[test]

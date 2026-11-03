@@ -20,7 +20,6 @@ pallet-storage-provider-precompile = { workspace = true }
 # Parity codec
 codec = { workspace = true, features = ["derive"] }
 scale-info = { workspace = true, features = ["derive"] }
-serde = { optional = true, features = ["derive"], workspace = true, default-features = true }
 serde_json = { features = ["alloc"], workspace = true }
 
 # Substrate
@@ -124,7 +123,6 @@ std = [
 	"pallet-transaction-payment-rpc-runtime-api/std",
 	"pallet-transaction-payment/std",
 	"pallet-utility/std",
-	"serde",
 	"serde_json/std",
 	"sp-api/std",
 	"sp-block-builder/std",

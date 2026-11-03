@@ -410,7 +410,7 @@ common::backend_tests! {
 
         let body: Value = proof_response.json().await.unwrap();
         assert!(body["leaf"]["data_root"].is_string());
-        assert!(body["proof"]["peaks"].is_array());
+        assert!(body["items"].is_array());
     }
 }
 
@@ -450,7 +450,7 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_s3_put_empty_body(backend) {
+    async fn test_s3_put_empty_body_is_rejected(backend) {
         let server = TestServer::new(backend).await;
 
         let response = server
@@ -460,21 +460,17 @@ common::backend_tests! {
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body: Value = response.json().await.unwrap();
-        assert_eq!(body["size"], 0);
+        assert_eq!(body["error"], "empty_body");
 
-        // GET should return empty body
         let response = server
             .client
             .get(server.url("/s3/1/object?key=empty.bin"))
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let data = response.bytes().await.unwrap();
-        assert!(data.is_empty());
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
 

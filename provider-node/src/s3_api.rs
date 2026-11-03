@@ -19,12 +19,12 @@ use axum::{
     Json,
 };
 use provider_auth::RequiredRole;
-use provider_storage::{build_padded_merkle_tree, ListResult, ObjectMeta};
+use provider_storage::{build_merkle_tree, ChunkTreeNode, ListResult, ObjectMeta};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::{hash_leaf, BucketId};
 
 /// Query parameter for object key.
 #[derive(Debug, Deserialize)]
@@ -49,6 +49,9 @@ pub async fn s3_put_object(
     }
 
     let data = body.to_vec();
+    if data.is_empty() {
+        return Err(Error::EmptyBody);
+    }
     let size = data.len() as u64;
 
     // Initialize bucket if needed
@@ -56,30 +59,25 @@ pub async fn s3_put_object(
 
     // 1. Split into chunks (256 KiB)
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
-    let chunks: Vec<&[u8]> = if data.is_empty() {
-        vec![&[]]
-    } else {
-        data.chunks(chunk_size).collect()
-    };
 
     // 2. Hash and store each chunk
-    let chunk_hashes: Vec<H256> = chunks
-        .iter()
+    let chunk_hashes: Vec<H256> = data
+        .chunks(chunk_size)
         .map(|chunk| {
-            let hash = blake2_256(chunk);
+            let hash = hash_leaf(chunk);
             state
                 .storage
-                .store_node(bucket_id, hash, chunk.to_vec(), None)?;
+                .store_node(bucket_id, hash, ChunkTreeNode::Chunk(chunk.to_vec()))?;
             Ok(hash)
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    // 3. Build balanced Merkle tree
-    let data_root = build_padded_merkle_tree(&*state.storage, bucket_id, &chunk_hashes);
+    // 3. Build the Merkle tree
+    let data_root = build_merkle_tree(&*state.storage, bucket_id, &chunk_hashes)?;
 
     // 4. Commit data_root to MMR
-    let (_mmr_root, _start_seq, leaf_indices) = state.storage.commit(bucket_id, vec![data_root])?;
-    let leaf_index = leaf_indices[0];
+    let outcome = state.storage.commit(bucket_id, vec![data_root])?;
+    let leaf_index = outcome.leaf_indices[0];
 
     // 5. Extract metadata from headers
     let content_type = headers
@@ -108,7 +106,7 @@ pub async fn s3_put_object(
         .unwrap_or_default()
         .as_secs();
 
-    let etag = format!("0x{}", hex::encode(data_root.as_bytes()));
+    let etag = format!("{data_root:#x}");
 
     // 6. Create ObjectMeta and insert into index
     let meta = ObjectMeta {
@@ -125,7 +123,7 @@ pub async fn s3_put_object(
 
     Ok(Json(PutObjectResponse {
         etag,
-        data_root: format!("0x{}", hex::encode(data_root.as_bytes())),
+        data_root,
         size,
         leaf_index,
     }))
@@ -244,7 +242,7 @@ pub async fn s3_head_object(
     );
     headers.insert(
         "x-amz-data-root",
-        format!("0x{}", hex::encode(meta.data_root.as_bytes()))
+        format!("{:#x}", meta.data_root)
             .parse()
             .unwrap_or_else(|_| "".parse().unwrap()),
     );
@@ -311,7 +309,7 @@ pub async fn s3_index_root(
 
     Ok(Json(IndexRootResponse {
         bucket_id,
-        metadata_merkle_root: format!("0x{}", hex::encode(root.as_bytes())),
+        metadata_merkle_root: root,
         object_count,
         total_size,
     }))
@@ -324,7 +322,7 @@ pub async fn s3_index_root(
 #[derive(Debug, Serialize)]
 pub struct PutObjectResponse {
     pub etag: String,
-    pub data_root: String,
+    pub data_root: H256,
     pub size: u64,
     pub leaf_index: u64,
 }
@@ -346,7 +344,7 @@ pub struct ListObjectsParams {
 #[derive(Debug, Serialize)]
 pub struct IndexRootResponse {
     pub bucket_id: BucketId,
-    pub metadata_merkle_root: String,
+    pub metadata_merkle_root: H256,
     pub object_count: u64,
     pub total_size: u64,
 }

@@ -228,6 +228,7 @@ function ChallengesContent() {
                     return (
                     <TableRow
                       key={rowKey}
+                      data-testid={`challenge-row-${rowKey}`}
                       className={
                         challenge.status === 'pending' ? 'bg-yellow-500/5' : undefined
                       }
@@ -272,7 +273,7 @@ function ChallengesContent() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2" data-testid="challenge-status">
                           {getStatusIcon(challenge.status)}
                           <Badge variant={getStatusVariant(challenge.status)}>
                             {challenge.status === 'expired'
@@ -286,6 +287,7 @@ function ChallengesContent() {
                           <div className="space-y-1">
                             <Button
                               size="sm"
+                              data-testid="challenge-action-button"
                               onClick={() =>
                                 challenge.status === 'pending'
                                   ? handleRespond(challenge)

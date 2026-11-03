@@ -469,9 +469,9 @@ impl AdminClient {
         self.base.chain()?.submit(&tx).await?;
 
         tracing::info!(
-            "Checkpoint submitted for bucket {} with MMR root 0x{}",
+            "Checkpoint submitted for bucket {} with MMR root {:#x}",
             bucket_id,
-            hex::encode(commitment.mmr_root.as_bytes())
+            commitment.mmr_root
         );
         Ok(())
     }

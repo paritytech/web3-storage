@@ -14,12 +14,12 @@ prost = { workspace = true, optional = true }
 codec = { workspace = true }
 scale-info = { workspace = true }
 sp-core = { workspace = true }
-sp-crypto-hashing = { workspace = true }
 sp-runtime = { workspace = true }
+storage-primitives = { workspace = true }
 serde = { workspace = true, optional = true }
 
 # Utilities
-hex = { workspace = true, features = ["alloc"] }
+array-bytes = { workspace = true }
 
 # Error handling (std only)
 thiserror = { workspace = true, optional = true }
@@ -31,12 +31,11 @@ prost-build = { workspace = true }
 default = ["std"]
 std = [
 	"codec/std",
-	"hex/std",
 	"prost",
 	"scale-info/std",
 	"serde/std",
 	"sp-core/std",
-	"sp-crypto-hashing/std",
 	"sp-runtime/std",
+	"storage-primitives/std",
 	"thiserror",
 ]

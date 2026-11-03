@@ -19,12 +19,12 @@ use axum::{
     Json,
 };
 use provider_auth::RequiredRole;
-use provider_storage::{build_padded_merkle_tree, FsEntryMeta};
+use provider_storage::{build_merkle_tree, ChunkTreeNode, FsEntryMeta};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::{hash_leaf, BucketId};
 
 /// Query parameter for file path.
 #[derive(Debug, Deserialize)]
@@ -72,6 +72,9 @@ pub async fn fs_put_file(
     validate_fs_path(&path)?;
 
     let data = body.to_vec();
+    if data.is_empty() {
+        return Err(Error::EmptyBody);
+    }
     let size = data.len() as u64;
 
     // Initialize bucket if needed
@@ -79,30 +82,25 @@ pub async fn fs_put_file(
 
     // 1. Split into chunks (256 KiB)
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
-    let chunks: Vec<&[u8]> = if data.is_empty() {
-        vec![&[]]
-    } else {
-        data.chunks(chunk_size).collect()
-    };
 
     // 2. Hash and store each chunk
-    let chunk_hashes: Vec<H256> = chunks
-        .iter()
+    let chunk_hashes: Vec<H256> = data
+        .chunks(chunk_size)
         .map(|chunk| {
-            let hash = blake2_256(chunk);
+            let hash = hash_leaf(chunk);
             state
                 .storage
-                .store_node(bucket_id, hash, chunk.to_vec(), None)?;
+                .store_node(bucket_id, hash, ChunkTreeNode::Chunk(chunk.to_vec()))?;
             Ok(hash)
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    // 3. Build balanced Merkle tree
-    let data_root = build_padded_merkle_tree(&*state.storage, bucket_id, &chunk_hashes);
+    // 3. Build the Merkle tree
+    let data_root = build_merkle_tree(&*state.storage, bucket_id, &chunk_hashes)?;
 
     // 4. Commit data_root to MMR
-    let (_mmr_root, _start_seq, leaf_indices) = state.storage.commit(bucket_id, vec![data_root])?;
-    let leaf_index = leaf_indices[0];
+    let outcome = state.storage.commit(bucket_id, vec![data_root])?;
+    let leaf_index = outcome.leaf_indices[0];
 
     // 5. Extract content type from headers
     let content_type = headers
@@ -129,7 +127,7 @@ pub async fn fs_put_file(
     state.fs_index.put_file(bucket_id, path, meta);
 
     Ok(Json(PutFileResponse {
-        data_root: format!("0x{}", hex::encode(data_root.as_bytes())),
+        data_root,
         size,
         leaf_index,
     }))
@@ -273,7 +271,7 @@ pub async fn fs_index_root(
 
     Ok(Json(FsIndexRootResponse {
         bucket_id,
-        metadata_merkle_root: format!("0x{}", hex::encode(root.as_bytes())),
+        metadata_merkle_root: root,
         file_count,
         dir_count,
         total_size,
@@ -286,7 +284,7 @@ pub async fn fs_index_root(
 
 #[derive(Debug, Serialize)]
 pub struct PutFileResponse {
-    pub data_root: String,
+    pub data_root: H256,
     pub size: u64,
     pub leaf_index: u64,
 }
@@ -323,7 +321,7 @@ pub struct ListDirResponse {
 #[derive(Debug, Serialize)]
 pub struct FsIndexRootResponse {
     pub bucket_id: BucketId,
-    pub metadata_merkle_root: String,
+    pub metadata_merkle_root: H256,
     pub file_count: u64,
     pub dir_count: u64,
     pub total_size: u64,

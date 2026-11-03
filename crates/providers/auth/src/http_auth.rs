@@ -26,9 +26,9 @@ pub fn build_auth_header(
     let timestamp = format!("{timestamp}");
     let signature = sign(auth_message(method, bucket_id, &timestamp).as_bytes());
     format!(
-        "Web3Storage 0x{}:0x{}:{}",
-        hex::encode(pubkey),
-        hex::encode(signature),
+        "Web3Storage {}:{}:{}",
+        array_bytes::bytes2hex("0x", pubkey),
+        array_bytes::bytes2hex("0x", signature),
         timestamp
     )
 }

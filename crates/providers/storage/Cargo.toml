@@ -11,7 +11,6 @@ description = "Storage engine for provider nodes: backends, MMR commitments, and
 storage-primitives = { workspace = true, features = ["serde", "std"] }
 codec = { workspace = true, features = ["std"] }
 dashmap = { workspace = true }
-hex = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
 rocksdb = { workspace = true }
 serde = { workspace = true, features = ["std"] }
@@ -25,4 +24,5 @@ tracing = { workspace = true, features = ["std"] }
 test-helpers = ["dep:tempfile"]
 
 [dev-dependencies]
+array-bytes = { workspace = true }
 tempfile = { workspace = true }

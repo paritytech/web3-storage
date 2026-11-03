@@ -61,7 +61,7 @@ primaries (replicas stay challengeable by anyone).
 
 Users who create conflicts without checkpointing waste their quota—providers must keep all signed data.
 
-**Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. Internal nodes are data whose content is child hashes. Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete.
+**Content-addressed storage**: Everything (chunks and internal nodes) is addressed by hash. An internal node is its two child hashes; chunks and nodes are hashed with different prefixes (`0x00` for a chunk, `0x01` for a node). Upload is bottom-up: children must exist before parent can be stored. If a root hash exists, the entire tree is guaranteed complete. The provider signs a commitment only over roots whose tree is the RFC 9162 tree over `CHUNK_SIZE` chunks (see "Chunk Tree"), and rejects other shapes and chunk sizes.
 
 ### Provider Lifecycle in Bucket
 
@@ -70,7 +70,7 @@ Four calls cover them:
 
 | Call | Who | Effect |
 | --- | --- | --- |
-| `create_bucket` | anyone | Empty bucket, caller is sole admin |
+| `create_bucket` | anyone | Empty bucket, caller is sole admin and pays its storage deposit |
 | `create_bucket_with_primary` | the quoted account (`terms.owner`) | `create_bucket` + `add_primary_provider` in one atomic call |
 | `add_primary_provider` | bucket admin | Primary agreement on an existing bucket |
 | `add_replica_provider` | the quoted account (`terms.owner`) | Replica agreement on an existing bucket |
@@ -142,7 +142,7 @@ from `bucket.primary_providers` and deletes the agreement, not the bucket.
 The bucket, its members, `snapshot` and `frozen_start_seq` remain on-chain.
 The admin can add a new primary with `add_primary_provider` at any later
 time and re-upload the data; the `bucket_id` and every external reference to
-it stay valid.
+it stay valid. The bucket remains until an admin calls `delete_bucket`.
 
 **Commitment liability**: A provider is liable for every commitment it signed, checkpointed or off-chain, while the commitment's agreement is live, unless the `Deleted` or `Superseded` defense applies (`verify_challenge_response`). A replica is liable in the same way for its last confirmed sync (`confirm_replica_sync`). That sync is always a canonical state, so it is a prefix of the current snapshot or below its `start_seq` (`checkpoint`), and the pruning rule never removes it. Otherwise providers prune data only as the pruning rule or a deletion allows.
 
@@ -242,7 +242,10 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     #[pallet::constant]
     type MinProviderStake: Get<BalanceOf<Self>>;
 
-    /// Maximum chunk size for challenge responses (e.g., 256 KiB).
+    /// Upper bound of `chunk_data` in a challenge response: at least the
+    /// `CHUNK_SIZE` of every leaf version the pallet accepts. A leaf's chunk
+    /// count comes from its own version's `CHUNK_SIZE`, not from this value,
+    /// so a runtime upgrade that changes it does not change `n` for any leaf.
     #[pallet::constant]
     type MaxChunkSize: Get<u32>;
 
@@ -259,6 +262,15 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     /// requires `terms.valid_until <= now + RequestTimeout`.
     #[pallet::constant]
     type RequestTimeout: Get<BlockNumberFor<Self>>;
+
+    /// Storage deposit for records a user creates: provider registrations,
+    /// buckets, member entries and agreements. Each record stores its ticket,
+    /// priced from a fixed `Footprint` per record kind, so a ticket is never
+    /// updated while its record exists. The runtime uses a
+    /// `HoldConsideration` under `HoldReason::StorageDeposit`: the deposit
+    /// stays on hold on the depositor until the pallet drops the ticket with
+    /// its record.
+    type StorageDeposit: Consideration<Self::AccountId, Footprint>;
 
     /// Caps the challenges sharing one deadline (anchor block); bounds the
     /// per-deadline index allocator.
@@ -291,10 +303,11 @@ parachain `HOURS`:
 | `MaxMembers` | `100` |
 | `MaxPrimarySlots` | `8` |
 | `MaxPhysicalMembers` | `4` |
-| `MaxChunkSize` | `262_144` (256 KiB) |
+| `MaxChunkSize` | `262_144` (256 KiB, the `CHUNK_SIZE` of leaf version 1) |
 | `ChallengeTimeout` | `48 * RC_HOURS` |
 | `SettlementTimeout` | `48 * RC_HOURS` |
 | `RequestTimeout` | `6 * RC_HOURS` |
+| `StorageDeposit` | `HoldConsideration<AccountId, Balances, StorageDepositReason, LinearStoragePrice<StorageDepositBase, StorageDepositPerByte, Balance>>` with base `UNIT / 10` and `MICROUNIT` per byte, the rates the contracts pallet (`revive.rs`) charges per regular storage item and per byte |
 | `MaxChallengesPerDeadline` | `1_000` |
 | `AnchorBlockTimeMillis` | `6_000` |
 | `OnSlash`, `OnBurn` | `ResolveTo` the account derived from `PalletId(*b"py/trsry")` |
@@ -317,14 +330,23 @@ pub enum HoldReason {
     /// A challenger's anti-spam deposit, refunded on resolution minus the
     /// provider's response-cost share.
     ChallengeDeposit,
+    /// A deposit for a record a user created, held on the depositor until
+    /// the record is removed.
+    StorageDeposit,
 }
 ```
 
 An agreement's escrow always sits on its **owner** (permissionless top-ups move
 a third party's funds there first, since settlement pays out of the owner's
 hold), and — unlike `reserve` — a hold must leave the existential deposit
-spendable, so registering needs `stake + ED` of free balance and an account
-with a hold cannot be reaped.
+spendable, so registering needs `stake + storage deposit + ED` of free balance
+and an account with a hold cannot be reaped.
+
+Each user-created record also has a **storage deposit**, held on the
+provider (provider record), the bucket creator (bucket), the admin that added
+the member (member entry) or the account that opened the agreement
+(agreement). Removing the record releases it to that account. Genesis
+providers and buckets pay it from the genesis endowment.
 
 ### Storage Items
 
@@ -391,6 +413,10 @@ pub struct ProviderInfo<T: Config> {
     pub settings: ProviderSettings<T>,
     /// Provider statistics - clients use these to evaluate quality
     pub stats: ProviderStats<T>,
+    /// Storage deposit, held on the provider at registration beside the
+    /// stake and released by `deregister_provider`.
+    /// Footprint: the record's maximum encoded length.
+    pub deposit: T::StorageDeposit,
 }
 
 /// A higher, previous stake generation still owed to live agreements.
@@ -462,6 +488,9 @@ pub struct ProviderSettings<T: Config> {
     /// sets it and could misreport it. No stake check is tied to it, nor to
     /// `committed_bytes` (see "Stake vs. capacity").
     pub max_capacity: u64,
+    /// Minimum `max_bytes` per agreement, primary or replica. `0` means no
+    /// minimum. Redeem calls reject `terms.max_bytes` below this value.
+    pub min_bytes: u64,
 }
 
 /// Monotonically increasing bucket ID counter. Ensures stable, unique IDs.
@@ -494,6 +523,13 @@ pub type Buckets<T: Config> = StorageMap<
 pub struct Member<T: Config> {
     pub account: T::AccountId,
     pub role: Role,
+    /// The admin that added the member and paid `deposit`. Fixed for the
+    /// lifetime of the entry.
+    pub depositor: T::AccountId,
+    /// Storage deposit for this entry and its `MemberBuckets` entry, released
+    /// to `depositor` when the member or the bucket is removed. Footprint:
+    /// the entry's maximum encoded length plus a `BucketId`.
+    pub deposit: T::StorageDeposit,
 }
 
 pub enum Role {
@@ -576,6 +612,23 @@ pub struct Bucket<T: Config> {
     pub historical_roots: [(u32, Commitment); 6],
     /// Total snapshots created for this bucket (for statistics)
     pub total_snapshots: u32,
+    /// The account that created the bucket and paid `deposit`. Fixed at
+    /// creation. A bucket can have several admins, so the bucket stores the
+    /// depositor apart from admin control; the creator gets the deposit back
+    /// even if it is no longer an admin or member.
+    pub creator: T::AccountId,
+    /// Storage deposit for the bucket record, held on `creator` and released
+    /// when `delete_bucket` or `cleanup_bucket_internal` removes the bucket.
+    /// The ticket contains only the amount, so the record stores the
+    /// depositor beside it, as `pallet-preimage` does.
+    ///
+    /// Footprint: one item of the encoded size of a new `Bucket` with one
+    /// member, no primary providers and no snapshot, including this field;
+    /// the same for every bucket. The pallet sums it from the field types, so
+    /// it follows changes to `Bucket`. Members and agreements added later pay
+    /// their own deposits; the agreement pays for the primary slot that
+    /// `create_bucket_with_primary` seeds.
+    pub deposit: T::StorageDeposit,
 }
 
 pub struct BucketSnapshot<BlockNumber> {
@@ -588,13 +641,14 @@ pub struct BucketSnapshot<BlockNumber> {
     /// if slot i signed. A virtual's members enter only as a group of at least
     /// its threshold `k` per call (virtual-provider extension, "Checkpoints"),
     /// so a set bit always means a liable signer.
-    /// Stored as `Vec<u8>` with explicit `count_signers()` / `has_provider_signed()`
-    /// helpers rather than `BitVec` to keep encoding stable and `no_std`-friendly.
-    /// The layout is bounded by `T::MaxPrimarySlots`, so indices are stable
-    /// within a checkpoint; if it changes between checkpoints (a primary added or
+    /// `BitVec<u8, Lsb0>` whose length always equals the number of slots in
+    /// the layout (bounded by `T::MaxPrimarySlots`), so indices are stable
+    /// within a checkpoint. `checkpoint` builds it from the submitted
+    /// signatures. If the layout changes between checkpoints (a primary added or
     /// removed, a virtual's member set re-snapshotted) the bits are adjusted in
-    /// place on that extrinsic.
-    pub primary_signers: Vec<u8>,
+    /// place on that extrinsic; a slot added after the checkpoint gets its bit
+    /// set when it signs via `extend_checkpoint`.
+    pub primary_signers: BitVec<u8, Lsb0>,
 }
 // Canonical range is [start_seq, start_seq + leaf_count)
 // A deletion starts a new MMR at start_seq = old start_seq + old leaf_count (`checkpoint`)
@@ -638,6 +692,15 @@ pub struct StorageAgreement<T: Config> {
     pub role: ProviderRole<T>,
     /// Block when agreement became active (for statistics)
     pub started_at: BlockNumberFor<T>,
+    /// The account that opened the agreement and paid `deposit`. Fixed at
+    /// creation; `transfer_agreement_ownership` does not change it.
+    pub depositor: T::AccountId,
+    /// Storage deposit, held on `depositor` and released to it wherever the
+    /// agreement is removed: `end_agreement`, `claim_expired_agreement`,
+    /// `cleanup_bucket_internal`. Footprint: the record's
+    /// maximum encoded length. Applies at any price, so a zero-price
+    /// agreement still costs its depositor something to keep.
+    pub deposit: T::StorageDeposit,
     /// Owner-created successor, not yet live ("Replacement agreements").
     pub pending_replacement: Option<PendingReplacement<T>>,
     /// `Some` for a virtual provider: the members liable for this agreement
@@ -805,8 +868,11 @@ pub struct Challenge<T: Config> {
     /// settled, extended or replaced while the challenge is open. `None` for a
     /// physical provider.
     pub snapshot: Option<VirtualSnapshot<T>>,
-    /// The challenged commitment, copied at creation (challenged_seq =
-    /// commitment.start_seq + target.leaf_index).
+    /// The challenged commitment, copied at creation: the snapshot's
+    /// (challenge_checkpoint), the provider-signed one (challenge_offchain) or
+    /// the replica's last synced one (challenge_replica). `challenged_seq =
+    /// commitment.start_seq + target.leaf_index`; `leaf_count` binds the proof
+    /// to `target.leaf_index` in `respond_to_challenge`.
     pub commitment: Commitment,
     /// Virtual provider: members liable for the challenged commitment, a
     /// bitmask over `snapshot` — the accepted signers
@@ -846,7 +912,8 @@ pub enum ChallengeKind {
 /// presence, so an account can be in **unbounded** buckets (state cost is the
 /// only limit — no artificial per-account cap). Maintained on every membership
 /// change; read only by the `member_buckets` runtime API (paged via
-/// `iter_prefix`) and `try_state`.
+/// `iter_prefix`) and `try_state`. The member deposits pay for each entry; the
+/// pallet deletes an entry when that membership ends.
 ///
 /// **Convenience index.** It exists only to answer "which buckets is this
 /// account in / does this provider serve" cheaply on-chain. If good off-chain
@@ -1284,6 +1351,7 @@ pub enum Event<T: Config> {
         bucket_id: BucketId,
         frozen_start_seq: u64,
     },
+    /// A bucket was removed and its storage deposits released.
     BucketDeleted {
         bucket_id: BucketId,
     },
@@ -1580,6 +1648,9 @@ impl<T: Config> Pallet<T> {
     ///
     /// Initialises `cur_until = 0`, `higher_stake_lock = { stake: 0, until: 0 }`,
     /// `version = 0`, `last_stake_event = None`.
+    ///
+    /// Also holds the provider record's storage deposit
+    /// (`ProviderInfo.deposit`) on the caller, beside the stake.
     #[pallet::weight(...)]
     pub fn register_provider(
         origin: OriginFor<T>,
@@ -1620,7 +1691,8 @@ impl<T: Config> Pallet<T> {
     /// released immediately; no announcement window is needed ("Changeable
     /// Stake").
     ///
-    /// Removes the `Providers` entry. Quote replay protection is per owner
+    /// Removes the `Providers` entry and releases its storage deposit
+    /// (`ProviderInfo.deposit`). Quote replay protection is per owner
     /// (`AgreementNonces`), so a quote already redeemed stays unredeemable
     /// against a later re-registration of the same key without any retained
     /// provider state.
@@ -1629,15 +1701,17 @@ impl<T: Config> Pallet<T> {
 
     /// Update provider settings.
     /// 
-    /// Allows provider to change pricing, duration limits, capacity, and
-    /// availability. Changes apply to new agreements only; existing agreements
-    /// retain their locked terms.
+    /// Allows provider to change pricing, duration limits, capacity,
+    /// minimum agreement size, and availability. Changes apply to new
+    /// agreements only; existing agreements retain their locked terms.
     ///
     /// Validation:
     /// - `min_duration <= max_duration` (`MinDurationExceedsMaxDuration`).
     /// - If `max_capacity > 0`: must be `>= committed_bytes`
     ///   (`CapacityBelowCommitted`). `max_capacity` is a self-declared *advisory*
     ///   ceiling only.
+    /// - If `max_capacity > 0`: `min_bytes` must be `<= max_capacity`
+    ///   (`MinBytesExceedsMaxCapacity`).
     /// - Bumps `version` iff `price_per_byte` or `replica_sync_price` increased
     ///   (`None` → `Some` counts as an increase). Other settings (durations,
     ///   capacity, `accepting_*`) are checked directly against a quote's
@@ -1686,8 +1760,10 @@ impl<T: Config> Pallet<T> {
 
     /// Create a new bucket.
     /// 
-    /// The caller becomes the bucket admin. The bucket starts empty with no
-    /// providers or data.
+    /// The caller becomes the bucket admin and pays two storage deposits: one
+    /// for the bucket record (`Bucket.deposit`) and one for its own member
+    /// entry (`Member.deposit`). The bucket starts empty with no providers or
+    /// data.
     /// 
     /// Parameters:
     /// - `min_providers`: Minimum primary provider signatures required for checkpoints
@@ -1699,6 +1775,25 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         min_providers: u32,
         visibility: Visibility,
+    ) -> DispatchResult;
+
+    /// Delete an empty bucket and release its storage deposits (admin only).
+    ///
+    /// Requires no storage agreement on the bucket (`BucketNotEmpty`). Open
+    /// challenges do not block it: a challenge on a deleted bucket settles as
+    /// a cancellation (`ChallengeResponse::Deleted`, `resolve_expired_challenge`).
+    ///
+    /// For every member (at most `MaxMembers`) releases the member deposit to
+    /// its `depositor` and removes the member's `MemberBuckets` entry for the
+    /// bucket. Then removes the bucket and releases its deposit
+    /// to `Bucket.creator`, even if the creator is no longer an admin or the
+    /// caller is another admin. While the creator is an admin, the refund
+    /// gives it a reason to delete a bucket nobody uses. Emits
+    /// `BucketDeleted`.
+    #[pallet::weight(...)]
+    pub fn delete_bucket(
+        origin: OriginFor<T>,
+        bucket_id: BucketId,
     ) -> DispatchResult;
 
     /// Set minimum providers required for checkpoint (admin only).
@@ -1750,6 +1845,10 @@ impl<T: Config> Pallet<T> {
     /// Adding a `Reader` is what makes membership the read access list for a
     /// private bucket. Visibility is set separately via `set_bucket_visibility`—
     /// adding a Reader does not by itself make a bucket private.
+    ///
+    /// Adding a member holds a storage deposit (`Member.deposit`) on the
+    /// caller, not on the member. A role change creates no record and holds
+    /// nothing.
     #[pallet::weight(...)]
     pub fn set_member(
         origin: OriginFor<T>,
@@ -1771,6 +1870,9 @@ impl<T: Config> Pallet<T> {
     /// practice you should be very careful with adding such accounts and should
     /// lean towards using a single one controlled by a DAO (contract, chain,
     /// ..).
+    ///
+    /// Releases the entry's storage deposit to the admin that added the
+    /// member (`Member.depositor`), whoever performs the removal.
     #[pallet::weight(...)]
     pub fn remove_member(
         origin: OriginFor<T>,
@@ -1787,7 +1889,9 @@ impl<T: Config> Pallet<T> {
     // Agreements are established by redeeming provider-signed AgreementTerms
     // (see the storage section) — there is no on-chain request/accept
     // round-trip. The provider quotes and signs terms off-chain; the owner
-    // submits them in a single call. `create_bucket_with_primary`,
+    // submits them in a single call. Every call that inserts an agreement
+    // also holds its storage deposit on the owner, next to the payment
+    // (`StorageAgreement.deposit`). `create_bucket_with_primary`,
     // `add_primary_provider` and `add_replica_provider` share the same
     // validation skeleton:
     // - `terms.bucket` must match the call (`TermsBucketMismatch`):
@@ -1813,6 +1917,7 @@ impl<T: Config> Pallet<T> {
     // - the provider must be registered with `stake >= MinProviderStake`
     //   (`StakeBelowMinimum`), within its duration bounds, and the added `terms.max_bytes` must fit
     //   its declared capacity (`CapacityExceeded`)
+    // - `terms.max_bytes` must be `>= settings.min_bytes` (`MaxBytesBelowMinimum`)
     //
     // Payment `provider.settings.price_per_byte * terms.max_bytes *
     // terms.duration` is held on the owner. The price is read from the
@@ -2044,6 +2149,11 @@ impl<T: Config> Pallet<T> {
     /// bucket's authorized challengers, and for a primary agreement on a
     /// private bucket may challenge primaries without being a member. Open
     /// challenges keep the tier they were created with.
+    ///
+    /// **The storage deposit does not move.** It stays on
+    /// `StorageAgreement.depositor` until the agreement is removed, so
+    /// `new_owner` pays nothing. After the transfer the depositor no longer
+    /// decides when that happens.
     /// 
     /// Parameters:
     /// - `bucket_id`: The bucket containing the agreement
@@ -2174,6 +2284,8 @@ impl<T: Config> Pallet<T> {
     /// pruning rule lets a provider delete never becomes canonical.
     /// Providers prune deleted data only once a deletion checkpoint is
     /// on-chain.
+    /// `leaf_count` above 2^48 is rejected (`LeafCountTooLarge`); this bounds
+    /// every MMR proof ("MMR Proof").
     /// For frozen buckets: start_seq must equal frozen_start_seq (append only).
     pub fn checkpoint(
         origin: OriginFor<T>,
@@ -2263,6 +2375,10 @@ impl<T: Config> Pallet<T> {
     // Game"). The gate reads the challenged provider's role from its *current*
     // agreement—the same lookup that yields `AgreementNotFound`—so an ended
     // agreement means no challenge, never a stale role.
+    // In all three modes the target leaf must exist: `target.leaf_index` must
+    // be below the commitment's `leaf_count`, else `LeafNotInCommitment`. A
+    // challenge on a leaf that does not exist has no valid response and
+    // would only resolve by timeout slash.
     // The challenger's deposit must cover the
     // provider's on-chain response cost (generously over-estimated; excess is
     // refunded on resolution). On a valid response the provider's stake is
@@ -2335,6 +2451,8 @@ impl<T: Config> Pallet<T> {
     /// obsolete signatures can't be used to slash. Also rejected if the
     /// challenged leaf is below the snapshot's `start_seq` (`ChallengedLeafDeleted`):
     /// the provider would answer with `Deleted` anyway.
+    /// Rejected if the commitment's `leaf_count` is above 2^48
+    /// (`LeafCountTooLarge`): no bounded `MmrProof` exists for it.
     /// 
     /// Preferred for hot buckets where snapshots change frequently.
     pub fn challenge_offchain(
@@ -2419,7 +2537,9 @@ impl<T: Config> Pallet<T> {
     /// failures) should be negligible if the replica syncs regularly.
     /// 
     /// On success (both checks pass):
-    /// - Updates replica's `last_sync` to the matched commitment and `current_block`
+    /// - Updates replica's `last_sync` to the matched commitment and `current_block`;
+    ///   a historical match records that entry's full commitment, so
+    ///   `challenge_replica` can bind a proof to it as well
     /// - Pays sync_price from replica's sync_balance
     /// - Emits ReplicaSynced event with position_matched for performance tracking
     ///   (position 0 = current snapshot, 1-6 = historical positions, higher = more lag)
@@ -2465,10 +2585,11 @@ impl<T: Config> Pallet<T> {
 
     /// Provider responds to challenge with proof.
     /// 
-    /// Must provide the challenged chunk with Merkle proofs, or claim the data
-    /// was deleted (the snapshot's start_seq is past it, or the bucket was
-    /// deleted), or
-    /// show the challenged state has been superseded by canonical. An invalid
+    /// Must provide the challenged chunk with Merkle proofs, show that the
+    /// chunk index is past the leaf's last chunk (`ChunkOutOfRange`), claim
+    /// the data was deleted (`Deleted`; on a deleted bucket this settles the
+    /// challenge as a cancellation), or show the challenged state has been
+    /// superseded by canonical. An invalid
     /// response is rejected (`InvalidProof`, `InvalidDeletionClaim`,
     /// `InvalidSupersededClaim`) and the challenge stays open until the
     /// deadline. A valid response decrements the provider's
@@ -2504,6 +2625,8 @@ impl<T: Config> Pallet<T> {
     /// snapshot's `per_provider_stake`) to `T::OnSlash`, refunds the
     /// challenger's deposit and decrements the provider's `pending_challenges`. A provider may call it against itself to
     /// release its locks and unblock `deregister_provider`.
+    /// If the bucket was deleted, it slashes nothing and refunds the deposit,
+    /// as `cancel_challenge` does.
     /// Fails with `ChallengeNotExpired` while the provider may still respond
     /// (`anchor <= deadline`) and `ChallengeNotFound` once resolved.
     #[pallet::weight(...)]
@@ -2532,12 +2655,21 @@ pub enum ChallengeResponse<T: Config> {
     Proof {
         chunk_data: BoundedVec<u8, T::MaxChunkSize>,
         mmr_proof: MmrProof,
-        chunk_proof: MerkleProof,
+        /// RFC 9162 inclusion path: sibling hashes from the chunk to data_root
+        chunk_proof: BoundedVec<H256, MaxProofDepth>,
+    },
+    /// The challenged `chunk_index` is at or beyond the leaf's chunk count.
+    /// The MMR proof carries the leaf, so the chain derives the count from
+    /// `leaf.data_size` itself.
+    ChunkOutOfRange {
+        mmr_proof: MmrProof,
     },
     /// Data was deleted: the current snapshot's `start_seq` is past the
-    /// challenged leaf, or the bucket was deleted. Only an admin's checkpoint
-    /// raises `start_seq` (`checkpoint`), so the chain checks this from state;
-    /// no evidence needed.
+    /// challenged leaf. Only an admin's checkpoint raises `start_seq`
+    /// (`checkpoint`), so the chain checks this from state; no evidence needed.
+    /// If the bucket was deleted, the challenge settles as a cancellation:
+    /// the challenger gets its full deposit back, the provider pays its own fee,
+    /// nothing is slashed.
     Deleted,
     /// Challenged state has been superseded by a larger canonical checkpoint.
     /// Valid when: canonical commitment != challenged commitment AND
@@ -2575,9 +2707,39 @@ collection round), ready to pass on-chain as `ProviderSignatures`.
 ### Authentication & RBAC
 
 Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`) and
-authenticated read endpoints require an `Authorization` header. The provider node verifies an sr25519 signature
-locally and resolves the caller's role via a TTL-cached query against the
-chain's `Buckets` storage (`bucket.members`).
+every **bucket-bound read** — Layer-0
+(`GET /commitment`, `GET /checkpoint-signature`, `GET /mmr_proof`,
+`GET /mmr_peaks`, `POST /exists`, `GET /replica/historical_roots`,
+`GET /replica/sync_status`) — require an `Authorization` header at Reader
+level. The provider node verifies an sr25519 signature locally and resolves
+the caller's role via a TTL-cached query against the chain's `Buckets`
+storage (`bucket.members`).
+
+Three Reader-level exemptions, all resolved from the same cached lookup:
+
+- **Public buckets** serve every bucket-bound read anonymously.
+- **Replica-held buckets**: when this node holds the bucket under a replica
+  agreement, reads are served to anyone regardless of visibility — replicas
+  serve everyone; visibility gates primaries only (design doc, "Bucket
+  Visibility & Access"). Resolved from the node's own `StorageAgreements`
+  entry, cached and invalidated alongside the member set.
+- **Operator self-auth**: a request signed by the node's *own* provider
+  account passes any Reader check. Provider accounts are never bucket
+  members, and the operator can read the node's disk anyway; this is what
+  lets the provider's own tooling (e.g. the dashboard building a challenge
+  response) fetch `/mmr_proof` on a private bucket. It never grants Writer
+  or Admin.
+
+**Hash-keyed reads are capability reads.** `GET /node`, `GET /read`,
+`GET /chunk_proof` and `POST /fetch_nodes` are keyed by a blake2-256 hash or
+data root and take a `bucket_id`. The node answers 404 `bucket_not_found` for
+a bucket it does not store, and serves the rest without authentication: the
+node store is a single content-addressed namespace with cross-bucket dedup, so
+the node cannot tell whether a hash belongs to the named bucket, and
+possession of the hash is the capability. Hashes of
+private data are unguessable and every enumeration surface that would reveal
+them (the MMR shape via `/mmr_peaks`, per-bucket listings) is gated; see the
+design doc's "Bucket Visibility & Access" for the rule and its limits.
 
 > **⚠️ Under-specified — [#304](https://github.com/paritytech/web3-storage/issues/304).**
 > This scheme grew organically across several crates and needs one source of
@@ -2617,13 +2779,21 @@ Upload Node (chunk or internal node)
 PUT /node
 Authorization: Web3Storage <...>       # Writer or Admin
 
-Request:
+Request (a chunk):
 {
   "bucket_id": 1234,                   // u64
-  "hash": "0xabc...",
-  "data": "<base64 encoded>",
-  "children": ["0xchild1...", "0xchild2..."] | null  // null for leaf chunks
+  "hash": "0xabc...",                  // hash_leaf(data)
+  "data": "<base64 encoded>"
 }
+
+Request (an internal node):
+{
+  "bucket_id": 1234,
+  "hash": "0xdef...",                  // hash_children(left, right)
+  "children": ["0xleft...", "0xright..."]
+}
+
+A request carries exactly one of `data` and `children`.
 
 Note: HTTP API is used for simplicity and firewall-friendliness. Binary protocols
 (e.g., libp2p streams) could be added later for efficiency. Base64 encoding adds
@@ -2635,6 +2805,9 @@ Response (200 OK):
 
 Response (400 Bad Request):
 { "error": "children_missing", "missing": ["0xchild2..."] }
+{ "error": "invalid_node" }               // both or neither of data and children
+{ "error": "invalid_child_count", "expected": 2, "actual": 3 }
+{ "error": "chunk_too_large", "size": 300000, "max": 262144 }
 
 Response (507 Insufficient Storage):
 { "error": "quota_exceeded", "used": 1000000, "max": 1000000 }
@@ -2648,6 +2821,7 @@ Client discovers which nodes are missing before uploading.
 Check Existence (batched)
 ─────────────────────────
 POST /exists
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Request:
 {
@@ -2668,6 +2842,14 @@ If a node exists, skip its subtree. Upload missing nodes bottom-up.
 ### Commit
 
 After uploading, client requests provider to add data_root(s) to MMR.
+
+Before it signs, the provider checks every `data_root` against the chunk tree
+rules (see "Chunk Tree"): the stored tree has the RFC 9162 shape over its
+chunks, every chunk except the last has exactly `CHUNK_SIZE` bytes, and the
+last has 1 to `CHUNK_SIZE` bytes. The provider sets the leaf's `data_size` to
+the sum of the chunk lengths. A root that fails a check is rejected with
+`non_canonical_tree`. The provider never signs a root it cannot prove every
+chunk of.
 
 ```
 Commit
@@ -2693,6 +2875,7 @@ Response (200 OK):
 
 Response (400 Bad Request):
 { "error": "root_not_found", "missing": ["0xroot2..."] }
+{ "error": "non_canonical_tree", "data_root": "0xroot1..." }
 ```
 
 ### Read
@@ -2700,7 +2883,10 @@ Response (400 Bad Request):
 ```
 Read Chunks
 ───────────
-GET /read?data_root=0x...&offset=0&length=2097152
+GET /read?bucket_id=1&data_root=0x...&offset=0&length=2097152
+
+Capability read: keyed by data root, unauthenticated; 404 for a bucket the
+node does not store (see Authentication & RBAC).
 
 Response:
 {
@@ -2766,19 +2952,21 @@ To pass to `create_bucket_with_primary` (`bucket: null`),
 and `provider_signatures` as its `sigs`. A member of a virtual provider collects at least `k` member signatures
 over the terms before responding; if it cannot, it rejects the request.
 
-The provider rejects requests outside its duration bounds, beyond its capacity,
-or for a role it is not accepting.
+The provider rejects requests outside its duration bounds, below its minimum
+agreement size, beyond its capacity, or for a role it is not accepting.
 
 Download Node
 ─────────────
-GET /node?hash=0x...
+GET /node?bucket_id=1&hash=0x...
 
-Response (200 OK):
-{
-  "hash": "0xabc...",
-  "data": "<base64 encoded>",
-  "children": ["0xchild1...", "0xchild2..."] | null
-}
+Capability read: keyed by hash, unauthenticated; 404 for a bucket the node
+does not store (see Authentication & RBAC).
+
+Response (200 OK), a chunk:
+{ "hash": "0xabc...", "data": "<base64 encoded>" }
+
+Response (200 OK), an internal node:
+{ "hash": "0xdef...", "children": ["0xleft...", "0xright..."] }
 
 Response (404 Not Found):
 { "error": "not_found" }
@@ -2786,6 +2974,7 @@ Response (404 Not Found):
 Get Commitment (for challenge_offchain)
 ───────────────────────────────────────
 GET /commitment?bucket_id=1234&agreement_id=7
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Response:
 {
@@ -2797,15 +2986,20 @@ Response:
   "provider_signatures": [{ "signer": "5F...", "signature": "0x..." }]
 }
 
-Note: The returned signatures cover a `CommitmentPayload` with the real
-`leaf_count`; `challenge_offchain` reconstructs the payload from the
-`commitment` and `agreement_id` the challenger passes, plus the chain's own
-genesis hash, so the same values returned here must be passed on-chain
-unchanged.
+Note: The returned signatures cover a `CommitmentPayload` with the **real**
+`leaf_count`, so they can back a bound `challenge_offchain` — the pallet
+reconstructs the payload from the `commitment` and `agreement_id` the
+challenger passes, plus the chain's own genesis hash, verifies the signatures
+over it, then uses that `leaf_count` to bind the proof to `leaf_index` in
+`respond_to_challenge`. The values returned here must therefore be passed
+on-chain unchanged. The `/commit` and `/delete` responses sign the same way
+and also return `leaf_count`; `/checkpoint-signature` is equivalent and is used
+for the on-chain `checkpoint` extrinsic.
 
 Get Checkpoint Signature (for checkpoint extrinsic)
 ───────────────────────────────────────────────────
 GET /checkpoint-signature?bucket_id=1234&agreement_id=7&prev_start_seq=0&prev_leaf_count=40
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
   // prev_*: the on-chain snapshot, optional
 
 Response:
@@ -2841,25 +3035,33 @@ successor's `agreement_id` is submitted with `activate_replacements` set.
 Get MMR Proof
 ─────────────
 GET /mmr_proof?bucket_id=0x...&leaf_index=5
+Authorization: Web3Storage <...>       # Reader; the provider's own account
+                                       # also passes (operator self-auth)
 
 Response:
 {
-  "leaf": { "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
-  "proof": { "peaks": [...], "siblings": [...] }
+  "leaf": { "leaf_version": 1, "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
+  "items": ["0x...", ...]
 }
 
 Get Chunk Proof
 ───────────────
-GET /chunk_proof?data_root=0x...&chunk_index=3
+GET /chunk_proof?bucket_id=1&data_root=0x...&chunk_index=3
+
+Capability read: keyed by data root, unauthenticated; 404 for a bucket the
+node does not store.
 
 Response:
 {
   "chunk_hash": "0xabc...",
-  "proof": { "siblings": [...], "path": [...] }
+  "proof": ["0xsibling1...", "0xsibling2..."]   // RFC 9162 inclusion path
 }
 
 Response (404 Not Found):
 { "error": "data_root_not_found" }
+
+Response (400 Bad Request):
+{ "error": "chunk_index_out_of_range" }   // chunk_index >= ceil(data_size / CHUNK_SIZE)
 
 Delete Data (admin only)
 ────────────────────────
@@ -2902,18 +3104,6 @@ starts a new MMR at the snapshot's end (15) and appends the snapshot's leaves
 off-chain branch under the pruning rule. The API keeps only a contiguous
 suffix of the snapshot.
 
-List Buckets
-────────────
-GET /buckets
-
-Response:
-{
-  "buckets": [
-    { "bucket_id": 1234, "mmr_root": "0x...", "start_seq": 0, "leaf_count": 42 },
-    { "bucket_id": 5678, "mmr_root": "0x...", "start_seq": 5, "leaf_count": 10 }
-  ]
-}
-
 Health Check
 ────────────
 GET /health
@@ -2930,15 +3120,12 @@ Response:
   "provider_id": "5G...",            // SS58 address
   "total_buckets": 3,
   "total_nodes": 1234,
-  "total_bytes": 42949672960,
-  "buckets": [
-    { "bucket_id": 1234, "nodes": 500, "bytes": 21474836480, ... },
-    ...
-  ]
+  "total_bytes": 42949672960
 }
 
-Note: Public observability endpoint. Useful for operators and the
-Prometheus/Grafana setup in `docs/`.
+Note: Public observability endpoint (operators, the Prometheus/Grafana setup
+in `docs/`). Aggregate totals only — a per-bucket breakdown would let anyone
+enumerate the node's buckets, sidestepping the per-bucket read gates.
 ```
 
 ### Replica Sync Status
@@ -2947,6 +3134,7 @@ Prometheus/Grafana setup in `docs/`.
 Get Historical Roots (informational)
 ────────────────────────────────────
 GET /replica/historical_roots?bucket_id=1234
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Response:
 {
@@ -2964,6 +3152,7 @@ and placeholder entries for the historical positions; clients building
 Get Replica Sync Status
 ───────────────────────
 GET /replica/sync_status?bucket_id=1234
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets)
 
 Response:
 {
@@ -2988,6 +3177,13 @@ top-down Merkle traversal. This section describes the sync protocol.
 4. Replica fetches missing nodes from providers, verifying hashes along the way
 5. Once fully synced, replica confirms on-chain to receive per-sync payment
 
+On a **private** bucket the primaries refuse step 2 (`/mmr_peaks` is
+Reader-gated and a replica is not a member — the design's primary gate), so
+the sync coordinator tries the bucket's *other replicas* after the primaries:
+replicas serve everyone, which is what lets a public→private bucket keep
+seeding new replicas. A born-private bucket has no honest source at all —
+by design.
+
 **Why chain-first?**
 
 The chain checkpoint is the source of truth. Fetching the root from a provider
@@ -2998,6 +3194,9 @@ the replica can verify all fetched data against a trusted commitment.
 Get MMR Peaks (given trusted root from chain)
 ─────────────────────────────────────────────
 GET /mmr_peaks?bucket_id=0x...
+Authorization: Web3Storage <...>       # Reader (anonymous on public buckets
+                                       # and on buckets the serving node
+                                       # holds as a replica)
 
 Response:
 {
@@ -3007,36 +3206,19 @@ Response:
 }
 
 Note: Replica already knows the trusted mmr_root from the chain. It fetches
-peaks from a provider and verifies: hash(peaks) == trusted_root. If verification
+peaks from a provider and verifies: bag_peaks(peaks) == trusted_root (peak bagging uses the `0x02` prefix). If verification
 fails, try another provider. Once verified, use peaks to start top-down traversal.
 
-Get MMR Subtree
-───────────────
-GET /mmr_subtree?bucket_id=0x...&peak_index=0&depth=2
-
-Request: Fetch nodes in an MMR subtree starting from a peak.
-- peak_index: which peak to start from (0 = leftmost)
-- depth: how many levels to fetch (0 = just the peak, 1 = peak + children, etc.)
-
-Response:
-{
-  "nodes": [
-    { "position": 0, "hash": "0xabc...", "children": [1, 2] },
-    { "position": 1, "hash": "0xdef...", "children": [3, 4] },
-    { "position": 2, "hash": "0x123...", "children": [5, 6] },
-    ...
-  ]
-}
-
-Note: Replica can batch requests by depth level. Check which hashes match
-locally stored nodes, then fetch children of missing nodes.
-
 Note: To check which nodes exist on a provider, use the existing POST /exists
-endpoint from the Sync Protocol section above.
+endpoint from the Sync Protocol section above. The traversal walks `GET /node`
+children links.
 
 Fetch Nodes (batched, for sync)
 ───────────────────────────────
 POST /fetch_nodes
+
+Capability read: keyed by hash, unauthenticated; 404 for a bucket the node
+does not store (see Authentication & RBAC).
 
 Request:
 {
@@ -3047,8 +3229,8 @@ Request:
 Response:
 {
   "nodes": [
-    { "hash": "0xdef...", "data": "<base64>", "children": ["0xchild1...", "0xchild2..."] },
-    { "hash": "0x456...", "data": "<base64>", "children": null }  // leaf chunk
+    { "hash": "0xdef...", "children": ["0xleft...", "0xright..."] },  // internal node
+    { "hash": "0x456...", "data": "<base64>" }                        // chunk
   ]
 }
 
@@ -3062,14 +3244,15 @@ requests when syncing many nodes.
 1. Query chain for bucket's current snapshot (mmr_root, start_seq, leaf_count)
    Also note historical_roots for fallback positions
 2. Fetch mmr_peaks from any provider
-3. Verify: hash(peaks) == trusted mmr_root from chain
+3. Verify: bag_peaks(peaks) == trusted mmr_root from chain (bagging uses the `0x02` prefix)
    If mismatch, try another provider
 4. Compare verified peaks with locally stored peaks
 5. For each differing peak:
    a. Fetch subtree level by level (breadth-first)
    b. At each level, check which nodes exist locally
    c. Fetch missing nodes from any available provider
-   d. Verify fetched nodes: hash(data) == expected_hash
+   d. Verify fetched nodes against expected_hash: a node with `data` is a chunk, hashed with `0x00`;
+      a node with `children` is hashed with `0x01` over left ++ right; reject a mismatch
    e. Continue to children of newly fetched nodes
 6. Once all nodes fetched and verified:
    a. Sign `ReplicaSyncPayload` — the `roots` matching on-chain
@@ -3128,7 +3311,10 @@ the exact chunk a challenge targets.
 pub struct ChunkLocation {
     /// Index of the challenged leaf within the MMR
     pub leaf_index: u64,
-    /// Index of the challenged chunk within the leaf's data
+    /// Index of the challenged chunk within the leaf's data: chunk `i` covers
+    /// bytes `[i * CHUNK_SIZE, min((i + 1) * CHUNK_SIZE, data_size))`. An
+    /// index at or beyond the chunk count is answered with
+    /// `ChallengeResponse::ChunkOutOfRange`.
     pub chunk_index: u64,
 }
 ```
@@ -3199,9 +3385,14 @@ pub struct ReplicaSyncPayload {
 
 ```rust
 pub struct MmrLeaf {
-    /// Merkle root of chunk tree
+    /// Leaf format version (`LEAF_VERSION = 1`). First field, so the leaf
+    /// hash preimage is `0x00 ++ leaf_version ++ ...`. The version defines the
+    /// fields below, `CHUNK_SIZE` and the chunk tree shape.
+    pub leaf_version: u8,
+    /// Root of the chunk tree (see "Chunk Tree")
     pub data_root: H256,
-    /// Size of content under this data_root
+    /// Byte length of the data under `data_root`. The chunk count is
+    /// `ceil(data_size / CHUNK_SIZE)` and is never zero.
     pub data_size: u64,
     /// Cumulative unique bytes in MMR at this point
     pub total_size: u64,
@@ -3209,7 +3400,53 @@ pub struct MmrLeaf {
 // Sequence number is implicit: start_seq + leaf_position
 ```
 
-### Merkle Proofs
+The provider writes `LEAF_VERSION`, the current version, into every leaf it
+commits. A verifier reads `leaf_version` first and checks the rest of the leaf
+under that version: its fields, its `CHUNK_SIZE`, the chunk tree shape and the
+hash prefixes. The pallet accepts every version it knows; a response whose
+leaf has an unknown version fails with `InvalidProof`. A format change bumps
+`LEAF_VERSION`; leaves of different versions share one MMR, so no root has to
+be recomputed.
+
+### Hash Prefixes
+
+Every hash in the chunk tree and the MMR is `blake2_256` over a one-byte
+prefix and the payload. The prefix identifies the kind of node the payload
+is, so a node's bytes never verify as a leaf of the same tree.
+
+| Prefix | Preimage | Hashes | Function |
+|---|---|---|---|
+| `0x00` | `0x00 ++ chunk` | a chunk: leaf of the chunk tree | `hash_leaf` |
+| `0x00` | `0x00 ++ leaf.encode()` | an `MmrLeaf`: leaf of the MMR (`leaf_version` is the first byte after the prefix) | `hash_leaf` |
+| `0x01` | `0x01 ++ left ++ right` | an internal node, in the chunk tree and in the MMR | `hash_children` |
+| `0x02` | `0x02 ++ peak ++ rest` | the MMR root: peaks folded right to left, one peak is the root, no peaks give zero | `bag_peaks` |
+
+### Chunk Tree
+
+The chunk tree is the binary Merkle tree of RFC 9162 (section 2.1.1) over the
+chunks of one piece of data, with the hashes of "Hash Prefixes" in place of
+SHA-256: the tree over one chunk is `hash_leaf(chunk)`; the tree over `n > 1`
+chunks is `hash_children(tree(chunks[0..k]), tree(chunks[k..n]))` with `k` the
+largest power of two smaller than `n`.
+
+Every chunk has `CHUNK_SIZE` bytes (256 KiB in leaf version 1) except the
+last, which has 1 to `CHUNK_SIZE` bytes, so `n = ceil(data_size / CHUNK_SIZE)`
+and `n >= 1`. Empty data has no chunks: the client does not upload it, and a
+root whose last chunk is empty fails the `/commit` check.
+
+Pairing nodes left to right at each level and moving an unpaired last node up
+unchanged builds the same tree. Reference implementation:
+`storage_primitives::merkle` (`merkle_root`, `build_merkle_proofs`,
+`verify_merkle_proof`).
+
+A chunk proof is the RFC 9162 inclusion proof (section 2.1.3.1): the sibling
+hashes from the chunk to the root, and nothing else. The verifier runs the
+algorithm of section 2.1.3.2 with `leaf_index = chunk_index` and
+`tree_size = n`; it derives every left/right direction from those two values,
+so the prover cannot choose them and the proof is bound to the chunk count
+that `data_size` implies. A proof against a tree of another size fails.
+
+### MMR Proof
 
 All proofs are extrinsic arguments, so every list is bounded. Leaf and chunk
 indices are `u64`, so a tree is at most 64 levels deep and an MMR has at most
@@ -3219,21 +3456,20 @@ indices are `u64`, so a tree is at most 64 levels deep and an MMR has at most
 /// Maximum depth of a tree and maximum number of MMR peaks.
 pub type MaxProofDepth = ConstU32<64>;
 
-pub struct MerkleProof {
-    /// Sibling hashes from leaf to root
-    pub siblings: BoundedVec<H256, MaxProofDepth>,
-    /// Path bits (0 = left, 1 = right)
-    pub path: BoundedVec<bool, MaxProofDepth>,
-}
-
 pub struct MmrProof {
-    /// Peaks of the MMR
-    pub peaks: BoundedVec<H256, MaxProofDepth>,
-    /// The leaf being proven. Verification hashes `leaf.encode()` as the
-    /// proof's starting point, so the leaf content is part of the proof.
+    /// The leaf being proven.
     pub leaf: MmrLeaf,
-    /// Proof from leaf to peak
-    pub leaf_proof: MerkleProof,
+    /// Proof for leaf `leaf_index` of an MMR with `leaf_count` leaves. Both
+    /// values come from the challenge and its commitment, not from the proof.
+    /// Items, in this order:
+    /// 1. the root of each peak left of the leaf's peak, left to right;
+    /// 2. the sibling at each level from the leaf up to its peak, bottom up;
+    /// 3. if any peaks are right of the leaf's peak, one hash of them, bagged
+    ///    right to left.
+    /// A proof with any other number of items is rejected. `leaf_count` is at
+    /// most 2^48 (`checkpoint`), so peak heights are at most 48: the peaks left
+    /// of the leaf's peak plus its siblings are at most 48 items, plus one bag.
+    pub items: BoundedVec<H256, ConstU32<49>>,
 }
 
 /// Proves that an MMR with `prev.leaf_count` leaves is a prefix of one with
@@ -3250,6 +3486,10 @@ pub struct MmrConsistencyProof {
     pub items: BoundedVec<(u64, H256), ConstU32<128>>,
 }
 ```
+
+Reference implementation of `MmrProof`: `polkadot-ckb-merkle-mountain-range` with
+`StorageMerge` (`gen_proof(..).proof_items()` to build, `MerkleProof::verify` to
+check).
 
 ---
 
@@ -3282,11 +3522,12 @@ pub struct MmrConsistencyProof {
        cost applies—a last-resort recovery path, not a cheap bulk channel)
 
 3b. Provider responds with `Deleted`
-    └─ The current snapshot's start_seq is past the challenged seq, or the
-       bucket was deleted
+    └─ The current snapshot's start_seq is past the challenged seq
     └─ Challenge rejected (data was legitimately deleted)
     └─ Treated as a valid response: provider's fee reimbursed as in 3a,
        remainder returned to challenger; stake untouched
+    └─ If the bucket was deleted: settled as a cancellation (full deposit
+       back to the challenger, no reimbursement, no slash)
 
 3c. Provider responds with an invalid proof or claim
     └─ Response rejected; the provider pays the transaction fee
@@ -3327,18 +3568,37 @@ fn verify_challenge_response(
     match response {
         ChallengeResponse::Proof { chunk_data, mmr_proof, chunk_proof } => {
             // The chunk must sit in the leaf and the leaf in the committed MMR.
-            let chunk_hash = blake2_256(chunk_data);
+            // The chunk count comes from the proven leaf, not from the prover.
+            let chunk_count = chunk_count(&mmr_proof.leaf); // ceil(data_size / CHUNK_SIZE of leaf_version)
+            let chunk_hash = hash_leaf(chunk_data); // blake2_256(0x00 ++ chunk_data)
             let chunk_ok = verify_merkle_proof(
-                chunk_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root,
+                chunk_hash,
+                challenge.target.chunk_index,
+                chunk_count,
+                chunk_proof,
+                &mmr_proof.leaf.data_root,
             );
-            let mmr_ok = verify_mmr_proof(mmr_proof, &challenge.commitment.mmr_root);
+            // Bound to the challenged leaf: the leaf position and the MMR shape
+            // come from (target.leaf_index, commitment.leaf_count), not from the
+            // proof, so a proof for a different leaf of the same MMR does not verify.
+            let mmr_ok = verify_mmr_proof(mmr_proof, challenge.target.leaf_index, &challenge.commitment);
             if chunk_ok && mmr_ok { Ok(()) } else { Err(Error::InvalidProof) }
+        }
+
+        ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
+            // The challenged leaf must be in the committed MMR and have no chunk at
+            // the index. Bound to target.leaf_index like the Proof arm, so the
+            // prover cannot pick a shorter leaf to claim the index is out of range.
+            let mmr_ok = verify_mmr_proof(mmr_proof, challenge.target.leaf_index, &challenge.commitment);
+            let out_of_range = challenge.target.chunk_index >= chunk_count(&mmr_proof.leaf);
+            if mmr_ok && out_of_range { Ok(()) } else { Err(Error::InvalidProof) }
         }
 
         ChallengeResponse::Deleted => {
             // A checkpoint raised start_seq past the challenged leaf: only an
-            // admin can do that, and start_seq never decreases. A deleted
-            // bucket counts as everything deleted.
+            // admin can do that, and start_seq never decreases. On a deleted
+            // bucket the caller settles the challenge as a cancellation
+            // (full refund, no reimbursement) instead of a defence.
             match bucket.and_then(|b| b.snapshot.as_ref()) {
                 None if bucket.is_none() => Ok(()),
                 Some(snapshot) if challenged_seq < snapshot.commitment.start_seq => Ok(()),

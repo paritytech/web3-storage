@@ -460,14 +460,8 @@ fn validate_object_key(key: &str) -> Result<()> {
 
 /// Parse a `0x`-prefixed 32-byte hex string.
 fn parse_h256(s: &str) -> Result<H256> {
-    let bytes = hex::decode(s.trim_start_matches("0x"))
-        .map_err(|e| S3ClientError::ProviderError(format!("Invalid hash {s:?}: {e}")))?;
-    if bytes.len() != 32 {
-        return Err(S3ClientError::ProviderError(format!(
-            "Invalid hash {s:?}: expected 32 bytes"
-        )));
-    }
-    Ok(H256::from_slice(&bytes))
+    s.parse()
+        .map_err(|e| S3ClientError::ProviderError(format!("Invalid hash {s:?}: {e}")))
 }
 
 fn header_str(headers: &reqwest::header::HeaderMap, name: &str) -> String {
@@ -571,7 +565,7 @@ mod tests {
     #[test]
     fn parse_h256_accepts_prefixed_hex_and_rejects_wrong_length() {
         let hash = H256::repeat_byte(0xab);
-        let hex = format!("0x{}", hex::encode(hash.as_bytes()));
+        let hex = format!("{hash:#x}");
         assert_eq!(parse_h256(&hex).unwrap(), hash);
         assert!(parse_h256("0xabcd").is_err());
         assert!(parse_h256("not hex").is_err());
