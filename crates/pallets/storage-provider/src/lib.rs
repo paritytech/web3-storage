@@ -377,7 +377,7 @@ pub mod pallet {
     /// `(bucket, provider)` pair. Maintained in lockstep with
     /// [`PendingChallenges`] and gates that bucket's agreement teardown
     /// (`end_agreement`, `claim_expired_agreement`) and bucket removal
-    /// (`delete_bucket`, `cleanup_bucket_internal`). An entry exists only
+    /// (`delete_bucket`). An entry exists only
     /// while the count is positive, so a bucket with no entry under its
     /// prefix has no open challenge.
     #[pallet::storage]
