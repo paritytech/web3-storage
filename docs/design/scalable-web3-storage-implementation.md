@@ -553,7 +553,7 @@ pub struct Bucket<T: Config> {
     /// even if it is no longer an admin or member.
     pub creator: T::AccountId,
     /// Storage deposit for the bucket record, held on `creator` and released
-    /// when `delete_bucket` or `cleanup_bucket_internal` removes the bucket.
+    /// when `delete_bucket` removes the bucket.
     /// The ticket contains only the amount, so the record stores the
     /// depositor beside it, as `pallet-preimage` does.
     ///
@@ -618,7 +618,7 @@ pub struct StorageAgreement<T: Config> {
     pub depositor: T::AccountId,
     /// Storage deposit, held on `depositor` and released to it wherever the
     /// agreement is removed: `end_agreement`, `claim_expired_agreement`,
-    /// `remove_slashed`, `cleanup_bucket_internal`. Footprint: the record's
+    /// `remove_slashed`. Footprint: the record's
     /// maximum encoded length. Applies at any price, so a zero-price
     /// agreement still costs its depositor something to keep.
     pub deposit: T::StorageDeposit,
@@ -779,7 +779,7 @@ pub type PendingChallenges<T: Config> =
 /// `(bucket, provider)` pair. Maintained in lockstep with
 /// `PendingChallenges` and gates that bucket's agreement teardown
 /// (`end_agreement`, `claim_expired_agreement`) and bucket removal
-/// (`delete_bucket`, `cleanup_bucket_internal`). An entry exists only while
+/// (`delete_bucket`). An entry exists only while
 /// the count is positive, so a bucket with no entry under its prefix has no
 /// open challenge, and the removal gate is one `next_key` read.
 #[pallet::storage]
@@ -1347,7 +1347,6 @@ impl<T: Config> Pallet<T> {
     ///   `remove_slashed` removes a slashed provider's agreement without
     ///   checking for pending challenges, so another challenge against that
     ///   provider can still be open, and answering it reads the bucket.
-    ///   `cleanup_bucket_internal` applies the same gate.
     ///
     /// For every member (at most `MaxMembers`) releases the member deposit to
     /// its `depositor` and removes the bucket from the member's
