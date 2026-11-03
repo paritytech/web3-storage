@@ -124,7 +124,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
       <li><code>challenge_replica</code>: against the commitment a replica confirmed on-chain, current or historical.</li>
     </ul>
     <p>A challenge names one leaf of a commitment (<code>target.leaf_index</code>, <code>chunk_index</code>). The leaf must exist: <code>leaf_index</code> below the commitment's <code>leaf_count</code>, else <code>LeafNotInCommitment</code> at creation. The response must prove that leaf; a proof for another leaf is <code>InvalidProof</code>.</p>
-    <p>You lock a deposit that covers the provider's response cost. The provider has <code>ChallengeTimeout</code> (48 hours) to respond. If it does not, anyone can call <code>resolve_expired_challenge</code> (free on success) to slash it. An invalid response is rejected and the challenge stays open. See <a href="#costs">Costs</a> for who pays.</p>
+    <p>You lock a deposit that covers the provider's response cost. The provider has <code>ChallengeTimeout</code> (48 hours) to respond. If it does not, anyone can call <code>resolve_expired_challenge</code> (free on success) to slash it. An invalid response is rejected and the challenge stays open. If the provider serves the data off-chain after you challenged, call <code>cancel_challenge</code> before it responds and no later than the deadline: the deposit is released in full. See <a href="#costs">Costs</a> for who pays.</p>
     <p class="see">Diagrams: <a href="12-challenge-protocol.html">12 Challenge protocol</a>, <a href="13-challenge-sequence.html">13 Challenge, response and slash</a></p>
   </li>
   <li>
