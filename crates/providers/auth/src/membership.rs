@@ -181,6 +181,7 @@ impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
 /// A [`MembershipResolver`] that returns the same fixed answers for every
 /// bucket. Used by tests across crates; [`Self::private`] is the fail-safe
 /// member-only shape.
+#[cfg(any(test, feature = "test-helpers"))]
 pub struct StaticMembershipResolver {
     /// Returned by `fetch_access` for every bucket.
     pub access: BucketAccess,
@@ -188,6 +189,7 @@ pub struct StaticMembershipResolver {
     pub own_agreement: Option<OwnAgreement>,
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 impl StaticMembershipResolver {
     /// Returns `access` for every bucket, with an unlimited primary agreement.
     pub fn new(access: BucketAccess) -> Self {
@@ -230,6 +232,7 @@ impl StaticMembershipResolver {
     }
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 #[async_trait::async_trait]
 impl MembershipResolver for StaticMembershipResolver {
     async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
