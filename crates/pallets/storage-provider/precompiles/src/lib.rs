@@ -16,7 +16,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use codec::Decode;
 use core::{fmt, marker::PhantomData, num::NonZero};
-use frame_support::dispatch::RawOrigin;
+use frame_support::{dispatch::RawOrigin, traits::Get};
 use frame_system::pallet_prelude::BlockNumberFor;
 use pallet_revive::{
     precompiles::{
@@ -227,6 +227,17 @@ where
                 )?;
                 pallet_storage_provider::Pallet::<Runtime>::freeze_bucket(frame_origin, *bucketId)
                     .map_err(|e| revert(&e, "freezeBucket failed"))?;
+                Ok(Vec::new())
+            }
+
+            IWeb3StorageCalls::deleteBucket(IWeb3Storage::deleteBucketCall { bucketId }) => {
+                env.charge(
+                    <Runtime as pallet_storage_provider::Config>::WeightInfo::delete_bucket(
+                        <Runtime as pallet_storage_provider::Config>::MaxMembers::get(),
+                    ),
+                )?;
+                pallet_storage_provider::Pallet::<Runtime>::delete_bucket(frame_origin, *bucketId)
+                    .map_err(|e| revert(&e, "deleteBucket failed"))?;
                 Ok(Vec::new())
             }
 

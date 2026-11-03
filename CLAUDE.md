@@ -47,7 +47,7 @@ Link, don't copy.
 | Runtime parameter values (stakes, timeouts, decimals) | `runtimes/web3-storage-local/src/storage.rs` — the code is the value; the design doc has the rationale |
 | Extrinsics, errors, events, storage items (API reference) | rustdoc on `crates/pallets/*` (`cargo doc -p pallet-storage-provider --no-deps --open`); the same text is in the runtime metadata, so IDE hover on PAPI/subxt bindings and polkadot.js Apps show it |
 | Payment math | `Pallet::calculate_payment` in `crates/pallets/storage-provider/src/impls/agreements.rs` — the code is the formula |
-| Layer 1 file system (drives, manifests, commit strategies) | rustdoc on `crates/primitives/file-system` and `crates/pallets/drive-registry`; [`clients/file-system/README.md`](clients/file-system/README.md) |
+| Layer 1 file system (drives, manifests, commit strategies) | rustdoc on `crates/primitives/file-system`; [`clients/file-system/README.md`](clients/file-system/README.md) |
 | Architecture diagrams and the dApp developer guide, derived from `docs/design/` | [`docs/site/`](docs/site/); update with the `/generate-docs` skill |
 | WIP designs: marketplace/discovery, checkpoint protocol, smart contracts, encryption | [`docs/drafts/`](docs/drafts/) — **not authoritative** |
 | Review criteria (Parity Standards) | the `/review` skill — authoritative; not restated here |
@@ -249,7 +249,7 @@ strings) are documented in [`packages/sdk/README.md`](packages/sdk/README.md).
 just setup           # one-time: download binaries, build
 just build           # cargo build --release
 cargo test           # all tests (or -p <crate> for one)
-just fs-test-all     # Layer 1: primitives + pallet + client tests
+just fs-test-all     # Layer 1: primitives + client tests
 cargo clippy --all-targets --all-features --workspace -- -D warnings
 ```
 
