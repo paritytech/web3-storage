@@ -29,6 +29,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 array-bytes = { workspace = true }
+axum = { workspace = true }
 client-test-support = { workspace = true }
 subxt-signer = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

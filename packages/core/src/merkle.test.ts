@@ -273,6 +273,8 @@ describe("verifyMmrProof", () => {
   it("rejects a proof for another leaf index", () => {
     expect(verifyMmrProof(proof1, 0n, mmrRoot, 3n)).toBe(false);
     expect(verifyMmrProof(proof2, 3n, mmrRoot, 3n)).toBe(false);
+    // A proof for an older leaf fails as the last leaf.
+    expect(verifyMmrProof(proof1, 2n, mmrRoot, 3n)).toBe(false);
   });
 
   // Written by `crates/primitives/storage/src/mmr.rs` (`proof_vectors`): run

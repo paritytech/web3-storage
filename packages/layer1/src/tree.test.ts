@@ -85,6 +85,21 @@ describe("root discovery", () => {
     await commitRoot(provider, new Uint8Array(DIRECTORY_NODE_MAX_SIZE + 1));
     await expect(tree.list("/")).rejects.toMatchObject({ code: "NotAFileSystem" });
   });
+
+  it("rejects a proof for an older leaf than the last one", async () => {
+    const { provider, tree } = setup();
+    // `putFile` commits the content, manifest and root as separate leaves,
+    // so leaf 0 is not the last leaf.
+    await tree.putFile("/a.txt", te.encode("a"));
+    // Answers every `GET /mmr_proof` with the proof of leaf 0.
+    const olderLeaf = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname === "/mmr_proof") url.searchParams.set("leaf_index", "0");
+      return provider.fetch(url.toString(), init);
+    }) as typeof fetch;
+    const reader = new FsTree(providerBlobStore(PROVIDER, BUCKET, signer, { fetch: olderLeaf }), () => 1_700_000_000n);
+    await expect(reader.rootCid()).rejects.toThrow(/MMR proof for the last leaf is invalid/);
+  });
 });
 
 describe("FS operations", () => {
