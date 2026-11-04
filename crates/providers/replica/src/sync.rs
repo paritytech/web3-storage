@@ -19,7 +19,7 @@
 //! On-chain confirmation of what was synced is the coordinator's
 //! (`coordinator::ReplicaSyncCoordinator::confirm_on_chain`).
 
-use crate::leaves::fetch_leaves;
+use crate::leaves::{fetch_leaves, TargetLeaves};
 use crate::source::{NodePage, SourceClient, SourceSet};
 use crate::Error;
 use provider_storage::{ChunkTreeNode, StorageBackend};
@@ -69,7 +69,7 @@ impl ReplicaSync {
         target: &Commitment,
         sources: &mut SourceSet,
     ) -> Result<(), Error> {
-        let leaves = fetch_leaves(
+        let TargetLeaves { leaves, kept } = fetch_leaves(
             self.storage.as_ref(),
             &self.client,
             &mut sources.clone(),
@@ -78,7 +78,7 @@ impl ReplicaSync {
         )
         .await?;
 
-        let data_roots: Vec<H256> = leaves.iter().map(|leaf| leaf.data_root).collect();
+        let data_roots: Vec<H256> = leaves[kept..].iter().map(|leaf| leaf.data_root).collect();
         TreeWalk::new(self.storage.as_ref(), bucket_id, &data_roots)
             .run(&self.client, sources)
             .await?;

@@ -11,6 +11,16 @@ use storage_primitives::{
     BucketId, Commitment,
 };
 
+/// The leaves of `target` and how many of them came from local storage.
+#[derive(Debug)]
+pub struct TargetLeaves {
+    /// The leaves of the target, checked against its root.
+    pub leaves: Vec<MmrLeaf>,
+    /// The number of leading `leaves` taken from local storage. Their data
+    /// roots were checked when they were installed.
+    pub kept: usize,
+}
+
 /// The leaves of `target`, checked against `target.mmr_root`.
 ///
 /// Local leaves that fall in the target's range are kept, and only the missing
@@ -29,10 +39,11 @@ pub async fn fetch_leaves(
     sources: &mut SourceSet,
     bucket_id: BucketId,
     target: &Commitment,
-) -> Result<Vec<MmrLeaf>, Error> {
+) -> Result<TargetLeaves, Error> {
     let end = target.start_seq.saturating_add(target.leaf_count);
 
     let mut leaves = kept_leaves(storage, bucket_id, target, end)?;
+    let kept = leaves.len();
     let mut next = target.start_seq + leaves.len() as u64;
     while next < end {
         let source = current_source(sources)?;
@@ -52,7 +63,7 @@ pub async fn fetch_leaves(
         }
     }
     if matches_root(&leaves, target)? {
-        return Ok(leaves);
+        return Ok(TargetLeaves { leaves, kept });
     }
 
     tracing::warn!(
@@ -62,7 +73,9 @@ pub async fn fetch_leaves(
     loop {
         let source = current_source(sources)?;
         match fetch_range(client, &source, bucket_id, target.start_seq, end).await {
-            Ok(leaves) if matches_root(&leaves, target)? => return Ok(leaves),
+            Ok(leaves) if matches_root(&leaves, target)? => {
+                return Ok(TargetLeaves { leaves, kept: 0 })
+            }
             Ok(_) => tracing::warn!(
                 bucket_id,
                 source,

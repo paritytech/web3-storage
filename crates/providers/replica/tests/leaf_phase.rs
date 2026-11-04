@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use provider_replica::leaves::fetch_leaves;
+use provider_replica::leaves::{fetch_leaves, TargetLeaves};
 use provider_replica::source::{SourceClient, SourceSet};
 use provider_replica::Error;
 use provider_storage::{temp_rocksdb, ChunkTreeNode, StorageBackend};
@@ -57,7 +57,7 @@ async fn run(
     local: &Backend,
     sources: Vec<String>,
     target: &Commitment,
-) -> Result<Vec<MmrLeaf>, Error> {
+) -> Result<TargetLeaves, Error> {
     fetch_leaves(
         local.0.as_ref(),
         &client(),
@@ -78,7 +78,8 @@ async fn only_the_missing_range_is_fetched() {
         .await
         .unwrap();
 
-    assert_eq!(fetched, leaves);
+    assert_eq!(fetched.leaves, leaves);
+    assert_eq!(fetched.kept, 3);
     assert_eq!(source.requests(), [(3, 6)]);
 }
 
@@ -93,7 +94,8 @@ async fn nothing_is_fetched_when_the_local_leaves_cover_the_target() {
         .await
         .unwrap();
 
-    assert_eq!(fetched, leaves);
+    assert_eq!(fetched.leaves, leaves);
+    assert_eq!(fetched.kept, 4);
     assert!(source.requests().is_empty());
 }
 
@@ -114,7 +116,8 @@ async fn a_fresh_replica_fetches_the_whole_range_page_by_page() {
     .await
     .unwrap();
 
-    assert_eq!(fetched, leaves);
+    assert_eq!(fetched.leaves, leaves);
+    assert_eq!(fetched.kept, 0);
     assert_eq!(source.requests(), [(0, 5), (2, 5), (4, 5)]);
 }
 
@@ -132,7 +135,8 @@ async fn local_leaves_before_the_target_start_are_dropped() {
         .await
         .unwrap();
 
-    assert_eq!(fetched, leaves);
+    assert_eq!(fetched.leaves, leaves);
+    assert_eq!(fetched.kept, 3);
     assert!(source.requests().is_empty());
 }
 
@@ -149,7 +153,8 @@ async fn a_gap_before_the_local_leaves_keeps_nothing() {
         .await
         .unwrap();
 
-    assert_eq!(fetched, leaves);
+    assert_eq!(fetched.leaves, leaves);
+    assert_eq!(fetched.kept, 0);
     assert_eq!(source.requests(), [(0, 5)]);
 }
 
@@ -172,7 +177,7 @@ async fn a_failing_source_is_skipped_for_the_next_one() {
         let fetched = run(&local, vec![failing.clone(), good.url.clone()], &target)
             .await
             .unwrap();
-        assert_eq!(fetched, leaves, "after {failing}");
+        assert_eq!(fetched.leaves, leaves, "after {failing}");
     }
 }
 
@@ -188,7 +193,7 @@ async fn a_page_that_fails_midway_is_retried_from_its_start_on_the_next_source()
         .await
         .unwrap();
 
-    assert_eq!(fetched, leaves);
+    assert_eq!(fetched.leaves, leaves);
     assert_eq!(flaky.requests(), [(0, 5), (2, 5)]);
     assert_eq!(steady.requests(), [(2, 5), (4, 5)]);
 }
@@ -204,7 +209,8 @@ async fn stale_local_leaves_are_replaced_by_the_whole_range() {
         .await
         .unwrap();
 
-    assert_eq!(fetched, leaves);
+    assert_eq!(fetched.leaves, leaves);
+    assert_eq!(fetched.kept, 0);
     // The missing range first, then the whole range once the root was wrong.
     assert_eq!(source.requests(), [(3, 6), (0, 6)]);
 }
@@ -221,7 +227,7 @@ async fn a_source_with_wrong_leaves_is_dropped_and_the_next_one_used() {
         .await
         .unwrap();
 
-    assert_eq!(fetched, leaves);
+    assert_eq!(fetched.leaves, leaves);
     // The first mismatch does not say who is wrong, so the liar gets the whole
     // range once more; its second mismatch drops it.
     assert_eq!(liar.requests(), [(0, 5), (0, 5)]);

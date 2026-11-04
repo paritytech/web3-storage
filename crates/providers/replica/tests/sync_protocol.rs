@@ -350,3 +350,35 @@ async fn a_source_refused_in_the_leaf_phase_still_serves_nodes() {
     assert_synced(source.as_ref(), replica.0.as_ref(), &target);
     assert!(!primary.node_requests().is_empty());
 }
+
+#[tokio::test]
+async fn a_later_sync_checks_only_the_data_roots_it_does_not_hold() {
+    let (source, _dir, first) = source_bucket(&[1, 1, 1]);
+    let node = spawn_node_source(Arc::clone(&source), NodeSourceConfig::default()).await;
+    let (storage, _storage_dir) = replica(u64::MAX);
+    let replica_storage = CheckedBackend::new(storage);
+    let sync = |target: Commitment| {
+        let storage: Arc<dyn StorageBackend> = replica_storage.clone();
+        let url = node.url.clone();
+        async move {
+            ReplicaSync::new(storage)
+                .sync_to_target(BUCKET, &target, &mut sources(&[&url]))
+                .await
+        }
+    };
+
+    sync(first).await.unwrap();
+    assert_eq!(replica_storage.take_checked().len(), 3);
+
+    add_upload(source.as_ref(), 3, 1);
+    let second = commitment_of(source.as_ref());
+    sync(second).await.unwrap();
+
+    let new_root = source
+        .get_leaves(BUCKET, 3, 4, usize::MAX, usize::MAX)
+        .unwrap()
+        .leaves[0]
+        .data_root;
+    assert_eq!(replica_storage.take_checked(), [new_root]);
+    assert_synced(source.as_ref(), replica_storage.as_ref(), &second);
+}

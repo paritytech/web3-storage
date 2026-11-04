@@ -274,8 +274,11 @@ pub trait StorageBackend: Send + Sync {
     ///
     /// Rejects the call and leaves the bucket unchanged unless there are
     /// `commitment.leaf_count` leaves, every `data_root` is stored, and the
-    /// MMR root over `leaves` equals `commitment.mmr_root`. Quota usage does
-    /// not change: nodes are charged when stored.
+    /// MMR root over `leaves` equals `commitment.mmr_root`. A leaf the bucket
+    /// already holds at the same sequence number with the same `data_root` is
+    /// not checked again: its root was checked when it was installed, and
+    /// nothing deletes nodes. Quota usage does not change: nodes are charged
+    /// when stored.
     fn import_commitment(
         &self,
         bucket_id: BucketId,

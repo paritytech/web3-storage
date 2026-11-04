@@ -13,12 +13,16 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
-use provider_storage::{build_merkle_tree, ChunkTreeNode, StorageBackend};
+use provider_storage::{
+    build_merkle_tree, BucketInfo, ChunkTreeNode, CommitOutcome, Error, LeafPage, StorageBackend,
+};
 use sp_core::H256;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_primitives::{hash_leaf, mmr::MmrLeaf, Commitment, DEFAULT_CHUNK_SIZE};
+use storage_primitives::{
+    hash_leaf, mmr::MmrLeaf, BucketId, Commitment, MmrProof, DEFAULT_CHUNK_SIZE,
+};
 
 /// One canned answer from the mock primary: a status and a body. Tests serve
 /// bodies a real primary could not produce, so this is a raw string rather
@@ -170,25 +174,31 @@ pub fn source_bucket(
     let (storage, dir) = provider_storage::temp_rocksdb();
     storage.init_bucket(1, u64::MAX).unwrap();
     for (upload, &count) in chunk_counts.iter().enumerate() {
-        let mut leaves = Vec::new();
-        for chunk in 0..count {
-            let len = if chunk + 1 == count {
-                1000
-            } else {
-                DEFAULT_CHUNK_SIZE as usize
-            };
-            let data = vec![(upload * 16 + chunk) as u8 + 1; len];
-            let hash = hash_leaf(&data);
-            storage
-                .store_node(1, hash, ChunkTreeNode::Chunk(data))
-                .unwrap();
-            leaves.push(hash);
-        }
-        let root = build_merkle_tree(storage.as_ref(), 1, &leaves).unwrap();
-        storage.commit(1, vec![root]).unwrap();
+        add_upload(storage.as_ref(), upload, count);
     }
     let commitment = commitment_of(storage.as_ref());
     (storage, dir, commitment)
+}
+
+/// Commit upload number `upload` of `chunk_count` chunks to bucket 1, as
+/// [`source_bucket`] does for each of its uploads.
+pub fn add_upload(storage: &dyn StorageBackend, upload: usize, chunk_count: usize) {
+    let mut leaves = Vec::new();
+    for chunk in 0..chunk_count {
+        let len = if chunk + 1 == chunk_count {
+            1000
+        } else {
+            DEFAULT_CHUNK_SIZE as usize
+        };
+        let data = vec![(upload * 16 + chunk) as u8 + 1; len];
+        let hash = hash_leaf(&data);
+        storage
+            .store_node(1, hash, ChunkTreeNode::Chunk(data))
+            .unwrap();
+        leaves.push(hash);
+    }
+    let root = build_merkle_tree(storage, 1, &leaves).unwrap();
+    storage.commit(1, vec![root]).unwrap();
 }
 
 /// The commitment of bucket 1's current state.
@@ -333,5 +343,121 @@ pub async fn spawn_node_source(
     NodeSource {
         url: spawn_app(app).await,
         node_requests,
+    }
+}
+
+/// A backend that forwards to another and records the hashes passed to
+/// `check_exists`.
+pub struct CheckedBackend {
+    inner: Arc<dyn StorageBackend>,
+    checked: Mutex<Vec<H256>>,
+}
+
+impl CheckedBackend {
+    pub fn new(inner: Arc<dyn StorageBackend>) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            checked: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// The hashes checked since the last call.
+    pub fn take_checked(&self) -> Vec<H256> {
+        std::mem::take(&mut self.checked.lock().unwrap())
+    }
+}
+
+impl StorageBackend for CheckedBackend {
+    fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
+        self.inner.init_bucket(bucket_id, max_bytes)
+    }
+
+    fn set_max_bytes(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
+        self.inner.set_max_bytes(bucket_id, max_bytes)
+    }
+
+    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo> {
+        self.inner.get_bucket(bucket_id)
+    }
+
+    fn bucket_ids(&self) -> Vec<BucketId> {
+        self.inner.bucket_ids()
+    }
+
+    fn total_nodes(&self) -> u64 {
+        self.inner.total_nodes()
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.inner.total_bytes()
+    }
+
+    fn store_node(
+        &self,
+        bucket_id: BucketId,
+        expected_hash: H256,
+        node: ChunkTreeNode,
+    ) -> Result<(), Error> {
+        self.inner.store_node(bucket_id, expected_hash, node)
+    }
+
+    fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode> {
+        self.inner.get_node(hash)
+    }
+
+    fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>) {
+        self.checked.lock().unwrap().extend_from_slice(hashes);
+        self.inner.check_exists(bucket_id, hashes)
+    }
+
+    fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error> {
+        self.inner.commit(bucket_id, data_roots)
+    }
+
+    fn delete_before(
+        &self,
+        bucket_id: BucketId,
+        new_start_seq: u64,
+    ) -> Result<(H256, u64, u64), Error> {
+        self.inner.delete_before(bucket_id, new_start_seq)
+    }
+
+    fn get_mmr_proof(&self, bucket_id: BucketId, leaf_index: u64) -> Result<MmrProof, Error> {
+        self.inner.get_mmr_proof(bucket_id, leaf_index)
+    }
+
+    fn get_mmr_proof_for_commitment(
+        &self,
+        bucket_id: BucketId,
+        commitment: &Commitment,
+        leaf_index: u64,
+    ) -> Result<MmrProof, Error> {
+        self.inner
+            .get_mmr_proof_for_commitment(bucket_id, commitment, leaf_index)
+    }
+
+    fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
+        self.inner.get_mmr_peaks(bucket_id)
+    }
+
+    fn get_leaves(
+        &self,
+        bucket_id: BucketId,
+        from_seq: u64,
+        to_seq: u64,
+        max_count: usize,
+        max_bytes: usize,
+    ) -> Result<LeafPage, Error> {
+        self.inner
+            .get_leaves(bucket_id, from_seq, to_seq, max_count, max_bytes)
+    }
+
+    fn import_commitment(
+        &self,
+        bucket_id: BucketId,
+        commitment: &Commitment,
+        leaves: Vec<MmrLeaf>,
+    ) -> Result<(), Error> {
+        self.inner.import_commitment(bucket_id, commitment, leaves)
     }
 }

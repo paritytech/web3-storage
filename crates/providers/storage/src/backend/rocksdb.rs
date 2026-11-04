@@ -565,8 +565,14 @@ impl DiskStorage {
             .db
             .cf_handle(CF_NODES)
             .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
-        for leaf in &leaves {
-            if self.db.get_cf(&cf, leaf.data_root.as_bytes())?.is_none() {
+        // A leaf the bucket already holds at the same position had its data
+        // root checked when it was installed, and nodes are never deleted.
+        for (leaf, seq) in leaves.iter().zip(commitment.start_seq..) {
+            let held = seq
+                .checked_sub(bucket.start_seq)
+                .and_then(|offset| bucket.leaves.get(offset as usize))
+                .is_some_and(|held| held.data_root == leaf.data_root);
+            if !held && self.db.get_cf(&cf, leaf.data_root.as_bytes())?.is_none() {
                 return Err(Error::RootNotFound(format!("{:#x}", leaf.data_root)));
             }
         }
@@ -1230,6 +1236,131 @@ mod tests {
         assert!(target
             .get_mmr_proof_for_commitment(1, &commitment, 0)
             .is_ok());
+    }
+
+    /// The commitment of `storage`'s bucket `bucket_id` as it stands.
+    fn commitment_of(storage: &DiskStorage, bucket_id: BucketId) -> storage_primitives::Commitment {
+        let info = StorageBackend::get_bucket(storage, bucket_id).unwrap();
+        storage_primitives::Commitment {
+            mmr_root: info.mmr_root,
+            start_seq: info.start_seq,
+            leaf_count: info.leaf_count,
+        }
+    }
+
+    fn remove_node(storage: &DiskStorage, hash: H256) {
+        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+        storage.db.delete_cf(&cf, hash.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn import_commitment_does_not_check_leaves_the_bucket_already_holds() {
+        let source_dir = TempDir::new().unwrap();
+        let source = DiskStorage::new(source_dir.path()).unwrap();
+        bucket_with_leaves(&source, 1, 3);
+        let old = source.get_bucket(1).unwrap().leaves;
+
+        let target_dir = TempDir::new().unwrap();
+        let target = DiskStorage::new(target_dir.path()).unwrap();
+        copy_data_roots(&source, &target, 1, &old);
+        target
+            .import_commitment(1, &commitment_of(&source, 1), old.clone())
+            .unwrap();
+
+        // The source adds a leaf. The target has the new root only: the nodes
+        // of the held leaves are gone, so a check of them would fail.
+        let hash = hash_leaf(&[9; 8]);
+        source
+            .store_node(1, hash, ChunkTreeNode::Chunk(vec![9; 8]))
+            .unwrap();
+        source.commit(1, vec![hash]).unwrap();
+        let leaves = source.get_bucket(1).unwrap().leaves;
+        copy_data_roots(&source, &target, 1, &leaves[3..]);
+        for leaf in &old {
+            remove_node(&target, leaf.data_root);
+        }
+
+        target
+            .import_commitment(1, &commitment_of(&source, 1), leaves.clone())
+            .unwrap();
+        assert_eq!(target.get_bucket(1).unwrap().leaves, leaves);
+    }
+
+    #[test]
+    fn import_commitment_matches_held_leaves_by_position_after_deletes() {
+        let source_dir = TempDir::new().unwrap();
+        let source = DiskStorage::new(source_dir.path()).unwrap();
+        bucket_with_leaves(&source, 1, 5);
+        let old = source.get_bucket(1).unwrap().leaves;
+
+        let target_dir = TempDir::new().unwrap();
+        let target = DiskStorage::new(target_dir.path()).unwrap();
+        copy_data_roots(&source, &target, 1, &old);
+        target
+            .import_commitment(1, &commitment_of(&source, 1), old.clone())
+            .unwrap();
+
+        // The source drops two leaves and adds one: the commitment starts at
+        // sequence number 2 and the target holds it from index 2 of its leaves.
+        source.delete_before(1, 2).unwrap();
+        let hash = hash_leaf(&[9; 8]);
+        source
+            .store_node(1, hash, ChunkTreeNode::Chunk(vec![9; 8]))
+            .unwrap();
+        source.commit(1, vec![hash]).unwrap();
+        let commitment = commitment_of(&source, 1);
+        assert_eq!((commitment.start_seq, commitment.leaf_count), (2, 4));
+        let leaves = source.get_leaves(1, 2, 6, 10, usize::MAX).unwrap().leaves;
+        copy_data_roots(&source, &target, 1, &leaves[3..]);
+        for leaf in &old {
+            remove_node(&target, leaf.data_root);
+        }
+
+        target.import_commitment(1, &commitment, leaves).unwrap();
+        assert_eq!(StorageBackend::get_bucket(&target, 1).unwrap().start_seq, 2);
+    }
+
+    #[test]
+    fn import_commitment_checks_leaves_that_differ_from_the_held_ones() {
+        let source_dir = TempDir::new().unwrap();
+        let source = DiskStorage::new(source_dir.path()).unwrap();
+        bucket_with_leaves(&source, 1, 3);
+        let held = source.get_bucket(1).unwrap().leaves;
+
+        let target_dir = TempDir::new().unwrap();
+        let target = DiskStorage::new(target_dir.path()).unwrap();
+        copy_data_roots(&source, &target, 1, &held);
+        target
+            .import_commitment(1, &commitment_of(&source, 1), held.clone())
+            .unwrap();
+        let before = target.get_bucket(1).unwrap();
+
+        // A different data root at a held position.
+        let mut changed = held.clone();
+        changed[1].data_root = H256::repeat_byte(7);
+        let err = target
+            .import_commitment(1, &commitment_of(&source, 1), changed)
+            .unwrap_err();
+        assert!(matches!(err, Error::RootNotFound(_)), "got {err:?}");
+
+        // A leaf past the end of the held leaves.
+        let mut longer = held.clone();
+        longer.push(MmrLeaf {
+            data_root: H256::repeat_byte(8),
+            ..held[2].clone()
+        });
+        let commitment = storage_primitives::Commitment {
+            leaf_count: 4,
+            ..commitment_of(&source, 1)
+        };
+        let err = target
+            .import_commitment(1, &commitment, longer)
+            .unwrap_err();
+        assert!(matches!(err, Error::RootNotFound(_)), "got {err:?}");
+
+        let after = target.get_bucket(1).unwrap();
+        assert_eq!(after.leaves, before.leaves);
+        assert_eq!(after.mmr_root, before.mmr_root);
     }
 
     #[test]
