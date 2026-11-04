@@ -2,7 +2,7 @@
 
 /**
  * Cross-language check of the in-bucket file-system format. The Rust test
- * `clients/s3/src/tests/fixtures.rs` runs a write sequence and writes the
+ * `clients/file-system/src/s3/tests/fixtures.rs` runs a write sequence and writes the
  * bucket to `.test-vectors/fs-bucket.json` (`just fs-fixture`). This test
  * loads that bucket into a fake provider and reads it, then runs the same
  * write sequence and checks that it produces the same blobs and commits.
@@ -62,7 +62,7 @@ function setup(provider: FakeProvider) {
   return { tree, s3 };
 }
 
-/** The write sequence of `write_sequence` in clients/s3/src/tests/fixtures.rs. */
+/** The write sequence of `write_sequence` in clients/file-system/src/s3/tests/fixtures.rs. */
 async function writeSequence(provider: FakeProvider): Promise<void> {
   const { tree, s3 } = setup(provider);
   await tree.mkdir("/docs");

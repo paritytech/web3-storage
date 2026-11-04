@@ -140,6 +140,7 @@ async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
 
     let store = fixtures::MemoryStore::default();
     let t = fixtures::tree(&store);
+    let objects = Objects::new(fixtures::tree(&store));
     let keys = [
         "a.txt",
         "b/1.txt",
@@ -151,7 +152,8 @@ async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
         "photos/2025/01/01/img.jpg",
     ];
     for key in keys {
-        put_object_in(&t, key, b"x", PutObjectOptions::default())
+        objects
+            .put_object(key, b"x", PutObjectOptions::default())
             .await
             .unwrap();
     }
@@ -191,17 +193,15 @@ async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
             Some("zzz"),
         ] {
             for max_keys in [1, 2, 1000] {
-                let listed = list_objects_in(
-                    &t,
-                    ListObjectsParams {
+                let listed = objects
+                    .list_objects_v2(ListObjectsParams {
                         prefix: Some(prefix.to_string()),
                         delimiter: Some("/".to_string()),
                         start_after: start_after.map(str::to_string),
                         max_keys: Some(max_keys),
-                    },
-                )
-                .await
-                .unwrap();
+                    })
+                    .await
+                    .unwrap();
                 let walked = list_page(&all, prefix, Some("/"), start_after, max_keys as usize);
                 let context = format!("{prefix:?} after {start_after:?} max {max_keys}");
                 let listed_keys: Vec<&str> =
@@ -221,15 +221,13 @@ async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
     // The root, `b`, `e` and `e/f`, and one path down `photos` to a
     // file: 8 of the 15 directories.
     store.reads.store(0, Ordering::Relaxed);
-    let listed = list_objects_in(
-        &t,
-        ListObjectsParams {
+    let listed = objects
+        .list_objects_v2(ListObjectsParams {
             delimiter: Some("/".to_string()),
             ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
+        })
+        .await
+        .unwrap();
     assert_eq!(listed.common_prefixes, ["b/", "photos/"]);
     assert_eq!(store.reads.load(Ordering::Relaxed), 8);
 }

@@ -1,117 +1,52 @@
-# File System Client SDK
+# File System Client
 
-Rust client for the Layer 1 file system on top of Scalable Web3 Storage.
+Rust library for a file system and S3-style objects stored in a Scalable Web3
+Storage bucket.
 
-## Overview
+A drive is a Layer 0 bucket of `pallet-storage-provider`, identified by its
+bucket id. Directories (`DirectoryNode`), file manifests (`FileManifest`) and
+file contents are blobs in the bucket, and the root directory is the bucket's
+last MMR leaf, so any client instance can open the drive. The crate talks to
+the provider's Layer 0 routes only and makes no chain calls.
 
-A drive is a Layer 0 bucket of `pallet-storage-provider`. The bucket id is the
-drive id. The chain stores no drive name and no drive record:
+- `format`: the blob types (`DirectoryNode`, `FileManifest`) and their rules.
+- `tree`: root discovery, the write order and the limits (single writer,
+  unauthenticated blob reads, prefix deletes). Read its module docs before
+  writing to a bucket.
+- `s3`: S3-style objects on the same tree. Key `k` is the file at path `/k`.
 
-- **Create**: `create_drive` submits `StorageProvider::create_bucket_with_primary`
-  with provider-signed terms and returns the bucket id from the
-  `BucketCreated` event.
-- **Share**: `add_member` / `remove_member` submit `StorageProvider::set_member`
-  / `remove_member`. There is no separate share call.
-- **Delete**: the client has no drive deletion. Layer 0 has no bucket deletion.
-- **Files and directories**: SCALE-encoded `DirectoryNode` and `FileManifest`
-  blobs (`format` module) plus file content, stored in the bucket
-  through Layer 0 routes only (`PUT /node`, `POST /commit`, `GET /read`,
-  `GET /node` (to check a 64-byte directory or manifest blob),
-  `GET /commitment`, `GET /mmr_proof`). The `tree` module contains the read and
-  write logic; the S3 client uses the same module.
-
-### Root directory
-
-The root directory is the data root of the bucket's last MMR leaf. The client
-reads `GET /commitment`, then the MMR proof of the last leaf, checks the proof
-against the commitment, and reads the root directory from it. Any client
-instance can open the drive. A drive with no commits is empty.
-
-Each write reads the current root, uploads the new content, manifest and
-rewritten directories (from the changed entry up to the root), and commits
-them in one `POST /commit` with the new root last.
-
-### Limits
-
-- **Single writer.** Two writers that read the same root and then both commit
-  lose one change: the last commit wins.
-- **Only the file system and S3 clients may write the bucket.** A raw Layer 0
-  commit becomes the last leaf and the client then rejects the bucket
-  (`NotAFileSystemBucket`).
-- **Prefix deletes.** An Admin `POST /delete` with a new `start_seq` can let
-  the provider drop blobs the current tree still references.
-- **Blob reads by CID are unauthenticated.** Layer 0 blob reads need no
-  signature: anyone who knows a CID and a bucket id can read the blob (#383,
-  #396). Bucket visibility does not protect file contents. Root discovery
-  (`GET /commitment`, `GET /mmr_proof`) needs Reader on a private bucket. Use
-  client-side encryption for confidential data.
-
-## Prerequisites
-
-1. `just start-chain` (parachain at `ws://127.0.0.1:2222`)
-2. `just start-provider` (provider at `http://127.0.0.1:3333`)
-3. A registered provider that accepts primary agreements (`just demo` registers one).
+Create the bucket and manage its members with `storage_client::AdminClient`,
+and checkpoint it with `storage_client::CheckpointManager`.
 
 ## Usage
 
 ```rust
-use file_system_client::{FileSystemClient, Signer};
-use storage_client::{NegotiateRequest, ProviderClient, Visibility};
+use file_system_client::{s3::Objects, EmptyParents, Tree};
+use storage_client::{Signer, StorageUserClient};
 
-let fs_client = FileSystemClient::new(
-    "ws://127.0.0.1:2222",
-    "http://127.0.0.1:3333",
-    Signer::from_seed("//Alice")?,
-)
-.await?;
+let store = StorageUserClient::for_provider("http://127.0.0.1:3333", Signer::from_seed("//Alice")?)?;
 
-let provider = ProviderClient::fetch_provider_id("http://127.0.0.1:3333").await?;
-let signed = ProviderClient::negotiate_terms(
-    "http://127.0.0.1:3333",
-    &NegotiateRequest {
-        owner,
-        max_bytes: 1_000_000_000,
-        duration: 500,
-        price_per_byte: 1,
-        replica_params: None,
-        bucket: None,
-    },
-)
-.await?;
+let tree = Tree::new(&store, bucket_id);
+tree.mkdir("/documents").await?;
+tree.put_file("/documents/hello.txt", b"hello", "text/plain", Vec::new()).await?;
+let entries = tree.list("/documents").await?;
+let file = tree.get_file("/documents/hello.txt").await?;
+tree.delete("/documents/hello.txt", EmptyParents::Keep).await?;
 
-let bucket_id = fs_client
-    .create_drive(provider, signed.terms, signed.signature, Visibility::Private)
-    .await?;
-
-fs_client.create_directory(bucket_id, "/documents").await?;
-fs_client
-    .upload_file(bucket_id, "/documents/hello.txt", b"hello", Some("text/plain"))
-    .await?;
-let entries = fs_client.list_directory(bucket_id, "/documents").await?;
-let file = fs_client.get_file(bucket_id, "/documents/hello.txt").await?;
-fs_client.delete(bucket_id, "/documents/hello.txt").await?;
-
-// Give Bob write access to the drive.
-fs_client.add_member(bucket_id, bob, file_system_client::Role::Writer).await?;
+let objects = Objects::new(Tree::new(&store, bucket_id));
+objects.put_object("photos/cat.jpg", &jpeg, Default::default()).await?;
+let listing = objects.list_objects_v2(Default::default()).await?;
 ```
 
-The signer signs extrinsics and the provider uploads and commits.
+`create_bucket` in `examples/demo.rs` shows how to create the bucket: negotiate signed terms
+with the provider (`ProviderClient::negotiate_terms`), then
+`AdminClient::create_bucket_with_primary`.
 
-Checkpoints: `submit_checkpoint`, `submit_checkpoint_with_config`, and
-`enable_auto_checkpoints` / `disable_auto_checkpoints` /
-`request_immediate_checkpoint` checkpoint the drive's bucket.
-
-## Examples
-
-```bash
-cargo run -p file-system-client --example basic_usage
-just fs-demo-ci   # runs examples/ci_integration_test.rs
-```
-
-## Testing
+## Examples and tests
 
 ```bash
 cargo test -p file-system-client
+just file-system-demo   # examples/demo.rs, needs a running chain and provider
 ```
 
 ## Documentation

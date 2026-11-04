@@ -34,8 +34,7 @@ COV_PACKAGES=(
 # Not measured, with the reason per crate.
 COV_SKIP_PACKAGES=(
 	storage-client # chain-bound SDK; integration tests self-skip without a live chain
-	file-system-client # layer-1 SDK; src is excluded by COV_IGNORE (clients/*/src)
-	s3-client # layer-1 SDK; src is excluded by COV_IGNORE (clients/*/src)
+	file-system-client # file system and S3 objects in a bucket; src is excluded by COV_IGNORE (clients/*/src)
 	client-test-support # dev-only helpers for the client crates' tests; src is excluded by COV_IGNORE (clients/*/src)
 	storage-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
 	provider-events # pure types; no tests of its own

@@ -83,8 +83,8 @@ over Layer 0's raw blob storage.
 just start-chain            # Terminal 1: relay + parachain
 just start-provider         # Terminal 2: provider node
 
-# Then run the file-system integration example:
-just fs-demo-ci             # Terminal 3
+# Then run the file system and S3 objects demo:
+just file-system-demo       # Terminal 3
 ```
 
 **What you get:**
@@ -95,8 +95,8 @@ just fs-demo-ci             # Terminal 3
 ### File System Commands
 
 ```bash
-just fs-test-all            # Run all unit tests across primitives, client
-just fs-demo-ci             # Integration example against a running chain + provider
+cargo test -p file-system-client   # Unit and integration tests
+just file-system-demo       # Demo against a running chain + provider
 ```
 
 **Complete guide**: [FILE_SYSTEM_QUICKSTART.md](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
@@ -131,13 +131,11 @@ just stats                   # Provider storage stats
 
 # End-to-end demos (require chain + provider running)
 just demo                    # Layer-0 PAPI demo: setup, upload, 2 challenges
-just fs-demo-ci              # Layer-1 file-system integration example
-just s3-demo-ci              # Layer-1 S3-compatible integration example
+just file-system-demo        # File system and S3 objects demo
 
 # Tests
 cargo test --workspace       # All unit + integration tests
-just fs-test-all             # File-system layer only
-just s3-test-all             # S3 layer only
+cargo test -p file-system-client  # File system and S3 objects
 ```
 
 ## Documentation

@@ -80,10 +80,10 @@ jobs:
       # Written by Rust tests, read by the TS unit tests:
       # - mmr-proofs.json: `crates/primitives/storage/src/mmr.rs`, read by
       #   packages/core/src/merkle.test.ts.
-      # - fs-bucket.json: `clients/s3/src/tests/fixtures.rs`, read by
+      # - fs-bucket.json: `clients/file-system/src/s3/tests/fixtures.rs`, read by
       #   packages/layer1/src/fixtures.test.ts.
       # Cached so a hit skips the Rust toolchain install and build. The key
-      # leaves out the provider crates that s3-client's tests depend on: those
+      # leaves out the provider crates that file-system-client's tests depend on: those
       # tests write the bucket to an in-memory store, so they do not change it.
       - name: Cache Rust test vectors
         id: rust-test-vectors
@@ -101,7 +101,7 @@ jobs:
           rustup toolchain install "$toolchain" --profile minimal
           echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
 
-      # The s3-client tests build provider-node and rocksdb.
+      # The file-system-client tests build provider-node and rocksdb.
       - name: Rust build cache
         if: steps.rust-test-vectors.outputs.cache-hit != 'true'
         uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
@@ -115,7 +115,7 @@ jobs:
           MMR_PROOF_VECTORS="$PWD/.test-vectors/mmr-proofs.json" \
             cargo test --locked -q -p storage-primitives mmr::tests::proof_vectors
           FS_FIXTURE="$PWD/.test-vectors/fs-bucket.json" \
-            cargo test --locked -q -p s3-client writes_fs_fixture
+            cargo test --locked -q -p file-system-client writes_fs_fixture
 
       - name: Run unit tests
         run: pnpm run test:unit

@@ -223,11 +223,8 @@ jobs:
       - name: Run L0 demo
         run: just demo
 
-      - name: Run file system integration test
-        run: just drain-tx-pool-then fs-demo-ci
-
-      - name: Run S3 integration test
-        run: just drain-tx-pool-then s3-demo-ci
+      - name: Run file system and S3 objects demo
+        run: just drain-tx-pool-then file-system-demo
 
       # Second provider (port 3433) following the same chain through the
       # embedded smoldot light client; passes once /info reports the on-chain

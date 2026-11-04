@@ -3315,9 +3315,11 @@ dependencies = [
  "array-bytes 6.2.3",
  "async-trait",
  "axum",
+ "base64",
  "client-test-support",
  "parity-scale-codec",
  "reqwest",
+ "serde_json",
  "sp-core",
  "sp-runtime",
  "storage-client",
@@ -3325,7 +3327,6 @@ dependencies = [
  "subxt-signer 0.50.2",
  "thiserror 2.0.18",
  "tokio",
- "tracing",
  "tracing-subscriber 0.3.23",
 ]
 
@@ -7966,29 +7967,6 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
-
-[[package]]
-name = "s3-client"
-version = "0.1.0"
-dependencies = [
- "array-bytes 6.2.3",
- "async-trait",
- "base64",
- "client-test-support",
- "file-system-client",
- "futures",
- "serde_json",
- "sp-core",
- "sp-runtime",
- "storage-client",
- "storage-primitives",
- "storage-subxt",
- "subxt-signer 0.50.2",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.23",
-]
 
 [[package]]
 name = "safe_arch"

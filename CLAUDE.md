@@ -249,7 +249,7 @@ strings) are documented in [`packages/sdk/README.md`](packages/sdk/README.md).
 just setup           # one-time: download binaries, build
 just build           # cargo build --release
 cargo test           # all tests (or -p <crate> for one)
-just fs-test-all     # Layer 1: file system client tests
+cargo test -p file-system-client  # file system and S3 objects
 cargo clippy --all-targets --all-features --workspace -- -D warnings
 ```
 
@@ -268,8 +268,7 @@ just start-chain     # Terminal 1 — zombienet: relay + parachain
 just start-provider  # Terminal 2 — provider HTTP node
 just demo            # Terminal 3 — Layer-0 PAPI flow (registers provider,
                      #   opens an agreement, exercises challenges)
-just fs-demo-ci      # Terminal 3 — Layer-1 file-system flow
-just s3-demo-ci      # Terminal 3 — Layer-1 S3 flow
+just file-system-demo  # Terminal 3 — file system and S3 objects flow
 just sc-demo         # Terminal 3 — smart-contract marketplace flow
 just health          # provider health check
 bash scripts/check-chain.sh  # relay + parachain + current block

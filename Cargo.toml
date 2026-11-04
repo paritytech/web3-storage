@@ -3,7 +3,6 @@ resolver = "2"
 members = [
 	# Storage client
 	"clients/file-system",
-	"clients/s3",
 	"clients/storage",
 	"clients/test-support",
 
@@ -65,7 +64,6 @@ storage-subxt = { path = "crates/storage-subxt" }
 file-system-client = { path = "clients/file-system" }
 
 # Storage Interfaces: S3-Compatible Interface
-s3-client = { path = "clients/s3" }
 
 # Client crates: shared test helpers
 client-test-support = { path = "clients/test-support" }

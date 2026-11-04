@@ -17,9 +17,9 @@
 //! - `expected`: root CID, listings, file and object reads.
 
 use super::*;
+use crate::format::{chunk_hashes, compute_cid, Cid, CHUNK_SIZE};
+use crate::tree::BlobLength;
 use base64::Engine as _;
-use file_system_client::format::{chunk_hashes, compute_cid, Cid, CHUNK_SIZE};
-use file_system_client::BlobLength;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -60,7 +60,7 @@ pub(crate) struct MemoryStore {
 
 #[async_trait::async_trait]
 impl BlobStore for MemoryStore {
-    async fn put_blob(&self, _bucket_id: BucketId, data: &[u8]) -> file_system_client::Result<Cid> {
+    async fn put_blob(&self, _bucket_id: BucketId, data: &[u8]) -> crate::Result<Cid> {
         let cid = compute_cid(data);
         self.blobs.lock().unwrap().insert(cid, data.to_vec());
         Ok(cid)
@@ -71,7 +71,7 @@ impl BlobStore for MemoryStore {
         _bucket_id: BucketId,
         cid: Cid,
         _length: BlobLength,
-    ) -> file_system_client::Result<Vec<u8>> {
+    ) -> crate::Result<Vec<u8>> {
         self.reads.fetch_add(1, Ordering::Relaxed);
         self.blobs
             .lock()
@@ -81,18 +81,14 @@ impl BlobStore for MemoryStore {
             .ok_or_else(|| FsClientError::StorageClient(format!("missing blob {cid:?}")))
     }
 
-    async fn commit(
-        &self,
-        _bucket_id: BucketId,
-        data_roots: Vec<Cid>,
-    ) -> file_system_client::Result<()> {
+    async fn commit(&self, _bucket_id: BucketId, data_roots: Vec<Cid>) -> crate::Result<()> {
         let blobs = self.blobs.lock().unwrap();
         assert!(data_roots.iter().all(|c| blobs.contains_key(c)));
         self.commits.lock().unwrap().push(data_roots);
         Ok(())
     }
 
-    async fn last_leaf(&self, _bucket_id: BucketId) -> file_system_client::Result<Option<Cid>> {
+    async fn last_leaf(&self, _bucket_id: BucketId) -> crate::Result<Option<Cid>> {
         Ok(self
             .commits
             .lock()
@@ -122,21 +118,21 @@ async fn write_sequence(store: &MemoryStore) {
     t.put_file("/empty", b"", DEFAULT_MIME_TYPE, vec![])
         .await
         .unwrap();
-    put_object_in(
-        &t,
-        "photos/cat.jpg",
-        b"meow",
-        PutObjectOptions {
-            content_type: Some("image/jpeg".into()),
-            metadata: HashMap::from([
-                ("Zeta".into(), "last".into()),
-                ("alpha".into(), "first".into()),
-                ("Camera-Model".into(), "X100".into()),
-            ]),
-        },
-    )
-    .await
-    .unwrap();
+    Objects::new(tree(store))
+        .put_object(
+            "photos/cat.jpg",
+            b"meow",
+            PutObjectOptions {
+                content_type: Some("image/jpeg".into()),
+                metadata: HashMap::from([
+                    ("Zeta".into(), "last".into()),
+                    ("alpha".into(), "first".into()),
+                    ("Camera-Model".into(), "X100".into()),
+                ]),
+            },
+        )
+        .await
+        .unwrap();
     t.delete("/docs/old.txt", EmptyParents::Keep).await.unwrap();
 }
 
@@ -194,12 +190,13 @@ async fn expected(store: &MemoryStore) -> Value {
         );
     }
 
-    let object = get_object_in(&t, "photos/cat.jpg").await.unwrap();
-    let head = head_object_in(&t, "photos/cat.jpg").await.unwrap();
+    let objects = Objects::new(tree(store));
+    let object = objects.get_object("photos/cat.jpg").await.unwrap();
+    let head = objects.head_object("photos/cat.jpg").await.unwrap();
     assert_eq!(head.etag, object.etag);
     assert_eq!(head.metadata, object.metadata);
     let metadata: BTreeMap<_, _> = object.metadata.into_iter().collect();
-    let objects = json!({
+    let object_reads = json!({
         "photos/cat.jpg": {
             "etag": object.etag,
             "content_type": object.content_type,
@@ -214,7 +211,7 @@ async fn expected(store: &MemoryStore) -> Value {
         "root_cid": hex_cid(&root.cid.unwrap()),
         "listings": listings,
         "files": files,
-        "objects": objects,
+        "objects": object_reads,
     })
 }
 
@@ -305,7 +302,7 @@ fn load(fixture: &Value) -> MemoryStore {
     store
 }
 
-const ABOUT: &str = "Written by clients/s3/src/tests/fixtures.rs (`just fs-fixture`); read by packages/layer1/src/fixtures.test.ts.";
+const ABOUT: &str = "Written by clients/file-system/src/s3/tests/fixtures.rs (`just fs-fixture`); read by packages/layer1/src/fixtures.test.ts.";
 
 #[tokio::test]
 async fn writes_fs_fixture() {

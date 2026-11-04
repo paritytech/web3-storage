@@ -5,7 +5,7 @@ authors.workspace = true
 edition.workspace = true
 license = "Apache-2.0"
 repository.workspace = true
-description = "Client SDK for Layer 1 file system built on Scalable Web3 Storage"
+description = "File system and S3-style objects stored in a web3-storage bucket"
 
 [dependencies]
 # Internal dependencies
@@ -13,9 +13,7 @@ codec = { workspace = true, features = ["std"] }
 storage-client = { workspace = true }
 storage-primitives = { workspace = true, features = ["std"] }
 
-# Async runtime
 async-trait = { workspace = true }
-tokio = { workspace = true }
 reqwest = { workspace = true }
 
 # Substrate/Polkadot
@@ -23,21 +21,14 @@ sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 
 # Utilities
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 array-bytes = { workspace = true }
 axum = { workspace = true }
+base64 = { workspace = true }
 client-test-support = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
 subxt-signer = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-
-[[example]]
-name = "basic_usage"
-path = "examples/basic_usage.rs"
-
-[[example]]
-name = "ci_integration_test"
-path = "examples/ci_integration_test.rs"
+tracing-subscriber = { workspace = true }

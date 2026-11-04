@@ -416,30 +416,12 @@ e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
     node --import tsx "$FILE" "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # ============================================================
-# File System (Layer 1)
+# File system and S3 objects in a bucket
 # ============================================================
 
-# Test the file system client
-fs-test-all:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cargo test -p file-system-client
-
-# File system integration test (used by CI; assumes chain + provider already running)
-fs-demo-ci:
-    cargo run --release -p file-system-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
-
-# ============================================================
-# S3-Compatible Interface (Layer 1)
-# ============================================================
-
-# Test the S3 client
-s3-test-all:
-    cargo test -p s3-client
-
-# S3 integration test (used by CI; assumes chain + provider already running)
-s3-demo-ci:
-    cargo run --release -p s3-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+# File system and S3 objects demo (used by CI; assumes chain + provider already running)
+file-system-demo:
+    cargo run --release -p file-system-client --example demo -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Write the MMR proof vectors that packages/core/src/merkle.test.ts reads
 mmr-proof-vectors:
@@ -447,7 +429,7 @@ mmr-proof-vectors:
 
 # Write the file-system bucket that packages/layer1/src/fixtures.test.ts reads
 fs-fixture:
-    FS_FIXTURE="{{justfile_directory()}}/.test-vectors/fs-bucket.json" cargo test --locked -q -p s3-client writes_fs_fixture
+    FS_FIXTURE="{{justfile_directory()}}/.test-vectors/fs-bucket.json" cargo test --locked -q -p file-system-client writes_fs_fixture
 
 # ─── UI Tests ─────────────────────────────────────────────────────────────────
 #
