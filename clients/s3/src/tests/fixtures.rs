@@ -20,8 +20,8 @@
 
 use super::*;
 use base64::Engine as _;
+use file_system_client::format::{chunk_hashes, compute_cid, Cid, CHUNK_SIZE};
 use file_system_client::BlobLength;
-use file_system_primitives::{chunk_hashes, compute_cid, Cid, CHUNK_SIZE};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};

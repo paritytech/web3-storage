@@ -1,44 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! File System Primitives for Layer 1
+//! Blob format of the Layer 1 file system.
 //!
-//! This crate provides the core data structures for the Layer 1 file system
-//! built on top of Layer 0 (Scalable Web3 Storage).
+//! The file system and S3 clients store every directory and file manifest as
+//! a SCALE encoded blob in the drive's bucket:
 //!
-//! # Architecture
-//!
-//! - **Layer 0**: Raw blob storage in buckets (content-addressed chunks)
-//! - **Layer 1**: File system metadata (directories, file manifests)
-//! - **Layer 2**: User interfaces (FUSE, web UI, CLI)
-//!
-//! # Key Concepts
-//!
-//! - **Drive**: A user's logical file system, mapped to a Layer 0 bucket
-//! - **DirectoryNode**: A directory containing references to children
-//! - **FileManifest**: Metadata about a file and its chunks
+//! - **DirectoryNode**: a directory and the references to its children
+//! - **FileManifest**: a file's size, content type and chunks
 //! - **CID**: Content Identifier of a blob: its Layer 0 `data_root`
 //!   (see [`compute_cid`])
 //!
-//! The file system clients store every directory and manifest as a SCALE
-//! encoded blob in the drive's bucket. The root directory is the data root of
-//! the bucket's last MMR leaf.
+//! The root directory is the data root of the bucket's last MMR leaf. The
+//! TypeScript clients use the same format (`packages/core/src/file-system.ts`).
 
-#![cfg_attr(not(feature = "std"), no_std)]
-
-extern crate alloc;
-
-#[cfg(feature = "std")]
-extern crate std;
-
-use alloc::{string::String, vec::Vec};
-use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
-use scale_info::TypeInfo;
+use codec::{Decode, Encode, MaxEncodedLen};
 use sp_core::H256;
 use sp_runtime::{traits::Get, BoundedVec};
 use storage_primitives::BucketId;
 
 // ============================================================================
-// SCALE-encoded types (no_std compatible, used on-chain)
+// SCALE-encoded types
 // ============================================================================
 
 /// Content Identifier: the Layer 0 `data_root` of a blob (see [`compute_cid`]).
@@ -50,21 +31,8 @@ pub const DEFAULT_MIME_TYPE: &str = "application/octet-stream";
 /// Chunk size of the [`compute_cid`] rule, in bytes (256 KiB).
 pub const CHUNK_SIZE: usize = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
 
-/// Entry type enumeration (SCALE-encoded, no_std compatible)
-#[derive(
-    Clone,
-    Copy,
-    Encode,
-    Decode,
-    Default,
-    DecodeWithMemTracking,
-    Eq,
-    PartialEq,
-    Debug,
-    TypeInfo,
-    MaxEncodedLen,
-)]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+/// Entry type enumeration
+#[derive(Clone, Copy, Encode, Decode, Default, Eq, PartialEq, Debug, MaxEncodedLen)]
 pub enum EntryType {
     /// A file entry
     #[codec(index = 0)]
@@ -139,16 +107,13 @@ impl Get<u32> for MaxEncryptionParamsLength {
     }
 }
 
-/// A single entry in a directory (SCALE-encoded, no_std compatible).
+/// A single entry in a directory.
 ///
 /// `name` is 1..=256 bytes of UTF-8, contains no `/`, and is not `.` or `..`
 /// (see [`validate_entry_name`]). For a file, `cid` is the CID of its
 /// [`FileManifest`] and `size` the content size; for a directory, `cid` is
 /// the CID of its [`DirectoryNode`] and `size` is 0.
-#[derive(
-    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
-)]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Encode, Decode, Eq, PartialEq, Debug, MaxEncodedLen)]
 pub struct DirectoryEntry {
     /// Human-readable name
     pub name: BoundedVec<u8, MaxEntryNameLength>,
@@ -201,10 +166,7 @@ impl DirectoryEntry {
 }
 
 /// Metadata key-value pair: key up to 64 bytes, value up to 256 bytes.
-#[derive(
-    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
-)]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Encode, Decode, Eq, PartialEq, Debug, MaxEncodedLen)]
 pub struct MetadataEntry {
     /// Metadata key
     pub key: BoundedVec<u8, MaxMetadataKeyLength>,
@@ -224,14 +186,11 @@ impl MetadataEntry {
     }
 }
 
-/// Directory node containing child references (SCALE-encoded, no_std compatible).
+/// Directory node containing child references.
 ///
 /// `children` are sorted by name bytes, ascending, and names are unique.
 /// `metadata` is reserved and empty. [`DirectoryNode::validate`] checks both.
-#[derive(
-    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
-)]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Encode, Decode, Eq, PartialEq, Debug, MaxEncodedLen)]
 pub struct DirectoryNode {
     /// Layer 0 bucket id
     pub bucket_id: BucketId,
@@ -325,11 +284,8 @@ impl DirectoryNode {
     }
 }
 
-/// A single chunk reference in a file (SCALE-encoded, no_std compatible)
-#[derive(
-    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
-)]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+/// A single chunk reference in a file
+#[derive(Clone, Encode, Decode, Eq, PartialEq, Debug, MaxEncodedLen)]
 pub struct FileChunk {
     /// Merkle leaf hash of the chunk
     pub cid: Cid,
@@ -337,16 +293,13 @@ pub struct FileChunk {
     pub sequence: u32,
 }
 
-/// File manifest tracking how to reassemble a file from chunks (SCALE-encoded, no_std compatible).
+/// File manifest tracking how to reassemble a file from chunks.
 ///
 /// `chunks` lists the hashes of the content's 256 KiB chunks in order, with
 /// `sequence` equal to the index. Empty content has no chunks and no stored
 /// blob, because Layer 0 has no chunk tree for empty data. The content's data
 /// root is [`FileManifest::content_root`].
-#[derive(
-    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
-)]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Encode, Decode, Eq, PartialEq, Debug, MaxEncodedLen)]
 pub struct FileManifest {
     /// Layer 0 bucket id
     pub bucket_id: BucketId,
@@ -455,47 +408,46 @@ impl FileManifest {
 // ============================================================================
 
 /// Error types for file system operations
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, TypeInfo)]
-#[cfg_attr(feature = "std", derive(thiserror::Error))]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FileSystemError {
-    #[cfg_attr(feature = "std", error("Invalid CID format"))]
+    #[error("Invalid CID format")]
     InvalidCid,
 
-    #[cfg_attr(feature = "std", error("Serialization failed"))]
+    #[error("Serialization failed")]
     SerializationError,
 
-    #[cfg_attr(feature = "std", error("Deserialization failed"))]
+    #[error("Deserialization failed")]
     DeserializationError,
 
-    #[cfg_attr(feature = "std", error("Entry not found: {0}"))]
+    #[error("Entry not found: {0}")]
     EntryNotFound(String),
 
-    #[cfg_attr(feature = "std", error("Invalid path"))]
+    #[error("Invalid path")]
     InvalidPath,
 
-    #[cfg_attr(feature = "std", error("Not a directory"))]
+    #[error("Not a directory")]
     NotADirectory,
 
-    #[cfg_attr(feature = "std", error("Not a file"))]
+    #[error("Not a file")]
     NotAFile,
 
     /// An entry name is empty, over 256 bytes, not UTF-8, contains `/`, or is
     /// `.` or `..`.
-    #[cfg_attr(feature = "std", error("Invalid entry name"))]
+    #[error("Invalid entry name")]
     InvalidEntryName,
 
     /// A directory node has unsorted or duplicate child names, a directory
     /// entry with a non-zero size, or non-empty metadata.
-    #[cfg_attr(feature = "std", error("Invalid directory node"))]
+    #[error("Invalid directory node")]
     InvalidDirectory,
 
     /// A file manifest's chunk count does not match its `total_size`, or a
     /// chunk's `sequence` is not its index.
-    #[cfg_attr(feature = "std", error("Invalid file manifest"))]
+    #[error("Invalid file manifest")]
     InvalidManifest,
 
     /// A value is over one of the format's size bounds.
-    #[cfg_attr(feature = "std", error("Value exceeds a size bound"))]
+    #[error("Value exceeds a size bound")]
     BoundsExceeded,
 }
 

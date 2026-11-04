@@ -30,10 +30,10 @@
 pub use storage_client::Signer;
 pub use storage_primitives::{BucketId, Role, Visibility};
 
-use file_system_client::{BlobStore, EmptyParents, FileStat, FsClientError, Tree};
-use file_system_primitives::{
+use file_system_client::format::{
     validate_entry_name, DirectoryEntry, MetadataEntry, DEFAULT_MIME_TYPE,
 };
+use file_system_client::{BlobStore, EmptyParents, FileStat, FsClientError, Tree};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;

@@ -102,7 +102,7 @@ itself and use only the provider's Layer 0 routes (`PUT /node`,
 `packages/layer1/src/tree.ts`:
 
 - Directories and files are SCALE-encoded `DirectoryNode` and
-  `FileManifest` blobs (`crates/primitives/file-system`). A blob's CID is
+  `FileManifest` blobs (`clients/file-system/src/format.rs`). A blob's CID is
   its `data_root` (`computeDataRoot`).
 - The root directory's CID is the bucket's last MMR leaf. A bucket with no
   leaves is an empty drive.

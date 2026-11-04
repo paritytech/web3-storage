@@ -14,11 +14,11 @@ drive id. The chain stores no drive name and no drive record:
   / `remove_member`. There is no separate share call.
 - **Delete**: the client has no drive deletion. Layer 0 has no bucket deletion.
 - **Files and directories**: SCALE-encoded `DirectoryNode` and `FileManifest`
-  blobs (`file-system-primitives`) plus file content, stored in the bucket
+  blobs (`format` module) plus file content, stored in the bucket
   through Layer 0 routes only (`PUT /node`, `POST /commit`, `GET /read`,
   `GET /node` (to check a 64-byte directory or manifest blob),
-  `GET /commitment`, `GET /mmr_proof`). The `tree` module contains the format
-  and the read and write logic; the S3 client uses the same module.
+  `GET /commitment`, `GET /mmr_proof`). The `tree` module contains the read and
+  write logic; the S3 client uses the same module.
 
 ### Root directory
 
@@ -116,7 +116,7 @@ cargo test -p file-system-client
 
 ## Documentation
 
-- API reference: `cargo doc -p file-system-client -p file-system-primitives --no-deps --open`
+- API reference: `cargo doc -p file-system-client --no-deps --open`
 - [Layer 0 design](../../docs/design/scalable-web3-storage.md)
 
 ## License

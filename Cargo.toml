@@ -30,7 +30,6 @@ members = [
 	"runtimes/web3-storage-paseo",
 
 	# Shared primitives
-	"crates/primitives/file-system",
 	"crates/primitives/storage",
 
 	# Smart-contract precompiles (pallet_revive integration)
@@ -64,7 +63,6 @@ storage-subxt = { path = "crates/storage-subxt" }
 
 # Storage Interfaces: File System Interface
 file-system-client = { path = "clients/file-system" }
-file-system-primitives = { path = "crates/primitives/file-system", default-features = false }
 
 # Storage Interfaces: S3-Compatible Interface
 s3-client = { path = "clients/s3" }

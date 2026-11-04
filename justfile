@@ -419,11 +419,10 @@ e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
 # File System (Layer 1)
 # ============================================================
 
-# Test all file system components (primitives + client)
+# Test the file system client
 fs-test-all:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo test -p file-system-primitives
     cargo test -p file-system-client
 
 # File system integration test (used by CI; assumes chain + provider already running)

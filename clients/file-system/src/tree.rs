@@ -49,12 +49,12 @@
 //!   (`GET /commitment`, `GET /mmr_proof`) needs Reader on a private bucket.
 //!   Confidential data needs client-side encryption.
 
-use crate::{FsClientError, Result};
-use codec::MaxEncodedLen;
-use file_system_primitives::{
+use crate::format::{
     compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest, FileSystemError,
     MetadataEntry,
 };
+use crate::{FsClientError, Result};
+use codec::MaxEncodedLen;
 use std::collections::HashSet;
 use storage_client::{ChunkingStrategy, StorageUserClient};
 use storage_primitives::{verify_last_mmr_leaf, BucketId};
@@ -242,7 +242,7 @@ pub enum EmptyParents {
 ///
 /// A path starts with `/`, separates names with `/`, and has no empty name
 /// (no trailing or double `/`). Each name follows
-/// [`file_system_primitives::validate_entry_name`].
+/// [`crate::format::validate_entry_name`].
 pub fn parse_path(path: &str) -> Result<Vec<&str>> {
     let invalid = || FsClientError::InvalidPath(path.to_string());
     let rest = path.strip_prefix('/').ok_or_else(invalid)?;
@@ -251,7 +251,7 @@ pub fn parse_path(path: &str) -> Result<Vec<&str>> {
     }
     rest.split('/')
         .map(|name| {
-            file_system_primitives::validate_entry_name(name.as_bytes())
+            crate::format::validate_entry_name(name.as_bytes())
                 .map(|_| name)
                 .map_err(|_| invalid())
         })
@@ -907,7 +907,7 @@ mod tests {
         assert_eq!(names(&t.list("/a").await.unwrap()), ["x", "z"]);
     }
 
-    const DEFAULT: &str = file_system_primitives::DEFAULT_MIME_TYPE;
+    const DEFAULT: &str = crate::format::DEFAULT_MIME_TYPE;
 
     #[tokio::test]
     async fn put_file_replaces_and_rejects_directories() {
@@ -1047,7 +1047,7 @@ mod tests {
             .unwrap();
         }
         let bytes = root.to_scale_bytes();
-        assert!(bytes.len() > file_system_primitives::CHUNK_SIZE);
+        assert!(bytes.len() > crate::format::CHUNK_SIZE);
         store.raw_commit(&bytes);
         let loaded = t.load_root().await.unwrap();
         assert_eq!(loaded.node, root);

@@ -10,7 +10,6 @@ description = "Client SDK for Layer 1 file system built on Scalable Web3 Storage
 [dependencies]
 # Internal dependencies
 codec = { workspace = true, features = ["std"] }
-file-system-primitives = { workspace = true, features = ["std"] }
 storage-client = { workspace = true }
 storage-primitives = { workspace = true, features = ["std"] }
 
@@ -20,6 +19,7 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 
 # Substrate/Polkadot
+sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 
 # Utilities
@@ -28,6 +28,7 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+array-bytes = { workspace = true }
 client-test-support = { workspace = true }
 subxt-signer = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -4,8 +4,8 @@
 //! only. No chain is needed.
 
 use client_test_support::{make_client, start_test_provider};
+use file_system_client::format::{compute_cid, DirectoryNode, DEFAULT_MIME_TYPE};
 use file_system_client::{EmptyParents, FsClientError, Tree};
-use file_system_primitives::{compute_cid, DirectoryNode, DEFAULT_MIME_TYPE};
 
 const BUCKET: u64 = 1;
 

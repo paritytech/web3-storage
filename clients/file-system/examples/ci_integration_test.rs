@@ -17,8 +17,8 @@
 //!
 //! Run via justfile (recommended): just fs-demo-ci
 
+use file_system_client::format::DirectoryEntry;
 use file_system_client::{FileSystemClient, Role, Signer};
-use file_system_primitives::DirectoryEntry;
 use sp_runtime::AccountId32;
 use std::env;
 use storage_client::{AdminClient, ClientConfig, NegotiateRequest, ProviderClient};
