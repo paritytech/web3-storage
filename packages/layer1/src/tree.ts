@@ -48,7 +48,7 @@ import {
   toHex,
   createLimiter,
   validateDirectoryNode,
-  verifyLastMmrLeaf,
+  verifyMmrProof,
   type DirectoryEntry,
   type DirectoryNode,
   type FileManifest,
@@ -140,7 +140,7 @@ export function providerBlobStore(
       // The proof ties the last leaf to the provider's MMR root. That root is
       // the provider's claim until compared with an on-chain checkpoint; the
       // commitment signature is not checked here.
-      if (!verifyLastMmrLeaf(proof, commitment.mmrRoot, commitment.leafCount)) {
+      if (!verifyMmrProof(proof, commitment.leafCount - 1n, commitment.mmrRoot, commitment.leafCount)) {
         throw new Error(`Bucket ${bucketId}: the provider's MMR proof for the last leaf is invalid`);
       }
       return proof.leaf.dataRoot;

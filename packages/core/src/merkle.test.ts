@@ -17,7 +17,6 @@ import {
   splitChunks,
   u64le,
   verifyChunkProof,
-  verifyLastMmrLeaf,
   verifyMmrProof,
   type MerkleEntry,
 } from "./merkle.js";
@@ -274,17 +273,6 @@ describe("verifyMmrProof", () => {
   it("rejects a proof for another leaf index", () => {
     expect(verifyMmrProof(proof1, 0n, mmrRoot, 3n)).toBe(false);
     expect(verifyMmrProof(proof2, 3n, mmrRoot, 3n)).toBe(false);
-  });
-
-  it("verifyLastMmrLeaf accepts only the last leaf", () => {
-    expect(verifyLastMmrLeaf(proof2, mmrRoot, 3n)).toBe(true);
-    expect(verifyLastMmrLeaf(proof1, mmrRoot, 3n)).toBe(false);
-    expect(verifyLastMmrLeaf(proof2, mmrRoot, 4n)).toBe(false);
-    expect(verifyLastMmrLeaf(proof2, mmrRoot, 0n)).toBe(false);
-    // Two leaves: the last leaf is the right child under the single peak.
-    const root2 = hashChildren(hashes[0], hashes[1]);
-    expect(verifyLastMmrLeaf({ leaf: leaves[1], items: [hashes[0]] }, root2, 2n)).toBe(true);
-    expect(verifyLastMmrLeaf({ leaf: leaves[0], items: [hashes[1]] }, root2, 2n)).toBe(false);
   });
 
   // Written by `crates/primitives/storage/src/mmr.rs` (`proof_vectors`): run

@@ -233,14 +233,6 @@ export interface MmrProof {
 }
 
 /**
- * {@link verifyMmrProof} for the last leaf of an MMR with `leafCount` leaves.
- * A proof for an older leaf fails.
- */
-export function verifyLastMmrLeaf(proof: MmrProof, mmrRoot: Uint8Array, leafCount: bigint): boolean {
-  return leafCount >= 1n && verifyMmrProof(proof, leafCount - 1n, mmrRoot, leafCount);
-}
-
-/**
  * Port of `storage_primitives::verify_mmr_proof`: the proof is for leaf
  * `leafIndex` of an MMR with `leafCount` leaves, has the item count that
  * shape requires, and the leaf hashes up to `mmrRoot`. A proof for another
