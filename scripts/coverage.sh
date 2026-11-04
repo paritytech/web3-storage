@@ -29,13 +29,13 @@ COV_PACKAGES=(
 	provider-storage
 	provider-challenge
 	provider-types
+	file-system-client
 )
 
 # Not measured, with the reason per crate.
 COV_SKIP_PACKAGES=(
 	storage-client # chain-bound SDK; integration tests self-skip without a live chain
-	file-system-client # file system and S3 objects in a bucket; src is excluded by COV_IGNORE (clients/*/src)
-	client-test-support # dev-only helpers for the client crates' tests; src is excluded by COV_IGNORE (clients/*/src)
+	client-test-support # dev-only helpers for the client crates' tests; excluded by COV_IGNORE
 	storage-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
 	provider-events # pure types; no tests of its own
 	storage-parachain-runtime # exercised out of process (zombienet e2e)
@@ -74,10 +74,10 @@ verify_classification() {
 # suites (crates/providers/replica/tests/, provider-node tests/coordinators/).
 # Groups: toolchain/vendored; generated code + test scaffolding; primitives
 # crates (linked in, own tests
-# not run here); chain-access layer (needs a live chain); client SDK crates
-# (in provider-node's dep graph until #277, never executed here); binary entry
-# points.
-COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/[^/]+/src/|clients/[^/]+/tests/|src/main\.rs|src/cli\.rs|src/command\.rs)'
+# not run here); chain-access layer (needs a live chain); the skipped client
+# crates storage-client and client-test-support, which file-system-client's
+# tests link and run only in part; binary entry points.
+COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/(storage|test-support)/src/|clients/[^/]+/tests/|src/main\.rs|src/cli\.rs|src/command\.rs)'
 
 REPO_ROOT="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}"
 cd "$REPO_ROOT"
