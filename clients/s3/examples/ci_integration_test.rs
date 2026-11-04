@@ -14,7 +14,7 @@
 //! 6. Read object metadata
 //! 7. Delete objects
 //!
-//! Object operations go directly through the provider's S3 HTTP API.
+//! Object operations store a file tree in the bucket through Layer 0 routes.
 //!
 //! Usage: cargo run --example ci_integration_test [chain_ws] [provider_url]
 
@@ -219,7 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listing = client
         .list_objects_v2(bucket_id, ListObjectsParams::default())
         .await?;
-    assert!(listing.contents.is_empty(), "Bucket index must be empty");
+    assert!(listing.contents.is_empty(), "Bucket must have no objects");
 
     // Summary
     println!();
@@ -227,7 +227,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("Summary:");
     println!("  - Created S3 bucket ({bucket_id})");
-    println!("  - Uploaded 2 objects via provider HTTP API");
+    println!("  - Uploaded 2 objects");
     println!("  - Downloaded and verified 2 objects");
     println!("  - Listed objects");
     println!("  - Checked object metadata via HEAD");

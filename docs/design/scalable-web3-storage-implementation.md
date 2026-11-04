@@ -618,7 +618,7 @@ pub struct Bucket<T: Config> {
     /// even if it is no longer an admin or member.
     pub creator: T::AccountId,
     /// Storage deposit for the bucket record, held on `creator` and released
-    /// when `delete_bucket` or `cleanup_bucket_internal` removes the bucket.
+    /// when `delete_bucket` removes the bucket.
     /// The ticket contains only the amount, so the record stores the
     /// depositor beside it, as `pallet-preimage` does.
     ///
@@ -696,10 +696,9 @@ pub struct StorageAgreement<T: Config> {
     /// creation; `transfer_agreement_ownership` does not change it.
     pub depositor: T::AccountId,
     /// Storage deposit, held on `depositor` and released to it wherever the
-    /// agreement is removed: `end_agreement`, `claim_expired_agreement`,
-    /// `cleanup_bucket_internal`. Footprint: the record's
-    /// maximum encoded length. Applies at any price, so a zero-price
-    /// agreement still costs its depositor something to keep.
+    /// agreement is removed: `end_agreement`, `claim_expired_agreement`.
+    /// Footprint: the record's maximum encoded length. Applies at any price,
+    /// so a zero-price agreement still costs its depositor something to keep.
     pub deposit: T::StorageDeposit,
     /// Owner-created successor, not yet live ("Replacement agreements").
     pub pending_replacement: Option<PendingReplacement<T>>,
