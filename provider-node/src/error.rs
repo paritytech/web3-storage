@@ -97,9 +97,6 @@ pub enum Error {
     #[error("Too many requests")]
     RateLimited,
 
-    #[error("Empty request body: empty data has no chunk tree")]
-    EmptyBody,
-
     /// `GET /mmr_proof` received some but not all of `mmr_root`,
     /// `start_seq` and `leaf_count`. Send all three or none.
     #[error("Incomplete commitment: send all of mmr_root, start_seq and leaf_count, or none")]
@@ -293,55 +290,6 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": e.to_string() })),
                 },
             ),
-            Error::ObjectNotFound { bucket_id, key } => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "object_not_found".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "key": key })),
-                },
-            ),
-            Error::InvalidObjectKey(key) => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "invalid_object_key".to_string(),
-                    details: Some(serde_json::json!({ "key": key })),
-                },
-            ),
-            Error::FileNotFound { bucket_id, path } => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "file_not_found".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "path": path })),
-                },
-            ),
-            Error::NotAFile { bucket_id, path } => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "not_a_file".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "path": path })),
-                },
-            ),
-            Error::InvalidPath(msg) => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "invalid_path".to_string(),
-                    details: Some(serde_json::json!({ "message": msg })),
-                },
-            ),
-            Error::EmptyBody => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "empty_body".to_string(),
-                    details: None,
-                },
-            ),
-            Error::IncompleteCommitment => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "incomplete_commitment".to_string(),
-                    details: None,
-                },
-            ),
             Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
                 StatusCode::UNAUTHORIZED,
                 ErrorResponse {
@@ -501,6 +449,13 @@ impl IntoResponse for Error {
                     details: None,
                 },
             ),
+            Error::IncompleteCommitment => (
+                StatusCode::BAD_REQUEST,
+                ErrorResponse {
+                    error: "incomplete_commitment".to_string(),
+                    details: None,
+                },
+            ),
         };
 
         (status, Json(error_response)).into_response()
@@ -589,6 +544,10 @@ mod tests {
         );
         assert_eq!(status_of(Error::InvalidSignature), StatusCode::BAD_REQUEST);
         assert_eq!(
+            status_of(Error::IncompleteCommitment),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
             status_of(Error::NotAuthorized("x".into())),
             StatusCode::FORBIDDEN
         );
@@ -612,40 +571,6 @@ mod tests {
         );
         assert_eq!(
             status_of(Error::decode("node data", "invalid base64")),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_of(Error::ObjectNotFound {
-                bucket_id: 1,
-                key: "k".into()
-            }),
-            StatusCode::NOT_FOUND
-        );
-        assert_eq!(
-            status_of(Error::InvalidObjectKey("k".into())),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(status_of(Error::EmptyBody), StatusCode::BAD_REQUEST);
-        assert_eq!(
-            status_of(Error::IncompleteCommitment),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_of(Error::FileNotFound {
-                bucket_id: 1,
-                path: "/a".into()
-            }),
-            StatusCode::NOT_FOUND
-        );
-        assert_eq!(
-            status_of(Error::NotAFile {
-                bucket_id: 1,
-                path: "/a".into()
-            }),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_of(Error::InvalidPath("p".into())),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
