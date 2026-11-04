@@ -419,11 +419,10 @@ e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
 # File System (Layer 1)
 # ============================================================
 
-# Test all file system components (primitives + client)
+# Test the file system client
 fs-test-all:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo test -p file-system-primitives
     cargo test -p file-system-client
 
 # File system integration test (used by CI; assumes chain + provider already running)
@@ -441,13 +440,22 @@ s3-test-all:
 # S3 integration test (used by CI; assumes chain + provider already running)
 s3-demo-ci:
     cargo run --release -p s3-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+
+# Write the MMR proof vectors that packages/core/src/merkle.test.ts reads
+mmr-proof-vectors:
+    MMR_PROOF_VECTORS="{{justfile_directory()}}/.test-vectors/mmr-proofs.json" cargo test --locked -q -p storage-primitives mmr::tests::proof_vectors
+
+# Write the file-system bucket that packages/layer1/src/fixtures.test.ts reads
+fs-fixture:
+    FS_FIXTURE="{{justfile_directory()}}/.test-vectors/fs-bucket.json" cargo test --locked -q -p s3-client writes_fs_fixture
+
 # ─── UI Tests ─────────────────────────────────────────────────────────────────
 #
 # Unit tests + Playwright e2e for drive-ui, provider, and explorer.
 # Requires a running local chain + provider node.
 
 # Run all UI unit tests (Vitest)
-test-ui-unit:
+test-ui-unit: mmr-proof-vectors fs-fixture
     pnpm run test:unit
 
 # Run drive-ui Playwright e2e (requires chain + provider running)

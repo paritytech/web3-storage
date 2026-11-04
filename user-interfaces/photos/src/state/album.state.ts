@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
 // Album State — the M6 "State B" interaction layer. Once a library exists, this
-// drives the provider's `/fs` API (the browser port of the M2/M3 headless flow):
+// drives the library bucket's file system through the SDK's FileSystemClient
+// (the browser port of the M2/M3 headless flow):
 // list/create albums (directories), upload photos with a client-generated
 // thumbnail, render a grid from those thumbnails, and open a photo full-res. Every
 // mutation refreshes its listing immediately and then schedules a background
@@ -20,7 +21,7 @@ import type { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { fromHex, type ParachainApi } from '@web3-storage/papi'
 import { requireApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
-import { getFsClient } from '@/lib/fs-client'
+import { getFsClient, setFsSigner } from '@/lib/fs-client'
 import { recomputeRoot } from '@/lib/fs-root'
 import { computeDataRoot, toHex } from '@web3-storage/sdk'
 import { LocalIndex } from '@/lib/local-index'
@@ -149,6 +150,7 @@ export async function initLibrary(
 ): Promise<void> {
   api = requireApi()
   signer = account.txCreator
+  setFsSigner({ signer: account.txCreator, address: account.address, publicKey: account.txCreator.publicKey })
   contractBytes = fromHex(contract.address)
   anchoredCallback = onAnchored
 
@@ -510,6 +512,7 @@ export async function deletePhoto(item: GridItem): Promise<void> {
 
 /** Tear down the album layer (on wallet/network/bucket change). */
 export function resetLibrary(): void {
+  setFsSigner(null)
   bucketId$.next(null)
   resetSession()
 }
@@ -598,12 +601,12 @@ async function runReanchor(): Promise<void> {
   }
 }
 
-/** PUT a blob, assert the provider's `data_root` matches our local computation, and record it in the index. */
+/** Store a file, assert the returned `data_root` matches our local computation, and record it in the index. */
 async function putVerified(bucketId: bigint, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
   const res = await getFsClient().uploadFile(bucketId, path, bytes, { contentType })
   const localRoot = computeDataRoot(bytes)
-  if (!res.dataRoot || rootToBytes32(localRoot).toLowerCase() !== res.dataRoot.toLowerCase()) {
-    throw new Error(`Provider stored ${path} with a different content root than computed locally.`)
+  if (rootToBytes32(localRoot).toLowerCase() !== res.dataRoot.toLowerCase()) {
+    throw new Error(`Stored ${path} with a different content root than computed locally.`)
   }
   index.setFile(path, localRoot, BigInt(bytes.length))
   // A rewritten thumbnail must not keep being served from its stale cached URL.

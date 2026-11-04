@@ -11,9 +11,7 @@
 //!
 //! Tests are skipped (not failed) when the chain is unreachable.
 
-mod common;
-
-use common::{alice_admin, chain_guard, chain_setup, dev_ss58};
+use client_test_support::{alice_admin, chain_guard, chain_setup, dev_ss58};
 use storage_primitives::Role;
 
 // ─── Bucket lifecycle ─────────────────────────────────────────────────────────
@@ -38,7 +36,7 @@ async fn test_bucket_lifecycle() {
     // `chain_setup` registers Alice as a provider, signs primary terms with
     // her keypair, and redeems them via `create_bucket_with_primary` to
     // create a fresh bucket. Returns `None` when the chain isn't reachable.
-    let setup = match common::chain_setup().await {
+    let setup = match chain_setup().await {
         Some(s) => s,
         None => {
             eprintln!("Chain not reachable — skipping test_bucket_lifecycle");
