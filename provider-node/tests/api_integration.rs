@@ -397,7 +397,7 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_node_rejects_leaf_above_max_chunk_size(backend) {
+    async fn test_upload_node_rejects_oversized_leaf_and_body(backend) {
         let server = TestServer::new(backend).await;
         let max = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
 
@@ -422,29 +422,9 @@ common::backend_tests! {
         assert_eq!(body["error"], "chunk_too_large");
         assert_eq!(body["details"]["size"], max + 1);
         assert_eq!(body["details"]["max"], max);
-    }
-}
 
-common::backend_tests! {
-    async fn test_request_body_above_limit_is_rejected(backend) {
-        let server = TestServer::new(backend).await;
-        // Over 4 * DEFAULT_CHUNK_SIZE once base64-encoded.
-        let data = vec![7u8; 4 * storage_primitives::DEFAULT_CHUNK_SIZE as usize];
-        let hash = storage_primitives::hash_leaf(&data);
-
-        let response = server
-            .client
-            .put(server.url("/node"))
-            .json(&json!({
-                "bucket_id": 1,
-                "hash": format!("{hash:#x}"),
-                "data": BASE64.encode(&data),
-                "children": null,
-            }))
-            .send()
-            .await
-            .unwrap();
-
+        // Over the request body limit once base64-encoded.
+        let response = put(vec![7u8; 4 * max]).await;
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }

@@ -218,6 +218,7 @@ describe("FakeProvider", () => {
     expect((await put(provider, { bucket_id: 5, hash: empty, data: "" })).status).toBe(200);
     await expect(commitDataRoots(PROVIDER, BUCKET, [empty], signer, { fetch: provider.fetch })).rejects.toMatchObject({
       status: 400,
+      message: expect.stringMatching(new RegExp(`non_canonical_tree.*${empty}`)),
     });
   });
 });

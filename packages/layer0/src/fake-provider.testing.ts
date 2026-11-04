@@ -159,7 +159,7 @@ export class FakeProvider {
     if (missing) return json(404, { error: "root_not_found", details: { data_root: missing } });
     // Empty data has no chunk tree: a root whose last chunk is empty is rejected.
     const emptyRoot = roots.find((r) => this.nodes.get(this.chunkHashes(r).at(-1)!)!.data.length === 0);
-    if (emptyRoot) return json(400, { error: "empty_data", details: { data_root: emptyRoot } });
+    if (emptyRoot) return json(400, { error: "non_canonical_tree", details: { data_root: emptyRoot } });
     const leaves = this.buckets.get(String(body.bucket_id));
     if (!leaves) return json(404, { error: "bucket_not_found" });
     const start = leaves.length;

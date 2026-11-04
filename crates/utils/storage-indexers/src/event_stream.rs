@@ -371,21 +371,13 @@ mod tests {
 
     #[test]
     fn pallet_gate_selects_only_named_pallets() {
-        let filter = EventFilter::pallet("StorageProvider");
-        assert!(filter.matches_pallet("StorageProvider"));
+        let filter = EventFilter::storage_provider();
+        assert!(filter.matches_pallet(STORAGE_PROVIDER_PALLET));
         assert!(!filter.matches_pallet("Balances"));
 
         let filter = filter.with_pallet("Balances");
         assert!(filter.matches_pallet("Balances"));
         assert!(!filter.matches_pallet("System"));
-    }
-
-    #[test]
-    fn storage_provider_selects_only_storage_provider() {
-        let filter = EventFilter::storage_provider();
-        assert!(filter.matches_pallet("StorageProvider"));
-        assert!(!filter.matches_pallet("System"));
-        assert!(!filter.matches_pallet("Balances"));
     }
 
     #[test]

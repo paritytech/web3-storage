@@ -6,9 +6,11 @@
 pub mod backend;
 pub mod error;
 
+#[cfg(any(test, feature = "test-helpers"))]
+pub use backend::build_merkle_tree;
 pub use backend::{
-    build_merkle_tree, BucketInfo, BucketState, ChunkTreeNode, CommitOutcome, DiskStorage,
-    StorageBackend, StorageBackendSpec,
+    BucketInfo, BucketState, ChunkTreeNode, CommitOutcome, DiskStorage, StorageBackend,
+    StorageBackendSpec,
 };
 pub use error::Error;
 
