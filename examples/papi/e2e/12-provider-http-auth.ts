@@ -19,8 +19,7 @@
  * Workflow 06 covers the same ACL on-chain; this one is the off-chain half —
  * it is the only workflow that sends an `Authorization` header.
  *
- * The role ladder probes the Layer 0 write endpoints (`PUT /node`,
- * `POST /delete`). Bucket-bound Layer 0 reads need `Reader` on a private
+ * The role ladder probes `PUT /node` (Writer) and `POST /delete` (Admin). Bucket-bound Layer 0 reads need `Reader` on a private
  * bucket: 12.13 covers that gate, 12.14 the hash-keyed reads that stay open.
  *
  * Usage: node e2e/12-provider-http-auth.js [chain_ws] [provider_url]

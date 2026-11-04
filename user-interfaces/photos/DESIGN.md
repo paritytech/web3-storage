@@ -162,10 +162,12 @@ v1 (per-user refunds = a follow-up; acceptable for a prototype).
 Layer 1 gives a real directory tree per bucket. The SDK's `FileSystemClient`
 (`@web3-storage/sdk/fs`) stores it in the bucket itself: file content, `FileManifest` and
 `DirectoryNode` blobs go up through the provider's Layer 0 routes (`PUT /node`, `POST /commit`),
-and the bucket's last MMR leaf points at the root directory. Reads go through `GET /read` and
-`GET /node`. Writes are signed by the user's wallet; reads are unauthenticated. The app calls
-the provider only through `FileSystemClient` methods such as `createDirectory`, `listDirectory`,
-`uploadFile`, and `downloadFile`.
+and the bucket's last MMR leaf points at the root directory. The client finds the root through
+`GET /commitment` and `GET /mmr_proof`, which need `Reader` on the private library bucket, and
+reads blobs by hash through `GET /read` and `GET /node`, which need no signature. The user's
+wallet signs the writes and the root lookup. The app calls the provider only through
+`FileSystemClient` methods such as `createDirectory`, `listDirectory`, `uploadFile`, and
+`downloadFile`.
 
 - **Albums**: directories. v1 ships one level of folders (`/Beach`, `/Family`); the same model
   nests for sub-albums later.
@@ -288,9 +290,9 @@ This app matches the React 19 + Vite + Tailwind + PAPI stack and the shared pack
   the provider isn't accepting or has no capacity.
 - **Insufficient `msg.value`** → compute payment from the signed `price_per_byte` and add a
   buffer; surface `PaymentExceedsMax` clearly.
-- **Provider authorization** → the browser signs the provider's Layer 0 write requests with the
-  user's wallet; the Writer role granted at `createLibrary` (`setMember`) makes them pass. Reads are
-  unauthenticated.
+- **Provider authorization** → the browser signs the provider's Layer 0 writes and the root lookup
+  (`GET /commitment`, `GET /mmr_proof`) with the user's wallet; the Writer role granted at
+  `createLibrary` (`setMember`) also satisfies `Reader`. Blob reads by hash need no signature.
 - **Integrity mismatch** → reject/flag a library whose locally-recomputed metadata root ≠ the
   on-chain `rootCid`.
 - **Upload retry** → `PUT` is idempotent for the same bytes (content-addressed); `setRoot` is the
