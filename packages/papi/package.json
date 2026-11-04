@@ -15,7 +15,7 @@
     "papi:update": "papi update parachain"
   },
   "devDependencies": {
-    "@polkadot-api/cli": "^0.22.3"
+    "@polkadot-api/cli": "^0.22.5"
   },
   "dependencies": {
     "@multiformats/multiaddr-to-uri": "^12.0.0",
@@ -23,6 +23,6 @@
     "@polkadot-api/utils": "^0.4.0",
     "@polkadot-labs/hdkd-helpers": "^0.0.34",
     "@web3-storage/core": "workspace:*",
-    "polkadot-api": "^3.2.1"
+    "polkadot-api": "^3.3.0"
   }
 }
