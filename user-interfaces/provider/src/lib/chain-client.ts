@@ -234,7 +234,7 @@ export interface OnChainProviderSettings {
   replicaSyncPrice: bigint | null
   acceptingExtensions: boolean
   maxCapacity: bigint
-  minBytes: bigint
+  minAgreementBytes: bigint
 }
 
 export interface OnChainAgreement {
@@ -344,7 +344,7 @@ export async function getProviderData(
     replicaSyncPrice: s.replica_sync_price ?? null,
     acceptingExtensions: s.accepting_extensions,
     maxCapacity: s.max_capacity,
-    minBytes: s.min_bytes,
+    minAgreementBytes: s.min_agreement_bytes,
   }
   return { info, settings }
 }
@@ -555,7 +555,7 @@ export async function submitUpdateSettings(
       replica_sync_price: settings.replicaSyncPrice ?? undefined,
       accepting_extensions: settings.acceptingExtensions,
       max_capacity: settings.maxCapacity,
-      min_bytes: settings.minBytes,
+      min_agreement_bytes: settings.minAgreementBytes,
     },
   })
   await submit(tx, signer, 'Update settings', onProgress)

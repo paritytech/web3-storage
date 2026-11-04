@@ -31,7 +31,7 @@ export interface PhotosProvider {
   availableCapacity: bigint | undefined
   maxCapacity: bigint
   /** Smallest agreement `max_bytes` the provider accepts; `0n` = no minimum. */
-  minBytes: bigint
+  minAgreementBytes: bigint
   minDuration: number
   maxDuration: number
   /** 0-100, computed on-chain by `ProviderStats::reputation`. */
@@ -70,7 +70,7 @@ export async function listProviders(api: ParachainApi): Promise<PhotosProvider[]
       availableCapacity,
       // `max_capacity === 0` means "unlimited" in the pallet.
       maxCapacity,
-      minBytes: info.min_bytes,
+      minAgreementBytes: info.min_agreement_bytes,
       minDuration: info.min_duration,
       maxDuration: info.max_duration,
       reputation: info.stats.reputation,
@@ -99,8 +99,8 @@ export interface ProviderEligibility {
 }
 
 /** Reason text when `bytesNeeded` is below the provider's minimum agreement size, else `null`. */
-export function belowMinimumReason(minBytes: bigint, bytesNeeded: bigint): string | null {
-  return bytesNeeded < minBytes ? `Below minimum size (min ${formatBytesBinary(minBytes)})` : null
+export function belowMinimumReason(minAgreementBytes: bigint, bytesNeeded: bigint): string | null {
+  return bytesNeeded < minAgreementBytes ? `Below minimum size (min ${formatBytesBinary(minAgreementBytes)})` : null
 }
 
 /**
@@ -114,7 +114,7 @@ export function annotate(
   const reasons: string[] = []
   if (!provider.acceptingPrimary) reasons.push('Not accepting')
   if (provider.url === null) reasons.push('No HTTP endpoint')
-  const belowMinimum = belowMinimumReason(provider.minBytes, bytesNeeded)
+  const belowMinimum = belowMinimumReason(provider.minAgreementBytes, bytesNeeded)
   if (belowMinimum) reasons.push(belowMinimum)
   // `undefined` free capacity is unlimited; otherwise it must cover the request.
   if (provider.availableCapacity !== undefined && provider.availableCapacity < bytesNeeded) {

@@ -139,8 +139,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             accepting_primary: true,
             replica_sync_price: None,
             accepting_extensions: true,
-            max_capacity: 0, // 0 = unlimited
-            min_bytes: 0,    // 0 = no minimum
+            max_capacity: 0,        // 0 = unlimited
+            min_agreement_bytes: 0, // 0 = no minimum
         })
         .await?;
     println!("  Settings updated");

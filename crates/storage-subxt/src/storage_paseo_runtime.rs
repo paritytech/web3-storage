@@ -1296,9 +1296,9 @@ pub mod api {
                         "provider_info",
                         (provider,),
                         [
-                            18u8, 102u8, 128u8, 86u8, 229u8, 55u8, 239u8, 160u8, 104u8, 105u8,
-                            43u8, 156u8, 115u8, 64u8, 185u8, 2u8, 50u8, 242u8, 44u8, 150u8, 95u8,
-                            115u8, 78u8, 38u8, 122u8, 25u8, 188u8, 74u8, 92u8, 255u8, 188u8, 114u8,
+                            42u8, 10u8, 151u8, 198u8, 94u8, 251u8, 45u8, 161u8, 114u8, 121u8, 81u8,
+                            115u8, 61u8, 110u8, 211u8, 16u8, 156u8, 19u8, 241u8, 160u8, 74u8, 35u8,
+                            186u8, 71u8, 53u8, 170u8, 75u8, 251u8, 198u8, 243u8, 96u8, 131u8,
                         ],
                     )
                 }
@@ -1316,10 +1316,9 @@ pub mod api {
                         "providers",
                         (offset, limit),
                         [
-                            223u8, 142u8, 115u8, 227u8, 250u8, 180u8, 58u8, 43u8, 166u8, 111u8,
-                            138u8, 224u8, 228u8, 151u8, 60u8, 109u8, 178u8, 108u8, 229u8, 219u8,
-                            10u8, 86u8, 22u8, 53u8, 129u8, 134u8, 143u8, 150u8, 180u8, 1u8, 143u8,
-                            169u8,
+                            120u8, 121u8, 239u8, 60u8, 95u8, 218u8, 166u8, 16u8, 171u8, 201u8,
+                            117u8, 220u8, 72u8, 48u8, 29u8, 35u8, 137u8, 29u8, 234u8, 228u8, 62u8,
+                            111u8, 24u8, 22u8, 27u8, 67u8, 1u8, 175u8, 25u8, 246u8, 175u8, 185u8,
                         ],
                     )
                 }
@@ -1563,10 +1562,10 @@ pub mod api {
                         "find_matching_providers",
                         (requirements, limit),
                         [
-                            236u8, 253u8, 74u8, 84u8, 107u8, 81u8, 73u8, 76u8, 134u8, 28u8, 154u8,
-                            31u8, 173u8, 235u8, 240u8, 185u8, 40u8, 82u8, 140u8, 209u8, 80u8,
-                            147u8, 123u8, 161u8, 16u8, 155u8, 109u8, 202u8, 213u8, 175u8, 17u8,
-                            51u8,
+                            157u8, 225u8, 102u8, 0u8, 206u8, 194u8, 8u8, 132u8, 146u8, 166u8,
+                            219u8, 171u8, 139u8, 81u8, 129u8, 90u8, 185u8, 215u8, 24u8, 220u8,
+                            138u8, 254u8, 206u8, 37u8, 192u8, 108u8, 111u8, 111u8, 202u8, 115u8,
+                            157u8, 55u8,
                         ],
                     )
                 }
@@ -1589,9 +1588,9 @@ pub mod api {
                         "providers_with_capacity",
                         (bytes_needed, offset, limit),
                         [
-                            3u8, 102u8, 215u8, 211u8, 152u8, 62u8, 123u8, 42u8, 55u8, 12u8, 233u8,
-                            172u8, 21u8, 64u8, 177u8, 226u8, 109u8, 167u8, 198u8, 17u8, 129u8, 0u8,
-                            215u8, 31u8, 123u8, 86u8, 81u8, 56u8, 66u8, 164u8, 140u8, 205u8,
+                            76u8, 219u8, 22u8, 191u8, 130u8, 51u8, 89u8, 202u8, 61u8, 4u8, 0u8,
+                            14u8, 108u8, 113u8, 239u8, 24u8, 163u8, 9u8, 107u8, 117u8, 11u8, 22u8,
+                            0u8, 154u8, 150u8, 110u8, 58u8, 27u8, 74u8, 38u8, 246u8, 240u8,
                         ],
                     )
                 }
@@ -2083,10 +2082,9 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            45u8, 128u8, 18u8, 252u8, 249u8, 58u8, 158u8, 203u8, 68u8, 57u8, 195u8,
-                            114u8, 144u8, 116u8, 93u8, 76u8, 133u8, 197u8, 23u8, 136u8, 84u8,
-                            224u8, 48u8, 141u8, 241u8, 130u8, 27u8, 186u8, 132u8, 201u8, 38u8,
-                            76u8,
+                            144u8, 11u8, 55u8, 214u8, 0u8, 66u8, 174u8, 166u8, 32u8, 51u8, 39u8,
+                            68u8, 245u8, 67u8, 46u8, 104u8, 245u8, 139u8, 199u8, 8u8, 22u8, 25u8,
+                            175u8, 113u8, 34u8, 107u8, 32u8, 138u8, 57u8, 239u8, 119u8, 54u8,
                         ],
                     )
                 }
@@ -2104,10 +2102,10 @@ pub mod api {
                         "dry_run_xcm",
                         (origin_location, xcm),
                         [
-                            35u8, 1u8, 89u8, 211u8, 196u8, 25u8, 49u8, 61u8, 25u8, 96u8, 45u8,
-                            173u8, 234u8, 98u8, 197u8, 68u8, 101u8, 223u8, 183u8, 102u8, 223u8,
-                            115u8, 190u8, 121u8, 237u8, 71u8, 114u8, 22u8, 26u8, 127u8, 25u8,
-                            167u8,
+                            2u8, 87u8, 118u8, 74u8, 11u8, 80u8, 16u8, 130u8, 236u8, 1u8, 99u8,
+                            234u8, 227u8, 56u8, 44u8, 232u8, 154u8, 242u8, 243u8, 152u8, 175u8,
+                            48u8, 162u8, 98u8, 184u8, 213u8, 129u8, 95u8, 34u8, 217u8, 200u8,
+                            144u8,
                         ],
                     )
                 }
@@ -3448,9 +3446,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                156u8, 116u8, 15u8, 110u8, 58u8, 130u8, 134u8, 129u8, 27u8, 191u8, 117u8, 0u8,
-                61u8, 121u8, 62u8, 238u8, 226u8, 23u8, 202u8, 198u8, 51u8, 33u8, 20u8, 228u8, 14u8,
-                189u8, 229u8, 21u8, 23u8, 117u8, 13u8, 161u8,
+                74u8, 131u8, 150u8, 38u8, 187u8, 245u8, 177u8, 167u8, 58u8, 10u8, 109u8, 57u8,
+                138u8, 138u8, 188u8, 68u8, 167u8, 74u8, 176u8, 177u8, 26u8, 148u8, 207u8, 85u8,
+                16u8, 35u8, 128u8, 69u8, 82u8, 225u8, 73u8, 147u8,
             ]
     }
     pub mod system {
@@ -4438,9 +4436,9 @@ pub mod api {
                         "System",
                         "Events",
                         [
-                            144u8, 129u8, 106u8, 12u8, 54u8, 17u8, 205u8, 22u8, 164u8, 17u8, 174u8,
-                            66u8, 200u8, 63u8, 59u8, 128u8, 100u8, 149u8, 26u8, 58u8, 180u8, 52u8,
-                            96u8, 246u8, 225u8, 156u8, 179u8, 37u8, 174u8, 199u8, 47u8, 13u8,
+                            234u8, 129u8, 21u8, 153u8, 6u8, 144u8, 238u8, 43u8, 212u8, 73u8, 83u8,
+                            54u8, 72u8, 131u8, 222u8, 209u8, 107u8, 130u8, 2u8, 38u8, 45u8, 37u8,
+                            84u8, 63u8, 147u8, 60u8, 233u8, 13u8, 245u8, 20u8, 221u8, 140u8,
                         ],
                     )
                 }
@@ -8438,10 +8436,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                213u8, 55u8, 167u8, 182u8, 125u8, 111u8, 71u8, 57u8, 71u8, 74u8,
-                                140u8, 123u8, 145u8, 229u8, 110u8, 64u8, 32u8, 28u8, 135u8, 47u8,
-                                51u8, 151u8, 154u8, 197u8, 168u8, 168u8, 174u8, 194u8, 213u8, 47u8,
-                                212u8, 141u8,
+                                185u8, 151u8, 190u8, 182u8, 164u8, 100u8, 12u8, 225u8, 127u8,
+                                104u8, 133u8, 231u8, 215u8, 168u8, 203u8, 114u8, 27u8, 2u8, 94u8,
+                                120u8, 231u8, 144u8, 151u8, 117u8, 42u8, 74u8, 31u8, 109u8, 154u8,
+                                96u8, 191u8, 138u8,
                             ],
                         )
                     }
@@ -8464,10 +8462,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                145u8, 68u8, 126u8, 222u8, 210u8, 128u8, 248u8, 62u8, 221u8, 223u8,
-                                126u8, 224u8, 15u8, 218u8, 9u8, 29u8, 149u8, 138u8, 110u8, 80u8,
-                                135u8, 183u8, 156u8, 228u8, 86u8, 64u8, 173u8, 157u8, 86u8, 163u8,
-                                112u8, 5u8,
+                                236u8, 181u8, 164u8, 199u8, 23u8, 60u8, 113u8, 222u8, 187u8, 163u8,
+                                255u8, 51u8, 164u8, 4u8, 83u8, 164u8, 171u8, 17u8, 26u8, 181u8,
+                                241u8, 109u8, 216u8, 127u8, 130u8, 226u8, 98u8, 212u8, 161u8,
+                                120u8, 83u8, 115u8,
                             ],
                         )
                     }
@@ -8506,10 +8504,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                254u8, 231u8, 186u8, 119u8, 167u8, 2u8, 217u8, 142u8, 149u8, 232u8,
-                                121u8, 170u8, 125u8, 164u8, 118u8, 0u8, 174u8, 210u8, 115u8, 133u8,
-                                207u8, 147u8, 155u8, 147u8, 148u8, 114u8, 193u8, 97u8, 121u8,
-                                215u8, 160u8, 96u8,
+                                16u8, 205u8, 232u8, 117u8, 4u8, 105u8, 196u8, 69u8, 183u8, 25u8,
+                                253u8, 39u8, 17u8, 221u8, 100u8, 77u8, 244u8, 147u8, 57u8, 138u8,
+                                246u8, 206u8, 21u8, 206u8, 183u8, 183u8, 138u8, 26u8, 78u8, 213u8,
+                                110u8, 6u8,
                             ],
                         )
                     }
@@ -14702,10 +14700,10 @@ pub mod api {
                             "batch",
                             super::Batch { calls },
                             [
-                                96u8, 209u8, 88u8, 239u8, 76u8, 21u8, 107u8, 193u8, 6u8, 71u8,
-                                184u8, 120u8, 22u8, 160u8, 14u8, 167u8, 148u8, 154u8, 77u8, 151u8,
-                                20u8, 164u8, 52u8, 143u8, 106u8, 200u8, 153u8, 56u8, 228u8, 160u8,
-                                108u8, 76u8,
+                                72u8, 221u8, 230u8, 118u8, 158u8, 156u8, 141u8, 115u8, 220u8,
+                                173u8, 144u8, 14u8, 36u8, 122u8, 120u8, 23u8, 93u8, 190u8, 121u8,
+                                55u8, 104u8, 49u8, 148u8, 51u8, 247u8, 44u8, 35u8, 227u8, 163u8,
+                                46u8, 196u8, 63u8,
                             ],
                         )
                     }
@@ -14736,10 +14734,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                143u8, 55u8, 119u8, 111u8, 30u8, 192u8, 89u8, 135u8, 145u8, 153u8,
-                                29u8, 236u8, 12u8, 158u8, 189u8, 174u8, 72u8, 181u8, 101u8, 187u8,
-                                237u8, 203u8, 98u8, 4u8, 174u8, 190u8, 217u8, 24u8, 42u8, 114u8,
-                                22u8, 223u8,
+                                178u8, 46u8, 253u8, 39u8, 147u8, 29u8, 204u8, 216u8, 159u8, 189u8,
+                                251u8, 190u8, 92u8, 183u8, 88u8, 2u8, 190u8, 118u8, 129u8, 105u8,
+                                64u8, 40u8, 250u8, 184u8, 238u8, 231u8, 212u8, 159u8, 178u8, 50u8,
+                                56u8, 30u8,
                             ],
                         )
                     }
@@ -14765,10 +14763,10 @@ pub mod api {
                             "batch_all",
                             super::BatchAll { calls },
                             [
-                                235u8, 98u8, 152u8, 14u8, 20u8, 195u8, 146u8, 186u8, 88u8, 20u8,
-                                195u8, 113u8, 131u8, 46u8, 79u8, 75u8, 183u8, 224u8, 141u8, 98u8,
-                                246u8, 224u8, 142u8, 151u8, 68u8, 84u8, 34u8, 216u8, 99u8, 161u8,
-                                93u8, 58u8,
+                                62u8, 227u8, 93u8, 90u8, 102u8, 20u8, 176u8, 36u8, 134u8, 152u8,
+                                122u8, 2u8, 75u8, 245u8, 253u8, 203u8, 172u8, 255u8, 207u8, 13u8,
+                                203u8, 206u8, 36u8, 233u8, 61u8, 58u8, 15u8, 173u8, 32u8, 166u8,
+                                122u8, 173u8,
                             ],
                         )
                     }
@@ -14792,10 +14790,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                144u8, 151u8, 119u8, 155u8, 202u8, 134u8, 32u8, 243u8, 74u8, 246u8,
-                                183u8, 139u8, 118u8, 225u8, 230u8, 50u8, 221u8, 52u8, 219u8, 46u8,
-                                168u8, 170u8, 178u8, 254u8, 21u8, 204u8, 88u8, 160u8, 40u8, 156u8,
-                                40u8, 165u8,
+                                117u8, 152u8, 7u8, 163u8, 150u8, 36u8, 6u8, 92u8, 59u8, 201u8,
+                                230u8, 68u8, 118u8, 100u8, 29u8, 121u8, 215u8, 162u8, 133u8, 91u8,
+                                242u8, 30u8, 91u8, 70u8, 221u8, 137u8, 250u8, 104u8, 0u8, 143u8,
+                                55u8, 66u8,
                             ],
                         )
                     }
@@ -14822,10 +14820,10 @@ pub mod api {
                             "force_batch",
                             super::ForceBatch { calls },
                             [
-                                200u8, 239u8, 191u8, 49u8, 35u8, 31u8, 3u8, 172u8, 65u8, 253u8,
-                                246u8, 138u8, 175u8, 76u8, 130u8, 127u8, 217u8, 21u8, 4u8, 26u8,
-                                109u8, 62u8, 210u8, 25u8, 93u8, 183u8, 234u8, 176u8, 234u8, 104u8,
-                                150u8, 58u8,
+                                192u8, 192u8, 194u8, 156u8, 171u8, 247u8, 19u8, 153u8, 179u8,
+                                160u8, 193u8, 174u8, 170u8, 9u8, 3u8, 7u8, 160u8, 1u8, 68u8, 177u8,
+                                126u8, 249u8, 101u8, 24u8, 254u8, 160u8, 180u8, 39u8, 35u8, 175u8,
+                                157u8, 234u8,
                             ],
                         )
                     }
@@ -14849,10 +14847,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                25u8, 222u8, 227u8, 230u8, 234u8, 109u8, 230u8, 145u8, 75u8, 23u8,
-                                55u8, 162u8, 67u8, 195u8, 39u8, 212u8, 128u8, 40u8, 227u8, 172u8,
-                                154u8, 102u8, 161u8, 162u8, 59u8, 104u8, 149u8, 195u8, 53u8, 184u8,
-                                193u8, 66u8,
+                                72u8, 161u8, 39u8, 221u8, 73u8, 13u8, 112u8, 179u8, 25u8, 165u8,
+                                176u8, 3u8, 134u8, 131u8, 159u8, 66u8, 110u8, 137u8, 48u8, 22u8,
+                                160u8, 109u8, 211u8, 14u8, 243u8, 163u8, 21u8, 178u8, 240u8, 121u8,
+                                79u8, 31u8,
                             ],
                         )
                     }
@@ -14892,10 +14890,10 @@ pub mod api {
                                 fallback: ::subxt::alloc::boxed::Box::new(fallback),
                             },
                             [
-                                68u8, 76u8, 100u8, 51u8, 147u8, 120u8, 111u8, 94u8, 103u8, 45u8,
-                                96u8, 36u8, 240u8, 146u8, 107u8, 112u8, 0u8, 87u8, 57u8, 60u8,
-                                23u8, 198u8, 32u8, 95u8, 146u8, 22u8, 93u8, 35u8, 108u8, 205u8,
-                                132u8, 78u8,
+                                97u8, 182u8, 128u8, 246u8, 157u8, 102u8, 94u8, 192u8, 248u8, 149u8,
+                                159u8, 141u8, 163u8, 187u8, 146u8, 154u8, 120u8, 242u8, 171u8,
+                                32u8, 60u8, 184u8, 192u8, 113u8, 30u8, 195u8, 81u8, 54u8, 225u8,
+                                231u8, 12u8, 37u8,
                             ],
                         )
                     }
@@ -14918,10 +14916,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                18u8, 132u8, 176u8, 144u8, 64u8, 15u8, 248u8, 16u8, 58u8, 27u8,
-                                154u8, 166u8, 253u8, 79u8, 7u8, 163u8, 129u8, 103u8, 175u8, 240u8,
-                                51u8, 138u8, 255u8, 68u8, 148u8, 241u8, 28u8, 136u8, 239u8, 101u8,
-                                146u8, 220u8,
+                                96u8, 150u8, 234u8, 41u8, 106u8, 139u8, 68u8, 101u8, 92u8, 196u8,
+                                210u8, 233u8, 9u8, 185u8, 71u8, 52u8, 31u8, 61u8, 104u8, 241u8,
+                                161u8, 94u8, 105u8, 61u8, 74u8, 134u8, 69u8, 213u8, 95u8, 77u8,
+                                245u8, 217u8,
                             ],
                         )
                     }
@@ -15347,7 +15345,7 @@ pub mod api {
             #[doc = "Rejected while a deregistration is announced, if"]
             #[doc = "`min_duration > max_duration`, if capacity drops below the bytes"]
             #[doc = "already committed, if the stake cannot back the capacity, or if"]
-            #[doc = "`min_bytes` exceeds a limited `max_capacity`."]
+            #[doc = "`min_agreement_bytes` exceeds a limited `max_capacity`."]
             pub struct UpdateProviderSettings {
                 pub settings: update_provider_settings::Settings,
             }
@@ -15518,7 +15516,7 @@ pub mod api {
             #[doc = "provider-signed terms."]
             #[doc = ""]
             #[doc = "Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the"]
-            #[doc = "provider's `min_bytes`."]
+            #[doc = "provider's `min_agreement_bytes`."]
             pub struct CreateBucketWithPrimary {
                 pub provider: create_bucket_with_primary::Provider,
                 pub terms: create_bucket_with_primary::Terms,
@@ -15566,7 +15564,7 @@ pub mod api {
             #[doc = "current snapshot's signer bitfield."]
             #[doc = ""]
             #[doc = "Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the"]
-            #[doc = "provider's `min_bytes`."]
+            #[doc = "provider's `min_agreement_bytes`."]
             pub struct AddPrimaryProvider {
                 pub bucket_id: add_primary_provider::BucketId,
                 pub provider: add_primary_provider::Provider,
@@ -15807,7 +15805,7 @@ pub mod api {
             #[doc = "`replica_params: Some(_)` off-chain; the caller submits it here."]
             #[doc = ""]
             #[doc = "Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the"]
-            #[doc = "provider's `min_bytes`."]
+            #[doc = "provider's `min_agreement_bytes`."]
             pub struct AddReplicaProvider {
                 pub bucket_id: add_replica_provider::BucketId,
                 pub provider: add_replica_provider::Provider,
@@ -16506,7 +16504,7 @@ pub mod api {
                     #[doc = "Rejected while a deregistration is announced, if"]
                     #[doc = "`min_duration > max_duration`, if capacity drops below the bytes"]
                     #[doc = "already committed, if the stake cannot back the capacity, or if"]
-                    #[doc = "`min_bytes` exceeds a limited `max_capacity`."]
+                    #[doc = "`min_agreement_bytes` exceeds a limited `max_capacity`."]
                     pub fn update_provider_settings(
                         &self,
                         settings: super::update_provider_settings::Settings,
@@ -16517,10 +16515,10 @@ pub mod api {
                             "update_provider_settings",
                             super::UpdateProviderSettings { settings },
                             [
-                                73u8, 120u8, 57u8, 69u8, 116u8, 98u8, 63u8, 91u8, 12u8, 2u8, 179u8,
-                                83u8, 119u8, 0u8, 253u8, 106u8, 76u8, 22u8, 104u8, 40u8, 182u8,
-                                188u8, 103u8, 43u8, 199u8, 71u8, 156u8, 44u8, 183u8, 80u8, 73u8,
-                                210u8,
+                                51u8, 1u8, 169u8, 39u8, 160u8, 202u8, 130u8, 243u8, 226u8, 55u8,
+                                143u8, 137u8, 45u8, 184u8, 115u8, 0u8, 24u8, 3u8, 117u8, 111u8,
+                                204u8, 225u8, 213u8, 42u8, 112u8, 17u8, 56u8, 227u8, 63u8, 137u8,
+                                27u8, 37u8,
                             ],
                         )
                     }
@@ -16630,7 +16628,7 @@ pub mod api {
                     #[doc = "provider-signed terms."]
                     #[doc = ""]
                     #[doc = "Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the"]
-                    #[doc = "provider's `min_bytes`."]
+                    #[doc = "provider's `min_agreement_bytes`."]
                     pub fn create_bucket_with_primary(
                         &self,
                         provider: super::create_bucket_with_primary::Provider,
@@ -16667,7 +16665,7 @@ pub mod api {
                     #[doc = "current snapshot's signer bitfield."]
                     #[doc = ""]
                     #[doc = "Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the"]
-                    #[doc = "provider's `min_bytes`."]
+                    #[doc = "provider's `min_agreement_bytes`."]
                     pub fn add_primary_provider(
                         &self,
                         bucket_id: super::add_primary_provider::BucketId,
@@ -16850,7 +16848,7 @@ pub mod api {
                     #[doc = "`replica_params: Some(_)` off-chain; the caller submits it here."]
                     #[doc = ""]
                     #[doc = "Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the"]
-                    #[doc = "provider's `min_bytes`."]
+                    #[doc = "provider's `min_agreement_bytes`."]
                     pub fn add_replica_provider(
                         &self,
                         bucket_id: super::add_replica_provider::BucketId,
@@ -18251,9 +18249,10 @@ pub mod api {
                         "StorageProvider",
                         "Providers",
                         [
-                            52u8, 169u8, 203u8, 239u8, 244u8, 12u8, 113u8, 109u8, 4u8, 253u8,
-                            224u8, 16u8, 160u8, 80u8, 237u8, 137u8, 29u8, 11u8, 185u8, 144u8, 23u8,
-                            240u8, 32u8, 58u8, 151u8, 184u8, 152u8, 133u8, 57u8, 16u8, 81u8, 27u8,
+                            186u8, 76u8, 36u8, 61u8, 182u8, 205u8, 251u8, 58u8, 229u8, 133u8, 0u8,
+                            52u8, 254u8, 108u8, 59u8, 206u8, 209u8, 216u8, 176u8, 20u8, 186u8,
+                            140u8, 127u8, 124u8, 43u8, 154u8, 114u8, 182u8, 224u8, 109u8, 88u8,
+                            212u8,
                         ],
                     )
                 }
@@ -19664,10 +19663,10 @@ pub mod api {
                                 transaction_encoded,
                             },
                             [
-                                253u8, 140u8, 92u8, 151u8, 85u8, 182u8, 110u8, 19u8, 196u8, 212u8,
-                                147u8, 249u8, 19u8, 13u8, 134u8, 221u8, 0u8, 165u8, 225u8, 253u8,
-                                85u8, 139u8, 66u8, 81u8, 98u8, 121u8, 214u8, 125u8, 230u8, 137u8,
-                                76u8, 177u8,
+                                251u8, 23u8, 215u8, 2u8, 234u8, 229u8, 91u8, 237u8, 76u8, 160u8,
+                                145u8, 98u8, 172u8, 148u8, 137u8, 136u8, 15u8, 241u8, 241u8, 242u8,
+                                107u8, 21u8, 209u8, 91u8, 52u8, 191u8, 25u8, 10u8, 209u8, 241u8,
+                                217u8, 96u8,
                             ],
                         )
                     }
@@ -19835,10 +19834,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                211u8, 231u8, 223u8, 192u8, 123u8, 142u8, 44u8, 65u8, 86u8, 32u8,
-                                241u8, 251u8, 6u8, 244u8, 217u8, 109u8, 136u8, 254u8, 129u8, 33u8,
-                                31u8, 122u8, 235u8, 33u8, 135u8, 141u8, 156u8, 136u8, 228u8, 43u8,
-                                42u8, 168u8,
+                                44u8, 146u8, 23u8, 111u8, 58u8, 185u8, 106u8, 253u8, 20u8, 201u8,
+                                1u8, 137u8, 152u8, 102u8, 22u8, 199u8, 129u8, 108u8, 77u8, 41u8,
+                                246u8, 184u8, 27u8, 18u8, 78u8, 156u8, 20u8, 77u8, 82u8, 74u8,
+                                192u8, 176u8,
                             ],
                         )
                     }
@@ -20201,9 +20200,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            71u8, 238u8, 147u8, 189u8, 43u8, 68u8, 7u8, 59u8, 65u8, 129u8, 195u8,
-                            104u8, 36u8, 47u8, 160u8, 177u8, 141u8, 216u8, 47u8, 58u8, 4u8, 214u8,
-                            89u8, 77u8, 42u8, 174u8, 103u8, 255u8, 95u8, 196u8, 25u8, 232u8,
+                            191u8, 4u8, 102u8, 110u8, 200u8, 40u8, 49u8, 157u8, 116u8, 225u8, 59u8,
+                            64u8, 19u8, 106u8, 76u8, 129u8, 155u8, 76u8, 133u8, 26u8, 241u8, 3u8,
+                            116u8, 81u8, 152u8, 121u8, 215u8, 246u8, 170u8, 43u8, 165u8, 5u8,
                         ],
                     )
                 }
@@ -24680,7 +24679,7 @@ pub mod api {
                     #[doc = "Rejected while a deregistration is announced, if"]
                     #[doc = "`min_duration > max_duration`, if capacity drops below the bytes"]
                     #[doc = "already committed, if the stake cannot back the capacity, or if"]
-                    #[doc = "`min_bytes` exceeds a limited `max_capacity`."]
+                    #[doc = "`min_agreement_bytes` exceeds a limited `max_capacity`."]
                     update_provider_settings {
                         settings: runtime_types::pallet_storage_provider::pallet::ProviderSettings,
                     },
@@ -24736,7 +24735,7 @@ pub mod api {
                     #[doc = "provider-signed terms."]
                     #[doc = ""]
                     #[doc = "Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the"]
-                    #[doc = "provider's `min_bytes`."]
+                    #[doc = "provider's `min_agreement_bytes`."]
                     create_bucket_with_primary {
                         provider: ::subxt::utils::AccountId32,
                         terms: runtime_types::storage_primitives::agreement_term::AgreementTerms<
@@ -24759,7 +24758,7 @@ pub mod api {
                     #[doc = "current snapshot's signer bitfield."]
                     #[doc = ""]
                     #[doc = "Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the"]
-                    #[doc = "provider's `min_bytes`."]
+                    #[doc = "provider's `min_agreement_bytes`."]
                     add_primary_provider {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
@@ -24835,7 +24834,7 @@ pub mod api {
                     #[doc = "`replica_params: Some(_)` off-chain; the caller submits it here."]
                     #[doc = ""]
                     #[doc = "Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the"]
-                    #[doc = "provider's `min_bytes`."]
+                    #[doc = "provider's `min_agreement_bytes`."]
                     add_replica_provider {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
@@ -25148,10 +25147,10 @@ pub mod api {
                     #[doc = "Provider settings specify `min_duration > max_duration`."]
                     MinDurationExceedsMaxDuration,
                     #[codec(index = 13)]
-                    #[doc = "Provider settings specify `min_bytes > max_capacity` while"]
-                    #[doc = "`max_capacity` is limited. Lower `min_bytes` or raise"]
+                    #[doc = "Provider settings specify `min_agreement_bytes > max_capacity` while"]
+                    #[doc = "`max_capacity` is limited. Lower `min_agreement_bytes` or raise"]
                     #[doc = "`max_capacity`."]
-                    MinBytesExceedsMaxCapacity,
+                    MinAgreementBytesExceedsMaxCapacity,
                     #[codec(index = 14)]
                     #[doc = "Provider has already announced a deregistration; the action is"]
                     #[doc = "rejected until they complete or cancel it."]
@@ -25378,7 +25377,7 @@ pub mod api {
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
                     #[codec(index = 74)]
-                    #[doc = "The terms' `max_bytes` is below the provider's `min_bytes`."]
+                    #[doc = "The terms' `max_bytes` is below the provider's `min_agreement_bytes`."]
                     #[doc = "Negotiate a quote with at least that many bytes."]
                     MaxBytesBelowMinimum,
                     #[codec(index = 75)]
@@ -25720,7 +25719,7 @@ pub mod api {
                     pub replica_sync_price: ::core::option::Option<::core::primitive::u128>,
                     pub accepting_extensions: ::core::primitive::bool,
                     pub max_capacity: ::core::primitive::u64,
-                    pub min_bytes: ::core::primitive::u64,
+                    pub min_agreement_bytes: ::core::primitive::u64,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -25920,7 +25919,7 @@ pub mod api {
                     #[codec(index = 3)]
                     NotAccepting,
                     #[codec(index = 4)]
-                    BelowMinBytes,
+                    BelowMinAgreementBytes,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -25944,7 +25943,7 @@ pub mod api {
                     pub replica_sync_price: ::core::option::Option<::core::primitive::u128>,
                     pub accepting_extensions: ::core::primitive::bool,
                     pub max_capacity: ::core::primitive::u64,
-                    pub min_bytes: ::core::primitive::u64,
+                    pub min_agreement_bytes: ::core::primitive::u64,
                     pub available_capacity: ::core::option::Option<::core::primitive::u64>,
                     pub deregister_at: ::core::option::Option<::core::primitive::u32>,
                     pub stats:

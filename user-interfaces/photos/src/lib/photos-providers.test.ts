@@ -11,7 +11,7 @@ const provider: PhotosProvider = {
   acceptingPrimary: true,
   availableCapacity: undefined,
   maxCapacity: 0n,
-  minBytes: 0n,
+  minAgreementBytes: 0n,
   minDuration: 10,
   maxDuration: 1000,
   reputation: 100,
@@ -24,14 +24,14 @@ describe('annotate', () => {
     expect(annotate(provider, want)).toEqual({ eligible: true, reasons: [] })
   })
 
-  it('rejects a size below min_bytes and names the minimum', () => {
-    const r = annotate({ ...provider, minBytes: 2048n }, want)
+  it('rejects a size below min_agreement_bytes and names the minimum', () => {
+    const r = annotate({ ...provider, minAgreementBytes: 2048n }, want)
     expect(r.eligible).toBe(false)
     expect(r.reasons).toEqual(['Below minimum size (min 2 KiB)'])
   })
 
   it('re-evaluates when the size changes', () => {
-    const p = { ...provider, minBytes: 2048n }
+    const p = { ...provider, minAgreementBytes: 2048n }
     expect(annotate(p, { ...want, bytesNeeded: 4096n }).eligible).toBe(true)
   })
 })

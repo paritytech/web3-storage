@@ -42,7 +42,7 @@ fn provider_info_from_runtime(info: RuntimeProviderInfo) -> ProviderInfo {
             replica_sync_price: info.settings.replica_sync_price,
             accepting_extensions: info.settings.accepting_extensions,
             max_capacity: info.settings.max_capacity,
-            min_bytes: info.settings.min_bytes,
+            min_agreement_bytes: info.settings.min_agreement_bytes,
         },
         stats: ProviderStats {
             registered_at: info.stats.registered_at,
@@ -330,7 +330,7 @@ mod tests {
                 replica_sync_price,
                 accepting_extensions: true,
                 max_capacity: 10_000,
-                min_bytes: 0,
+                min_agreement_bytes: 0,
             },
             stats: RuntimeProviderStats {
                 registered_at: 1,
@@ -726,7 +726,7 @@ mod tests {
                         ),
                         ("accepting_extensions", Value::bool(true)),
                         ("max_capacity", Value::u128(10_000)),
-                        ("min_bytes", Value::u128(0)),
+                        ("min_agreement_bytes", Value::u128(0)),
                     ]),
                 ),
             ],

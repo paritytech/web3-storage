@@ -54,7 +54,7 @@ export function describeProviderError(
 ): string {
   switch (code) {
     case "max_bytes_below_minimum":
-      return `Requested size ${formatBytes(details?.requested)} is below this provider's minimum of ${formatBytes(details?.min_bytes)}. Choose a larger size or another provider.`;
+      return `Requested size ${formatBytes(details?.requested)} is below this provider's minimum of ${formatBytes(details?.min_agreement_bytes)}. Choose a larger size or another provider.`;
     case "invalid_max_bytes_request":
       return "Requested size is 0 bytes. Enter a size above 0.";
     default:

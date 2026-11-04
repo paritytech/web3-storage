@@ -7,7 +7,7 @@ export interface ProviderEligibilityInput {
   acceptingPrimary: boolean
   /** Free capacity per the chain; `undefined` means unlimited. */
   availableCapacity: bigint | undefined
-  minBytes: bigint
+  minAgreementBytes: bigint
   minDuration: number
   /** `0` means no upper bound. */
   maxDuration: number
@@ -23,7 +23,7 @@ export function providerDisabledReason(
   duration: number,
 ): string | null {
   if (!p.acceptingPrimary) return 'Not accepting'
-  if (capacity < p.minBytes) return `Below minimum size (min ${formatBytes(p.minBytes)})`
+  if (capacity < p.minAgreementBytes) return `Below minimum size (min ${formatBytes(p.minAgreementBytes)})`
   if (p.availableCapacity !== undefined && p.availableCapacity < capacity) return 'Capacity full'
   if (duration < p.minDuration) return 'Duration too short'
   if (p.maxDuration > 0 && duration > p.maxDuration) return 'Duration too long'

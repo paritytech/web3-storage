@@ -6,7 +6,7 @@ import { providerDisabledReason, type ProviderEligibilityInput } from './provide
 const provider: ProviderEligibilityInput = {
   acceptingPrimary: true,
   availableCapacity: undefined,
-  minBytes: 0n,
+  minAgreementBytes: 0n,
   minDuration: 10,
   maxDuration: 1000,
 }
@@ -20,18 +20,18 @@ describe('providerDisabledReason', () => {
     expect(providerDisabledReason({ ...provider, acceptingPrimary: false }, 1024n, 100)).toBe('Not accepting')
   })
 
-  it('rejects a request below min_bytes and shows the minimum', () => {
-    expect(providerDisabledReason({ ...provider, minBytes: 2048n }, 1024n, 100)).toBe(
+  it('rejects a request below min_agreement_bytes and shows the minimum', () => {
+    expect(providerDisabledReason({ ...provider, minAgreementBytes: 2048n }, 1024n, 100)).toBe(
       'Below minimum size (min 2 KB)',
     )
   })
 
-  it('accepts a request equal to min_bytes', () => {
-    expect(providerDisabledReason({ ...provider, minBytes: 1024n }, 1024n, 100)).toBeNull()
+  it('accepts a request equal to min_agreement_bytes', () => {
+    expect(providerDisabledReason({ ...provider, minAgreementBytes: 1024n }, 1024n, 100)).toBeNull()
   })
 
   it('re-evaluates for a different size', () => {
-    const p = { ...provider, minBytes: 2048n }
+    const p = { ...provider, minAgreementBytes: 2048n }
     expect(providerDisabledReason(p, 1024n, 100)).not.toBeNull()
     expect(providerDisabledReason(p, 4096n, 100)).toBeNull()
   })

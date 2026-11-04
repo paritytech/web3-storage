@@ -175,7 +175,7 @@ fn extend_agreement_fails_no_agreement() {
 }
 
 #[test]
-fn top_up_and_extend_ignore_min_bytes_raised_after_agreement() {
+fn top_up_and_extend_ignore_min_agreement_bytes_raised_after_agreement() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
         let bucket_id = setup_agreement(2, 1, 50, 100);
@@ -185,7 +185,7 @@ fn top_up_and_extend_ignore_min_bytes_raised_after_agreement() {
             RuntimeOrigin::signed(2),
             ProviderSettings {
                 accepting_primary: true,
-                min_bytes: 100,
+                min_agreement_bytes: 100,
                 ..Default::default()
             }
         ));

@@ -66,7 +66,7 @@ export default function ProviderPickerPanel({
         return "Duration mismatch";
       case "NotAccepting":
         return "Not accepting primary";
-      case "BelowMinBytes":
+      case "BelowMinAgreementBytes":
         return "Below minimum size";
       default:
         return reason;

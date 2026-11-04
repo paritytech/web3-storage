@@ -148,7 +148,7 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
       })
       return
     }
-    const belowMinimum = belowMinimumReason(info.min_bytes, sizeBytes)
+    const belowMinimum = belowMinimumReason(info.min_agreement_bytes, sizeBytes)
     if (belowMinimum) {
       creation$.next({
         stage: 'failed',

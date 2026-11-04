@@ -231,7 +231,7 @@ async function main() {
   });
 
   tests.push({
-    name: "2.9b min_bytes: provider refuses and chain rejects bytes below the minimum",
+    name: "2.9b min_agreement_bytes: provider refuses and chain rejects bytes below the minimum",
     fn: async () => {
       const stored = (await api.query.StorageProvider.Providers.getValue(
         provider.address,
@@ -245,15 +245,15 @@ async function main() {
         replica_sync_price: stored.settings.replica_sync_price ?? undefined,
         accepting_extensions: stored.settings.accepting_extensions,
         max_capacity: stored.settings.max_capacity,
-        min_bytes: stored.settings.min_bytes,
+        min_agreement_bytes: stored.settings.min_agreement_bytes,
       };
       // Signed while the provider has no minimum, redeemed after it raises one.
       const earlier = await negotiateSigned(api, PROVIDER_URL, client, provider, {
         maxBytes,
         duration,
       });
-      await updateProviderSettings(api, provider, { ...original, min_bytes: maxBytes + 1n });
-      await waitForNodeMinBytes(maxBytes + 1n);
+      await updateProviderSettings(api, provider, { ...original, min_agreement_bytes: maxBytes + 1n });
+      await waitForNodeMinAgreementBytes(maxBytes + 1n);
       try {
         await assertNegotiateRejects(
           () => negotiateSigned(api, PROVIDER_URL, client, provider, { maxBytes, duration }),
@@ -267,7 +267,7 @@ async function main() {
         await submitTxExpectFailure(tx, client.signer, "MaxBytesBelowMinimum", "2.9b");
       } finally {
         await updateProviderSettings(api, provider, original);
-        await waitForNodeMinBytes(original.min_bytes);
+        await waitForNodeMinAgreementBytes(original.min_agreement_bytes);
       }
     },
   });
@@ -328,23 +328,23 @@ async function main() {
 }
 
 /**
- * Wait until the provider node reports `minBytes` in its settings. The node
+ * Wait until the provider node reports `minAgreementBytes` in its settings. The node
  * reads its settings from finalized blocks, so it lags the best block that
  * `updateProviderSettings` waits for.
  */
-async function waitForNodeMinBytes(minBytes: bigint) {
+async function waitForNodeMinAgreementBytes(minAgreementBytes: bigint) {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     const { provider_registration_info } = await getProviderNodeInfo(PROVIDER_URL);
     if (
       provider_registration_info != null &&
-      BigInt(provider_registration_info.settings.min_bytes) === minBytes
+      BigInt(provider_registration_info.settings.min_agreement_bytes) === minAgreementBytes
     ) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  throw new Error(`provider node did not report min_bytes ${minBytes} within 60s`);
+  throw new Error(`provider node did not report min_agreement_bytes ${minAgreementBytes} within 60s`);
 }
 
 /**

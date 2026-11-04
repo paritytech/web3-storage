@@ -498,7 +498,7 @@ function OverviewContent() {
               <div>
                 <p className="text-sm text-gray-400">Min Agreement Size</p>
                 <p className="font-medium">
-                  {settings.minBytes === 0n ? 'No minimum' : formatBytes(Number(settings.minBytes))}
+                  {settings.minAgreementBytes === 0n ? 'No minimum' : formatBytes(Number(settings.minAgreementBytes))}
                 </p>
               </div>
               <div>

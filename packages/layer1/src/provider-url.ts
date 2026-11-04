@@ -180,8 +180,8 @@ export async function discoverAcceptingProvider(
     const provider = entry.value;
     if (!provider?.settings?.accepting_primary) continue;
     if (provider.deregister_at !== undefined) continue;
-    const { min_bytes, max_capacity, min_duration, max_duration } = provider.settings;
-    if (maxBytes < min_bytes) continue;
+    const { min_agreement_bytes, max_capacity, min_duration, max_duration } = provider.settings;
+    if (maxBytes < min_agreement_bytes) continue;
     // `max_capacity == 0` means unlimited.
     if (max_capacity > 0n && provider.committed_bytes + maxBytes > max_capacity) continue;
     if (duration < min_duration || duration > max_duration) continue;

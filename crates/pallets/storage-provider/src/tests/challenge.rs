@@ -2403,7 +2403,7 @@ mod challenge_tests {
                 replica_sync_price: Some(1u64),
                 accepting_extensions: true,
                 max_capacity: 0,
-                min_bytes: 0,
+                min_agreement_bytes: 0,
             };
             assert_ok!(StorageProvider::update_provider_settings(
                 RuntimeOrigin::signed(4),

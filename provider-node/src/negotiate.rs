@@ -60,10 +60,10 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
         return Err(Error::InvalidMaxBytesRequest);
     }
 
-    if req.max_bytes < info.settings.min_bytes {
+    if req.max_bytes < info.settings.min_agreement_bytes {
         return Err(Error::MaxBytesBelowMinimum {
             requested: req.max_bytes,
-            min_bytes: info.settings.min_bytes,
+            min_agreement_bytes: info.settings.min_agreement_bytes,
         });
     }
 
@@ -87,7 +87,7 @@ mod tests {
     use provider_types::{ProviderSettings, ProviderStats};
     use sp_runtime::AccountId32;
 
-    fn info(min_bytes: u64) -> ProviderInfo {
+    fn info(min_agreement_bytes: u64) -> ProviderInfo {
         ProviderInfo {
             multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
             public_key: vec![0; 32],
@@ -101,7 +101,7 @@ mod tests {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 0,
-                min_bytes,
+                min_agreement_bytes,
             },
             stats: ProviderStats::default(),
             deregister_at: None,
@@ -121,13 +121,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_max_bytes_below_min_bytes() {
+    fn rejects_max_bytes_below_min_agreement_bytes() {
         let err = validate_request(&request(99), &info(100)).unwrap_err();
         assert!(matches!(
             err,
             Error::MaxBytesBelowMinimum {
                 requested: 99,
-                min_bytes: 100
+                min_agreement_bytes: 100
             }
         ));
     }
@@ -139,12 +139,12 @@ mod tests {
     }
 
     #[test]
-    fn accepts_max_bytes_equal_to_min_bytes() {
+    fn accepts_max_bytes_equal_to_min_agreement_bytes() {
         assert!(validate_request(&request(100), &info(100)).is_ok());
     }
 
     #[test]
-    fn accepts_any_nonzero_max_bytes_when_min_bytes_is_zero() {
+    fn accepts_any_nonzero_max_bytes_when_min_agreement_bytes_is_zero() {
         assert!(validate_request(&request(1), &info(0)).is_ok());
     }
 }

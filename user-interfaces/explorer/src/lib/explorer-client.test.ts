@@ -41,7 +41,7 @@ function provider(overrides: Partial<ProviderRow>): ProviderRow {
       replicaSyncPrice: undefined,
       acceptingExtensions: true,
       maxCapacity: 0n,
-      minBytes: 0n,
+      minAgreementBytes: 0n,
     },
     stats: {
       registeredAt: 0,

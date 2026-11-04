@@ -332,7 +332,7 @@ fn add_primary_provider_works_on_a_frozen_bucket() {
 }
 
 #[test]
-fn add_primary_provider_fails_when_below_min_bytes() {
+fn add_primary_provider_fails_when_below_min_agreement_bytes() {
     new_test_ext().execute_with(|| {
         run_to_block(1);
         register_provider_with_settings(
@@ -340,7 +340,7 @@ fn add_primary_provider_fails_when_below_min_bytes() {
             200,
             ProviderSettings {
                 accepting_primary: true,
-                min_bytes: 51,
+                min_agreement_bytes: 51,
                 ..Default::default()
             },
         );

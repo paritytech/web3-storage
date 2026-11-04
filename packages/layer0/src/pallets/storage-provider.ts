@@ -93,7 +93,7 @@ export async function ensureProviderRegistered(
       replica_sync_price: undefined,
       accepting_extensions: true,
       max_capacity: 0n,
-      min_bytes: 0n,
+      min_agreement_bytes: 0n,
     },
     opts,
   );
@@ -109,7 +109,7 @@ export async function ensureProviderRegistered(
       readiness.provider_info_loaded &&
       provider_registration_info != null &&
       BigInt(provider_registration_info.settings.price_per_byte) === pricePerByte &&
-      BigInt(provider_registration_info.settings.min_bytes) === 0n;
+      BigInt(provider_registration_info.settings.min_agreement_bytes) === 0n;
     if (readiness.signing_configured && priceSynced) return;
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }

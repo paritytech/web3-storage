@@ -129,7 +129,7 @@ async function main() {
         replica_sync_price: stored.settings.replica_sync_price ?? undefined,
         accepting_extensions: stored.settings.accepting_extensions,
         max_capacity: stored.settings.max_capacity,
-        min_bytes: stored.settings.min_bytes,
+        min_agreement_bytes: stored.settings.min_agreement_bytes,
       };
       const originalPrice = BigInt(base.price_per_byte);
       const bumpedPrice = originalPrice + 1n;

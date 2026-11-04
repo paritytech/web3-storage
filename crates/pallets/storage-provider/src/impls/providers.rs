@@ -38,8 +38,8 @@ impl<T: Config> Pallet<T> {
             );
 
             ensure!(
-                settings.min_bytes <= settings.max_capacity,
-                Error::<T>::MinBytesExceedsMaxCapacity
+                settings.min_agreement_bytes <= settings.max_capacity,
+                Error::<T>::MinAgreementBytesExceedsMaxCapacity
             );
 
             // Validate stake backs declared capacity

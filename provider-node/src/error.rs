@@ -89,8 +89,11 @@ pub enum Error {
         max_capacity: u64,
     },
 
-    #[error("Requested {requested} bytes is below the provider's minimum of {min_bytes} bytes")]
-    MaxBytesBelowMinimum { requested: u64, min_bytes: u64 },
+    #[error("Requested {requested} bytes is below the provider's minimum of {min_agreement_bytes} bytes")]
+    MaxBytesBelowMinimum {
+        requested: u64,
+        min_agreement_bytes: u64,
+    },
 
     #[error("Provider is deregistering; not accepting new agreements")]
     ProviderDeregistering,
@@ -473,14 +476,14 @@ impl IntoResponse for Error {
             ),
             Error::MaxBytesBelowMinimum {
                 requested,
-                min_bytes,
+                min_agreement_bytes,
             } => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 ErrorResponse {
                     error: "max_bytes_below_minimum".to_string(),
                     details: Some(serde_json::json!({
                         "requested": requested,
-                        "min_bytes": min_bytes,
+                        "min_agreement_bytes": min_agreement_bytes,
                     })),
                 },
             ),

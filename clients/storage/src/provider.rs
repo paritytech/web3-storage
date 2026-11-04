@@ -163,7 +163,7 @@ impl ProviderClient {
             settings.replica_sync_price,
             settings.accepting_extensions,
             settings.max_capacity,
-            settings.min_bytes,
+            settings.min_agreement_bytes,
         );
 
         chain
@@ -569,8 +569,9 @@ pub struct ProviderSettings {
     pub accepting_extensions: bool,
     /// Maximum storage capacity in bytes. 0 = unlimited.
     pub max_capacity: u64,
-    /// Minimum `max_bytes` per agreement. 0 = no minimum.
-    pub min_bytes: u64,
+    /// Smallest agreement size, in bytes, that the provider accepts.
+    /// 0 = no minimum.
+    pub min_agreement_bytes: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -668,7 +669,7 @@ mod tests {
     async fn negotiate_reports_status_code_and_details() {
         let url = serve(
             StatusCode::UNPROCESSABLE_ENTITY,
-            r#"{"error":"max_bytes_below_minimum","details":{"requested":99,"min_bytes":100}}"#,
+            r#"{"error":"max_bytes_below_minimum","details":{"requested":99,"min_agreement_bytes":100}}"#,
         )
         .await;
         let err = ProviderClient::negotiate_terms(&url, &request())
@@ -684,7 +685,7 @@ mod tests {
                 assert_eq!(code.as_deref(), Some("max_bytes_below_minimum"));
                 assert_eq!(
                     details.as_ref().unwrap(),
-                    &json!({"requested": 99, "min_bytes": 100})
+                    &json!({"requested": 99, "min_agreement_bytes": 100})
                 );
             }
             other => panic!("unexpected error: {other:?}"),

@@ -348,7 +348,7 @@ impl<T: Config> Pallet<T> {
     ) -> Result<u64, DispatchError> {
         Self::validate_duration(&provider_info.settings, terms.duration)?;
         ensure!(
-            terms.max_bytes >= provider_info.settings.min_bytes,
+            terms.max_bytes >= provider_info.settings.min_agreement_bytes,
             Error::<T>::MaxBytesBelowMinimum
         );
 

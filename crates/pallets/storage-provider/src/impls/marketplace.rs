@@ -60,10 +60,10 @@ impl<T: Config> Pallet<T> {
             }
 
             // Check minimum agreement size
-            if score > 0 && requirements.bytes_needed < info.settings.min_bytes {
+            if score > 0 && requirements.bytes_needed < info.settings.min_agreement_bytes {
                 score = score.saturating_sub(50);
                 if partial_reason.is_none() {
-                    partial_reason = Some(PartialMatchReason::BelowMinBytes);
+                    partial_reason = Some(PartialMatchReason::BelowMinAgreementBytes);
                 }
             }
 
@@ -107,7 +107,7 @@ impl<T: Config> Pallet<T> {
                     .map(|p| p.saturated_into::<u128>()),
                 accepting_extensions: info.settings.accepting_extensions,
                 max_capacity,
-                min_bytes: info.settings.min_bytes,
+                min_agreement_bytes: info.settings.min_agreement_bytes,
                 available_capacity,
                 deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
                 stats: crate::runtime_api::ProviderStatsInfo::from(&info.stats),
@@ -156,7 +156,7 @@ impl<T: Config> Pallet<T> {
                 }
 
                 // Check minimum agreement size
-                if bytes_needed < info.settings.min_bytes {
+                if bytes_needed < info.settings.min_agreement_bytes {
                     return false;
                 }
 
@@ -197,7 +197,7 @@ impl<T: Config> Pallet<T> {
                             .map(|p| p.saturated_into::<u128>()),
                         accepting_extensions: info.settings.accepting_extensions,
                         max_capacity,
-                        min_bytes: info.settings.min_bytes,
+                        min_agreement_bytes: info.settings.min_agreement_bytes,
                         available_capacity,
                         deregister_at: info.deregister_at.map(|b| b.saturated_into::<u32>()),
                         stats: crate::runtime_api::ProviderStatsInfo::from(&info.stats),

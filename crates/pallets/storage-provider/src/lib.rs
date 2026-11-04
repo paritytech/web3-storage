@@ -548,9 +548,10 @@ pub mod pallet {
         /// Maximum storage capacity in bytes. 0 = unlimited (backward compatible).
         /// When set, provider cannot accept agreements that would exceed this capacity.
         pub max_capacity: u64,
-        /// Minimum `max_bytes` per agreement, primary or replica. 0 = no minimum.
-        /// Redeeming terms with a smaller `max_bytes` is rejected.
-        pub min_bytes: u64,
+        /// Smallest agreement size, in bytes, that the provider accepts, for
+        /// primary and replica agreements. 0 = no minimum.
+        /// The value must <= `max_bytes`.
+        pub min_agreement_bytes: u64,
     }
 
     impl<T: Config> Default for ProviderSettings<T> {
@@ -563,7 +564,7 @@ pub mod pallet {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 0, // 0 = unlimited (backward compatible)
-                min_bytes: 0,
+                min_agreement_bytes: 0,
             }
         }
     }
@@ -1168,10 +1169,10 @@ pub mod pallet {
         InsufficientStakeForCapacity,
         /// Provider settings specify `min_duration > max_duration`.
         MinDurationExceedsMaxDuration,
-        /// Provider settings specify `min_bytes > max_capacity` while
-        /// `max_capacity` is limited. Lower `min_bytes` or raise
+        /// Provider settings specify `min_agreement_bytes > max_capacity` while
+        /// `max_capacity` is limited. Lower `min_agreement_bytes` or raise
         /// `max_capacity`.
-        MinBytesExceedsMaxCapacity,
+        MinAgreementBytesExceedsMaxCapacity,
         /// Provider has already announced a deregistration; the action is
         /// rejected until they complete or cancel it.
         DeregisterAnnounced,
@@ -1353,7 +1354,7 @@ pub mod pallet {
         TermsBucketMismatch,
         /// Storage agreement requested 0 byte
         InvalidMaxBytesRequest,
-        /// The terms' `max_bytes` is below the provider's `min_bytes`.
+        /// The terms' `max_bytes` is below the provider's `min_agreement_bytes`.
         /// Negotiate a quote with at least that many bytes.
         MaxBytesBelowMinimum,
         /// A challenge against a provider on this bucket is still open.
@@ -1574,7 +1575,7 @@ pub mod pallet {
         /// Rejected while a deregistration is announced, if
         /// `min_duration > max_duration`, if capacity drops below the bytes
         /// already committed, if the stake cannot back the capacity, or if
-        /// `min_bytes` exceeds a limited `max_capacity`.
+        /// `min_agreement_bytes` exceeds a limited `max_capacity`.
         #[pallet::call_index(3)]
         #[pallet::weight(T::WeightInfo::update_provider_settings())]
         pub fn update_provider_settings(
@@ -1749,7 +1750,7 @@ pub mod pallet {
         /// provider-signed terms.
         ///
         /// Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the
-        /// provider's `min_bytes`.
+        /// provider's `min_agreement_bytes`.
         #[pallet::call_index(17)]
         #[pallet::weight(T::WeightInfo::create_bucket_with_primary())]
         pub fn create_bucket_with_primary(
@@ -1775,7 +1776,7 @@ pub mod pallet {
         /// current snapshot's signer bitfield.
         ///
         /// Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the
-        /// provider's `min_bytes`.
+        /// provider's `min_agreement_bytes`.
         #[pallet::call_index(18)]
         #[pallet::weight(T::WeightInfo::add_primary_provider())]
         pub fn add_primary_provider(
@@ -1990,7 +1991,7 @@ pub mod pallet {
         /// `replica_params: Some(_)` off-chain; the caller submits it here.
         ///
         /// Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the
-        /// provider's `min_bytes`.
+        /// provider's `min_agreement_bytes`.
         #[pallet::call_index(20)]
         #[pallet::weight(T::WeightInfo::add_replica_provider())]
         pub fn add_replica_provider(

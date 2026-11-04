@@ -79,12 +79,12 @@ describe("provider error bodies", () => {
   it("parses code and details from a JSON 422", () => {
     const body = JSON.stringify({
       error: "max_bytes_below_minimum",
-      details: { requested: 99, min_bytes: 100 },
+      details: { requested: 99, min_agreement_bytes: 100 },
     });
     const err = httpErrorFromBody(422, body, "/negotiate failed");
     expect(err.status).toBe(422);
     expect(err.code).toBe("max_bytes_below_minimum");
-    expect(err.details).toEqual({ requested: 99, min_bytes: 100 });
+    expect(err.details).toEqual({ requested: 99, min_agreement_bytes: 100 });
     expect(err.message).not.toContain("{");
   });
 
@@ -97,7 +97,7 @@ describe("provider error bodies", () => {
   });
 
   it("names the requested size and the minimum", () => {
-    const msg = describeProviderError("max_bytes_below_minimum", { requested: 99, min_bytes: 100 });
+    const msg = describeProviderError("max_bytes_below_minimum", { requested: 99, min_agreement_bytes: 100 });
     expect(msg).toContain("99 bytes");
     expect(msg).toContain("100 bytes");
   });

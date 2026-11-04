@@ -871,7 +871,7 @@ fn confirm_replica_sync_after_interval_with_new_root() {
 }
 
 #[test]
-fn add_replica_provider_fails_when_below_min_bytes() {
+fn add_replica_provider_fails_when_below_min_agreement_bytes() {
     new_test_ext().execute_with(|| {
         register_provider_with_settings(
             2,
@@ -879,7 +879,7 @@ fn add_replica_provider_fails_when_below_min_bytes() {
             ProviderSettings {
                 accepting_primary: true,
                 replica_sync_price: Some(10),
-                min_bytes: 51,
+                min_agreement_bytes: 51,
                 ..Default::default()
             },
         );

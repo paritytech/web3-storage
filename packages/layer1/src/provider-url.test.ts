@@ -23,7 +23,7 @@ interface ProviderEntry {
   value: {
     settings: {
       accepting_primary: boolean;
-      min_bytes: bigint;
+      min_agreement_bytes: bigint;
       max_capacity: bigint;
       min_duration: number;
       max_duration: number;
@@ -49,7 +49,7 @@ function entry(
     value: {
       settings: {
         accepting_primary: true,
-        min_bytes: 0n,
+        min_agreement_bytes: 0n,
         max_capacity: 0n,
         min_duration: 10,
         max_duration: 1000,
@@ -136,7 +136,7 @@ describe("resolveCreationTerms", () => {
 
   it("discovers a provider that fits the requested size and duration", async () => {
     const { calls, fetchImpl } = jsonFetch();
-    const api = fakeApi({ entries: [entry("5small", 1, { min_bytes: 4096n }), entry("5fits", 2)] });
+    const api = fakeApi({ entries: [entry("5small", 1, { min_agreement_bytes: 4096n }), entry("5fits", 2)] });
     const res = await resolveCreationTerms(api, {
       owner: "5own",
       maxBytes: 1024n,
@@ -192,7 +192,7 @@ describe("discoverAcceptingProvider", () => {
 
   it.each([
     ["deregistering", { deregister_at: 500 }],
-    ["min_bytes above the request", { min_bytes: 1025n }],
+    ["min_agreement_bytes above the request", { min_agreement_bytes: 1025n }],
     ["not enough free capacity", { max_capacity: 2000n, committed_bytes: 1000n }],
     ["duration below min_duration", { min_duration: 101 }],
     ["duration above max_duration", { max_duration: 99 }],
@@ -205,7 +205,7 @@ describe("discoverAcceptingProvider", () => {
   it("accepts a provider at the exact boundaries", async () => {
     const entries = [
       entry("5edge", 1, {
-        min_bytes: 1024n,
+        min_agreement_bytes: 1024n,
         max_capacity: 2048n,
         committed_bytes: 1024n,
         min_duration: 100,

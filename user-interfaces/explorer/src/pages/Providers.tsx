@@ -196,7 +196,7 @@ function ProviderDetails({ provider: p }: { provider: ProviderRow }) {
               </dd>
               <dt className="text-gray-400">Min agreement size</dt>
               <dd className="text-gray-200">
-                {s.minBytes === 0n ? 'No minimum' : formatBytes(s.minBytes)}
+                {s.minAgreementBytes === 0n ? 'No minimum' : formatBytes(s.minAgreementBytes)}
               </dd>
             </dl>
           </div>

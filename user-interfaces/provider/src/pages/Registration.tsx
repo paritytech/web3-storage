@@ -69,13 +69,13 @@ function requiredStakeForCapacity(maxCapacity: bigint): bigint {
   return maxCapacity * MIN_STAKE_PER_BYTE
 }
 
-// The runtime rejects settings with `min_bytes > max_capacity` when the
-// capacity is limited (`MinBytesExceedsMaxCapacity`).
-function minBytesExceedsCapacity(settings: ProviderSettings): boolean {
-  return settings.maxCapacity > 0n && settings.minBytes > settings.maxCapacity
+// The runtime rejects settings with `min_agreement_bytes > max_capacity` when the
+// capacity is limited (`MinAgreementBytesExceedsMaxCapacity`).
+function minAgreementBytesExceedsCapacity(settings: ProviderSettings): boolean {
+  return settings.maxCapacity > 0n && settings.minAgreementBytes > settings.maxCapacity
 }
 
-const MIN_BYTES_ERROR = 'Min agreement size cannot exceed max capacity.'
+const MIN_AGREEMENT_BYTES_ERROR = 'Min agreement size cannot exceed max capacity.'
 
 // Registration wizard steps
 type WizardStep = 'connect' | 'stake' | 'settings' | 'confirm' | 'complete'
@@ -109,7 +109,7 @@ export function Registration() {
     replicaSyncPrice: null,
     acceptingExtensions: true,
     maxCapacity: 1_099_511_627_776n, // 1 TB (2^40 bytes)
-    minBytes: 0n,
+    minAgreementBytes: 0n,
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -452,22 +452,22 @@ export function Registration() {
                 </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="minBytes">Min Agreement Size (bytes)</Label>
+                <Label htmlFor="minAgreementBytes">Min Agreement Size (bytes)</Label>
                 <Input
-                  id="minBytes"
-                  data-testid="registration-minbytes-input"
+                  id="minAgreementBytes"
+                  data-testid="registration-min-agreement-bytes-input"
                   type="number"
-                  value={settings.minBytes.toString()}
+                  value={settings.minAgreementBytes.toString()}
                   onChange={(e) =>
-                    setSettings({ ...settings, minBytes: BigInt(e.target.value || '0') })
+                    setSettings({ ...settings, minAgreementBytes: BigInt(e.target.value || '0') })
                   }
                 />
                 <p className="text-xs text-gray-500">
-                  {settings.minBytes === 0n ? '0 = no minimum' : formatBytes(Number(settings.minBytes))}
+                  {settings.minAgreementBytes === 0n ? '0 = no minimum' : formatBytes(Number(settings.minAgreementBytes))}
                 </p>
-                {minBytesExceedsCapacity(settings) && (
-                  <p data-testid="registration-minbytes-error" className="text-xs text-red-400">
-                    {MIN_BYTES_ERROR}
+                {minAgreementBytesExceedsCapacity(settings) && (
+                  <p data-testid="registration-min-agreement-bytes-error" className="text-xs text-red-400">
+                    {MIN_AGREEMENT_BYTES_ERROR}
                   </p>
                 )}
               </div>
@@ -561,7 +561,7 @@ export function Registration() {
                 data-testid="registration-settings-continue"
                 className="flex-1"
                 onClick={() => setStep('confirm')}
-                disabled={minBytesExceedsCapacity(settings)}
+                disabled={minAgreementBytesExceedsCapacity(settings)}
               >
                 Review & Confirm
                 <ArrowRight className="ml-2 h-4 w-4" />
@@ -603,7 +603,7 @@ export function Registration() {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Min Agreement Size</span>
-                <span>{settings.minBytes === 0n ? 'No minimum' : formatBytes(Number(settings.minBytes))}</span>
+                <span>{settings.minAgreementBytes === 0n ? 'No minimum' : formatBytes(Number(settings.minAgreementBytes))}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Duration Range</span>
@@ -963,21 +963,21 @@ function SettingsManager() {
               <p className="text-xs text-gray-500">{settings.maxCapacity === 0n ? '0 = unlimited' : formatBytes(Number(settings.maxCapacity))}</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="minBytes">Min Agreement Size</Label>
+              <Label htmlFor="minAgreementBytes">Min Agreement Size</Label>
               <Input
-                id="minBytes"
-                data-testid="settings-minbytes-input"
+                id="minAgreementBytes"
+                data-testid="settings-min-agreement-bytes-input"
                 type="number"
-                className={settings.minBytes === 0n ? 'text-gray-500' : ''}
-                value={settings.minBytes.toString()}
+                className={settings.minAgreementBytes === 0n ? 'text-gray-500' : ''}
+                value={settings.minAgreementBytes.toString()}
                 onChange={(e) =>
-                  setSettings({ ...settings, minBytes: BigInt(e.target.value || '0') })
+                  setSettings({ ...settings, minAgreementBytes: BigInt(e.target.value || '0') })
                 }
               />
-              <p className="text-xs text-gray-500">{settings.minBytes === 0n ? '0 = no minimum' : formatBytes(Number(settings.minBytes))}</p>
-              {minBytesExceedsCapacity(settings) && (
-                <p data-testid="settings-minbytes-error" className="text-xs text-red-400">
-                  {MIN_BYTES_ERROR}
+              <p className="text-xs text-gray-500">{settings.minAgreementBytes === 0n ? '0 = no minimum' : formatBytes(Number(settings.minAgreementBytes))}</p>
+              {minAgreementBytesExceedsCapacity(settings) && (
+                <p data-testid="settings-min-agreement-bytes-error" className="text-xs text-red-400">
+                  {MIN_AGREEMENT_BYTES_ERROR}
                 </p>
               )}
             </div>
@@ -1070,7 +1070,7 @@ function SettingsManager() {
         className="w-full"
         size="lg"
         onClick={handleUpdate}
-        disabled={isSubmitting || minBytesExceedsCapacity(settings)}
+        disabled={isSubmitting || minAgreementBytesExceedsCapacity(settings)}
       >
         {isSubmitting ? (
           <>

@@ -49,8 +49,8 @@ pub enum PartialMatchReason {
     DurationMismatch,
     /// Provider is not accepting agreements.
     NotAccepting,
-    /// Requested bytes are below the provider's `min_bytes`.
-    BelowMinBytes,
+    /// Requested bytes are below the provider's `min_agreement_bytes`.
+    BelowMinAgreementBytes,
 }
 
 /// Provider matching result.
@@ -89,8 +89,9 @@ pub struct ProviderInfo {
     pub committed_bytes: u64,
     /// Maximum capacity (0 = unlimited).
     pub max_capacity: u64,
-    /// Smallest agreement `max_bytes` the provider accepts (0 = no minimum).
-    pub min_bytes: u64,
+    /// Smallest agreement size, in bytes, that the provider accepts
+    /// (0 = no minimum).
+    pub min_agreement_bytes: u64,
     /// Free capacity per the chain; `None` is unlimited, not `Some(0)` ("full").
     pub available_capacity: Option<u64>,
     /// Minimum agreement duration.
@@ -132,7 +133,7 @@ impl From<rt_api::ProviderInfoResponse> for ProviderInfo {
             stake: p.stake,
             committed_bytes: p.committed_bytes,
             max_capacity: p.max_capacity,
-            min_bytes: p.min_bytes,
+            min_agreement_bytes: p.min_agreement_bytes,
             available_capacity: p.available_capacity,
             min_duration: p.min_duration,
             max_duration: p.max_duration,
@@ -159,7 +160,7 @@ impl From<rt_api::PartialMatchReason> for PartialMatchReason {
             rt_api::PartialMatchReason::InsufficientCapacity => Self::InsufficientCapacity,
             rt_api::PartialMatchReason::DurationMismatch => Self::DurationMismatch,
             rt_api::PartialMatchReason::NotAccepting => Self::NotAccepting,
-            rt_api::PartialMatchReason::BelowMinBytes => Self::BelowMinBytes,
+            rt_api::PartialMatchReason::BelowMinAgreementBytes => Self::BelowMinAgreementBytes,
         }
     }
 }
@@ -539,7 +540,7 @@ mod tests {
                 stake: 0,
                 committed_bytes: 0,
                 max_capacity: 0,
-                min_bytes: 4096,
+                min_agreement_bytes: 4096,
                 available_capacity: None,
                 min_duration: 10,
                 max_duration: 100,
@@ -569,7 +570,7 @@ mod tests {
 
     #[test]
     fn partial_matches_are_not_full_matches() {
-        assert!(!matched(50, Some(PartialMatchReason::BelowMinBytes)).is_full_match());
+        assert!(!matched(50, Some(PartialMatchReason::BelowMinAgreementBytes)).is_full_match());
         assert!(!matched(100, Some(PartialMatchReason::PriceTooHigh)).is_full_match());
         assert!(!matched(50, None).is_full_match());
     }
