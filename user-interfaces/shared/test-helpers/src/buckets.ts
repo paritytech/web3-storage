@@ -21,12 +21,10 @@ const DEFAULT_DURATION = 10_000;
 // look up the bucket ids they created instead of expecting an empty list.
 
 export interface CreateBucketOptions {
-  /** Bytes to reserve. Default 10 MB. Alias: `maxCapacity`. */
-  maxBytes?: bigint;
+  /** Bytes to reserve. Default 10 MB. */
   maxCapacity?: bigint;
-  /** Agreement duration in blocks. Default 10_000. Alias: `storagePeriod`. */
+  /** Agreement duration in blocks. Default 10_000. */
   duration?: number;
-  storagePeriod?: number;
   /** Read visibility of the bucket (default Private). */
   visibility?: "Public" | "Private";
 }
@@ -48,8 +46,8 @@ export async function createBucketViaApi(
   const api = getApi();
   const storage = new Web3Storage({ api, signer, providerUrl: DEV_PROVIDER_URL });
   const { bucketId } = await storage.createBucket({
-    maxCapacity: opts.maxCapacity ?? opts.maxBytes ?? DEFAULT_MAX_BYTES,
-    duration: opts.storagePeriod ?? opts.duration ?? DEFAULT_DURATION,
+    maxCapacity: opts.maxCapacity ?? DEFAULT_MAX_BYTES,
+    duration: opts.duration ?? DEFAULT_DURATION,
     visibility: opts.visibility,
   });
   return { bucketId };
