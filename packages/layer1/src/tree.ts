@@ -6,7 +6,7 @@
  * can move to another structure (#410) without touching the clients.
  *
  * Format: `DirectoryNode` and `FileManifest` from
- * `crates/primitives/file-system`, SCALE-encoded, each stored as a blob whose
+ * `clients/file-system/src/format.rs`, SCALE-encoded, each stored as a blob whose
  * CID is its `data_root`. A directory entry points at a child directory's
  * node or a file's manifest; a manifest lists the content chunk hashes.
  *
@@ -48,7 +48,7 @@ import {
   toHex,
   createLimiter,
   validateDirectoryNode,
-  verifyLastMmrLeaf,
+  verifyMmrProof,
   type DirectoryEntry,
   type DirectoryNode,
   type FileManifest,
@@ -140,7 +140,7 @@ export function providerBlobStore(
       // The proof ties the last leaf to the provider's MMR root. That root is
       // the provider's claim until compared with an on-chain checkpoint; the
       // commitment signature is not checked here.
-      if (!verifyLastMmrLeaf(proof, commitment.mmrRoot, commitment.leafCount)) {
+      if (!verifyMmrProof(proof, commitment.leafCount - 1n, commitment.mmrRoot, commitment.leafCount)) {
         throw new Error(`Bucket ${bucketId}: the provider's MMR proof for the last leaf is invalid`);
       }
       return proof.leaf.dataRoot;

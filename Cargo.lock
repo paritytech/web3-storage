@@ -3312,11 +3312,13 @@ dependencies = [
 name = "file-system-client"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "async-trait",
+ "axum",
  "client-test-support",
- "file-system-primitives",
  "parity-scale-codec",
  "reqwest",
+ "sp-core",
  "sp-runtime",
  "storage-client",
  "storage-primitives",
@@ -3325,20 +3327,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.23",
-]
-
-[[package]]
-name = "file-system-primitives"
-version = "0.1.0"
-dependencies = [
- "array-bytes 6.2.3",
- "parity-scale-codec",
- "scale-info",
- "serde",
- "sp-core",
- "sp-runtime",
- "storage-primitives",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -7989,7 +7977,6 @@ dependencies = [
  "base64",
  "client-test-support",
  "file-system-client",
- "file-system-primitives",
  "futures",
  "serde_json",
  "sp-core",

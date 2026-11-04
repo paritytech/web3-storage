@@ -102,7 +102,7 @@ itself and use only the provider's Layer 0 routes (`PUT /node`,
 `packages/layer1/src/tree.ts`:
 
 - Directories and files are SCALE-encoded `DirectoryNode` and
-  `FileManifest` blobs (`crates/primitives/file-system`). A blob's CID is
+  `FileManifest` blobs (`clients/file-system/src/format.rs`). A blob's CID is
   its `data_root` (`computeDataRoot`).
 - The root directory's CID is the bucket's last MMR leaf. A bucket with no
   leaves is an empty drive.
@@ -140,7 +140,7 @@ Rules for callers:
 | `fs.downloadFile`, `s3.getObject` | **Yes** | the path resolves through CID-checked directory and manifest blobs from the root CID |
 
 The root CID comes from the provider's last MMR leaf, checked against the
-provider's MMR root with `verifyLastMmrLeaf`. That MMR root is the provider's
+provider's MMR root with `verifyMmrProof`. That MMR root is the provider's
 claim until it is compared with an on-chain checkpoint.
 
 Provider requests are signed (`Web3Storage <pubkey>:<sig>:<timestamp>` per

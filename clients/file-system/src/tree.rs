@@ -49,15 +49,15 @@
 //!   (`GET /commitment`, `GET /mmr_proof`) needs Reader on a private bucket.
 //!   Confidential data needs client-side encryption.
 
-use crate::{FsClientError, Result};
-use codec::MaxEncodedLen;
-use file_system_primitives::{
+use crate::format::{
     compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest, FileSystemError,
     MetadataEntry,
 };
+use crate::{FsClientError, Result};
+use codec::MaxEncodedLen;
 use std::collections::HashSet;
 use storage_client::{ChunkingStrategy, StorageUserClient};
-use storage_primitives::{verify_last_mmr_leaf, BucketId};
+use storage_primitives::{verify_mmr_proof, BucketId, Commitment};
 
 /// The length of a blob to read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,7 +139,7 @@ impl BlobStore for StorageUserClient {
 
     /// Reads the commitment, then the MMR proof of leaf `leaf_count - 1`, and
     /// checks that the proof is for the last leaf of the commitment's MMR
-    /// ([`verify_last_mmr_leaf`]). The provider signs the commitment; this
+    /// ([`verify_mmr_proof`]). The provider signs the commitment; this
     /// does not check that signature.
     async fn last_leaf(&self, bucket_id: BucketId) -> Result<Option<Cid>> {
         let Some(commitment) = self
@@ -157,7 +157,12 @@ impl BlobStore for StorageUserClient {
             .await
             .map_err(storage_error)?;
         let data_root = proof.leaf.data_root;
-        if !verify_last_mmr_leaf(proof, &commitment.mmr_root, commitment.leaf_count) {
+        let mmr = Commitment {
+            mmr_root: commitment.mmr_root,
+            start_seq: commitment.start_seq,
+            leaf_count: commitment.leaf_count,
+        };
+        if !verify_mmr_proof(proof, commitment.leaf_count - 1, &mmr) {
             return Err(FsClientError::InvalidMmrProof(bucket_id));
         }
         Ok(Some(data_root))
@@ -242,7 +247,7 @@ pub enum EmptyParents {
 ///
 /// A path starts with `/`, separates names with `/`, and has no empty name
 /// (no trailing or double `/`). Each name follows
-/// [`file_system_primitives::validate_entry_name`].
+/// [`crate::format::validate_entry_name`].
 pub fn parse_path(path: &str) -> Result<Vec<&str>> {
     let invalid = || FsClientError::InvalidPath(path.to_string());
     let rest = path.strip_prefix('/').ok_or_else(invalid)?;
@@ -251,7 +256,7 @@ pub fn parse_path(path: &str) -> Result<Vec<&str>> {
     }
     rest.split('/')
         .map(|name| {
-            file_system_primitives::validate_entry_name(name.as_bytes())
+            crate::format::validate_entry_name(name.as_bytes())
                 .map(|_| name)
                 .map_err(|_| invalid())
         })
@@ -907,7 +912,7 @@ mod tests {
         assert_eq!(names(&t.list("/a").await.unwrap()), ["x", "z"]);
     }
 
-    const DEFAULT: &str = file_system_primitives::DEFAULT_MIME_TYPE;
+    const DEFAULT: &str = crate::format::DEFAULT_MIME_TYPE;
 
     #[tokio::test]
     async fn put_file_replaces_and_rejects_directories() {
@@ -1047,7 +1052,7 @@ mod tests {
             .unwrap();
         }
         let bytes = root.to_scale_bytes();
-        assert!(bytes.len() > file_system_primitives::CHUNK_SIZE);
+        assert!(bytes.len() > crate::format::CHUNK_SIZE);
         store.raw_commit(&bytes);
         let loaded = t.load_root().await.unwrap();
         assert_eq!(loaded.node, root);

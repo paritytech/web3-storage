@@ -45,9 +45,10 @@
 //! let bytes = fs_client.download_file(bucket_id, "/documents/report.pdf").await?;
 //! ```
 
+pub mod format;
 pub mod tree;
 
-use file_system_primitives::{Cid, DirectoryEntry, DEFAULT_MIME_TYPE};
+use crate::format::{Cid, DirectoryEntry, DEFAULT_MIME_TYPE};
 use sp_runtime::AccountId32;
 use std::sync::Arc;
 use storage_client::substrate::{created_bucket_id, SubstrateClient};

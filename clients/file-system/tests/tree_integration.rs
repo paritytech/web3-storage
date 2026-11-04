@@ -4,10 +4,59 @@
 //! only. No chain is needed.
 
 use client_test_support::{make_client, start_test_provider};
+use file_system_client::format::{compute_cid, DirectoryNode, DEFAULT_MIME_TYPE};
 use file_system_client::{EmptyParents, FsClientError, Tree};
-use file_system_primitives::{compute_cid, DirectoryNode, DEFAULT_MIME_TYPE};
 
 const BUCKET: u64 = 1;
+
+/// Start a proxy in front of `provider` that answers every `GET /mmr_proof`
+/// with the proof of leaf 0. It forwards other requests and returns the
+/// status, `Content-Type` and body.
+async fn start_older_leaf_proxy(provider: String) -> String {
+    use axum::{body::Body, extract::Request, http::header, response::Response};
+
+    let http = reqwest::Client::new();
+    let app = axum::Router::new().fallback(move |req: Request| {
+        let (http, provider) = (http.clone(), provider.clone());
+        async move {
+            let (parts, body) = req.into_parts();
+            let mut url = reqwest::Url::parse(&format!("{provider}{}", parts.uri)).unwrap();
+            if url.path() == "/mmr_proof" {
+                let pairs: Vec<(String, String)> = url
+                    .query_pairs()
+                    .map(|(k, v)| {
+                        let v = if k == "leaf_index" {
+                            "0".into()
+                        } else {
+                            v.into_owned()
+                        };
+                        (k.into_owned(), v)
+                    })
+                    .collect();
+                url.query_pairs_mut().clear().extend_pairs(pairs);
+            }
+            let mut headers = parts.headers;
+            headers.remove(header::HOST);
+            let body = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+            let resp = http
+                .request(parts.method, url)
+                .headers(headers)
+                .body(body)
+                .send()
+                .await
+                .unwrap();
+            let mut out = Response::builder().status(resp.status());
+            if let Some(content_type) = resp.headers().get(header::CONTENT_TYPE) {
+                out = out.header(header::CONTENT_TYPE, content_type);
+            }
+            out.body(Body::from(resp.bytes().await.unwrap())).unwrap()
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}")
+}
 
 #[tokio::test]
 async fn empty_bucket_has_empty_root() {
@@ -17,6 +66,29 @@ async fn empty_bucket_has_empty_root() {
     let root = tree.load_root().await.unwrap();
     assert_eq!(root.cid, None);
     assert!(tree.list("/").await.unwrap().is_empty());
+}
+
+/// Root discovery rejects a proof for a leaf other than the last one.
+#[tokio::test]
+async fn proof_for_an_older_leaf_is_rejected() {
+    let url = start_test_provider().await;
+    let writer = make_client(url.clone());
+    // `put_file` commits the content, manifest and root as separate leaves,
+    // so leaf 0 is not the last leaf.
+    Tree::new(&writer, BUCKET)
+        .put_file("/a.txt", b"a", DEFAULT_MIME_TYPE, vec![])
+        .await
+        .unwrap();
+
+    let reader_client = make_client(start_older_leaf_proxy(url).await);
+    let err = Tree::new(&reader_client, BUCKET)
+        .load_root()
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, FsClientError::InvalidMmrProof(BUCKET)),
+        "{err:?}"
+    );
 }
 
 /// A second client instance finds the root through the bucket's last MMR

@@ -39,7 +39,6 @@ export {
   splitChunks,
   verifyChunkProof,
   verifyMmrProof,
-  verifyLastMmrLeaf,
   createLimiter,
   u64le,
   ScaleError,

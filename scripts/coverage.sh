@@ -38,7 +38,6 @@ COV_SKIP_PACKAGES=(
 	s3-client # layer-1 SDK; src is excluded by COV_IGNORE (clients/*/src)
 	client-test-support # dev-only helpers for the client crates' tests; src is excluded by COV_IGNORE (clients/*/src)
 	storage-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
-	file-system-primitives # format types and checks; excluded by COV_IGNORE (/primitives/)
 	provider-events # pure types; no tests of its own
 	storage-parachain-runtime # exercised out of process (zombienet e2e)
 	storage-paseo-runtime # exercised out of process (zombienet e2e)

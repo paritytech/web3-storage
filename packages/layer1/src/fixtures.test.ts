@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Cross-language fixtures for the in-bucket file-system format, in
- * `examples/fixtures/`. `rust-written.json` comes from
- * `clients/s3/src/tests/fixtures.rs`; this test loads it into a fake provider and
- * reads it. It also runs the same write sequence and checks the result
- * against `ts-written.json`, which the Rust test reads. See the Rust module
- * for the fixture format.
- *
- * Regenerate `ts-written.json` with
- * `UPDATE_FS_FIXTURES=1 npm run -s test:unit -- fixtures` in packages/layer1.
+ * Cross-language check of the in-bucket file-system format. The Rust test
+ * `clients/s3/src/tests/fixtures.rs` runs a write sequence and writes the
+ * bucket to `.test-vectors/fs-bucket.json` (`just fs-fixture`). This test
+ * loads that bucket into a fake provider and reads it, then runs the same
+ * write sequence and checks that it produces the same blobs and commits.
+ * See the Rust module for the fixture format. Skipped locally if the file is
+ * missing; required in CI.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   base64ToBytes,
@@ -26,7 +24,7 @@ import {
 } from "@web3-storage/core";
 import { commitDataRoots, makeSigner, readBlob, uploadBlob } from "@web3-storage/layer0";
 
-import { FakeProvider } from "../../layer0/src/fake-provider.testing.js";
+import { FakeProvider } from "@web3-storage/layer0/testing";
 import { S3Client } from "./s3/client.js";
 import { FsTree, providerBlobStore } from "./tree.js";
 
@@ -35,12 +33,10 @@ const BUCKET = 7n;
 const MTIME = 1_700_000_000n;
 const GENERATOR = "byte i is i % 251";
 const BIG_SIZE = 3 * DEFAULT_CHUNK_SIZE + 100;
-const UPDATE_ENV = "UPDATE_FS_FIXTURES";
 /** Hashing the multi-chunk file several times in JS takes a few seconds. */
 const TIMEOUT_MS = 60_000;
-const FIXTURES = new URL("../../../examples/fixtures/", import.meta.url);
-const TS_ABOUT =
-  "Written by packages/layer1/src/fixtures.test.ts; read by clients/s3/src/tests/fixtures.rs. Regenerate: UPDATE_FS_FIXTURES=1 npm run -s test:unit -- fixtures (in packages/layer1)";
+const FIXTURE = new URL("../../../.test-vectors/fs-bucket.json", import.meta.url);
+const fixtureMissing = !process.env.CI && !existsSync(FIXTURE);
 
 const signer = makeSigner("//Alice");
 const te = new TextEncoder();
@@ -57,18 +53,6 @@ interface Fixture {
 
 function generate(size: number): Uint8Array {
   return Uint8Array.from({ length: size }, (_, i) => i % 251);
-}
-
-/** JSON with object keys sorted, formatted like `serde_json::to_string_pretty`. */
-function canonicalJson(value: Json): string {
-  const sortKeys = (v: Json): Json => {
-    if (Array.isArray(v)) return v.map(sortKeys);
-    if (v && typeof v === "object") {
-      return Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])]));
-    }
-    return v;
-  };
-  return JSON.stringify(sortKeys(value), null, 2) + "\n";
 }
 
 function setup(provider: FakeProvider) {
@@ -145,13 +129,13 @@ async function expected(provider: FakeProvider): Promise<Json> {
   };
 }
 
-/** The fixture JSON for the bucket in `provider`. */
-async function fixture(provider: FakeProvider): Promise<string> {
+/** The blobs and commits of the bucket in `provider`, in the fixture format. */
+async function written(provider: FakeProvider): Promise<Pick<Fixture, "blobs" | "generated_blobs" | "commits">> {
   const commits: string[][] = provider.calls
     .filter((c) => c.method === "POST" && c.path === "/commit")
     .map((c) => (c.body.data_roots as string[]).map((r) => r.toLowerCase()));
   const blobs: Record<string, string> = {};
-  const generated: Json[] = [];
+  const generated: Fixture["generated_blobs"] = [];
   for (const cid of [...new Set(commits.flat())].sort()) {
     const bytes = await readBlob(PROVIDER, BUCKET, cid, { fetch: provider.fetch });
     if (bytes.length > DEFAULT_CHUNK_SIZE) {
@@ -166,15 +150,7 @@ async function fixture(provider: FakeProvider): Promise<string> {
       blobs[cid] = bytesToBase64(bytes);
     }
   }
-  return canonicalJson({
-    about: TS_ABOUT,
-    bucket_id: Number(BUCKET),
-    mtime: Number(MTIME),
-    blobs,
-    generated_blobs: generated,
-    commits,
-    expected: await expected(provider),
-  });
+  return { blobs, generated_blobs: generated, commits };
 }
 
 /**
@@ -201,39 +177,25 @@ async function load(f: Fixture): Promise<FakeProvider> {
   return provider;
 }
 
-function readFixture(name: string): Fixture {
-  return JSON.parse(readFileSync(new URL(name, FIXTURES), "utf8")) as Fixture;
-}
-
-describe("cross-language fixtures", () => {
+describe("cross-language fixture", () => {
   afterEach(() => vi.useRealTimers());
 
-  it("reads the bucket the Rust client wrote", async () => {
-    const f = readFixture("rust-written.json");
-    const provider = await load(f);
-    const lastCommit = f.commits[f.commits.length - 1];
-    expect(f.expected.root_cid).toBe(lastCommit[lastCommit.length - 1]);
-    expect(await expected(provider)).toEqual(f.expected);
+  it.skipIf(fixtureMissing)(
+    "reads the bucket the Rust client wrote and writes the same bucket",
+    async () => {
+      expect(existsSync(FIXTURE), "FS fixture missing; run `just fs-fixture`").toBe(true);
+      const f = JSON.parse(readFileSync(FIXTURE, "utf8")) as Fixture;
+      const provider = await load(f);
+      const lastCommit = f.commits[f.commits.length - 1];
+      expect(f.expected.root_cid).toBe(lastCommit[lastCommit.length - 1]);
+      expect(await expected(provider)).toEqual(f.expected);
 
-    // Both languages write the same bucket for the same operations.
-    const ts = new FakeProvider();
-    await writeSequence(ts);
-    expect(await expected(ts)).toEqual(f.expected);
-  }, TIMEOUT_MS);
-
-  it("ts-written.json is current", async () => {
-    const provider = new FakeProvider();
-    await writeSequence(provider);
-    const produced = await fixture(provider);
-
-    // The fixture loads back and reads the same.
-    const parsed = JSON.parse(produced) as Fixture;
-    expect(await expected(await load(parsed))).toEqual(parsed.expected);
-
-    const url = new URL("ts-written.json", FIXTURES);
-    if (process.env[UPDATE_ENV]) writeFileSync(url, produced);
-    expect(readFileSync(url, "utf8"), `ts-written.json is out of date; regenerate it with ${UPDATE_ENV}=1`).toBe(
-      produced,
-    );
-  }, TIMEOUT_MS);
+      // Both languages write the same bucket for the same operations.
+      const ts = new FakeProvider();
+      await writeSequence(ts);
+      expect(await written(ts)).toEqual({ blobs: f.blobs, generated_blobs: f.generated_blobs, commits: f.commits });
+      expect(await expected(ts)).toEqual(f.expected);
+    },
+    TIMEOUT_MS,
+  );
 });
