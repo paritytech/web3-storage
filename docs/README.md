@@ -48,7 +48,7 @@ Unratified / WIP notes. **These need triage** ([#308](https://github.com/parityt
 - **[Checkpoint Protocol](./drafts/CHECKPOINT_PROTOCOL.md)** — multi-provider checkpoint coordination.
 - **[Provider-Initiated Checkpoints](./drafts/provider-initiated-checkpoints.md)** — extension where providers proactively commit state; removed in #306, archived (design + implementation) for potential re-evaluation.
 - **[Client-Side Encryption](./drafts/CLIENT_SIDE_ENCRYPTION.md)** — wire format, cipher choice.
-- **[S3 Metadata Index](./drafts/S3_METADATA_INDEX.md)** — how prefix/delimiter queries are served.
+- **[S3 Metadata Index](./drafts/S3_METADATA_INDEX.md)** — the provider-side prefix/delimiter index; removed with the provider `/s3` routes (#514), archived for reference.
 - **[Challenge Economics — Extensions](./drafts/challenge-economics-extensions.md)** — speculative "Capped Split for the general public"; also records that the design's two-tier challenger split isn't implemented yet.
 
 ## Clients

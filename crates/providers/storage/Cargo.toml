@@ -8,10 +8,9 @@ repository.workspace = true
 description = "Storage engine for provider nodes: backends and MMR commitments"
 
 [dependencies]
-storage-primitives = { workspace = true, features = ["serde", "std"] }
+storage-primitives = { workspace = true, features = ["std"] }
 codec = { workspace = true, features = ["std"] }
 rocksdb = { workspace = true }
-serde = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }
 tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }

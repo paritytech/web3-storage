@@ -7118,7 +7118,6 @@ dependencies = [
  "array-bytes 6.2.3",
  "parity-scale-codec",
  "rocksdb",
- "serde",
  "sp-core",
  "storage-primitives",
  "tempfile",
