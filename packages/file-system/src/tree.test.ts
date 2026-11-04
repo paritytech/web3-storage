@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import {
-  computeDataRoot,
-  decodeDirectoryNode,
-  DIRECTORY_NODE_MAX_SIZE,
-  encodeDirectoryNode,
-  hexToBytes,
-  toHex,
-} from "@web3-storage/core";
+import { computeDataRoot, hexToBytes, toHex } from "@web3-storage/core";
 import { commitDataRoots, makeSigner, uploadBlob } from "@web3-storage/layer0";
-
 import { FakeProvider } from "@web3-storage/layer0/testing";
+
+import { decodeDirectoryNode, DIRECTORY_NODE_MAX_SIZE, encodeDirectoryNode } from "./format.js";
 import { commitOrder, FileSystemError, FsTree, parsePath, providerBlobStore } from "./tree.js";
 
 const PROVIDER = "http://provider.test";

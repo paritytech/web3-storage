@@ -7,8 +7,8 @@
  * its `data_root` ({@link computeDataRoot}).
  */
 
-import { compareBytes } from "./bytes.js";
-import { computeDataRoot } from "./merkle.js";
+import { compareBytes, computeDataRoot } from "@web3-storage/core";
+
 import { ScaleError, ScaleReader, ScaleWriter } from "./scale.js";
 
 /** Bounds of the Rust `BoundedVec`s (`Max*` types in the primitives crate). */

@@ -1,14 +1,12 @@
 {
-  "name": "@web3-storage/layer1",
+  "name": "@web3-storage/file-system",
   "version": "0.1.0",
   "private": true,
-  "description": "Layer-1 storage interfaces (#123 layout): FileSystemClient (drives) and S3Client (buckets/objects) over the layer-0 chain binding + provider HTTP. Depends on @web3-storage/layer0 and @web3-storage/core only.",
+  "description": "A file system and S3-style objects stored in a Layer 0 bucket: the on-bucket format, the copy-on-write tree and the object view. Needs a provider URL and a signer, no chain connection.",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./fs": "./src/fs/index.ts",
-    "./s3": "./src/s3/index.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

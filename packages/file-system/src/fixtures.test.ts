@@ -11,7 +11,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -25,7 +25,7 @@ import {
 import { commitDataRoots, makeSigner, readBlob, uploadBlob } from "@web3-storage/layer0";
 
 import { FakeProvider } from "@web3-storage/layer0/testing";
-import { S3Client } from "./s3/client.js";
+import { Objects } from "./objects.js";
 import { FsTree, providerBlobStore } from "./tree.js";
 
 const PROVIDER = "http://provider.test";
@@ -58,7 +58,7 @@ function generate(size: number): Uint8Array {
 function setup(provider: FakeProvider) {
   const http = { fetch: provider.fetch };
   const tree = new FsTree(providerBlobStore(PROVIDER, BUCKET, signer, http), () => MTIME);
-  const s3 = new S3Client({ api: {} as never, signer, providerUrl: PROVIDER, fetch: provider.fetch });
+  const s3 = new Objects(tree);
   return { tree, s3 };
 }
 
@@ -70,16 +70,10 @@ async function writeSequence(provider: FakeProvider): Promise<void> {
   await tree.putFile("/docs/old.txt", te.encode("deleted later"), { contentType: "text/plain" });
   await tree.putFile("/big.bin", generate(BIG_SIZE));
   await tree.putFile("/empty", new Uint8Array(0));
-  // S3Client uses the system clock for mtime.
-  vi.useFakeTimers({ toFake: ["Date"], now: Number(MTIME) * 1000 });
-  try {
-    await s3.putObject(BUCKET, "photos/cat.jpg", te.encode("meow"), {
-      contentType: "image/jpeg",
-      metadata: { Zeta: "last", alpha: "first", "Camera-Model": "X100" },
-    });
-  } finally {
-    vi.useRealTimers();
-  }
+  await s3.putObject("photos/cat.jpg", te.encode("meow"), {
+    contentType: "image/jpeg",
+    metadata: { Zeta: "last", alpha: "first", "Camera-Model": "X100" },
+  });
   await tree.delete("/docs/old.txt");
 }
 
@@ -109,9 +103,9 @@ async function expected(provider: FakeProvider): Promise<Json> {
       user_metadata: Object.entries(file.userMetadata).map(([k, v]) => [k, v]),
     };
   }
-  const object = await s3.getObject(BUCKET, "photos/cat.jpg");
+  const object = await s3.getObject("photos/cat.jpg");
   const { data, key: _key, ...head } = object;
-  expect(await s3.headObject(BUCKET, "photos/cat.jpg")).toEqual({ key: "photos/cat.jpg", ...head });
+  expect(await s3.headObject("photos/cat.jpg")).toEqual({ key: "photos/cat.jpg", ...head });
   return {
     root_cid: await tree.rootCid(),
     listings,
@@ -178,8 +172,6 @@ async function load(f: Fixture): Promise<FakeProvider> {
 }
 
 describe("cross-language fixture", () => {
-  afterEach(() => vi.useRealTimers());
-
   it.skipIf(fixtureMissing)(
     "reads the bucket the Rust client wrote and writes the same bucket",
     async () => {

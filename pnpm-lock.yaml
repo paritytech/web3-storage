@@ -71,6 +71,25 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@types/node@26.6.5)(vite@8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
+  packages/file-system:
+    dependencies:
+      '@web3-storage/core':
+        specifier: workspace:*
+        version: link:../core
+      '@web3-storage/layer0':
+        specifier: workspace:*
+        version: link:../layer0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.5
+        version: 26.6.5
+      typescript:
+        specifier: ~7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@26.6.5)(vite@8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+
   packages/layer0:
     dependencies:
       '@polkadot-api/descriptors':
@@ -108,25 +127,6 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@types/node@26.6.5)(vite@8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
-  packages/layer1:
-    dependencies:
-      '@web3-storage/core':
-        specifier: workspace:*
-        version: link:../core
-      '@web3-storage/layer0':
-        specifier: workspace:*
-        version: link:../layer0
-    devDependencies:
-      '@types/node':
-        specifier: ^26.6.5
-        version: 26.6.5
-      typescript:
-        specifier: ~7.0.2
-        version: 7.0.2
-      vitest:
-        specifier: ^5.0.5
-        version: 5.0.5(@types/node@26.6.5)(vite@8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
-
   packages/papi:
     dependencies:
       '@multiformats/multiaddr-to-uri':
@@ -160,12 +160,12 @@ importers:
       '@web3-storage/core':
         specifier: workspace:*
         version: link:../core
+      '@web3-storage/file-system':
+        specifier: workspace:*
+        version: link:../file-system
       '@web3-storage/layer0':
         specifier: workspace:*
         version: link:../layer0
-      '@web3-storage/layer1':
-        specifier: workspace:*
-        version: link:../layer1
       polkadot-api:
         specifier: ^3.3.0
         version: 3.3.0(esbuild@0.28.2)(rxjs@7.8.2)

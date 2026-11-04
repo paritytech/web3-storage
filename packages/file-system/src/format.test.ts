@@ -15,10 +15,9 @@ import {
   FS_LIMITS,
   type DirectoryNode,
   type FileManifest,
-} from "./file-system.js";
-import { computeDataRoot, hashLeaf } from "./merkle.js";
+} from "./format.js";
+import { computeDataRoot, hashLeaf, hexToBytes, toHex } from "@web3-storage/core";
 import { ScaleError } from "./scale.js";
-import { hexToBytes, toHex } from "./bytes.js";
 
 const te = new TextEncoder();
 

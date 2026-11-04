@@ -197,7 +197,7 @@ web3-storage/
 ├── runtimes/               # Parachain runtimes: web3-storage-local, web3-storage-paseo
 ├── provider-node/          # Off-chain provider binary
 ├── clients/                # Rust client SDKs: storage (Layer 0), file-system, s3 (Layer 1)
-├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,layer1,papi,sdk}
+├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,file-system,papi,sdk}
 ├── user-interfaces/        # Web apps: landing, explorer, drive-ui, provider, s3-ui, photos, shared
 ├── examples/               # contracts/ (Solidity dApps), papi/ (end-to-end PAPI demos)
 ├── scripts/                # Helper scripts (chain spec, health checks, smoke test)

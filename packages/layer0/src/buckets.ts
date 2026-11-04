@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Layer 0 bucket reads shared by the layer-1 clients. A drive and an S3
- * bucket are both a plain Layer 0 bucket: the chain stores no name and no
- * type for it, so a bucket is identified by its id only.
+ * Layer 0 bucket reads. The chain stores no name and no type for a bucket,
+ * so a drive and an S3 bucket are both identified by the bucket id only.
  */
 
-import type { ParachainApi, Visibility } from "@web3-storage/layer0";
-
+import type { ParachainApi } from "./address.js";
+import type { Visibility } from "./pallets/storage-provider.js";
 import { resolveBucketProviders, type PrimaryProviderInfo } from "./provider-url.js";
 
 export type MemberRole = "Admin" | "Writer" | "Reader";

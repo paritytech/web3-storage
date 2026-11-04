@@ -2,7 +2,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { getBucketInfos, listMemberBuckets } from "./bucket-info.js";
+import { getBucketInfos, listMemberBuckets } from "./buckets.js";
 
 type Bucket = {
   members: { account: string; role: { type: string } }[];

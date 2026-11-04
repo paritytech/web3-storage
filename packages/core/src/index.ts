@@ -7,9 +7,7 @@
 
 export * from "./address.js";
 export * from "./bytes.js";
-export * from "./file-system.js";
 export * from "./http.js";
 export * from "./limit.js";
 export * from "./merkle.js";
-export * from "./scale.js";
 export * from "./verify.js";

@@ -2,10 +2,10 @@
 
 import { describe, expect, it } from "vitest";
 import { makeSigner } from "@web3-storage/layer0";
+import { FakeProvider } from "@web3-storage/layer0/testing";
 
-import { FakeProvider } from "../../../layer0/src/fake-provider.testing.js";
-import { FileSystemClient } from "../fs/client.js";
-import { paginateKeys, S3Client } from "./client.js";
+import { Objects, paginateKeys } from "./objects.js";
+import { FsTree, providerBlobStore } from "./tree.js";
 
 const BUCKET = 9n;
 const te = new TextEncoder();
@@ -13,23 +13,20 @@ const td = new TextDecoder();
 
 function makeClient() {
   const provider = new FakeProvider();
-  const client = new S3Client({
-    api: {} as never,
-    signer: makeSigner("//Alice"),
-    providerUrl: "http://provider.test",
-    fetch: provider.fetch,
-  });
-  return { client, provider };
+  const tree = new FsTree(
+    providerBlobStore("http://provider.test", BUCKET, makeSigner("//Alice"), { fetch: provider.fetch }),
+  );
+  return { client: new Objects(tree), provider, tree };
 }
 
-describe("S3Client objects", () => {
+describe("Objects", () => {
   it("put/get/head round-trip content, type, metadata and etag", async () => {
     const { client, provider } = makeClient();
-    const put = await client.putObject(BUCKET, "dir/a b.txt", te.encode("body"), {
+    const put = await client.putObject("dir/a b.txt", te.encode("body"), {
       contentType: "text/plain",
       metadata: { Origin: "test" },
     });
-    const got = await client.getObject(BUCKET, "dir/a b.txt");
+    const got = await client.getObject("dir/a b.txt");
     expect(td.decode(got.data)).toBe("body");
     expect(got).toMatchObject({
       key: "dir/a b.txt",
@@ -38,7 +35,7 @@ describe("S3Client objects", () => {
       metadata: { origin: "test" },
       etag: put.cid,
     });
-    const head = await client.headObject(BUCKET, "dir/a b.txt");
+    const head = await client.headObject("dir/a b.txt");
     const { data: _data, ...meta } = got;
     expect(head).toEqual(meta);
     expect(provider.calls.every((c) => !c.path.startsWith("/s3") && !c.path.startsWith("/fs"))).toBe(true);
@@ -46,66 +43,68 @@ describe("S3Client objects", () => {
 
   it("stores an empty object without a content blob", async () => {
     const { client } = makeClient();
-    const put = await client.putObject(BUCKET, "empty", new Uint8Array(0));
+    const put = await client.putObject("empty", new Uint8Array(0));
     // Empty content has no chunk tree: its root, and so its etag, is the zero hash.
     expect(put.etag).toBe(`0x${"00".repeat(32)}`);
-    const got = await client.getObject(BUCKET, "empty");
+    const got = await client.getObject("empty");
     expect(got).toMatchObject({ size: 0, etag: put.etag });
     expect(got.data).toEqual(new Uint8Array(0));
   });
 
   it("stores metadata lowercased and sorted, like the Rust client", async () => {
     const { client } = makeClient();
-    await client.putObject(BUCKET, "k", te.encode("x"), { metadata: { Zeta: "2", alpha: "1" } });
+    await client.putObject("k", te.encode("x"), { metadata: { Zeta: "2", alpha: "1" } });
     // Read order is stored order, so this checks the manifest is sorted by key.
-    const head = await client.headObject(BUCKET, "k");
+    const head = await client.headObject("k");
     expect(Object.keys(head.metadata)).toEqual(["alpha", "zeta"]);
     await expect(
-      client.putObject(BUCKET, "k", te.encode("x"), { metadata: { A: "1", a: "2" } }),
+      client.putObject("k", te.encode("x"), { metadata: { A: "1", a: "2" } }),
     ).rejects.toThrow(/appears twice/);
   });
 
   it("get of a missing key fails with NoSuchKey", async () => {
     const { client } = makeClient();
-    await client.putObject(BUCKET, "a/b", te.encode("x"));
-    await expect(client.getObject(BUCKET, "a")).rejects.toThrow(/NoSuchKey: a/);
-    await expect(client.headObject(BUCKET, "nope")).rejects.toThrow(/NoSuchKey: nope/);
-    await expect(client.getObject(BUCKET, "a/b/c")).rejects.toThrow(/NoSuchKey/);
+    await client.putObject("a/b", te.encode("x"));
+    await expect(client.getObject("a")).rejects.toThrow(/NoSuchKey: a/);
+    await expect(client.headObject("nope")).rejects.toThrow(/NoSuchKey: nope/);
+    await expect(client.getObject("a/b/c")).rejects.toThrow(/NoSuchKey/);
   });
 
   it("delete is a no-op for a missing key and prunes emptied directories", async () => {
     const { client } = makeClient();
-    await client.deleteObject(BUCKET, "missing/key");
-    await client.putObject(BUCKET, "a/b/c", te.encode("x"));
-    await client.putObject(BUCKET, "z", te.encode("y"));
-    await client.deleteObject(BUCKET, "a"); // a directory, not a key
-    await client.deleteObject(BUCKET, "a/b/c");
-    const listed = await client.listObjects(BUCKET);
+    await client.deleteObject("missing/key");
+    await client.putObject("a/b/c", te.encode("x"));
+    await client.putObject("z", te.encode("y"));
+    await client.deleteObject("a"); // a directory, not a key
+    await client.deleteObject("a/b/c");
+    const listed = await client.listObjects();
     expect(listed.objects.map((o) => o.key)).toEqual(["z"]);
     expect(listed.commonPrefixes).toEqual([]);
   });
 
-  it("validates object keys", () => {
+  it("validates object keys", async () => {
     const { client } = makeClient();
     for (const key of ["", "/a", "a/", "a//b", "./a", "a/..", "x".repeat(1025), `${"x".repeat(257)}/a`, "a\ud800", "\udc00/b"]) {
-      expect(() => client.validateObjectKey(key), key).toThrow(/Object key must/);
+      await expect(client.headObject(key), key).rejects.toThrow(/Object key must/);
     }
-    for (const key of ["a", "a/b/c", "é/ü", "a b", "x".repeat(256)]) client.validateObjectKey(key);
+    for (const key of ["a", "a/b/c", "é/ü", "a b", "x".repeat(256)]) {
+      await expect(client.headObject(key), key).rejects.toThrow(/NoSuchKey/);
+    }
   });
 });
 
-describe("S3Client.listObjects", () => {
+describe("Objects.listObjects", () => {
   const keys = ["photos/2024/b.jpg", "photos/2024/a.jpg", "photos/2025/c.jpg", "photos/x.jpg", "readme", "B", "é"];
 
   async function filled() {
     const { client } = makeClient();
-    for (const key of keys) await client.putObject(BUCKET, key, te.encode(key));
+    for (const key of keys) await client.putObject(key, te.encode(key));
     return client;
   }
 
   it("sorts all keys by bytes, not by tree walk order", async () => {
     const client = await filled();
-    const r = await client.listObjects(BUCKET);
+    const r = await client.listObjects();
     expect(r.objects.map((o) => o.key)).toEqual([
       "B",
       "photos/2024/a.jpg",
@@ -120,24 +119,24 @@ describe("S3Client.listObjects", () => {
 
   it("applies prefix, delimiter, startAfter and maxKeys", async () => {
     const client = await filled();
-    expect((await client.listObjects(BUCKET, { prefix: "photos/20" })).objects.map((o) => o.key)).toEqual([
+    expect((await client.listObjects({ prefix: "photos/20" })).objects.map((o) => o.key)).toEqual([
       "photos/2024/a.jpg",
       "photos/2024/b.jpg",
       "photos/2025/c.jpg",
     ]);
-    const delimited = await client.listObjects(BUCKET, { prefix: "photos/", delimiter: "/" });
+    const delimited = await client.listObjects({ prefix: "photos/", delimiter: "/" });
     expect(delimited.commonPrefixes).toEqual(["photos/2024/", "photos/2025/"]);
     expect(delimited.objects.map((o) => o.key)).toEqual(["photos/x.jpg"]);
-    const top = await client.listObjects(BUCKET, { delimiter: "/" });
+    const top = await client.listObjects({ delimiter: "/" });
     expect(top.commonPrefixes).toEqual(["photos/"]);
     expect(top.objects.map((o) => o.key)).toEqual(["B", "readme", "é"]);
-    const after = await client.listObjects(BUCKET, { startAfter: "photos/2025/c.jpg" });
+    const after = await client.listObjects({ startAfter: "photos/2025/c.jpg" });
     expect(after.objects.map((o) => o.key)).toEqual(["photos/x.jpg", "readme", "é"]);
-    expect((await client.listObjects(BUCKET, { prefix: "nothing/here" })).objects).toEqual([]);
+    expect((await client.listObjects({ prefix: "nothing/here" })).objects).toEqual([]);
   });
 
   it("with delimiter / matches a full walk with fewer directory reads", async () => {
-    const { client, provider } = makeClient();
+    const { client, provider, tree } = makeClient();
     const deep = [
       "a.txt",
       "b/1.txt",
@@ -148,17 +147,11 @@ describe("S3Client.listObjects", () => {
       "photos/2024/02/01/img.jpg",
       "photos/2025/01/01/img.jpg",
     ];
-    for (const key of deep) await client.putObject(BUCKET, key, te.encode(key));
+    for (const key of deep) await client.putObject(key, te.encode(key));
     // File-system writes can leave directories without objects.
-    const fs = new FileSystemClient({
-      api: {} as never,
-      signer: makeSigner("//Alice"),
-      providerUrl: "http://provider.test",
-      fetch: provider.fetch,
-    });
-    await fs.createDirectory(BUCKET, "/b/empty");
-    await fs.createDirectory(BUCKET, "/e/f");
-    const all = (await client.listAllObjects(BUCKET)).objects;
+    await tree.mkdir("/b/empty");
+    await tree.mkdir("/e/f");
+    const all = (await client.listAllObjects()).objects;
 
     const prefixes = ["", "b", "b/", "b/c", "e/", "photos/", "photos/2024/", "photos/2024/0", "x/", "a.txt/"];
     const startAfters = [
@@ -176,7 +169,7 @@ describe("S3Client.listObjects", () => {
       for (const startAfter of startAfters) {
         for (const maxKeys of [1, 2, 1000]) {
           const opts = { prefix, delimiter: "/", startAfter, maxKeys };
-          const listed = await client.listObjects(BUCKET, opts);
+          const listed = await client.listObjects(opts);
           const walked = paginateKeys(all, opts);
           expect(listed, JSON.stringify(opts)).toEqual(walked);
         }
@@ -187,7 +180,7 @@ describe("S3Client.listObjects", () => {
     // 8 of the 15 directories.
     const nodeReads = () => provider.calls.filter((c) => c.method === "GET" && c.path === "/node").length;
     const before = nodeReads();
-    const top = await client.listObjects(BUCKET, { delimiter: "/" });
+    const top = await client.listObjects({ delimiter: "/" });
     expect(top.commonPrefixes).toEqual(["b/", "photos/"]);
     expect(nodeReads() - before).toBe(8);
   });
@@ -197,7 +190,7 @@ describe("S3Client.listObjects", () => {
     const seen: string[] = [];
     let startAfter: string | undefined;
     for (;;) {
-      const page = await client.listObjects(BUCKET, { maxKeys: 3, startAfter });
+      const page = await client.listObjects({ maxKeys: 3, startAfter });
       seen.push(...page.objects.map((o) => o.key));
       if (!page.isTruncated) break;
       expect(page.objects).toHaveLength(3);
@@ -207,29 +200,29 @@ describe("S3Client.listObjects", () => {
   });
 });
 
-describe("S3Client.listObjects limits", () => {
+describe("Objects.listObjects limits", () => {
   it("clamps maxKeys to 1-1000", async () => {
     const { client } = makeClient();
-    for (let i = 0; i < 3; i++) await client.putObject(BUCKET, `k${i}`, te.encode("x"));
-    const zero = await client.listObjects(BUCKET, { maxKeys: 0 });
+    for (let i = 0; i < 3; i++) await client.putObject(`k${i}`, te.encode("x"));
+    const zero = await client.listObjects({ maxKeys: 0 });
     expect(zero.objects.map((o) => o.key)).toEqual(["k0"]);
     expect(zero.isTruncated).toBe(true);
     expect(zero.nextStartAfter).toBe("k0");
-    const huge = await client.listObjects(BUCKET, { maxKeys: Number.MAX_SAFE_INTEGER });
+    const huge = await client.listObjects({ maxKeys: Number.MAX_SAFE_INTEGER });
     expect(huge.objects).toHaveLength(3);
     expect(huge.isTruncated).toBe(false);
   });
 
   it("listAllObjects returns every key from one root read", async () => {
     const { client, provider } = makeClient();
-    for (const key of ["d/b", "d/a", "d/e/f", "z"]) await client.putObject(BUCKET, key, te.encode("x"));
+    for (const key of ["d/b", "d/a", "d/e/f", "z"]) await client.putObject(key, te.encode("x"));
     const before = provider.calls.length;
-    const all = await client.listAllObjects(BUCKET, { prefix: "d/" });
+    const all = await client.listAllObjects({ prefix: "d/" });
     expect(all.objects.map((o) => o.key)).toEqual(["d/a", "d/b", "d/e/f"]);
     expect(all.commonPrefixes).toEqual([]);
     const rootReads = provider.calls.slice(before).filter((c) => c.path === "/commitment");
     expect(rootReads).toHaveLength(1);
-    expect(await client.listAllObjects(BUCKET, { delimiter: "/" })).toMatchObject({
+    expect(await client.listAllObjects({ delimiter: "/" })).toMatchObject({
       objects: [{ key: "z" }],
       commonPrefixes: ["d/"],
     });

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The file-system tree that FileSystemClient and S3Client keep inside a
- * Layer 0 bucket. This module is the only code that knows the format, so S3
- * can move to another structure (#410) without touching the clients.
+ * The file-system tree stored inside a Layer 0 bucket. `Objects` (S3) uses
+ * the same tree.
  *
  * Format: `DirectoryNode` and `FileManifest` from
  * `clients/file-system/src/format.rs`, SCALE-encoded, each stored as a blob whose
@@ -12,7 +11,7 @@
  *
  * Root: the last MMR leaf of the bucket is the CID of the root directory. A
  * bucket with no leaves is an empty drive. Consequences:
- * - Only the FS/S3 clients may write to the bucket. A raw Layer 0 commit
+ * - Only this tree may write to the bucket. A raw Layer 0 commit
  *   becomes the last leaf and the tree no longer loads.
  * - An Admin prefix delete (`/delete` with a new `start_seq`) can drop blobs
  *   that the current tree still references.
@@ -34,25 +33,11 @@ import {
   bytesEq,
   chunkCount,
   compareBytes,
-  decodeDirectoryNode,
-  decodeFileManifest,
-  DIRECTORY_NODE_MAX_SIZE,
-  encodeDirectoryNode,
-  encodeFileManifest,
-  FILE_MANIFEST_MAX_SIZE,
-  FS_LIMITS,
+  createLimiter,
   hexToBytes,
-  isValidEntryName,
-  isWellFormedString,
   merkleRoot,
   toHex,
-  createLimiter,
-  validateDirectoryNode,
   verifyMmrProof,
-  type DirectoryEntry,
-  type DirectoryNode,
-  type FileManifest,
-  type MetadataEntry,
 } from "@web3-storage/core";
 import {
   BlobTooLargeError,
@@ -64,6 +49,23 @@ import {
   type ChainSigner,
   type ProviderHttpOpts,
 } from "@web3-storage/layer0";
+
+import {
+  decodeDirectoryNode,
+  decodeFileManifest,
+  DIRECTORY_NODE_MAX_SIZE,
+  encodeDirectoryNode,
+  encodeFileManifest,
+  FILE_MANIFEST_MAX_SIZE,
+  FS_LIMITS,
+  isValidEntryName,
+  isWellFormedString,
+  validateDirectoryNode,
+  type DirectoryEntry,
+  type DirectoryNode,
+  type FileManifest,
+  type MetadataEntry,
+} from "./format.js";
 
 /** Directory reads in flight at once while listing a tree. */
 const DIRECTORY_READ_CONCURRENCY = 4;

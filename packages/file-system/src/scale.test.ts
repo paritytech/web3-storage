@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import { ScaleError, ScaleReader, ScaleWriter } from "./scale.js";
-import { hexToBytes, toHex } from "./bytes.js";
+import { hexToBytes, toHex } from "@web3-storage/core";
 
 describe("SCALE compact", () => {
   const cases: [number, string][] = [

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Provider endpoint resolution shared by the layer-1 clients: on-chain
+ * Provider endpoint resolution: on-chain
  * multiaddr lookup with a per-bucket cache, plus the watchValue-based wait
  * for a provider to accept a freshly created bucket's agreement.
  */
@@ -12,14 +12,9 @@ import {
   type NegotiateRequest,
   type SignedTerms,
 } from "@web3-storage/core";
-import {
-  getAgreementNonce,
-  parseMultiaddrToUrl,
-  resolveProviderEndpoint,
-  waitForPrimaryProvider,
-  type ParachainApi,
-  type WaitOpts,
-} from "@web3-storage/layer0";
+import { parseMultiaddrToUrl, resolveProviderEndpoint, type ParachainApi } from "./address.js";
+import { getAgreementNonce } from "./pallets/storage-provider.js";
+import { waitForPrimaryProvider, type WaitOpts } from "./waits.js";
 
 export type NegotiateProviderResult =
   | { ok: true; url: string; signed: SignedTerms }
