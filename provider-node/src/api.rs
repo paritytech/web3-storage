@@ -33,6 +33,12 @@ const NEGOTIATE_RATE_LIMIT_PER_SEC: u64 = 5;
 /// `/negotiate` requests before being throttled to the refill rate.
 const NEGOTIATE_RATE_LIMIT_BURST: u64 = 16;
 
+/// Largest request body the node reads. The largest valid body is one
+/// `PUT /node` with a `DEFAULT_CHUNK_SIZE` chunk in base64 (4/3 of the chunk
+/// size); the rest is headroom for the hash lists of `/commit`, `/exists` and
+/// `/fetch_nodes`.
+const MAX_REQUEST_BODY: usize = 4 * storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+
 /// Create the API router with all endpoints.
 pub fn create_router(state: Arc<ProviderState>) -> Router {
     // Per-IP token-bucket limiter for `/negotiate`.
@@ -99,7 +105,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         // Replica sync status
         .route("/replica/historical_roots", get(get_historical_roots))
         .route("/replica/sync_status", get(get_replica_sync_status))
-        .layer(DefaultBodyLimit::max(256 * 1024 * 1024)) // 256 MB
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state)

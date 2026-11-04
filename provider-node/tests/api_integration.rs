@@ -426,6 +426,30 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
+    async fn test_request_body_above_limit_is_rejected(backend) {
+        let server = TestServer::new(backend).await;
+        // Over 4 * DEFAULT_CHUNK_SIZE once base64-encoded.
+        let data = vec![7u8; 4 * storage_primitives::DEFAULT_CHUNK_SIZE as usize];
+        let hash = storage_primitives::hash_leaf(&data);
+
+        let response = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": format!("{hash:#x}"),
+                "data": BASE64.encode(&data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+}
+
+common::backend_tests! {
     async fn test_upload_node_rejects_both_or_neither_of_data_and_children(backend) {
         let server = TestServer::new(backend).await;
 
