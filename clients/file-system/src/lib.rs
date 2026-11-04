@@ -757,18 +757,9 @@ impl FileSystemClient {
 
     /// Fetch a blob from Layer 0 storage by CID
     async fn fetch_blob(&self, bucket_id: BucketId, cid: Cid) -> Result<Vec<u8>> {
-        // Use the read API with CID as data root
-        // Note: This assumes provider maps CID to stored data
-        //
-        // We use a large but safe maximum length (1 TiB) instead of u64::MAX
-        // because the provider's chunk calculation would overflow with u64::MAX:
-        //   end_chunk = (offset + length + chunk_size - 1) / chunk_size
-        // With u64::MAX, this wraps around and results in end_chunk = 0.
-        const MAX_READ_LENGTH: u64 = 1024 * 1024 * 1024 * 1024; // 1 TiB
-
         let data = self
             .storage_client
-            .download(bucket_id, &cid, 0, MAX_READ_LENGTH)
+            .download_full(bucket_id, &cid)
             .await
             .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
 

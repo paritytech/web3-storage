@@ -16,7 +16,7 @@ use crate::verification::ClientVerifier;
 use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use sp_core::H256;
-use storage_primitives::{hash_children, hash_leaf, BucketId, DEFAULT_CHUNK_SIZE};
+use storage_primitives::{hash_children, hash_leaf, BucketId, DEFAULT_CHUNK_SIZE, MAX_READ_CHUNKS};
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {
@@ -182,7 +182,8 @@ impl StorageUserClient {
     /// Download data from a provider using the data root.
     ///
     /// This will:
-    /// 1. Request chunks from the provider
+    /// 1. Request chunks from the provider, in several `/read` requests when the
+    ///    range spans more than [`MAX_READ_CHUNKS`] chunks
     /// 2. Verify each chunk's hash
     /// 3. Optionally verify Merkle proofs
     /// 4. Reassemble the data
@@ -205,49 +206,16 @@ impl StorageUserClient {
         offset: u64,
         length: u64,
     ) -> ClientResult<Vec<u8>> {
-        let provider_url = self.base.get_provider_url()?;
-
-        let response = self
-            .base
-            .http
-            .get(format!("{provider_url}/read"))
-            .query(&[
-                ("bucket_id", bucket_id.to_string()),
-                ("data_root", format!("{:#x}", data_root)),
-                ("offset", offset.to_string()),
-                ("length", length.to_string()),
-            ])
-            .send()
+        let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
+        let start_chunk = offset / chunk_size;
+        let end_chunk = offset.saturating_add(length).div_ceil(chunk_size);
+        let data = self
+            .read_chunks(bucket_id, data_root, start_chunk, Some(end_chunk))
             .await?;
 
-        if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Provider returned error: {}",
-                response.status()
-            )));
-        }
-
-        let read_response: ReadResponse = response.json().await?;
-
-        let mut data = Vec::new();
-        for chunk in read_response.chunks {
-            let chunk_data = BASE64
-                .decode(&chunk.data)
-                .map_err(|e| ClientError::Serialization(e.to_string()))?;
-
-            // Verify chunk hash
-            let expected_hash = parse_h256(&chunk.hash)?;
-            if hash_leaf(&chunk_data) != expected_hash {
-                return Err(ClientError::VerificationFailed);
-            }
-
-            data.extend_from_slice(&chunk_data);
-        }
-
         // Trim to requested range
-        let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
-        let start = (offset % chunk_size) as usize;
-        let end = start + length as usize;
+        let start = ((offset % chunk_size) as usize).min(data.len());
+        let end = start.saturating_add(length as usize);
         let trimmed = if end <= data.len() {
             data[start..end].to_vec()
         } else {
@@ -262,14 +230,107 @@ impl StorageUserClient {
         }
     }
 
-    /// Download entire file by data root.
+    /// Download all data under `data_root`. The caller does not need to know
+    /// its size.
     pub async fn download_full(
         &self,
         bucket_id: BucketId,
         data_root: &H256,
-        total_size: u64,
     ) -> ClientResult<Vec<u8>> {
-        self.download(bucket_id, data_root, 0, total_size).await
+        let data = self.read_chunks(bucket_id, data_root, 0, None).await?;
+        if let Some(cipher) = &self.cipher {
+            cipher.decrypt(&data)
+        } else {
+            Ok(data)
+        }
+    }
+
+    /// Read chunks `start_chunk..end_chunk` of `data_root`, or up to the last
+    /// chunk when `end_chunk` is `None`, in pages of at most
+    /// [`MAX_READ_CHUNKS`] chunks. The provider returns fewer chunks than
+    /// requested at the end of the data, which ends the read.
+    async fn read_chunks(
+        &self,
+        bucket_id: BucketId,
+        data_root: &H256,
+        start_chunk: u64,
+        end_chunk: Option<u64>,
+    ) -> ClientResult<Vec<u8>> {
+        let mut data = Vec::new();
+        let mut next = start_chunk;
+        loop {
+            let page_end = next.saturating_add(MAX_READ_CHUNKS);
+            let page_end = end_chunk.map_or(page_end, |end| end.min(page_end));
+            if next >= page_end {
+                return Ok(data);
+            }
+            let requested = page_end - next;
+            let returned = self
+                .read_page(bucket_id, data_root, next, requested, &mut data)
+                .await?;
+            if returned > requested {
+                return Err(ClientError::Api(format!(
+                    "Provider returned {returned} chunks for a read of {requested} chunks"
+                )));
+            }
+            if returned < requested {
+                return Ok(data);
+            }
+            next = page_end;
+        }
+    }
+
+    /// Send one `/read` for `count` chunks from `start_chunk`, verify each
+    /// chunk's hash and append the chunk bytes to `data`. Returns the number of
+    /// chunks the provider returned.
+    async fn read_page(
+        &self,
+        bucket_id: BucketId,
+        data_root: &H256,
+        start_chunk: u64,
+        count: u64,
+        data: &mut Vec<u8>,
+    ) -> ClientResult<u64> {
+        let provider_url = self.base.get_provider_url()?;
+        let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
+
+        let response = self
+            .base
+            .http
+            .get(format!("{provider_url}/read"))
+            .query(&[
+                ("bucket_id", bucket_id.to_string()),
+                ("data_root", format!("{:#x}", data_root)),
+                ("offset", (start_chunk * chunk_size).to_string()),
+                ("length", (count * chunk_size).to_string()),
+            ])
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(ClientError::Api(format!(
+                "Provider returned error: {status}: {body}"
+            )));
+        }
+
+        let read_response: ReadResponse = response.json().await?;
+        let returned = read_response.chunks.len() as u64;
+        for chunk in read_response.chunks {
+            let chunk_data = BASE64
+                .decode(&chunk.data)
+                .map_err(|e| ClientError::Serialization(e.to_string()))?;
+
+            // Verify chunk hash
+            let expected_hash = parse_h256(&chunk.hash)?;
+            if hash_leaf(&chunk_data) != expected_hash {
+                return Err(ClientError::VerificationFailed);
+            }
+
+            data.extend_from_slice(&chunk_data);
+        }
+        Ok(returned)
     }
 
     /// Read a single node by its hash.

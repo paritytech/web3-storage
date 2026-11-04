@@ -11,7 +11,7 @@ mod common;
 use common::{make_client, start_test_provider};
 use sp_core::H256;
 use storage_client::{ChunkingStrategy, ClientError, EncryptionKey, Node, ENCRYPTION_OVERHEAD};
-use storage_primitives::DEFAULT_CHUNK_SIZE;
+use storage_primitives::{DEFAULT_CHUNK_SIZE, MAX_READ_CHUNKS};
 
 // ============================================================================
 // Health
@@ -277,11 +277,112 @@ async fn test_download_full_roundtrip() {
         .unwrap();
     client.commit(1, vec![data_root]).await.unwrap();
 
-    let retrieved = client
-        .download_full(1, &data_root, original.len() as u64)
+    let retrieved = client.download_full(1, &data_root).await.unwrap();
+
+    assert_eq!(retrieved, original);
+}
+
+/// Data larger than one `/read` page: the client reads it in several pages.
+#[tokio::test]
+async fn test_download_more_than_one_read_page() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let chunk_size = DEFAULT_CHUNK_SIZE as usize;
+    let len = chunk_size * MAX_READ_CHUNKS as usize + 100;
+    let data: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::default())
         .await
         .unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
 
+    let full = client.download_full(1, &data_root).await.unwrap();
+    assert_eq!(full, data);
+
+    let range = client
+        .download(1, &data_root, 10, len as u64 - 20)
+        .await
+        .unwrap();
+    assert_eq!(range, &data[10..len - 10]);
+}
+
+/// Data of exactly one `/read` page: the read after the last full page
+/// returns no chunks and ends the download.
+#[tokio::test]
+async fn test_download_exact_read_page() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let page_len = DEFAULT_CHUNK_SIZE as usize * MAX_READ_CHUNKS as usize;
+    let data: Vec<u8> = (0..page_len).map(|i| (i % 251) as u8).collect();
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::default())
+        .await
+        .unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
+
+    let full = client.download_full(1, &data_root).await.unwrap();
+    assert_eq!(full, data);
+}
+
+/// A range that starts in the second `/read` page.
+#[tokio::test]
+async fn test_download_range_in_second_read_page() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let chunk_size = DEFAULT_CHUNK_SIZE as usize;
+    let page_len = chunk_size * MAX_READ_CHUNKS as usize;
+    let len = page_len + chunk_size * 2;
+    let data: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::default())
+        .await
+        .unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
+
+    let offset = page_len + 7;
+    let range = client
+        .download(1, &data_root, offset as u64, chunk_size as u64)
+        .await
+        .unwrap();
+    assert_eq!(range, &data[offset..offset + chunk_size]);
+}
+
+/// An offset past the end of the data returns no bytes.
+#[tokio::test]
+async fn test_download_offset_past_end() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let data_root = client
+        .upload(1, b"tiny", ChunkingStrategy::default())
+        .await
+        .unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
+
+    let retrieved = client.download(1, &data_root, 10, 5).await.unwrap();
+    assert!(retrieved.is_empty());
+}
+
+/// A length past the end of the data returns the data up to its end.
+#[tokio::test]
+async fn test_download_length_past_end() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let original = b"short blob";
+    let data_root = client
+        .upload(1, original, ChunkingStrategy::default())
+        .await
+        .unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
+
+    let retrieved = client
+        .download(1, &data_root, 0, 1024u64.pow(4))
+        .await
+        .unwrap();
     assert_eq!(retrieved, original);
 }
 

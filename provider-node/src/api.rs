@@ -23,18 +23,11 @@ use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_primitives::{AgreementTerms, BucketId};
+use storage_primitives::{AgreementTerms, BucketId, MAX_READ_CHUNKS};
 use storage_primitives::{Commitment, CommitmentPayload};
 use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
-
-/// Most chunks one `/read` returns. 64 chunks of `DEFAULT_CHUNK_SIZE` are
-/// 16 MiB, eight times the 2 MiB example in the design, and about 21 MiB once
-/// base64-encoded into the JSON response. The read is unauthenticated and the
-/// node holds the whole response in memory, so a bound is needed; a caller
-/// that wants more reads in several requests.
-const MAX_READ_CHUNKS: u64 = 64;
 
 /// Sustained `/negotiate` requests allowed per-IP / second (token refill rate).
 const NEGOTIATE_RATE_LIMIT_PER_SEC: u64 = 5;
