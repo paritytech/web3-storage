@@ -6,13 +6,13 @@
 
 use super::{alice_account, test_state, test_state_with_data, wait_for};
 use provider_events::BlockEvent;
-use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
+use provider_replica::coordinator::{BucketCommitments, ReplicaAgreementInfo};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, Commitment};
 use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponse,
@@ -286,22 +286,29 @@ impl ReplicaSyncChainClient for MockReplicaClient {
         Ok(100)
     }
 
+    async fn get_anchor_block_time(&self) -> Result<Duration, provider_replica::ChainClientError> {
+        Ok(Duration::from_secs(6))
+    }
+
     async fn fetch_replica_agreements(
         &self,
         _provider_account: &str,
-        _local_buckets: Vec<BucketId>,
     ) -> Result<Vec<ReplicaAgreementInfo>, provider_replica::ChainClientError> {
         self.duty_passes.fetch_add(1, Ordering::SeqCst);
         Ok(self.agreement.clone().into_iter().collect())
     }
 
-    async fn fetch_bucket_snapshot(
+    async fn fetch_bucket_commitments(
         &self,
         _bucket_id: BucketId,
-    ) -> Result<BucketSnapshot, provider_replica::ChainClientError> {
-        Ok(BucketSnapshot {
-            mmr_root: self.snapshot_root,
-            leaf_count: 1,
+    ) -> Result<BucketCommitments, provider_replica::ChainClientError> {
+        Ok(BucketCommitments {
+            snapshot: Commitment {
+                mmr_root: self.snapshot_root,
+                start_seq: 0,
+                leaf_count: 1,
+            },
+            ..Default::default()
         })
     }
 
@@ -323,8 +330,8 @@ impl ReplicaSyncChainClient for MockReplicaClient {
         &self,
         _bucket_id: BucketId,
         _attestation: provider_replica::SignedSyncRoots,
-    ) -> Result<(u8, u128), provider_replica::ChainClientError> {
-        Ok((0, 0))
+    ) -> Result<Option<(u8, u128)>, provider_replica::ChainClientError> {
+        Ok(Some((0, 0)))
     }
 }
 
@@ -401,6 +408,8 @@ async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
             sync_price: 1,
             min_sync_interval: 0,
             last_sync: None,
+            max_bytes: 1024 * 1024,
+            expires_at: 10_000,
         }),
         snapshot_root: H256::repeat_byte(0xAB),
     });

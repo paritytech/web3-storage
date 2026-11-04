@@ -16,22 +16,27 @@ pub type SyncRoots = [Option<H256>; 7];
 /// submitted payload one value — they cannot drift apart.
 #[derive(Clone, Debug)]
 pub struct SignedSyncRoots {
-    /// The roots shape `confirm_replica_sync` expects: target root in
-    /// position 0, positions 1–6 map to the bucket's prime-bucketed
-    /// historical slots (unused by the node today).
+    /// The roots shape `confirm_replica_sync` expects: the synced root at the
+    /// position it matches (0 for the snapshot, 1-6 for the historical
+    /// slots), `None` everywhere else.
     pub roots: SyncRoots,
     /// Scheme-tagged signature over `SCALE(roots)` by the registered key.
     pub signature: sp_runtime::MultiSignature,
 }
 
 impl SignedSyncRoots {
-    /// Attest the target root with the provider's registered signing key.
+    /// Attest `target_mmr_root` at `position` with the provider's registered
+    /// signing key.
+    ///
+    /// The pallet returns the first position whose root matches, so the root
+    /// goes at one position only. Panics if `position` is above 6.
     pub fn sign(
         signer: &dyn SyncRootsSigner,
+        position: u8,
         target_mmr_root: H256,
     ) -> Result<Self, SigningRefused> {
         let mut roots: SyncRoots = [None; 7];
-        roots[0] = Some(target_mmr_root);
+        roots[usize::from(position)] = Some(target_mmr_root);
         let signature = signer.sign_sync_roots(&roots)?;
         Ok(Self { roots, signature })
     }
@@ -87,7 +92,7 @@ mod tests {
         let signer = TestSigner(pair);
         let target = H256::repeat_byte(7);
 
-        let attestation = SignedSyncRoots::sign(&signer, target).unwrap();
+        let attestation = SignedSyncRoots::sign(&signer, 0, target).unwrap();
 
         assert_eq!(
             attestation.roots,
@@ -96,5 +101,27 @@ mod tests {
         assert!(attestation
             .signature
             .verify(attestation.roots.encode().as_slice(), &account));
+    }
+
+    /// The pallet compares `roots[0]` to the snapshot and `roots[p]` to
+    /// `historical_roots[p - 1]`, so the root must sit at exactly the position
+    /// it was selected at and nowhere else.
+    #[test]
+    fn the_root_is_signed_at_its_position_only() {
+        let pair = sp_core::sr25519::Pair::from_string("//Test", None).unwrap();
+        let account = MultiSigner::Sr25519(pair.public()).into_account();
+        let signer = TestSigner(pair);
+        let target = H256::repeat_byte(7);
+
+        for position in 0u8..=6 {
+            let attestation = SignedSyncRoots::sign(&signer, position, target).unwrap();
+
+            let mut expected: SyncRoots = [None; 7];
+            expected[usize::from(position)] = Some(target);
+            assert_eq!(attestation.roots, expected, "position {position}");
+            assert!(attestation
+                .signature
+                .verify(attestation.roots.encode().as_slice(), &account));
+        }
     }
 }

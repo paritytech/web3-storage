@@ -220,6 +220,25 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "data_root": root })),
                     },
                 ),
+                StorageError::LeavesDeleted {
+                    from_seq,
+                    start_seq,
+                } => (
+                    StatusCode::CONFLICT,
+                    ErrorResponse {
+                        error: "leaves_deleted".to_string(),
+                        details: Some(
+                            serde_json::json!({ "from_seq": from_seq, "start_seq": start_seq }),
+                        ),
+                    },
+                ),
+                StorageError::LeavesBeyondEnd { to_seq, end_seq } => (
+                    StatusCode::CONFLICT,
+                    ErrorResponse {
+                        error: "leaves_beyond_end".to_string(),
+                        details: Some(serde_json::json!({ "to_seq": to_seq, "end_seq": end_seq })),
+                    },
+                ),
                 StorageError::CommitmentNotReproducible(reason) => (
                     StatusCode::NOT_FOUND,
                     ErrorResponse {
@@ -581,6 +600,20 @@ mod tests {
                 provider_storage::Error::CommitmentNotReproducible("x".into())
             )),
             StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::LeavesDeleted {
+                from_seq: 0,
+                start_seq: 1
+            })),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::LeavesBeyondEnd {
+                to_seq: 2,
+                end_seq: 1
+            })),
+            StatusCode::CONFLICT
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::RootNotFound(

@@ -43,7 +43,7 @@ pub use provider_coordinator::{
 pub use provider_replica::{
     ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus, SyncDuty,
-    SyncResult, SyncRoots, SyncRootsSigner,
+    SyncResult, SyncRoots, SyncRootsSigner, SyncingBuckets,
 };
 pub use types::*;
 
@@ -83,6 +83,8 @@ pub struct ProviderState {
     /// Browser origins allowed via CORS. `None` (the default) keeps the
     /// permissive policy; `Some(list)` restricts to exactly those origins.
     pub cors_allowed_origins: Option<Vec<String>>,
+    /// The buckets the replica sync coordinator is syncing.
+    pub replica_syncing: SyncingBuckets,
     /// Live chain state kept in sync by the chain-state coordinator — the single
     /// writer for `current_anchor_block`, `constants`, and `provider_info`.
     /// `/negotiate` gates on all three before signing.
@@ -108,6 +110,7 @@ impl ProviderState {
             fs_index: FsIndexManager::new(),
             auth,
             cors_allowed_origins: None,
+            replica_syncing: SyncingBuckets::default(),
             chain_state: Arc::new(ChainState::default()),
         }
     }

@@ -4,12 +4,16 @@
 //! to pull data from primaries, and the background coordinator that drives it.
 
 pub mod coordinator;
+pub mod leaves;
+pub mod source;
 pub mod sync;
 pub mod sync_roots;
+pub mod target;
 
 pub use coordinator::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
+    SyncingBuckets,
 };
 pub use provider_types::ChainClientError;
 pub use sync::ReplicaSync;
@@ -45,6 +49,17 @@ pub enum Error {
     #[error("Source returned error for {what}: status {status}")]
     SourceUnavailable { what: &'static str, status: u16 },
 
+    /// A sync source served a response that breaks the protocol, for example a
+    /// page that starts at the wrong sequence number or lists a hash twice. The
+    /// source is not used again in this pass.
+    #[error("Sync source broke the protocol ({what}): {reason}")]
+    BadSource { what: &'static str, reason: String },
+
+    /// Every sync source failed, so the data cannot be fetched in this pass.
+    /// The next pass tries all sources again.
+    #[error("No sync source left for {what}")]
+    NoSourceLeft { what: &'static str },
+
     /// A call through [`ReplicaSyncChainClient`] failed. [`ChainClientError`]
     /// is declared in `provider-types` and shared with the node; this crate
     /// only reports it.
@@ -63,6 +78,14 @@ impl Error {
         Error::Decode {
             what,
             reason: e.to_string(),
+        }
+    }
+
+    /// A sync source served a response that breaks the protocol.
+    pub fn bad_source(what: &'static str, reason: impl fmt::Display) -> Self {
+        Error::BadSource {
+            what,
+            reason: reason.to_string(),
         }
     }
 
@@ -121,6 +144,14 @@ mod tests {
             }
             .to_string(),
             "Source returned error for mmr peaks: status 404"
+        );
+        assert_eq!(
+            Error::bad_source("mmr leaves", "page made no progress").to_string(),
+            "Sync source broke the protocol (mmr leaves): page made no progress"
+        );
+        assert_eq!(
+            Error::NoSourceLeft { what: "mmr leaves" }.to_string(),
+            "No sync source left for mmr leaves"
         );
     }
 }

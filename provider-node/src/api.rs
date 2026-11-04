@@ -18,7 +18,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use provider_auth::RequiredRole;
-use provider_storage::{BucketInfo, ChunkTreeNode};
+use provider_storage::{BucketInfo, ChunkTreeNode, StorageBackend};
 use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
@@ -89,6 +89,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/delete", post(delete_data))
         // Replica sync
         .route("/mmr_peaks", get(get_mmr_peaks))
+        .route("/mmr_leaves", get(get_mmr_leaves))
         .route("/fetch_nodes", post(fetch_nodes))
         // Off-chain term negotiation: signed AgreementTerms the caller redeems
         // on-chain (create_bucket_with_primary / add_primary_provider /
@@ -545,6 +546,58 @@ async fn delete_data(
 // Replica Sync
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Maximum number of nodes in one `/fetch_nodes` page. Limits the storage
+/// reads and hash checks of one request when nodes are small: 1000 internal
+/// nodes are about 64 KB.
+const PAGE_MAX_ITEMS: usize = 1000;
+
+/// Maximum number of leaves in one `/mmr_leaves` page. Each page request
+/// decodes the whole bucket state, so a larger page means fewer decodes for the
+/// same range. A leaf is at most about 165 bytes as JSON, so a full page is
+/// about 5.4 MB, the size of a full page of chunks.
+const PAGE_MAX_LEAVES: usize = 32 * 1024;
+
+/// Maximum payload bytes in one page: the SCALE-encoded size of a leaf, or the
+/// data of a chunk. The JSON response is larger (hex hashes, base64 data).
+/// 16 full chunks are about 5.3 MiB of base64: small enough that one page stays
+/// cheap in memory and quick to retry on a slow link.
+const PAGE_MAX_BYTES: usize = 16 * storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+
+/// Look up `hashes` in order and stop at [`PAGE_MAX_ITEMS`] processed hashes
+/// (nodes and missing hashes) or when the next node would exceed
+/// [`PAGE_MAX_BYTES`]. The hashes after that point are returned as `next`, so
+/// every requested hash is in exactly one of the three lists.
+fn fetch_nodes_page(storage: &dyn StorageBackend, hashes: &[H256]) -> FetchNodesResponse {
+    let mut nodes = Vec::new();
+    let mut missing = Vec::new();
+    let mut bytes = 0usize;
+    let mut next = Vec::new();
+
+    for (index, hash) in hashes.iter().enumerate() {
+        if nodes.len() + missing.len() >= PAGE_MAX_ITEMS {
+            next.extend_from_slice(&hashes[index..]);
+            break;
+        }
+        let Some(node) = storage.get_node(hash) else {
+            missing.push(*hash);
+            continue;
+        };
+        let size = node.size() as usize;
+        if bytes + size > PAGE_MAX_BYTES {
+            next.extend_from_slice(&hashes[index..]);
+            break;
+        }
+        bytes += size;
+        nodes.push(DownloadNodeResponse::new(*hash, &node));
+    }
+
+    FetchNodesResponse {
+        nodes,
+        missing,
+        next,
+    }
+}
+
 async fn get_mmr_peaks(
     State(state): State<Arc<ProviderState>>,
     headers: axum::http::HeaderMap,
@@ -568,22 +621,48 @@ async fn get_mmr_peaks(
     }))
 }
 
+async fn get_mmr_leaves(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<MmrLeavesQuery>,
+) -> Result<Json<MmrLeavesResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let page = state.storage.get_leaves(
+        query.bucket_id,
+        query.from_seq,
+        query.to_seq,
+        PAGE_MAX_LEAVES,
+        PAGE_MAX_BYTES,
+    )?;
+
+    Ok(Json(MmrLeavesResponse {
+        bucket_id: query.bucket_id,
+        from_seq: query.from_seq,
+        next_seq: page.next_seq,
+        leaves: page.leaves,
+    }))
+}
+
 async fn fetch_nodes(
     State(state): State<Arc<ProviderState>>,
     Json(request): Json<FetchNodesRequest>,
 ) -> Result<Json<FetchNodesResponse>, Error> {
     require_bucket(&state, request.bucket_id)?;
-    let mut nodes = Vec::new();
+    let hashes = request
+        .hashes
+        .iter()
+        .map(|hash| decode_hash(hash))
+        .collect::<Result<Vec<_>, _>>()?;
 
-    for hash_str in &request.hashes {
-        let hash = decode_hash(hash_str)?;
-
-        if let Some(node) = state.storage.get_node(&hash) {
-            nodes.push(DownloadNodeResponse::new(hash, &node));
-        }
-    }
-
-    Ok(Json(FetchNodesResponse { nodes }))
+    Ok(Json(fetch_nodes_page(state.storage.as_ref(), &hashes)))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -729,6 +808,6 @@ async fn get_replica_sync_status(
         local_mmr_root: bucket.mmr_root,
         local_leaf_count: bucket.leaf_count,
         last_sync_block: None, // Would be tracked by coordinator
-        syncing: false,        // Would check coordinator state
+        syncing: state.replica_syncing.is_syncing(query.bucket_id),
     }))
 }

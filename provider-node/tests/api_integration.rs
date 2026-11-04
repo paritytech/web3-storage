@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair, H256};
 use storage_primitives::{Commitment, CommitmentPayload};
-use storage_provider_node::ProviderState;
+use storage_provider_node::{ProviderState, SyncingBuckets};
 
 use common::{StorageBackendKind, TestServer};
 
@@ -30,6 +30,21 @@ impl TestServer {
         Self::start(backend, move |deps| {
             ProviderState::with_seed_scheme(deps, common::PROVIDER_SEED, scheme)
                 .expect("//Alice is a valid SURI")
+        })
+        .await
+    }
+
+    /// Signing provider (`//Alice`) whose replica sync coordinator reports
+    /// into `syncing`.
+    async fn new_with_replica_syncing(
+        backend: StorageBackendKind,
+        syncing: SyncingBuckets,
+    ) -> Self {
+        Self::start(backend, move |deps| {
+            let mut state = ProviderState::with_seed(deps, common::PROVIDER_SEED)
+                .expect("//Alice is a valid SURI");
+            state.replica_syncing = syncing;
+            state
         })
         .await
     }
@@ -1161,6 +1176,138 @@ common::backend_tests! {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MMR leaves
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Upload and commit `count` distinct single-chunk leaves to `bucket_id`, one
+/// commit per leaf.
+async fn commit_chunks(server: &TestServer, bucket_id: u64, count: u8) {
+    for i in 0..count {
+        let data = vec![i; 8];
+        let hash = format!("{:#x}", storage_primitives::hash_leaf(&data));
+        let resp = server
+            .client
+            .request_bucket(Method::PUT, server.url("/node"), bucket_id)
+            .json(&json!({
+                "bucket_id": bucket_id,
+                "hash": hash,
+                "data": BASE64.encode(&data),
+                "children": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = server
+            .client
+            .request_bucket(Method::POST, server.url("/commit"), bucket_id)
+            .json(&json!({ "bucket_id": bucket_id, "data_roots": [hash] }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+}
+
+async fn get_leaves(server: &TestServer, query: &str) -> (StatusCode, Value) {
+    let resp = server
+        .client
+        .get(server.url(&format!("/mmr_leaves?bucket_id=1&{query}")))
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, resp.json().await.unwrap())
+}
+
+common::backend_tests! {
+    async fn test_mmr_leaves_returns_the_requested_range(backend) {
+        let server = TestServer::new(backend).await;
+        commit_chunks(&server, 1, 5).await;
+
+        let (status, body) = get_leaves(&server, "from_seq=1&to_seq=5").await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["bucket_id"], 1);
+        assert_eq!(body["from_seq"], 1);
+        assert_eq!(body["next_seq"], 5);
+        let leaves = body["leaves"].as_array().unwrap();
+        assert_eq!(leaves.len(), 4);
+        assert_eq!(leaves[0]["leaf_version"], 1);
+        assert_eq!(leaves[0]["data_size"], 8);
+        assert_eq!(leaves[3]["total_size"], 40);
+        assert_eq!(
+            leaves[2]["data_root"],
+            format!("{:#x}", storage_primitives::hash_leaf(&[3u8; 8]))
+        );
+    }
+}
+
+common::backend_tests! {
+    async fn test_mmr_leaves_page_is_limited_to_32768_leaves(backend) {
+        let server = TestServer::new(backend).await;
+        commit_chunks(&server, 1, 1).await;
+        let root = storage_primitives::hash_leaf(&[0u8; 8]);
+        let resp = server
+            .client
+            .request_bucket(Method::POST, server.url("/commit"), 1)
+            .json(&json!({ "bucket_id": 1, "data_roots": vec![root; 32 * 1024] }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let (status, body) = get_leaves(&server, "from_seq=0&to_seq=32769").await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["next_seq"], 32 * 1024);
+        assert_eq!(body["leaves"].as_array().unwrap().len(), 32 * 1024);
+    }
+}
+
+common::backend_tests! {
+    async fn test_mmr_leaves_conflicts_on_deleted_and_missing_ranges(backend) {
+        let server = TestServer::new(backend).await;
+        commit_chunks(&server, 1, 5).await;
+
+        let (status, body) = get_leaves(&server, "from_seq=0&to_seq=6").await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "leaves_beyond_end");
+
+        let resp = server
+            .client
+            .request_bucket(Method::POST, server.url("/delete"), 1)
+            .json(&json!({ "bucket_id": 1, "new_start_seq": 2 }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let (status, body) = get_leaves(&server, "from_seq=1&to_seq=5").await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "leaves_deleted");
+
+        let (status, body) = get_leaves(&server, "from_seq=2&to_seq=5").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["leaves"].as_array().unwrap().len(), 3);
+    }
+}
+
+common::backend_tests! {
+    async fn test_mmr_leaves_nonexistent_bucket(backend) {
+        let server = TestServer::new(backend).await;
+
+        let resp = server
+            .client
+            .get(server.url("/mmr_leaves?bucket_id=999&from_seq=0&to_seq=0"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Fetch nodes
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1226,8 +1373,9 @@ common::backend_tests! {
         assert_eq!(resp.status(), StatusCode::OK);
 
         let body: Value = resp.json().await.unwrap();
-        let nodes = body["nodes"].as_array().unwrap();
-        assert!(nodes.is_empty());
+        assert!(body["nodes"].as_array().unwrap().is_empty());
+        assert_eq!(body["missing"], json!([fake]));
+        assert!(body["next"].as_array().unwrap().is_empty());
     }
 }
 
@@ -1312,6 +1460,29 @@ common::backend_tests! {
         assert!(body["local_mmr_root"].is_string());
         assert!(body["local_leaf_count"].as_u64().unwrap() > 0);
         assert_eq!(body["syncing"], false);
+    }
+}
+
+common::backend_tests! {
+    async fn test_replica_sync_status_reports_a_sync_in_progress(backend) {
+        let syncing = SyncingBuckets::default();
+        let server = TestServer::new_with_replica_syncing(backend, syncing.clone()).await;
+        upload_and_commit(&server, 1).await;
+        let syncing_now = |server: &TestServer| {
+            let request = server.client.get(server.url("/replica/sync_status?bucket_id=1"));
+            async move {
+                let body: Value = request.send().await.unwrap().json().await.unwrap();
+                body["syncing"].as_bool().unwrap()
+            }
+        };
+
+        assert!(!syncing_now(&server).await);
+
+        let guard = syncing.begin(1);
+        assert!(syncing_now(&server).await);
+
+        drop(guard);
+        assert!(!syncing_now(&server).await);
     }
 }
 

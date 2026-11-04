@@ -7,7 +7,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use provider_storage::ChunkTreeNode;
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
-use storage_primitives::BucketId;
+use storage_primitives::{mmr::MmrLeaf, BucketId};
 
 pub use provider_types::ProviderInfo;
 
@@ -290,6 +290,24 @@ pub struct MmrPeaksResponse {
     pub peaks: Vec<H256>,
 }
 
+/// Query for a range of MMR leaves.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MmrLeavesQuery {
+    pub bucket_id: BucketId,
+    pub from_seq: u64,
+    pub to_seq: u64,
+}
+
+/// A page of MMR leaves. `next_seq` is the first sequence number not in
+/// `leaves`; it equals the requested `to_seq` on the last page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MmrLeavesResponse {
+    pub bucket_id: BucketId,
+    pub from_seq: u64,
+    pub next_seq: u64,
+    pub leaves: Vec<MmrLeaf>,
+}
+
 /// Request to fetch multiple nodes of a bucket. Like `GET /node`, the hash is
 /// the read capability (see the L0 read-access rules in the design doc's
 /// "Bucket Visibility & Access").
@@ -299,10 +317,18 @@ pub struct FetchNodesRequest {
     pub hashes: Vec<String>,
 }
 
-/// Response with fetched nodes.
+/// Response with fetched nodes. The node processes the requested hashes in
+/// order and stops at its page limits, so every requested hash appears in
+/// exactly one list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchNodesResponse {
+    /// Requested hashes the node stores.
     pub nodes: Vec<DownloadNodeResponse>,
+    /// Requested hashes the node does not store.
+    pub missing: Vec<H256>,
+    /// Requested hashes the node did not process because of its page limits.
+    /// Request them again.
+    pub next: Vec<H256>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
