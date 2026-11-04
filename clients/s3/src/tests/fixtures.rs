@@ -2,14 +2,12 @@
 
 //! Cross-language fixtures for the in-bucket file-system format.
 //!
-//! `rust_written_fixture_is_current` runs a fixed sequence of FS and S3
-//! writes into an in-memory store and checks the result against
-//! `examples/fixtures/rust-written.json`, which the
-//! TypeScript tests (`packages/layer1/src/fixtures.test.ts`) load and read.
-//! `reads_the_typescript_fixture` does the reverse with `ts-written.json`.
-//!
-//! Regenerate a fixture with `UPDATE_FS_FIXTURES=1`, here with
-//! `UPDATE_FS_FIXTURES=1 cargo test -p s3-client fixtures`.
+//! `writes_fs_fixture` runs a fixed sequence of FS and S3 writes into an
+//! in-memory store, checks the root CID against [`ROOT_CID`] and, when
+//! `FS_FIXTURE` names a file, writes the resulting bucket there as JSON. `just fs-fixture` writes
+//! `.test-vectors/fs-bucket.json`. The TypeScript test
+//! (`packages/layer1/src/fixtures.test.ts`) reads that bucket and checks that
+//! its own write sequence produces the same blobs and commits.
 //!
 //! Fixture format:
 //! - `blobs`: CID -> base64 bytes, for every blob of at most one chunk.
@@ -31,13 +29,13 @@ const BUCKET: BucketId = 7;
 const MTIME: u64 = 1_700_000_000;
 const GENERATOR: &str = "byte i is i % 251";
 const BIG_SIZE: usize = 3 * CHUNK_SIZE + 100;
-const UPDATE_ENV: &str = "UPDATE_FS_FIXTURES";
+const FIXTURE_ENV: &str = "FS_FIXTURE";
 
-fn fixture_path(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/fixtures")
-        .join(name)
-}
+/// Root CID of the bucket that `write_sequence` produces. It covers every
+/// directory node, manifest and content root, so a change to the bucket
+/// format changes it. Clients cannot read buckets written in an older
+/// format, so update it only with a reviewed format change.
+const ROOT_CID: &str = "0x7aa7bcb3d443e0b47cabae360f168099695e46c84433e79dce13852d9647ffe5";
 
 fn generate(size: usize) -> Vec<u8> {
     (0..size).map(|i| (i % 251) as u8).collect()
@@ -307,56 +305,25 @@ fn load(fixture: &Value) -> MemoryStore {
     store
 }
 
-const RUST_ABOUT: &str = "Written by clients/s3/src/tests/fixtures.rs; read by packages/layer1/src/fixtures.test.ts. Regenerate: UPDATE_FS_FIXTURES=1 cargo test -p s3-client fixtures";
+const ABOUT: &str = "Written by clients/s3/src/tests/fixtures.rs (`just fs-fixture`); read by packages/layer1/src/fixtures.test.ts.";
 
 #[tokio::test]
-async fn rust_written_fixture_is_current() {
+async fn writes_fs_fixture() {
     let store = MemoryStore::default();
     write_sequence(&store).await;
-    let produced = fixture(&store, RUST_ABOUT).await;
+    let produced = fixture(&store, ABOUT).await;
 
     // The fixture loads back and reads the same.
     let parsed: Value = serde_json::from_str(&produced).unwrap();
     assert_eq!(expected(&load(&parsed)).await, parsed["expected"]);
+    assert_eq!(parsed["expected"]["root_cid"], ROOT_CID);
 
-    let path = fixture_path("rust-written.json");
-    if std::env::var_os(UPDATE_ENV).is_some() {
-        std::fs::write(&path, &produced).unwrap();
+    let Some(path) = std::env::var_os(FIXTURE_ENV) else {
+        return;
+    };
+    let path = std::path::Path::new(&path);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).unwrap();
     }
-    let checked_in = std::fs::read_to_string(&path).unwrap();
-    assert!(
-        checked_in == produced,
-        "{} is out of date; regenerate it with {UPDATE_ENV}=1",
-        path.display()
-    );
-}
-
-#[tokio::test]
-async fn reads_the_typescript_fixture() {
-    let text = std::fs::read_to_string(fixture_path("ts-written.json")).unwrap();
-    let fixture: Value = serde_json::from_str(&text).unwrap();
-    let store = load(&fixture);
-
-    // Root discovery: the root is the last root of the last commit.
-    let last = fixture["commits"].as_array().unwrap().last().unwrap();
-    let root = tree(&store).load_root().await.unwrap();
-    assert_eq!(
-        Value::from(hex_cid(&root.cid.unwrap())),
-        *last.as_array().unwrap().last().unwrap()
-    );
-    assert_eq!(
-        fixture["expected"]["root_cid"],
-        *last.as_array().unwrap().last().unwrap()
-    );
-
-    assert_eq!(expected(&store).await, fixture["expected"]);
-
-    // Both languages write the same bucket for the same operations.
-    let rust = MemoryStore::default();
-    write_sequence(&rust).await;
-    assert_eq!(expected(&rust).await, fixture["expected"]);
-    assert_eq!(
-        *rust.commits.lock().unwrap(),
-        *store.commits.lock().unwrap()
-    );
+    std::fs::write(path, &produced).unwrap();
 }

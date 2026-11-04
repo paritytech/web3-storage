@@ -443,7 +443,11 @@ s3-demo-ci:
 
 # Write the MMR proof vectors that packages/core/src/merkle.test.ts reads
 mmr-proof-vectors:
-    MMR_PROOF_VECTORS="{{justfile_directory()}}/.test-vectors/mmr-proofs.json" cargo test -q -p storage-primitives mmr::tests::proof_vectors
+    MMR_PROOF_VECTORS="{{justfile_directory()}}/.test-vectors/mmr-proofs.json" cargo test --locked -q -p storage-primitives mmr::tests::proof_vectors
+
+# Write the file-system bucket that packages/layer1/src/fixtures.test.ts reads
+fs-fixture:
+    FS_FIXTURE="{{justfile_directory()}}/.test-vectors/fs-bucket.json" cargo test --locked -q -p s3-client writes_fs_fixture
 
 # ─── UI Tests ─────────────────────────────────────────────────────────────────
 #
@@ -451,7 +455,7 @@ mmr-proof-vectors:
 # Requires a running local chain + provider node.
 
 # Run all UI unit tests (Vitest)
-test-ui-unit: mmr-proof-vectors
+test-ui-unit: mmr-proof-vectors fs-fixture
     pnpm run test:unit
 
 # Run drive-ui Playwright e2e (requires chain + provider running)
