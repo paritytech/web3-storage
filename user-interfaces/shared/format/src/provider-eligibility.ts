@@ -2,30 +2,33 @@
 
 import { formatBytes } from './index'
 
-/** The provider fields that decide whether it can take a new primary agreement. */
+/** A provider as scored by the `find_matching_providers` runtime API. */
 export interface ProviderEligibilityInput {
-  acceptingPrimary: boolean
-  /** Free capacity per the chain; `undefined` means unlimited. */
-  availableCapacity: bigint | undefined
+  /** The chain's `PartialMatchReason` variant name; `''` when the provider matches. */
+  partialReason: string
   minAgreementBytes: bigint
-  minDuration: number
-  /** `0` means no upper bound. */
-  maxDuration: number
 }
 
 /**
- * Why a provider cannot take an agreement of `capacity` bytes for `duration`
- * blocks, or `null` when it can. Pickers disable the row with this text.
+ * Why a provider cannot take the requested agreement, or `null` when it can.
+ * The chain sets `partialReason` for every requirement the provider fails, so
+ * pickers disable a row exactly when this returns text.
  */
-export function providerDisabledReason(
-  p: ProviderEligibilityInput,
-  capacity: bigint,
-  duration: number,
-): string | null {
-  if (!p.acceptingPrimary) return 'Not accepting'
-  if (capacity < p.minAgreementBytes) return `Below minimum size (min ${formatBytes(p.minAgreementBytes)})`
-  if (p.availableCapacity !== undefined && p.availableCapacity < capacity) return 'Capacity full'
-  if (duration < p.minDuration) return 'Duration too short'
-  if (p.maxDuration > 0 && duration > p.maxDuration) return 'Duration too long'
-  return null
+export function providerDisabledReason(p: ProviderEligibilityInput): string | null {
+  switch (p.partialReason) {
+    case '':
+      return null
+    case 'NotAccepting':
+      return 'Not accepting'
+    case 'InsufficientCapacity':
+      return 'Capacity full'
+    case 'BelowMinAgreementBytes':
+      return `Below minimum size (min ${formatBytes(p.minAgreementBytes)})`
+    case 'PriceTooHigh':
+      return 'Price above your max'
+    case 'DurationMismatch':
+      return 'Duration out of range'
+    default:
+      return p.partialReason
+  }
 }

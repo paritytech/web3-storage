@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { RefreshCw, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AvailableProvider, MatchingProviders } from "@/lib/drive-client";
@@ -33,48 +33,36 @@ export default function ProviderPickerPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadProviders = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const list = await queryMatchingProviders({
-        primaryOnly: true,
-        maxPricePerByte: requiredPricePerByte,
-        bytesNeeded: requiredCapacity,
-        minDuration: requiredDuration,
-      });
-      setProviders(list);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load providers");
-    } finally {
-      setLoading(false);
-    }
-  }, [requiredCapacity, requiredDuration, requiredPricePerByte]);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Re-score when the requirements change so the Match column follows the form.
+  // `stale` drops the result of a query that a newer one has replaced.
   useEffect(() => {
-    loadProviders();
-  }, [loadProviders]);
+    let stale = false;
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const list = await queryMatchingProviders({
+          primaryOnly: true,
+          maxPricePerByte: requiredPricePerByte,
+          bytesNeeded: requiredCapacity,
+          minDuration: requiredDuration,
+        });
+        if (!stale) setProviders(list);
+      } catch (err) {
+        if (!stale) setError(err instanceof Error ? err.message : "Failed to load providers");
+      } finally {
+        if (!stale) setLoading(false);
+      }
+    }, 300);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [requiredCapacity, requiredDuration, requiredPricePerByte, refreshKey]);
 
-  const humanizeReason = (reason: string): string => {
-    switch (reason) {
-      case "PriceTooHigh":
-        return "Price above your max";
-      case "InsufficientCapacity":
-        return "Limited capacity";
-      case "DurationMismatch":
-        return "Duration mismatch";
-      case "NotAccepting":
-        return "Not accepting primary";
-      case "BelowMinAgreementBytes":
-        return "Below minimum size";
-      default:
-        return reason;
-    }
-  };
-
-  const getDisabledReason = (p: AvailableProvider): string | null =>
-    providerDisabledReason(p, requiredCapacity, requiredDuration);
+  const refresh = () => setRefreshKey((k) => k + 1);
 
   return (
     <div className="space-y-2" data-testid="provider-picker">
@@ -83,7 +71,7 @@ export default function ProviderPickerPanel({
         <Button
           variant="ghost"
           size="sm"
-          onClick={loadProviders}
+          onClick={refresh}
           disabled={loading}
         >
           <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? "animate-spin" : ""}`} />
@@ -99,7 +87,7 @@ export default function ProviderPickerPanel({
       ) : error ? (
         <div className="py-4 text-center">
           <p className="text-sm text-red-500 mb-2">{error}</p>
-          <Button variant="outline" size="sm" onClick={loadProviders}>
+          <Button variant="outline" size="sm" onClick={refresh}>
             Retry
           </Button>
         </div>
@@ -124,7 +112,7 @@ export default function ProviderPickerPanel({
             </thead>
             <tbody>
               {providers.map((p) => {
-                const reason = getDisabledReason(p);
+                const reason = providerDisabledReason(p);
                 const rowDisabled = reason !== null;
                 // `undefined` is unlimited — nothing to meter.
                 const free = p.availableCapacity;
@@ -146,10 +134,8 @@ export default function ProviderPickerPanel({
                     </td>
                     <td className="px-3 py-2">
                       <div className="text-xs font-medium">{p.matchScore}/100</div>
-                      {p.partialReason ? (
-                        <div className="text-xs text-amber-600">
-                          {humanizeReason(p.partialReason)}
-                        </div>
+                      {reason ? (
+                        <div className="text-xs text-amber-600">{reason}</div>
                       ) : (
                         <div className="text-xs text-muted-foreground">Best fit</div>
                       )}
@@ -189,7 +175,7 @@ export default function ProviderPickerPanel({
                     </td>
                     <td className="px-3 py-2 text-right">
                       {rowDisabled ? (
-                        <span className="text-xs text-muted-foreground">{reason}</span>
+                        <span className="text-xs text-muted-foreground">Unavailable</span>
                       ) : (
                         <Button
                           data-testid="provider-picker-select"

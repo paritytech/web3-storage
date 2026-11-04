@@ -16,6 +16,7 @@ import {
   getAgreementNonce,
   parseMultiaddrToUrl,
   resolveProviderEndpoint,
+  toSs58,
   waitForPrimaryProvider,
   type ParachainApi,
   type WaitOpts,
@@ -150,12 +151,16 @@ export interface ProviderChoice {
   url?: string;
 }
 
+/** Largest u128: requests no price cap from `find_matching_providers`. */
+const NO_PRICE_CAP = (1n << 128n) - 1n;
+/** Largest u32: `find_matching_providers` returns every registered provider. */
+const ALL_PROVIDERS = 0xffff_ffff;
+
 /**
  * Pick an on-chain provider that would accept a primary agreement for
- * `maxBytes` over `duration` and exposes a resolvable HTTP endpoint. A
- * provider is skipped when it is not accepting primary agreements, is
- * deregistering, requires a larger minimum size, lacks free capacity, or lists
- * a duration range that excludes `duration`. `urlOverride` (a dev/test
+ * `maxBytes` over `duration` and exposes a resolvable HTTP endpoint. The
+ * `find_matching_providers` runtime API decides eligibility: a provider
+ * qualifies when it reports no partial-match reason. `urlOverride` (a dev/test
  * provider URL) wins over the registered multiaddr — the local dev provider
  * registers as the accepting provider, and all UIs/examples point at one URL.
  * Throws when none qualifies.
@@ -174,20 +179,21 @@ export async function discoverAcceptingProvider(
     urlOverride?: string;
   },
 ): Promise<{ address: string; url: string }> {
-  const entries = await api.query.StorageProvider.Providers.getEntries(readOpts);
-  for (const entry of entries) {
-    const address = entry.keyArgs[0];
-    const provider = entry.value;
-    if (!provider?.settings?.accepting_primary) continue;
-    if (provider.deregister_at !== undefined) continue;
-    const { min_agreement_bytes, max_capacity, min_duration, max_duration } = provider.settings;
-    if (maxBytes < min_agreement_bytes) continue;
-    // `max_capacity == 0` means unlimited.
-    if (max_capacity > 0n && provider.committed_bytes + maxBytes > max_capacity) continue;
-    if (duration < min_duration || duration > max_duration) continue;
+  const matches = await api.apis.StorageProviderApi.find_matching_providers(
+    {
+      bytes_needed: maxBytes,
+      min_duration: duration,
+      max_price_per_byte: NO_PRICE_CAP,
+      primary_only: true,
+    },
+    ALL_PROVIDERS,
+    readOpts,
+  );
+  for (const match of matches) {
+    if (match.partial_reason !== undefined) continue;
     const url =
-      urlOverride ?? parseMultiaddrToUrl(new TextDecoder().decode(provider.multiaddr));
-    if (url) return { address, url };
+      urlOverride ?? parseMultiaddrToUrl(new TextDecoder().decode(match.info.multiaddr));
+    if (url) return { address: toSs58(match.account), url };
   }
   throw new Error(
     `no provider accepts a primary agreement of ${maxBytes} bytes for ${duration} blocks (register one, or pass an explicit provider)`,

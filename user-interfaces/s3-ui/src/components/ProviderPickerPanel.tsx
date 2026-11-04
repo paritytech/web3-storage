@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { RefreshCw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -26,30 +26,38 @@ export default function ProviderPickerPanel({
   const [providers, setProviders] = useState<MatchingProviders[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const results = await queryMatchingProviders(
-        {
-          bytesNeeded: requiredCapacity,
-          minDuration: requiredDuration,
-          maxPricePerByte: requiredPricePerByte,
-          primaryOnly: true,
-        },
-        10,
-      );
-      setProviders(results);
-    } catch {
-      setProviders([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [requiredCapacity, requiredDuration, requiredPricePerByte]);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Re-score when the requirements change so the Score column follows the form.
+  // `stale` drops the result of a query that a newer one has replaced.
   useEffect(() => {
-    load();
-  }, [load]);
+    let stale = false;
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const results = await queryMatchingProviders(
+          {
+            bytesNeeded: requiredCapacity,
+            minDuration: requiredDuration,
+            maxPricePerByte: requiredPricePerByte,
+            primaryOnly: true,
+          },
+          10,
+        );
+        if (!stale) setProviders(results);
+      } catch {
+        if (!stale) setProviders([]);
+      } finally {
+        if (!stale) setLoading(false);
+      }
+    }, 300);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [requiredCapacity, requiredDuration, requiredPricePerByte, refreshKey]);
+
+  const refresh = () => setRefreshKey((k) => k + 1);
 
   if (loading) {
     return (
@@ -66,7 +74,7 @@ export default function ProviderPickerPanel({
         <p className="text-sm font-medium">
           {providers.length} provider{providers.length !== 1 && "s"} found
         </p>
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={load}>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={refresh}>
           <RefreshCw className="h-4 w-4" />
         </Button>
       </div>
@@ -98,8 +106,7 @@ export default function ProviderPickerPanel({
                   free !== undefined && p.maxCapacity > 0n
                     ? Number((free * 100n) / p.maxCapacity)
                     : 0;
-                // Evaluated against the current form values.
-                const reason = providerDisabledReason(p, requiredCapacity, requiredDuration);
+                const reason = providerDisabledReason(p);
                 const rowDisabled = reason !== null;
 
                 return (
