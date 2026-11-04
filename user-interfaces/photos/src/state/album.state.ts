@@ -488,7 +488,7 @@ export async function renamePhoto(item: GridItem, rawName: string): Promise<void
 }
 
 /**
- * Delete a photo (and its thumbnail) from the album. Removes the FS index entries;
+ * Delete a photo (and its thumbnail) from the album. Removes their directory entries;
  * the underlying blobs linger in the MMR (no GC), matching the app's copy-on-write
  * model. Refreshes the grid and schedules a background re-anchor.
  */

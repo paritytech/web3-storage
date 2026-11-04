@@ -17,9 +17,7 @@ use std::fmt;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
-use storage_primitives::{
-    build_merkle_proofs, merkle_root, merkle_tree, BucketId, DEFAULT_CHUNK_SIZE,
-};
+use storage_primitives::{build_merkle_proofs, merkle_root, BucketId, DEFAULT_CHUNK_SIZE};
 
 /// A chunk's hash, its data and its Merkle proof (sibling hashes up to the
 /// data root).
@@ -115,26 +113,6 @@ pub trait StorageBackend: Send + Sync {
 
     /// Commit data roots to the bucket's MMR.
     fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
-
-    /// Collect actual chunk data under a data root (DFS, leaf data in order).
-    fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
-        let mut chunks = Vec::new();
-        let mut stack = vec![root];
-
-        while let Some(hash) = stack.pop() {
-            if let Some(node) = self.get_node(&hash) {
-                match node {
-                    ChunkTreeNode::Internal { left, right } => {
-                        stack.push(right);
-                        stack.push(left);
-                    }
-                    ChunkTreeNode::Chunk(data) => chunks.push(data),
-                }
-            }
-        }
-
-        chunks
-    }
 
     /// Hash and byte size of each chunk under `root`, in leaf order. Skips
     /// nodes missing from storage.
@@ -270,18 +248,17 @@ fn proven_chunks<B: StorageBackend + ?Sized>(
         .collect()
 }
 
-/// Store the internal nodes of `storage_primitives::merkle_tree` over `leaves`
-/// and return the root. Fails with `EmptyData` for no leaves, and otherwise
-/// returns the first `store_node` error.
+/// Store the internal nodes of `storage_primitives::merkle_tree` over
+/// `leaves` (at least one) and return the root, or the first `store_node`
+/// error. Test helper: clients upload internal nodes through `PUT /node`.
+#[cfg(any(test, feature = "test-helpers"))]
 pub fn build_merkle_tree(
     storage: &dyn StorageBackend,
     bucket_id: BucketId,
     leaves: &[H256],
 ) -> Result<H256, Error> {
-    if leaves.is_empty() {
-        return Err(Error::EmptyData);
-    }
-    let (root, nodes) = merkle_tree(leaves);
+    assert!(!leaves.is_empty(), "a Merkle tree needs at least one leaf");
+    let (root, nodes) = storage_primitives::merkle_tree(leaves);
     for node in nodes {
         storage.store_node(
             bucket_id,
@@ -375,13 +352,6 @@ mod tests {
                 chunk_count: 5
             })
         ));
-    }
-
-    #[test]
-    fn build_merkle_tree_rejects_no_leaves() {
-        let (_dir, storage, _) = storage_with_chunks(1024, &[]);
-        let err = build_merkle_tree(&storage, 1, &[]).unwrap_err();
-        assert!(matches!(err, Error::EmptyData), "got {err:?}");
     }
 
     #[test]
