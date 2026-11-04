@@ -377,7 +377,7 @@ pub mod pallet {
     /// `(bucket, provider)` pair. Maintained in lockstep with
     /// [`PendingChallenges`] and gates that bucket's agreement teardown
     /// (`end_agreement`, `claim_expired_agreement`) and bucket removal
-    /// (`delete_bucket`, `cleanup_bucket_internal`). An entry exists only
+    /// (`delete_bucket`). An entry exists only
     /// while the count is positive, so a bucket with no entry under its
     /// prefix has no open challenge.
     #[pallet::storage]
@@ -1303,8 +1303,8 @@ pub mod pallet {
         /// A frozen bucket only accepts checkpoints that keep its
         /// `frozen_start_seq`.
         SnapshotViolatesFrozen,
-        /// Fewer valid provider signatures than the bucket's `min_providers`,
-        /// or none.
+        /// Fewer distinct primary providers signed than the bucket's
+        /// `min_providers`, or none. A repeated signature counts once.
         InsufficientSignatures,
 
         // General errors
@@ -2385,9 +2385,9 @@ pub mod pallet {
 
         /// Writer or admin. Make a provider-signed commitment the bucket's
         /// canonical state. Needs valid signatures from at least
-        /// `min_providers` of the bucket's primary providers, and at least
-        /// one; a frozen bucket
-        /// only accepts commitments that keep its `frozen_start_seq`.
+        /// `min_providers` distinct primary providers, and at least one; a
+        /// repeated signature counts once. A frozen bucket only accepts
+        /// commitments that keep its `frozen_start_seq`.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
         pub fn checkpoint(
@@ -2421,45 +2421,35 @@ pub mod pallet {
 
                 let mut primary_signers =
                     BitVec::<u8, Lsb0>::repeat(false, bucket.primary_providers.len());
-                let mut signing_count = 0usize;
-                let mut signing_providers = Vec::new();
+                let mut providers = Vec::new();
 
-                for (signer, signature) in signatures.iter() {
-                    // Find signer in primary_providers
+                for (signer, signature) in signatures {
                     let idx = bucket
                         .primary_providers
                         .iter()
-                        .position(|p| p == signer)
+                        .position(|p| *p == signer)
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
-                    // Verify the signature using the provider's registered public key
-                    Self::verify_signature(signature, &encoded_payload, signer)?;
+                    Self::verify_signature(&signature, &encoded_payload, &signer)?;
 
-                    primary_signers
+                    let already_signed = primary_signers
                         .get_mut(idx)
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?
-                        .set(true);
-                    // TODO(#388): this counts signature entries, not distinct
-                    // providers, so one provider's signature repeated N times
-                    // satisfies `min_providers = N`. Count `primary_signers`
-                    // (which ORs, so it is duplicate-free) the way the freeze
-                    // path does, or reject a repeated signer outright.
-                    // https://github.com/paritytech/web3-storage/issues/388
-                    signing_count += 1;
-                    signing_providers.push(signer.clone());
+                        .replace(true);
+                    if !already_signed {
+                        providers.push(signer);
+                    }
                 }
 
                 // At least one signature even if `min_providers` is 0 in
                 // state written before the bound existed: a snapshot no
                 // provider signed is a snapshot no provider is liable for.
                 ensure!(
-                    signing_count >= bucket.min_providers.max(1) as usize,
+                    primary_signers.count_ones() >= bucket.min_providers.max(1) as usize,
                     Error::<T>::InsufficientSignatures
                 );
 
                 let anchor_block = Self::current_anchor_block();
-
-                // Update historical roots
                 Self::update_historical_roots(bucket, anchor_block, commitment);
 
                 bucket.snapshot = Some(BucketSnapshot {
@@ -2473,7 +2463,7 @@ pub mod pallet {
                 Self::deposit_event(Event::BucketCheckpointed {
                     bucket_id,
                     commitment,
-                    providers: signing_providers,
+                    providers,
                 });
 
                 Ok(())
