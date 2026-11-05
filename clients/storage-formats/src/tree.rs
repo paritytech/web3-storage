@@ -128,12 +128,19 @@ impl<T: BlobStore + ?Sized> BlobStore for &T {
     }
 }
 
-/// Map a format error to the client error for `path`.
-fn format_error(path: &str, e: FileSystemError) -> FsClientError {
-    match e {
-        FileSystemError::InvalidEntryName => FsClientError::InvalidPath(path.to_string()),
-        FileSystemError::BoundsExceeded => FsClientError::BoundedOverflow,
-        other => FsClientError::Serialization(format!("{path}: {other}")),
+/// The error for a write at `path` that a format rule rejects.
+fn format_error(path: &str) -> impl Fn(FileSystemError) -> FsClientError + '_ {
+    move |source| FsClientError::Format {
+        path: path.to_string(),
+        source,
+    }
+}
+
+/// The error for a blob at `path` that breaks a format rule.
+fn invalid_blob(path: &str) -> impl Fn(FileSystemError) -> FsClientError + '_ {
+    move |source| FsClientError::InvalidBlob {
+        path: path.to_string(),
+        reason: source.to_string(),
     }
 }
 
@@ -351,7 +358,7 @@ impl<S: BlobStore> Tree<S> {
         let data = if stat.size() == 0 {
             Vec::new()
         } else {
-            self.read_blob(stat.content_root(), BlobLength::Exact(stat.size()))
+            self.read_blob(path, stat.content_root(), BlobLength::Exact(stat.size()))
                 .await?
         };
         Ok(FileContent { stat, data })
@@ -410,7 +417,7 @@ impl<S: BlobStore> Tree<S> {
             .split_last()
             .ok_or_else(|| FsClientError::NotAFile(path.to_string()))?;
         let manifest = FileManifest::for_content(self.bucket_id, data, content_type, user_metadata)
-            .map_err(|e| format_error(path, e))?;
+            .map_err(format_error(path))?;
 
         let root = self.load_root().await?;
         let mut chain = self.dir_chain(root.node, parents, true).await?;
@@ -427,10 +434,10 @@ impl<S: BlobStore> Tree<S> {
             data.len() as u64,
             (self.now)(),
         )
-        .map_err(|e| format_error(path, e))?;
+        .map_err(format_error(path))?;
         parent
             .upsert_child(entry.clone())
-            .map_err(|e| format_error(path, e))?;
+            .map_err(format_error(path))?;
 
         let (dirs, root) = self.rewrite(chain, parents, path)?;
         let mut blobs = Vec::new();
@@ -541,10 +548,10 @@ impl<S: BlobStore> Tree<S> {
             let bytes = chain[depth + 1].to_scale_bytes();
             let entry =
                 DirectoryEntry::try_new(name, EntryType::Directory, compute_cid(&bytes), 0, mtime)
-                    .map_err(|e| format_error(path, e))?;
+                    .map_err(format_error(path))?;
             chain[depth]
                 .upsert_child(entry)
-                .map_err(|e| format_error(path, e))?;
+                .map_err(format_error(path))?;
             below_root.push(bytes);
         }
         Ok((below_root, chain[0].to_scale_bytes()))
@@ -594,8 +601,9 @@ impl<S: BlobStore> Tree<S> {
         Ok(Some(data_root))
     }
 
-    /// Read a blob and check its length and that its CID is `cid`.
-    async fn read_blob(&self, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
+    /// Read the blob of the entry at `path` and check its length and that
+    /// its CID is `cid`.
+    async fn read_blob(&self, path: &str, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
         let bytes = self.store.get_blob(self.bucket_id, cid, length).await?;
         let len = bytes.len() as u64;
         let length_ok = match length {
@@ -603,9 +611,10 @@ impl<S: BlobStore> Tree<S> {
             BlobLength::AtMost(max) => len <= max,
         };
         if !length_ok {
-            return Err(FsClientError::Serialization(format!(
-                "{cid:?}: {len} bytes, expected {length:?}"
-            )));
+            return Err(FsClientError::InvalidBlob {
+                path: path.to_string(),
+                reason: format!("{len} bytes, expected {length:?}"),
+            });
         }
         check_cid(cid, &bytes)?;
         Ok(bytes)
@@ -613,12 +622,14 @@ impl<S: BlobStore> Tree<S> {
 
     async fn read_dir(&self, path: &str, cid: Cid) -> Result<DirectoryNode> {
         let bytes = self
-            .read_blob(cid, BlobLength::AtMost(max_len::<DirectoryNode>()))
+            .read_blob(path, cid, BlobLength::AtMost(max_len::<DirectoryNode>()))
             .await?;
-        let node = DirectoryNode::from_scale_bytes(&bytes).map_err(|e| {
-            FsClientError::Serialization(format!("{path}: invalid directory node: {e}"))
-        })?;
-        node.validate().map_err(|e| format_error(path, e))?;
+        let node =
+            DirectoryNode::from_scale_bytes(&bytes).map_err(|e| FsClientError::InvalidBlob {
+                path: path.to_string(),
+                reason: format!("not a directory node: {e}"),
+            })?;
+        node.validate().map_err(invalid_blob(path))?;
         Ok(node)
     }
 
@@ -642,12 +653,14 @@ impl<S: BlobStore> Tree<S> {
 
     async fn read_manifest(&self, path: &str, cid: Cid) -> Result<FileManifest> {
         let bytes = self
-            .read_blob(cid, BlobLength::AtMost(max_len::<FileManifest>()))
+            .read_blob(path, cid, BlobLength::AtMost(max_len::<FileManifest>()))
             .await?;
-        let manifest = FileManifest::from_scale_bytes(&bytes).map_err(|e| {
-            FsClientError::Serialization(format!("{path}: invalid file manifest: {e}"))
-        })?;
-        manifest.validate().map_err(|e| format_error(path, e))?;
+        let manifest =
+            FileManifest::from_scale_bytes(&bytes).map_err(|e| FsClientError::InvalidBlob {
+                path: path.to_string(),
+                reason: format!("not a file manifest: {e}"),
+            })?;
+        manifest.validate().map_err(invalid_blob(path))?;
         Ok(manifest)
     }
 }
@@ -1009,6 +1022,24 @@ mod tests {
         ));
     }
 
+    /// The client reports the format rule that rejected a write, as the
+    /// primitives error, with the path; nothing is uploaded.
+    #[tokio::test]
+    async fn a_write_that_breaks_a_format_rule_reports_the_rule() {
+        let store = MemoryStore::default();
+        let content_type = "x".repeat(129);
+        let err = tree(&store)
+            .put_file("/a.txt", b"x", &content_type, vec![])
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            FsClientError::Format { ref path, source: FileSystemError::MetadataTooLarge }
+                if path == "/a.txt"
+        ));
+        assert!(store.commits().is_empty());
+    }
+
     #[tokio::test]
     async fn reads_reject_bytes_that_do_not_match_the_cid() {
         let store = MemoryStore::default();
@@ -1061,15 +1092,17 @@ mod tests {
         store.raw_commit(&vec![0u8; DirectoryNode::max_encoded_len() + 1]);
         assert!(matches!(
             tree(&store).load_root().await,
-            Err(FsClientError::NotAFileSystemBucket { bucket_id: BUCKET, reason })
-                if reason.contains("larger than a directory node")
+            Err(FsClientError::NotAFileSystemBucket {
+                bucket_id: BUCKET,
+                ..
+            })
         ));
 
         let store = MemoryStore::default();
         commit_file_with_manifest(&store, &vec![0u8; FileManifest::max_encoded_len() + 1]);
         assert!(matches!(
             tree(&store).stat("/f").await,
-            Err(FsClientError::Serialization(e)) if e.contains("expected AtMost")
+            Err(FsClientError::InvalidBlob { path, .. }) if path == "/f"
         ));
     }
 
@@ -1081,7 +1114,7 @@ mod tests {
         commit_file_with_manifest(&store, &manifest.to_scale_bytes());
         assert!(matches!(
             tree(&store).stat("/f").await,
-            Err(FsClientError::Serialization(e)) if e.contains("Invalid file manifest")
+            Err(FsClientError::InvalidBlob { path, .. }) if path == "/f"
         ));
     }
 }

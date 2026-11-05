@@ -83,7 +83,7 @@ impl BlobStore for MemoryStore {
             .unwrap()
             .get(&cid)
             .cloned()
-            .ok_or_else(|| FsClientError::StorageClient(format!("missing blob {cid:?}")))
+            .ok_or_else(|| FsClientError::Store(format!("missing blob {cid:?}")))
     }
 
     async fn commit(&self, _bucket_id: BucketId, data_roots: Vec<Cid>) -> Result<()> {

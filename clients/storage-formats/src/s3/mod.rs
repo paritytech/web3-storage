@@ -15,9 +15,12 @@
 //!
 //! The limits of the [`crate::tree`] module apply.
 
-use crate::format::{validate_entry_name, DirectoryEntry, MetadataEntry, DEFAULT_MIME_TYPE};
+use crate::format::{
+    validate_entry_name, DirectoryEntry, MaxMetadataEntries, MetadataEntry, DEFAULT_MIME_TYPE,
+};
 use crate::tree::{BlobStore, EmptyParents, FileStat, Tree};
 use crate::FsClientError;
+use bounded_collections::Get;
 use primitive_types::H256;
 use std::collections::HashMap;
 use storage_primitives::BucketId;
@@ -35,7 +38,12 @@ const DEFAULT_MAX_KEYS: u32 = 1000;
 pub enum S3ClientError {
     /// The bucket has no object with this key.
     #[error("Object not found: {bucket_id}/{key}")]
-    ObjectNotFound { bucket_id: BucketId, key: String },
+    ObjectNotFound {
+        /// The bucket that was read.
+        bucket_id: BucketId,
+        /// The requested key.
+        key: String,
+    },
 
     /// The key is empty, longer than 1024 bytes, has an empty segment
     /// (leading, trailing or double `/`), a segment over 256 bytes, or a `.`
@@ -417,6 +425,13 @@ fn to_metadata_entries(metadata: HashMap<String, String>) -> Result<Vec<Metadata
         .map(|(k, v)| (k.to_lowercase(), v))
         .collect();
     lowered.sort();
+    let max_entries = MaxMetadataEntries::get() as usize;
+    if lowered.len() > max_entries {
+        return Err(S3ClientError::InvalidMetadata(format!(
+            "{} entries, at most {max_entries}",
+            lowered.len()
+        )));
+    }
     if let Some(pair) = lowered.windows(2).find(|pair| pair[0].0 == pair[1].0) {
         return Err(S3ClientError::InvalidMetadata(format!(
             "duplicate key {:?}",

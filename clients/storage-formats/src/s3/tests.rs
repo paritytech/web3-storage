@@ -53,7 +53,17 @@ fn metadata_keys_are_lowercased_sorted_and_unique() {
         Err(S3ClientError::InvalidMetadata(_))
     ));
     let long_value = HashMap::from([("k".to_string(), "v".repeat(257))]);
-    assert!(to_metadata_entries(long_value).is_err());
+    assert!(matches!(
+        to_metadata_entries(long_value),
+        Err(S3ClientError::InvalidMetadata(_))
+    ));
+    let too_many: HashMap<String, String> = (0..65)
+        .map(|i| (format!("k{i}"), "v".to_string()))
+        .collect();
+    assert!(matches!(
+        to_metadata_entries(too_many),
+        Err(S3ClientError::InvalidMetadata(_))
+    ));
 }
 
 const KEYS: &[&str] = &[

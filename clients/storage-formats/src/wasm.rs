@@ -149,18 +149,18 @@ fn store_error(value: JsValue) -> FsClientError {
         .dyn_ref::<js_sys::Error>()
         .map(|error| String::from(error.message()))
         .unwrap_or_else(|| format!("{value:?}"));
-    FsClientError::StorageClient(message)
+    FsClientError::Store(message)
 }
 
 fn from_store<T: for<'de> Deserialize<'de>>(value: JsValue) -> Result<T> {
     serde_wasm_bindgen::from_value(value)
-        .map_err(|e| FsClientError::StorageClient(format!("invalid store response: {e}")))
+        .map_err(|e| FsClientError::Store(format!("invalid store response: {e}")))
 }
 
 fn cid_from(value: &JsValue) -> Result<Cid> {
     let bytes = js_sys::Uint8Array::new(value).to_vec();
     if bytes.len() != 32 {
-        return Err(FsClientError::StorageClient(format!(
+        return Err(FsClientError::Store(format!(
             "the store returned a {}-byte CID",
             bytes.len()
         )));

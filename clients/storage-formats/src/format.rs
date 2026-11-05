@@ -174,13 +174,14 @@ pub struct MetadataEntry {
 }
 
 impl MetadataEntry {
-    /// Create an entry. Fails with [`FileSystemError::BoundsExceeded`] if the
+    /// Create an entry. Fails with [`FileSystemError::MetadataTooLarge`] if the
     /// key is over 64 bytes or the value over 256 bytes.
     pub fn try_new(key: &[u8], value: &[u8]) -> Result<Self, FileSystemError> {
         Ok(Self {
-            key: BoundedVec::try_from(key.to_vec()).map_err(|_| FileSystemError::BoundsExceeded)?,
+            key: BoundedVec::try_from(key.to_vec())
+                .map_err(|_| FileSystemError::MetadataTooLarge)?,
             value: BoundedVec::try_from(value.to_vec())
-                .map_err(|_| FileSystemError::BoundsExceeded)?,
+                .map_err(|_| FileSystemError::MetadataTooLarge)?,
         })
     }
 }
@@ -210,7 +211,7 @@ impl DirectoryNode {
     }
 
     /// Insert `entry`, or replace the child with the same name. Keeps the
-    /// children sorted. Fails with [`FileSystemError::BoundsExceeded`] if the
+    /// children sorted. Fails with [`FileSystemError::DirectoryFull`] if the
     /// directory already has 1024 children.
     pub fn upsert_child(&mut self, entry: DirectoryEntry) -> Result<(), FileSystemError> {
         match self.position(&entry.name) {
@@ -221,7 +222,7 @@ impl DirectoryNode {
             Err(pos) => self
                 .children
                 .try_insert(pos, entry)
-                .map_err(|_| FileSystemError::BoundsExceeded),
+                .map_err(|_| FileSystemError::DirectoryFull),
         }
     }
 
@@ -317,9 +318,9 @@ pub struct FileManifest {
 impl FileManifest {
     /// Build the manifest of `content`: its chunk hashes, size, `mime_type`
     /// ([`DEFAULT_MIME_TYPE`] if empty) and `user_metadata`. Fails with
-    /// [`FileSystemError::BoundsExceeded`] if
-    /// the MIME type is over 128 bytes, the content has more than 65536
-    /// chunks, or there are more than 64 metadata entries.
+    /// [`FileSystemError::ContentTooLarge`] if the content has more than
+    /// 65536 chunks, and with [`FileSystemError::MetadataTooLarge`] if the
+    /// MIME type is over 128 bytes or there are more than 64 metadata entries.
     pub fn for_content(
         bucket_id: BucketId,
         content: &[u8],
@@ -342,12 +343,12 @@ impl FileManifest {
         Ok(Self {
             bucket_id,
             mime_type: BoundedVec::try_from(mime_type.as_bytes().to_vec())
-                .map_err(|_| FileSystemError::BoundsExceeded)?,
+                .map_err(|_| FileSystemError::MetadataTooLarge)?,
             total_size: content.len() as u64,
-            chunks: BoundedVec::try_from(chunks).map_err(|_| FileSystemError::BoundsExceeded)?,
+            chunks: BoundedVec::try_from(chunks).map_err(|_| FileSystemError::ContentTooLarge)?,
             encryption_params: BoundedVec::default(),
             user_metadata: BoundedVec::try_from(user_metadata)
-                .map_err(|_| FileSystemError::BoundsExceeded)?,
+                .map_err(|_| FileSystemError::MetadataTooLarge)?,
         })
     }
 
@@ -406,48 +407,33 @@ impl FileManifest {
 // Error types
 // ============================================================================
 
-/// Error types for file system operations
+/// Errors of the file-system format: building a node or manifest that breaks
+/// a bound, or reading one that breaks the format rules.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FileSystemError {
-    #[error("Invalid CID format")]
-    InvalidCid,
-
-    #[error("Serialization failed")]
-    SerializationError,
-
-    #[error("Deserialization failed")]
-    DeserializationError,
-
-    #[error("Entry not found: {0}")]
-    EntryNotFound(String),
-
-    #[error("Invalid path")]
-    InvalidPath,
-
-    #[error("Not a directory")]
-    NotADirectory,
-
-    #[error("Not a file")]
-    NotAFile,
-
     /// An entry name is empty, over 256 bytes, not UTF-8, contains `/`, or is
     /// `.` or `..`.
     #[error("Invalid entry name")]
     InvalidEntryName,
-
     /// A directory node has unsorted or duplicate child names, a directory
     /// entry with a non-zero size, or non-empty metadata.
     #[error("Invalid directory node")]
     InvalidDirectory,
-
     /// A file manifest's chunk count does not match its `total_size`, or a
     /// chunk's `sequence` is not its index.
     #[error("Invalid file manifest")]
     InvalidManifest,
-
-    /// A value is over one of the format's size bounds.
-    #[error("Value exceeds a size bound")]
-    BoundsExceeded,
+    /// The directory already has 1024 children, the most a node holds.
+    #[error("Directory is full")]
+    DirectoryFull,
+    /// The content has more than 65536 chunks (16 GiB), the most a manifest
+    /// lists.
+    #[error("Content is too large")]
+    ContentTooLarge,
+    /// The MIME type is over 128 bytes, there are more than 64 metadata
+    /// entries, or a metadata key or value is over 64 or 256 bytes.
+    #[error("File metadata exceeds a size bound")]
+    MetadataTooLarge,
 }
 
 // ============================================================================
@@ -656,14 +642,14 @@ mod tests {
         let long_mime = "a".repeat(129);
         assert_eq!(
             FileManifest::for_content(1, b"x", &long_mime, vec![]),
-            Err(FileSystemError::BoundsExceeded)
+            Err(FileSystemError::MetadataTooLarge)
         );
         let too_many = (0..65)
             .map(|i| MetadataEntry::try_new(format!("k{i}").as_bytes(), b"v").unwrap())
             .collect();
         assert_eq!(
             FileManifest::for_content(1, b"x", DEFAULT_MIME_TYPE, too_many),
-            Err(FileSystemError::BoundsExceeded)
+            Err(FileSystemError::MetadataTooLarge)
         );
         assert!(MetadataEntry::try_new(&[b'k'; 65], b"v").is_err());
         assert!(MetadataEntry::try_new(b"k", &[b'v'; 257]).is_err());
@@ -776,7 +762,7 @@ mod tests {
         }
         assert_eq!(
             dir.upsert_child(entry("overflow", EntryType::File, 0)),
-            Err(FileSystemError::BoundsExceeded)
+            Err(FileSystemError::DirectoryFull)
         );
     }
 
