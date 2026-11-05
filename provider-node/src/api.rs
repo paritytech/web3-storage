@@ -181,11 +181,12 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
 }
 
 async fn stats(State(state): State<Arc<ProviderState>>) -> Json<StatsResponse> {
+    let stats = state.storage.stats();
     Json(StatsResponse {
         provider_id: state.provider_id.clone(),
-        total_buckets: state.storage.bucket_ids().len(),
-        total_nodes: state.storage.total_nodes(),
-        total_bytes: state.storage.total_bytes(),
+        total_buckets: stats.buckets as usize,
+        total_nodes: stats.nodes,
+        total_bytes: stats.bytes,
     })
 }
 
@@ -199,10 +200,10 @@ struct GetNodeQuery {
     hash: String,
 }
 
-fn require_bucket(state: &ProviderState, bucket_id: BucketId) -> Result<BucketInfo, Error> {
+async fn require_bucket(state: &ProviderState, bucket_id: BucketId) -> Result<BucketInfo, Error> {
     Ok(state
-        .storage
-        .get_bucket(bucket_id)
+        .blocking_storage(move |storage| storage.get_bucket(bucket_id))
+        .await?
         .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?)
 }
 
@@ -211,11 +212,11 @@ async fn get_node(
     Query(query): Query<GetNodeQuery>,
 ) -> Result<Json<DownloadNodeResponse>, Error> {
     let hash = decode_hash(&query.hash)?;
-    require_bucket(&state, query.bucket_id)?;
+    require_bucket(&state, query.bucket_id).await?;
 
     let node = state
-        .storage
-        .get_node(&hash)
+        .blocking_storage(move |storage| storage.get_node(&hash))
+        .await?
         .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
 
     Ok(Json(DownloadNodeResponse::new(hash, &node)))
@@ -253,12 +254,13 @@ async fn upload_node(
         })
         .transpose()?;
     let node = ChunkTreeNode::from_wire(data, children)?;
-
-    // Initialize bucket if needed
-    state.storage.init_bucket(request.bucket_id, u64::MAX)?;
-
-    // Store node
-    state.storage.store_node(request.bucket_id, hash, node)?;
+    let bucket_id = request.bucket_id;
+    state
+        .blocking_storage(move |storage| {
+            storage.init_bucket(bucket_id, u64::MAX)?;
+            storage.store_node(bucket_id, hash, node)
+        })
+        .await??;
 
     Ok(Json(UploadNodeResponse { stored: true }))
 }
@@ -283,7 +285,10 @@ async fn check_exists(
         .map(|h| decode_hash(h))
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let (exists, missing) = state.storage.check_exists(request.bucket_id, &hashes);
+    let bucket_id = request.bucket_id;
+    let (exists, missing) = state
+        .blocking_storage(move |storage| storage.check_exists(bucket_id, &hashes))
+        .await?;
 
     Ok(Json(ExistsResponse { exists, missing }))
 }
@@ -312,7 +317,10 @@ async fn commit(
         .map(|h| decode_hash(h))
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let outcome = state.storage.commit(request.bucket_id, data_roots)?;
+    let bucket_id = request.bucket_id;
+    let outcome = state
+        .blocking_storage(move |storage| storage.commit(bucket_id, data_roots))
+        .await??;
 
     let payload = CommitmentPayload::new(
         request.bucket_id,
@@ -338,16 +346,20 @@ async fn read_chunks(
     Query(query): Query<ReadQuery>,
 ) -> Result<Json<ReadResponse>, Error> {
     let data_root = decode_hash(&query.data_root)?;
-    require_bucket(&state, query.bucket_id)?;
+    require_bucket(&state, query.bucket_id).await?;
 
-    // Calculate chunk indices
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
     let start_chunk = query.offset / chunk_size;
-    let end_chunk = (query.offset + query.length).div_ceil(chunk_size);
+    let end_chunk = query
+        .offset
+        .saturating_add(query.length)
+        .div_ceil(chunk_size);
 
     let chunks = state
-        .storage
-        .get_chunks_in_range(data_root, start_chunk..end_chunk)?
+        .blocking_storage(move |storage| {
+            storage.get_chunks_in_range(data_root, start_chunk..end_chunk)
+        })
+        .await??
         .into_iter()
         .map(|(hash, data, proof)| ChunkWithProof {
             hash,
@@ -377,7 +389,7 @@ async fn get_commitment(
     )
     .await?;
 
-    let bucket = require_bucket(&state, query.bucket_id)?;
+    let bucket = require_bucket(&state, query.bucket_id).await?;
 
     let payload = CommitmentPayload::new(
         query.bucket_id,
@@ -414,7 +426,7 @@ async fn get_checkpoint_signature(
     )
     .await?;
 
-    let bucket = require_bucket(&state, query.bucket_id)?;
+    let bucket = require_bucket(&state, query.bucket_id).await?;
 
     let leaf_count = bucket.leaf_count;
 
@@ -452,17 +464,18 @@ async fn get_mmr_proof(
     )
     .await?;
 
-    let proof = match query.commitment()? {
-        Some(commitment) => state.storage.get_mmr_proof_for_commitment(
-            query.bucket_id,
-            &commitment,
-            query.leaf_index,
-        )?,
-        None => state
-            .storage
-            .get_mmr_proof(query.bucket_id, query.leaf_index)?,
-    };
-    Ok(Json(proof))
+    let commitment = query.commitment()?;
+    let (bucket_id, leaf_index) = (query.bucket_id, query.leaf_index);
+    let mmr_proof = state
+        .blocking_storage(move |storage| match commitment {
+            Some(commitment) => {
+                storage.get_mmr_proof_for_commitment(bucket_id, &commitment, leaf_index)
+            }
+            None => storage.get_mmr_proof(bucket_id, leaf_index),
+        })
+        .await??;
+
+    Ok(Json(mmr_proof))
 }
 
 async fn get_chunk_proof(
@@ -470,11 +483,12 @@ async fn get_chunk_proof(
     Query(query): Query<ChunkProofQuery>,
 ) -> Result<Json<ChunkProofResponse>, Error> {
     let data_root = decode_hash(&query.data_root)?;
-    require_bucket(&state, query.bucket_id)?;
+    require_bucket(&state, query.bucket_id).await?;
 
+    let chunk_index = query.chunk_index;
     let (chunk_data, proof) = state
-        .storage
-        .get_chunk_at_index(data_root, query.chunk_index)?;
+        .blocking_storage(move |storage| storage.get_chunk_at_index(data_root, chunk_index))
+        .await??;
     let chunk_hash = storage_primitives::hash_leaf(&chunk_data);
 
     Ok(Json(ChunkProofResponse {
@@ -505,18 +519,17 @@ async fn delete_data(
     )
     .await?;
 
-    let (mmr_root, start_seq, leaf_count) = state
-        .storage
-        .delete_before(request.bucket_id, request.new_start_seq)?;
+    let (bucket_id, new_start_seq) = (request.bucket_id, request.new_start_seq);
+    let commitment = state
+        .blocking_storage(move |storage| storage.delete_before(bucket_id, new_start_seq))
+        .await??;
+    let Commitment {
+        mmr_root,
+        start_seq,
+        leaf_count,
+    } = commitment;
 
-    let payload = CommitmentPayload::new(
-        request.bucket_id,
-        Commitment {
-            mmr_root,
-            start_seq,
-            leaf_count,
-        },
-    );
+    let payload = CommitmentPayload::new(request.bucket_id, commitment);
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(DeleteResponse {
@@ -545,7 +558,10 @@ async fn get_mmr_peaks(
     )
     .await?;
 
-    let (mmr_root, peaks) = state.storage.get_mmr_peaks(query.bucket_id)?;
+    let bucket_id = query.bucket_id;
+    let (mmr_root, peaks) = state
+        .blocking_storage(move |storage| storage.get_mmr_peaks(bucket_id))
+        .await??;
 
     Ok(Json(MmrPeaksResponse {
         bucket_id: query.bucket_id,
@@ -558,16 +574,25 @@ async fn fetch_nodes(
     State(state): State<Arc<ProviderState>>,
     Json(request): Json<FetchNodesRequest>,
 ) -> Result<Json<FetchNodesResponse>, Error> {
-    require_bucket(&state, request.bucket_id)?;
-    let mut nodes = Vec::new();
+    require_bucket(&state, request.bucket_id).await?;
+    let hashes = request
+        .hashes
+        .iter()
+        .map(|hash_str| decode_hash(hash_str))
+        .collect::<Result<Vec<_>, Error>>()?;
 
-    for hash_str in &request.hashes {
-        let hash = decode_hash(hash_str)?;
-
-        if let Some(node) = state.storage.get_node(&hash) {
-            nodes.push(DownloadNodeResponse::new(hash, &node));
-        }
-    }
+    let nodes = state
+        .blocking_storage(move |storage| {
+            hashes
+                .into_iter()
+                .filter_map(|hash| {
+                    storage
+                        .get_node(&hash)
+                        .map(|node| DownloadNodeResponse::new(hash, &node))
+                })
+                .collect::<Vec<_>>()
+        })
+        .await?;
 
     Ok(Json(FetchNodesResponse { nodes }))
 }
@@ -594,7 +619,7 @@ async fn get_historical_roots(
     )
     .await?;
 
-    let bucket = require_bucket(&state, query.bucket_id)?;
+    let bucket = require_bucket(&state, query.bucket_id).await?;
 
     Ok(Json(HistoricalRootsResponse {
         bucket_id: query.bucket_id,
@@ -708,7 +733,7 @@ async fn get_replica_sync_status(
     )
     .await?;
 
-    let bucket = require_bucket(&state, query.bucket_id)?;
+    let bucket = require_bucket(&state, query.bucket_id).await?;
 
     Ok(Json(BucketSyncStatusResponse {
         bucket_id: query.bucket_id,
