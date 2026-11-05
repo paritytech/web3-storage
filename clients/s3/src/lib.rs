@@ -4,35 +4,51 @@
 //!
 //! An S3 bucket is a Layer 0 bucket of `pallet-storage-provider`, identified
 //! by its bucket id. The chain stores no bucket name and no object metadata.
-//! Object operations go to the provider's `/s3/{bucket_id}/...` HTTP routes;
-//! the provider's S3 index maps each key to its content, content type and
-//! user metadata.
 //!
-//! Downloads by key are unverified: nothing on chain commits to the
-//! provider's key-to-content index, so the client cannot check that the
-//! returned bytes belong to the requested key (#410).
+//! Objects are files in the bucket's file tree ([`file_system_client::tree`]):
+//! key `k` is the file at path `/k`. The client reads and writes the tree
+//! through Layer 0 routes only (`PUT /node`, `POST /commit`, `GET /read`,
+//! `GET /node`, `GET /commitment`, `GET /mmr_proof`). Downloads are checked against the
+//! object's content root, and the tree's root is the bucket's last MMR leaf.
 //!
-//! The client has no bucket deletion: Layer 0 has no bucket deletion.
-
-mod substrate;
+//! Limits:
+//! - **Single writer.** Two clients that write the same bucket at the same
+//!   time can lose a change: the last commit wins.
+//! - **Only the S3 and file system clients may write the bucket.** Any other
+//!   commit replaces the tree's root.
+//! - **Prefix deletes.** An Admin `POST /delete` that moves `start_seq` past
+//!   the leaves of blobs the current tree still references lets the provider
+//!   drop those blobs.
+//! - **Blob reads by CID are unauthenticated.** Anyone who knows a CID and a
+//!   bucket id can read the blob (#383, #396). Root discovery
+//!   (`GET /commitment`, `GET /mmr_proof`) needs Reader on a private bucket.
+//!   Confidential data needs client-side encryption.
+//! - A key cannot also be a prefix directory of another key: `a` and `a/b`
+//!   cannot both exist ([`S3ClientError::KeyConflict`]).
+//! - No bucket deletion: Layer 0 has no bucket deletion.
 
 pub use storage_client::Signer;
 pub use storage_primitives::{BucketId, Role, Visibility};
-pub use substrate::SubstrateClient;
 
-use reqwest::{Response, StatusCode};
-use serde::Deserialize;
+use file_system_client::format::{
+    validate_entry_name, DirectoryEntry, MetadataEntry, DEFAULT_MIME_TYPE,
+};
+use file_system_client::{BlobStore, EmptyParents, FileStat, FsClientError, Tree};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
+use storage_client::substrate::{
+    created_bucket_id, extrinsics, fetch_bucket, fetch_member_bucket_ids, SubstrateClient,
+};
+use storage_client::{convert, ClientError, StorageUserClient};
 use thiserror::Error;
-use tracing::{debug, info};
-
-/// Prefix of the HTTP headers that carry user metadata.
-const USER_METADATA_HEADER_PREFIX: &str = "x-amz-meta-";
+use tracing::{debug, info, warn};
 
 /// Maximum object key length in bytes.
 const MAX_OBJECT_KEY_LEN: usize = 1024;
+
+/// Default and maximum page size of [`S3Client::list_objects_v2`].
+const DEFAULT_MAX_KEYS: u32 = 1000;
 
 /// S3 client error types.
 #[derive(Error, Debug)]
@@ -42,27 +58,41 @@ pub enum S3ClientError {
     #[error("Bucket not found: {0}")]
     BucketNotFound(BucketId),
 
-    /// The provider's index has no object with this key.
+    /// The bucket has no object with this key.
     #[error("Object not found: {bucket_id}/{key}")]
     ObjectNotFound { bucket_id: BucketId, key: String },
 
-    /// The key is empty or longer than 1024 bytes.
+    /// The key is empty, longer than 1024 bytes, has an empty segment
+    /// (leading, trailing or double `/`), a segment over 256 bytes, or a `.`
+    /// or `..` segment.
     #[error("Invalid object key: {0}")]
     InvalidObjectKey(String),
 
-    /// The provider rejected the request: the signer is not a bucket member
-    /// with the required role.
-    #[error("Access denied")]
-    AccessDenied,
+    /// The key is the prefix directory of other keys, or a prefix of the key
+    /// is itself a key. Delete the other object first.
+    #[error("Object key conflicts with an existing key: {0}")]
+    KeyConflict(String),
+
+    /// Two metadata keys are equal after lowercasing, or a key or value is
+    /// over the size bounds (64 entries, 64-byte keys, 256-byte values).
+    #[error("Invalid user metadata: {0}")]
+    InvalidMetadata(String),
 
     #[error("Chain error: {0}")]
     ChainError(String),
 
-    #[error("Provider error: {0}")]
-    ProviderError(String),
+    /// Reading or writing the bucket's file tree failed.
+    #[error(transparent)]
+    FileSystem(#[from] FsClientError),
+}
 
-    #[error("HTTP error: {0}")]
-    HttpError(#[from] reqwest::Error),
+impl From<ClientError> for S3ClientError {
+    fn from(e: ClientError) -> Self {
+        match e {
+            ClientError::Chain(message) => Self::ChainError(message),
+            other => Self::FileSystem(other.into()),
+        }
+    }
 }
 
 /// Result type for S3 client operations.
@@ -71,21 +101,19 @@ pub type Result<T> = std::result::Result<T, S3ClientError>;
 /// Options for [`S3Client::put_object`].
 #[derive(Default, Clone, Debug)]
 pub struct PutObjectOptions {
-    /// Content type (MIME type). Defaults to `application/octet-stream`.
+    /// Content type (MIME type). `None` or an empty string stores
+    /// `application/octet-stream`.
     pub content_type: Option<String>,
-    /// User-defined metadata, sent as `x-amz-meta-*` headers. Header names
-    /// are case-insensitive, so keys come back lowercase. A key or value that
-    /// is not valid in an HTTP header fails the request with
-    /// [`S3ClientError::HttpError`].
+    /// User-defined metadata. Keys are stored lowercase.
     pub metadata: HashMap<String, String>,
 }
 
 /// Response from [`S3Client::put_object`].
 #[derive(Clone, Debug)]
 pub struct PutObjectResponse {
-    /// ETag of the uploaded object.
+    /// ETag: `0x` + hex of the content root.
     pub etag: String,
-    /// Merkle root of the uploaded data.
+    /// Content root (Layer 0 data root) of the object data.
     pub cid: H256,
     /// Size of the uploaded object in bytes.
     pub size: u64,
@@ -94,11 +122,11 @@ pub struct PutObjectResponse {
 /// Response from [`S3Client::get_object`].
 #[derive(Clone, Debug)]
 pub struct GetObjectResponse {
-    /// Object data. Unverified: see the crate docs.
+    /// Object data, checked against the content root.
     pub data: Vec<u8>,
     /// Content type.
     pub content_type: String,
-    /// ETag.
+    /// ETag: `0x` + hex of the content root.
     pub etag: String,
     /// Size in bytes.
     pub size: u64,
@@ -113,13 +141,13 @@ pub struct GetObjectResponse {
 pub struct HeadObjectResponse {
     /// Content type.
     pub content_type: String,
-    /// ETag.
+    /// ETag: `0x` + hex of the content root.
     pub etag: String,
     /// Size in bytes.
     pub size: u64,
     /// Last modified time, in seconds since the Unix epoch.
     pub last_modified: u64,
-    /// Merkle root of the object data, as reported by the provider.
+    /// Content root (Layer 0 data root) of the object data.
     pub cid: H256,
     /// User metadata.
     pub metadata: HashMap<String, String>,
@@ -157,16 +185,17 @@ pub struct ListObjectsParams {
     /// Group keys that contain this delimiter after the prefix into
     /// `common_prefixes`.
     pub delimiter: Option<String>,
-    /// Return only keys after this key.
+    /// Return only keys after this key. To read the next page, pass the
+    /// previous page's `next_start_after`.
     pub start_after: Option<String>,
-    /// `next_continuation_token` from the previous page.
-    pub continuation_token: Option<String>,
-    /// Maximum number of keys to return. The provider default is 1000.
+    /// Maximum number of keys and common prefixes to return, 1 to 1000
+    /// (default 1000). 0 counts as 1, so a truncated page always names
+    /// `next_start_after`.
     pub max_keys: Option<u32>,
 }
 
 /// One object in a [`ListObjectsResponse`].
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObjectSummary {
     /// Object key.
     pub key: String,
@@ -174,39 +203,121 @@ pub struct ObjectSummary {
     pub size: u64,
     /// Last modified time, in seconds since the Unix epoch.
     pub last_modified: u64,
-    /// ETag.
-    pub etag: String,
+    /// Not set: listing reads no manifests. [`S3Client::head_object`]
+    /// returns the ETag.
+    pub etag: Option<String>,
 }
 
-/// Response from [`S3Client::list_objects_v2`], as returned by the provider.
-#[derive(Clone, Debug, Deserialize)]
+/// Response from [`S3Client::list_objects_v2`].
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListObjectsResponse {
-    /// Matching objects.
+    /// Matching objects, sorted by key bytes.
     pub contents: Vec<ObjectSummary>,
-    /// Key prefixes grouped by the delimiter.
+    /// Key prefixes grouped by the delimiter, sorted.
     pub common_prefixes: Vec<String>,
     /// `true` if more keys match than this page returns.
     pub is_truncated: bool,
-    /// Token for the next page.
-    pub next_continuation_token: Option<String>,
-    /// Number of keys returned.
+    /// The last key or common prefix of this page when `is_truncated`; pass
+    /// it as `start_after` for the next page.
+    pub next_start_after: Option<String>,
+    /// Number of keys and common prefixes returned.
     pub key_count: u32,
 }
 
-/// Body of the provider's `PUT /s3/{bucket_id}/object` response.
-#[derive(Deserialize)]
-struct PutObjectWire {
-    etag: String,
-    data_root: String,
-    size: u64,
+/// Object operations on a bucket's file tree, through one provider. Needs no
+/// chain connection.
+pub struct ObjectClient {
+    storage: StorageUserClient,
 }
 
-/// S3 client for interacting with web3-storage using S3-compatible semantics.
+impl ObjectClient {
+    /// Create an object client for `provider_url`. `signer` authenticates
+    /// uploads and commits; the provider checks its bucket role.
+    pub fn new(provider_url: &str, signer: Signer) -> Result<Self> {
+        let storage = StorageUserClient::for_provider(provider_url, signer)
+            .map_err(|e| FsClientError::Config(e.to_string()))?;
+        Ok(Self { storage })
+    }
+
+    fn tree(&self, bucket_id: BucketId) -> Tree<&StorageUserClient> {
+        Tree::new(&self.storage, bucket_id)
+    }
+
+    /// Upload an object. Replaces an existing object with the same key.
+    pub async fn put_object(
+        &self,
+        bucket_id: BucketId,
+        key: &str,
+        data: &[u8],
+        options: PutObjectOptions,
+    ) -> Result<PutObjectResponse> {
+        info!(
+            "Uploading object: {}/{} ({} bytes)",
+            bucket_id,
+            key,
+            data.len()
+        );
+        put_object_in(&self.tree(bucket_id), key, data, options).await
+    }
+
+    /// Download an object by key. The data is checked against the object's
+    /// content root.
+    pub async fn get_object(&self, bucket_id: BucketId, key: &str) -> Result<GetObjectResponse> {
+        info!("Downloading object: {}/{}", bucket_id, key);
+        get_object_in(&self.tree(bucket_id), key).await
+    }
+
+    /// Read an object's metadata without the data.
+    pub async fn head_object(&self, bucket_id: BucketId, key: &str) -> Result<HeadObjectResponse> {
+        head_object_in(&self.tree(bucket_id), key).await
+    }
+
+    /// Delete an object, and the prefix directories it leaves empty. The data
+    /// remains in the bucket's committed history. Deleting a missing key
+    /// succeeds.
+    pub async fn delete_object(&self, bucket_id: BucketId, key: &str) -> Result<()> {
+        info!("Deleting object: {}/{}", bucket_id, key);
+        let path = key_to_path(key)?;
+        match self
+            .tree(bucket_id)
+            .delete(&path, EmptyParents::Remove)
+            .await
+        {
+            Ok(()) => Ok(()),
+            // No object with this key: the path is missing, passes through
+            // a file, or is a directory.
+            Err(
+                FsClientError::PathNotFound(_)
+                | FsClientError::NotADirectory(_)
+                | FsClientError::NotAFile(_),
+            ) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// List objects in a bucket, sorted by key bytes.
+    ///
+    /// Reads the root and the deepest directory the prefix names. With
+    /// delimiter `/`, reads each of its subdirectories only until it finds an
+    /// object, unless `start_after` is a key inside one of them. With any
+    /// other delimiter or none, reads every directory under it. Reads no
+    /// manifests, so `etag` is not set.
+    pub async fn list_objects_v2(
+        &self,
+        bucket_id: BucketId,
+        params: ListObjectsParams,
+    ) -> Result<ListObjectsResponse> {
+        debug!("Listing objects in bucket: {}", bucket_id);
+        list_objects_in(&self.tree(bucket_id), params).await
+    }
+}
+
+/// S3 client: Layer 0 buckets on chain, objects through [`ObjectClient`].
 pub struct S3Client {
-    http: reqwest::Client,
-    provider_url: String,
-    signer: Signer,
+    objects: ObjectClient,
     substrate_client: SubstrateClient,
+    /// The signer's account.
+    account: AccountId32,
 }
 
 impl S3Client {
@@ -220,14 +331,26 @@ impl S3Client {
             chain_url, provider_url
         );
 
-        let substrate_client = SubstrateClient::new(chain_url, signer.clone()).await?;
+        info!("Connecting to chain at {}", chain_url);
+        let account_id: [u8; 32] = signer.keypair().public_key().0;
+        let substrate_client = SubstrateClient::connect(chain_url)
+            .await?
+            .with_signer(signer.clone());
+        info!(
+            "Connected to chain, account: {}",
+            array_bytes::bytes2hex("0x", account_id)
+        );
 
         Ok(Self {
-            http: reqwest::Client::new(),
-            provider_url: provider_url.trim_end_matches('/').to_string(),
-            signer,
+            objects: ObjectClient::new(provider_url, signer)?,
             substrate_client,
+            account: AccountId32::new(account_id),
         })
+    }
+
+    /// The object operations of this client.
+    pub fn objects(&self) -> &ObjectClient {
+        &self.objects
     }
 
     /// Create an S3 bucket: a Layer 0 bucket with one primary agreement.
@@ -243,10 +366,9 @@ impl S3Client {
         sig: sp_runtime::MultiSignature,
         visibility: Visibility,
     ) -> Result<BucketId> {
-        let bucket_id = self
-            .substrate_client
-            .create_bucket_with_primary(provider, &terms, &sig, visibility)
-            .await?;
+        let tx = extrinsics::create_bucket_with_primary(provider, &terms, &sig, visibility);
+        let events = self.substrate_client.submit(&tx).await?;
+        let bucket_id = created_bucket_id(&events)?;
         info!("S3 bucket created: {}", bucket_id);
         Ok(bucket_id)
     }
@@ -254,9 +376,10 @@ impl S3Client {
     /// Read a bucket from the chain. Fails with
     /// [`S3ClientError::BucketNotFound`] if it does not exist.
     pub async fn head_bucket(&self, bucket_id: BucketId) -> Result<BucketInfo> {
-        self.substrate_client
-            .get_bucket_info(bucket_id)
+        let at = self.substrate_client.at_current_block().await?;
+        fetch_bucket(&at, bucket_id)
             .await?
+            .map(|bucket| to_bucket_info(bucket_id, bucket))
             .ok_or(S3ClientError::BucketNotFound(bucket_id))
     }
 
@@ -264,13 +387,27 @@ impl S3Client {
     /// owned or shared. The chain does not record which buckets contain S3
     /// objects, so this lists all of them.
     pub async fn list_buckets(&self, account: Option<AccountId32>) -> Result<Vec<BucketInfo>> {
-        let account = account.unwrap_or_else(|| self.substrate_client.account());
-        self.substrate_client.list_member_buckets(&account).await
+        let account = account.unwrap_or_else(|| self.account.clone());
+        let at = self.substrate_client.at_current_block().await?;
+        let bucket_ids = fetch_member_bucket_ids(&at, &account).await?;
+
+        // One read per bucket, but issued together rather than in series.
+        let fetched =
+            futures::future::join_all(bucket_ids.iter().map(|id| fetch_bucket(&at, *id))).await;
+
+        let mut buckets = Vec::new();
+        for (id, result) in bucket_ids.iter().zip(fetched) {
+            match result {
+                Ok(Some(bucket)) => buckets.push(to_bucket_info(*id, bucket)),
+                Ok(None) => {}
+                Err(e) => warn!("Failed to read bucket {id}: {e}"),
+            }
+        }
+
+        Ok(buckets)
     }
 
-    /// Upload an object. The provider stores the data, commits it to the
-    /// bucket, and records the key, content type and user metadata in its
-    /// S3 index. Nothing about the object goes on chain.
+    /// See [`ObjectClient::put_object`].
     pub async fn put_object(
         &self,
         bucket_id: BucketId,
@@ -278,327 +415,357 @@ impl S3Client {
         data: &[u8],
         options: PutObjectOptions,
     ) -> Result<PutObjectResponse> {
-        info!(
-            "Uploading object: {}/{} ({} bytes)",
-            bucket_id,
-            key,
-            data.len()
-        );
-        validate_object_key(key)?;
-
-        let content_type = options
-            .content_type
-            .unwrap_or_else(|| "application/octet-stream".to_string());
-        let mut req = self
-            .http
-            .put(self.object_url(bucket_id))
-            .query(&[("key", key)])
-            .header("content-type", content_type)
-            .body(data.to_vec());
-        for (k, v) in &options.metadata {
-            req = req.header(format!("{USER_METADATA_HEADER_PREFIX}{k}"), v);
-        }
-
-        let response = self.send(req, "PUT", bucket_id, key).await?;
-        let body: PutObjectWire = response.json().await?;
-        let cid = parse_h256(&body.data_root)?;
-
-        info!(
-            "Object uploaded: {}/{} (etag={})",
-            bucket_id, key, body.etag
-        );
-        Ok(PutObjectResponse {
-            etag: body.etag,
-            cid,
-            size: body.size,
-        })
+        self.objects.put_object(bucket_id, key, data, options).await
     }
 
-    /// Download an object by key.
-    ///
-    /// Unverified: the key-to-content mapping comes from the provider's
-    /// index, which nothing on chain commits to (#410).
+    /// See [`ObjectClient::get_object`].
     pub async fn get_object(&self, bucket_id: BucketId, key: &str) -> Result<GetObjectResponse> {
-        info!("Downloading object: {}/{}", bucket_id, key);
-        validate_object_key(key)?;
-
-        let req = self
-            .http
-            .get(self.object_url(bucket_id))
-            .query(&[("key", key)]);
-        let response = self.send(req, "GET", bucket_id, key).await?;
-
-        let headers = response.headers().clone();
-        let data = response.bytes().await?.to_vec();
-
-        info!(
-            "Object downloaded: {}/{} ({} bytes)",
-            bucket_id,
-            key,
-            data.len()
-        );
-        Ok(GetObjectResponse {
-            content_type: content_type(&headers),
-            etag: header_str(&headers, "etag"),
-            size: data.len() as u64,
-            last_modified: header_u64(&headers, "last-modified"),
-            metadata: user_metadata(&headers),
-            data,
-        })
+        self.objects.get_object(bucket_id, key).await
     }
 
-    /// Read an object's metadata from the provider's index without the data.
+    /// See [`ObjectClient::head_object`].
     pub async fn head_object(&self, bucket_id: BucketId, key: &str) -> Result<HeadObjectResponse> {
-        validate_object_key(key)?;
-        let req = self
-            .http
-            .head(self.object_url(bucket_id))
-            .query(&[("key", key)]);
-        let response = self.send(req, "HEAD", bucket_id, key).await?;
-        let headers = response.headers();
-
-        Ok(HeadObjectResponse {
-            content_type: content_type(headers),
-            etag: header_str(headers, "etag"),
-            size: header_u64(headers, "content-length"),
-            last_modified: header_u64(headers, "last-modified"),
-            cid: parse_h256(&header_str(headers, "x-amz-data-root"))?,
-            metadata: user_metadata(headers),
-        })
+        self.objects.head_object(bucket_id, key).await
     }
 
-    /// Delete an object from the provider's index. The data remains in the
-    /// bucket's committed history. Deleting a missing key succeeds.
+    /// See [`ObjectClient::delete_object`].
     pub async fn delete_object(&self, bucket_id: BucketId, key: &str) -> Result<()> {
-        info!("Deleting object: {}/{}", bucket_id, key);
-        validate_object_key(key)?;
-
-        let req = self
-            .http
-            .delete(self.object_url(bucket_id))
-            .query(&[("key", key)]);
-        self.send(req, "DELETE", bucket_id, key).await?;
-
-        info!("Object deleted: {}/{}", bucket_id, key);
-        Ok(())
+        self.objects.delete_object(bucket_id, key).await
     }
 
-    /// List objects in a bucket from the provider's index.
+    /// See [`ObjectClient::list_objects_v2`].
     pub async fn list_objects_v2(
         &self,
         bucket_id: BucketId,
         params: ListObjectsParams,
     ) -> Result<ListObjectsResponse> {
-        debug!("Listing objects in bucket: {}", bucket_id);
-
-        let mut query: Vec<(&str, String)> = Vec::new();
-        let optional = [
-            ("prefix", params.prefix),
-            ("delimiter", params.delimiter),
-            ("start_after", params.start_after),
-            ("continuation_token", params.continuation_token),
-            ("max_keys", params.max_keys.map(|n| n.to_string())),
-        ];
-        for (name, value) in optional {
-            if let Some(value) = value {
-                query.push((name, value));
-            }
-        }
-
-        let req = self
-            .http
-            .get(format!("{}/s3/{bucket_id}/objects", self.provider_url))
-            .query(&query);
-        let response = self.send(req, "GET", bucket_id, "").await?;
-        Ok(response.json().await?)
-    }
-
-    fn object_url(&self, bucket_id: BucketId) -> String {
-        format!("{}/s3/{bucket_id}/object", self.provider_url)
-    }
-
-    /// Sign `req` with the provider auth header, send it, and map error
-    /// statuses to [`S3ClientError`]. `key` is used only in error values;
-    /// pass `""` for requests that are not about one object.
-    async fn send(
-        &self,
-        req: reqwest::RequestBuilder,
-        method: &str,
-        bucket_id: BucketId,
-        key: &str,
-    ) -> Result<Response> {
-        let response = req
-            .header("Authorization", self.signer.auth_header(method, bucket_id))
-            .send()
-            .await?;
-        match response.status() {
-            status if status.is_success() => Ok(response),
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(S3ClientError::AccessDenied),
-            status => {
-                let body = response.text().await.unwrap_or_default();
-                if status == StatusCode::NOT_FOUND {
-                    if let Some(err) = map_not_found(method, &body, bucket_id, key) {
-                        return Err(err);
-                    }
-                }
-                Err(S3ClientError::ProviderError(format!(
-                    "{method} failed: {status} {body}"
-                )))
-            }
-        }
+        self.objects.list_objects_v2(bucket_id, params).await
     }
 }
 
-/// Reject empty keys and keys over 1024 bytes. The provider rejects only
-/// empty keys; the 1024-byte limit is this client's.
-fn validate_object_key(key: &str) -> Result<()> {
-    if key.is_empty() || key.len() > MAX_OBJECT_KEY_LEN {
-        return Err(S3ClientError::InvalidObjectKey(key.to_string()));
+/// Convert the decoded `StorageProvider::Buckets` value to [`BucketInfo`].
+fn to_bucket_info(
+    bucket_id: BucketId,
+    bucket: storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket,
+) -> BucketInfo {
+    BucketInfo {
+        bucket_id,
+        members: bucket
+            .members
+            .0
+            .iter()
+            .map(|m| BucketMember {
+                account: AccountId32::new(m.account.0),
+                role: convert::to_sp_role(&m.role),
+            })
+            .collect(),
+        primary_providers: bucket
+            .primary_providers
+            .0
+            .iter()
+            .map(|p| AccountId32::new(p.0))
+            .collect(),
+        visibility: bucket.visibility.into(),
+        frozen: bucket.frozen_start_seq.is_some(),
     }
-    Ok(())
 }
 
-/// Parse a `0x`-prefixed 32-byte hex string.
-fn parse_h256(s: &str) -> Result<H256> {
-    let bytes = hex::decode(s.trim_start_matches("0x"))
-        .map_err(|e| S3ClientError::ProviderError(format!("Invalid hash {s:?}: {e}")))?;
-    if bytes.len() != 32 {
-        return Err(S3ClientError::ProviderError(format!(
-            "Invalid hash {s:?}: expected 32 bytes"
+/// Check `key` and return its file path, `/` + `key`.
+///
+/// A key is 1..=1024 bytes, split on `/` into segments of 1..=256 bytes, with
+/// no empty, `.` or `..` segment.
+pub fn key_to_path(key: &str) -> Result<String> {
+    let valid = !key.is_empty()
+        && key.len() <= MAX_OBJECT_KEY_LEN
+        && key
+            .split('/')
+            .all(|segment| validate_entry_name(segment.as_bytes()).is_ok());
+    if valid {
+        Ok(format!("/{key}"))
+    } else {
+        Err(S3ClientError::InvalidObjectKey(key.to_string()))
+    }
+}
+
+/// [`ObjectClient::put_object`] on `tree`.
+async fn put_object_in<S: BlobStore>(
+    tree: &Tree<S>,
+    key: &str,
+    data: &[u8],
+    options: PutObjectOptions,
+) -> Result<PutObjectResponse> {
+    let path = key_to_path(key)?;
+    let metadata = to_metadata_entries(options.metadata)?;
+    let content_type = options
+        .content_type
+        .unwrap_or_else(|| DEFAULT_MIME_TYPE.to_string());
+    let stat = tree
+        .put_file(&path, data, &content_type, metadata)
+        .await
+        .map_err(|e| match e {
+            FsClientError::NotAFile(_) | FsClientError::NotADirectory(_) => {
+                S3ClientError::KeyConflict(key.to_string())
+            }
+            other => other.into(),
+        })?;
+    let cid = stat.content_root();
+    Ok(PutObjectResponse {
+        etag: etag(cid),
+        cid,
+        size: stat.size(),
+    })
+}
+
+/// [`ObjectClient::get_object`] on `tree`.
+async fn get_object_in<S: BlobStore>(tree: &Tree<S>, key: &str) -> Result<GetObjectResponse> {
+    let path = key_to_path(key)?;
+    let file = tree
+        .get_file(&path)
+        .await
+        .map_err(|e| object_error(e, tree.bucket_id(), key))?;
+    let head = to_head(&file.stat);
+    Ok(GetObjectResponse {
+        data: file.data,
+        content_type: head.content_type,
+        etag: head.etag,
+        size: head.size,
+        last_modified: head.last_modified,
+        metadata: head.metadata,
+    })
+}
+
+/// [`ObjectClient::head_object`] on `tree`.
+async fn head_object_in<S: BlobStore>(tree: &Tree<S>, key: &str) -> Result<HeadObjectResponse> {
+    let path = key_to_path(key)?;
+    let stat = tree
+        .stat(&path)
+        .await
+        .map_err(|e| object_error(e, tree.bucket_id(), key))?;
+    Ok(to_head(&stat))
+}
+
+/// [`ObjectClient::list_objects_v2`] on `tree`.
+async fn list_objects_in<S: BlobStore>(
+    tree: &Tree<S>,
+    params: ListObjectsParams,
+) -> Result<ListObjectsResponse> {
+    let prefix = params.prefix.unwrap_or_default();
+    let delimiter = params.delimiter.as_deref().filter(|d| !d.is_empty());
+    let start_after = params.start_after.as_deref();
+
+    // `a/b/c` lists under `/a/b`; `a/b/` lists under `/a/b`; `a` lists
+    // under `/`.
+    let dir_key = prefix.rfind('/').map_or("", |i| &prefix[..i]);
+    let key_prefix = if dir_key.is_empty() {
+        String::new()
+    } else {
+        format!("{dir_key}/")
+    };
+    // With delimiter `/`, each subdirectory of the listed directory that
+    // contains an object is one common prefix. If `start_after` is a key
+    // inside a subdirectory, the page shows that common prefix only if the
+    // subdirectory has a later key, so read every directory.
+    let start_after_in_subdir = start_after
+        .and_then(|after| after.strip_prefix(key_prefix.as_str()))
+        .is_some_and(|rel| rel.find('/').is_some_and(|i| i + 1 < rel.len()));
+    let dir_only = delimiter == Some("/") && !start_after_in_subdir;
+
+    let dir_path = if dir_key.is_empty() {
+        Ok("/".to_string())
+    } else {
+        key_to_path(dir_key)
+    };
+    let mut objects: Vec<(String, DirectoryEntry)> = match dir_path {
+        Ok(dir_path) => {
+            let listed = if dir_only {
+                // A subdirectory gets the key `name/`, which `list_page`
+                // turns into a common prefix.
+                tree.list_non_empty(&dir_path).await.map(|entries| {
+                    entries
+                        .into_iter()
+                        .map(|entry| {
+                            let name = entry.name_str();
+                            let rel = if entry.is_directory() {
+                                format!("{name}/")
+                            } else {
+                                name
+                            };
+                            (rel, entry)
+                        })
+                        .collect()
+                })
+            } else {
+                tree.files_under(&dir_path).await
+            };
+            match listed {
+                Ok(entries) => entries
+                    .into_iter()
+                    .map(|(rel, entry)| (format!("{key_prefix}{rel}"), entry))
+                    .collect(),
+                Err(FsClientError::PathNotFound(_) | FsClientError::NotADirectory(_)) => Vec::new(),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        // No valid key starts with an invalid directory key.
+        Err(_) => Vec::new(),
+    };
+
+    objects.sort_by(|a, b| a.0.cmp(&b.0));
+    let keys: Vec<&str> = objects.iter().map(|(k, _)| k.as_str()).collect();
+    let max_keys = params
+        .max_keys
+        .unwrap_or(DEFAULT_MAX_KEYS)
+        .clamp(1, DEFAULT_MAX_KEYS) as usize;
+    let page = list_page(&keys, &prefix, delimiter, start_after, max_keys);
+
+    let contents: Vec<ObjectSummary> = page
+        .contents
+        .iter()
+        .map(|&i| {
+            let (key, entry) = &objects[i];
+            ObjectSummary {
+                key: key.clone(),
+                size: entry.size,
+                last_modified: entry.mtime,
+                etag: None,
+            }
+        })
+        .collect();
+
+    Ok(ListObjectsResponse {
+        key_count: (contents.len() + page.common_prefixes.len()) as u32,
+        contents,
+        common_prefixes: page.common_prefixes,
+        is_truncated: page.is_truncated,
+        next_start_after: page.next_start_after,
+    })
+}
+
+fn etag(content_root: H256) -> String {
+    format!("{content_root:#x}")
+}
+
+/// Map a tree read error for `key` to the S3 error.
+fn object_error(e: FsClientError, bucket_id: BucketId, key: &str) -> S3ClientError {
+    match e {
+        FsClientError::PathNotFound(_)
+        | FsClientError::NotADirectory(_)
+        | FsClientError::NotAFile(_) => S3ClientError::ObjectNotFound {
+            bucket_id,
+            key: key.to_string(),
+        },
+        other => other.into(),
+    }
+}
+
+fn to_head(stat: &FileStat) -> HeadObjectResponse {
+    let cid = stat.content_root();
+    HeadObjectResponse {
+        content_type: stat.content_type(),
+        etag: etag(cid),
+        size: stat.size(),
+        last_modified: stat.mtime(),
+        cid,
+        metadata: stat
+            .manifest
+            .user_metadata
+            .iter()
+            .map(|m| {
+                (
+                    String::from_utf8_lossy(&m.key).into_owned(),
+                    String::from_utf8_lossy(&m.value).into_owned(),
+                )
+            })
+            .collect(),
+    }
+}
+
+/// Lowercase the keys and sort by key. Fails if two keys are equal after
+/// lowercasing or an entry is over the bounds.
+fn to_metadata_entries(metadata: HashMap<String, String>) -> Result<Vec<MetadataEntry>> {
+    let mut lowered: Vec<(String, String)> = metadata
+        .into_iter()
+        .map(|(k, v)| (k.to_lowercase(), v))
+        .collect();
+    lowered.sort();
+    if let Some(pair) = lowered.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+        return Err(S3ClientError::InvalidMetadata(format!(
+            "duplicate key {:?}",
+            pair[0].0
         )));
     }
-    Ok(H256::from_slice(&bytes))
-}
-
-fn header_str(headers: &reqwest::header::HeaderMap, name: &str) -> String {
-    headers
-        .get(name)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default()
-        .to_string()
-}
-
-fn header_u64(headers: &reqwest::header::HeaderMap, name: &str) -> u64 {
-    header_str(headers, name).parse().unwrap_or_default()
-}
-
-fn content_type(headers: &reqwest::header::HeaderMap) -> String {
-    let value = header_str(headers, "content-type");
-    if value.is_empty() {
-        "application/octet-stream".to_string()
-    } else {
-        value
-    }
-}
-
-fn user_metadata(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {
-    headers
+    lowered
         .iter()
-        .filter_map(|(name, value)| {
-            let key = name.as_str().strip_prefix(USER_METADATA_HEADER_PREFIX)?;
-            Some((key.to_string(), value.to_str().ok()?.to_string()))
+        .map(|(k, v)| {
+            MetadataEntry::try_new(k.as_bytes(), v.as_bytes())
+                .map_err(|_| S3ClientError::InvalidMetadata(format!("key {k:?} or its value")))
         })
         .collect()
 }
 
-/// Map a provider 404 to a typed error from the `error` field of its JSON
-/// body. A HEAD response has no body, so an empty HEAD 404 for a key maps to
-/// a missing object; HEAD cannot tell that apart from an unknown route.
-/// Returns `None` for any other 404 (a missing chunk, an unknown route),
-/// which the caller reports as a provider error.
-fn map_not_found(
-    method: &str,
-    body: &str,
-    bucket_id: BucketId,
-    key: &str,
-) -> Option<S3ClientError> {
-    let error = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| v.get("error")?.as_str().map(str::to_owned));
-    let object_not_found = || S3ClientError::ObjectNotFound {
-        bucket_id,
-        key: key.to_string(),
+/// One page of a listing, as indices into the sorted keys.
+#[derive(Debug, PartialEq, Eq)]
+struct Page {
+    contents: Vec<usize>,
+    common_prefixes: Vec<String>,
+    is_truncated: bool,
+    next_start_after: Option<String>,
+}
+
+/// Select one page from `keys` (sorted by bytes): keys that start with
+/// `prefix` and sort after `start_after`. With a `delimiter`, keys that
+/// contain it after the prefix collapse into one common prefix (the key up to
+/// and including the delimiter). A common prefix equal to `start_after` is
+/// skipped, so `next_start_after` pages past it.
+/// `max_keys` must be at least 1.
+fn list_page(
+    keys: &[&str],
+    prefix: &str,
+    delimiter: Option<&str>,
+    start_after: Option<&str>,
+    max_keys: usize,
+) -> Page {
+    let mut page = Page {
+        contents: Vec::new(),
+        common_prefixes: Vec::new(),
+        is_truncated: false,
+        next_start_after: None,
     };
-    match error.as_deref() {
-        Some("bucket_not_found") => Some(S3ClientError::BucketNotFound(bucket_id)),
-        Some("object_not_found") => Some(object_not_found()),
-        None if method == "HEAD" && body.is_empty() && !key.is_empty() => Some(object_not_found()),
-        _ => None,
+    let mut last: Option<&str> = None;
+    for (index, key) in keys.iter().enumerate() {
+        if !key.starts_with(prefix) || start_after.is_some_and(|after| *key <= after) {
+            continue;
+        }
+        let group = delimiter.and_then(|d| {
+            key[prefix.len()..]
+                .find(d)
+                .map(|i| &key[..prefix.len() + i + d.len()])
+        });
+        if let Some(group) = group {
+            if Some(group) == start_after || Some(group) == last {
+                continue;
+            }
+        }
+        if page.contents.len() + page.common_prefixes.len() == max_keys {
+            page.is_truncated = true;
+            break;
+        }
+        match group {
+            Some(group) => {
+                page.common_prefixes.push(group.to_string());
+                last = Some(group);
+            }
+            None => {
+                page.contents.push(index);
+                last = Some(key);
+            }
+        }
     }
+    if page.is_truncated {
+        page.next_start_after = last.map(str::to_string);
+    }
+    page
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn map_not_found_reads_the_provider_error_code() {
-        let bucket = r#"{"error":"bucket_not_found","details":{"bucket_id":7}}"#;
-        let object = r#"{"error":"object_not_found","details":{"bucket_id":7,"key":"k"}}"#;
-        assert!(matches!(
-            map_not_found("GET", bucket, 7, "k"),
-            Some(S3ClientError::BucketNotFound(7))
-        ));
-        assert!(matches!(
-            map_not_found("GET", object, 7, "k"),
-            Some(S3ClientError::ObjectNotFound { bucket_id: 7, ref key }) if key == "k"
-        ));
-        assert!(matches!(
-            map_not_found("HEAD", "", 7, "k"),
-            Some(S3ClientError::ObjectNotFound { bucket_id: 7, .. })
-        ));
-        // A missing chunk or an unknown route is not a missing key.
-        assert!(map_not_found("GET", r#"{"error":"not_found"}"#, 7, "k").is_none());
-        assert!(map_not_found("GET", r#"{"error":"root_not_found"}"#, 7, "k").is_none());
-        assert!(map_not_found("GET", "", 7, "k").is_none());
-    }
-
-    #[test]
-    fn test_put_object_options_default() {
-        let options = PutObjectOptions::default();
-        assert!(options.content_type.is_none());
-        assert!(options.metadata.is_empty());
-    }
-
-    #[test]
-    fn validate_object_key_rejects_empty_and_too_long() {
-        assert!(validate_object_key("a").is_ok());
-        assert!(validate_object_key(&"a".repeat(MAX_OBJECT_KEY_LEN)).is_ok());
-        assert!(validate_object_key("").is_err());
-        assert!(validate_object_key(&"a".repeat(MAX_OBJECT_KEY_LEN + 1)).is_err());
-    }
-
-    #[test]
-    fn parse_h256_accepts_prefixed_hex_and_rejects_wrong_length() {
-        let hash = H256::repeat_byte(0xab);
-        let hex = format!("0x{}", hex::encode(hash.as_bytes()));
-        assert_eq!(parse_h256(&hex).unwrap(), hash);
-        assert!(parse_h256("0xabcd").is_err());
-        assert!(parse_h256("not hex").is_err());
-    }
-
-    #[test]
-    fn user_metadata_reads_only_prefixed_headers() {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("x-amz-meta-color", "blue".parse().unwrap());
-        headers.insert("content-type", "text/plain".parse().unwrap());
-        let metadata = user_metadata(&headers);
-        assert_eq!(metadata.len(), 1);
-        assert_eq!(metadata.get("color").map(String::as_str), Some("blue"));
-    }
-
-    #[test]
-    fn list_objects_response_decodes_provider_wire_format() {
-        let json = r#"{
-            "contents": [{"key": "a.txt", "size": 3, "last_modified": 10, "etag": "0x01"}],
-            "common_prefixes": ["dir/"],
-            "is_truncated": false,
-            "next_continuation_token": null,
-            "key_count": 1
-        }"#;
-        let parsed: ListObjectsResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(parsed.contents[0].key, "a.txt");
-        assert_eq!(parsed.common_prefixes, vec!["dir/".to_string()]);
-        assert_eq!(parsed.key_count, 1);
-    }
-}
+mod tests;

@@ -107,12 +107,13 @@ mod hex_multi_signature {
     use sp_runtime::MultiSignature;
 
     pub fn serialize<S: Serializer>(sig: &MultiSignature, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&hex::encode(sig.encode()))
+        s.serialize_str(&array_bytes::bytes2hex("", sig.encode()))
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<MultiSignature, D::Error> {
         let s = String::deserialize(d)?;
-        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+        let bytes = array_bytes::hex2bytes(&s)
+            .map_err(|e| serde::de::Error::custom(format!("invalid hex: {e:?}")))?;
         MultiSignature::decode(&mut &bytes[..]).map_err(serde::de::Error::custom)
     }
 }

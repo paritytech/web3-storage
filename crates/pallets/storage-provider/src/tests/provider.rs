@@ -132,7 +132,8 @@ fn deregister_provider_full_flow_announce_then_complete() {
             1
         )));
         assert!(Providers::<Test>::get(1).is_none());
-        assert_eq!(Balances::free_balance(1), balance_before + 200);
+        // Stake and the record's storage deposit both come back.
+        assert_eq!(Balances::free_balance(1), balance_before + 210);
     });
 }
 
@@ -679,5 +680,25 @@ fn establish_agreement_works_within_capacity() {
         let provider = Providers::<Test>::get(2).unwrap();
         assert_eq!(provider.committed_bytes, 100);
         assert_eq!(provider.settings.max_capacity, 150);
+    });
+}
+
+/// The deposit is a real cost: an account that can fund the stake but not
+/// the record's deposit cannot register.
+#[test]
+fn register_provider_fails_without_funds_for_the_deposit() {
+    new_test_ext().execute_with(|| {
+        // Stake plus the existential deposit, nothing left for the 10.
+        assert_ok!(Balances::force_set_balance(RuntimeOrigin::root(), 9, 101));
+        let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+        assert_noop!(
+            StorageProvider::register_provider(
+                RuntimeOrigin::signed(9),
+                multiaddr.try_into().unwrap(),
+                test_public_key(),
+                100
+            ),
+            sp_runtime::TokenError::FundsUnavailable
+        );
     });
 }

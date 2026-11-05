@@ -581,7 +581,7 @@
           <h3>Creation</h3>
         </div>
         <ul>
-          <li>&bull; create_bucket: anyone; caller is sole admin; bucket_id assigned and never changes</li>
+          <li>&bull; create_bucket: anyone; caller is sole admin and pays the bucket and member storage deposits; bucket_id never changes</li>
           <li>&bull; create_bucket_with_primary: bucket and first primary in one call, min_providers = 1</li>
           <li>&bull; add_primary_provider: bucket admin, below MaxPrimaryProviders</li>
         </ul>
@@ -608,6 +608,7 @@
           <li>&bull; Ending the last agreement deletes the agreement, not the bucket</li>
           <li>&bull; Members, snapshot and frozen_start_seq remain; a frozen bucket stays frozen</li>
           <li>&bull; add_primary_provider works on a bucket with zero primaries and on a frozen bucket</li>
+          <li>&bull; delete_bucket (admin) removes a bucket with no agreements and no open challenge and releases its storage deposits</li>
         </ul>
       </div>
 
