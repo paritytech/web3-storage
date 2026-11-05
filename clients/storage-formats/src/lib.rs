@@ -5,8 +5,9 @@
 //! A drive is a Layer 0 bucket of `pallet-storage-provider`, identified by
 //! its bucket id. Directories, file manifests and file contents are blobs in
 //! the bucket, and the root directory is the bucket's last MMR leaf. The
-//! [`tree`] module contains the format, the read and write logic and the
-//! limits; the [`s3`] module maps object keys onto the same tree.
+//! [`format`](mod@format) module defines these blobs and their limits,
+//! [`tree`] reads and writes them, and [`s3`] maps object keys onto the same
+//! tree.
 //!
 //! This crate makes no chain calls. Create the bucket and manage its members
 //! with `storage_client::AdminClient`, and checkpoint it with

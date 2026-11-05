@@ -10,11 +10,10 @@
 //! - **CID**: Content Identifier of a blob: its Layer 0 `data_root`
 //!   (see [`compute_cid`])
 //!
-//! The root directory is the data root of the bucket's last MMR leaf. The
-//! TypeScript clients use the same format (`packages/core/src/file-system.ts`).
+//! The root directory is the data root of the bucket's last MMR leaf.
 
 use bounded_collections::{BoundedVec, Get};
-use codec::{Decode, Encode, MaxEncodedLen};
+use codec::{Decode, DecodeAll, Encode, MaxEncodedLen};
 use primitive_types::H256;
 use storage_primitives::BucketId;
 
@@ -273,9 +272,9 @@ impl DirectoryNode {
         self.encode()
     }
 
-    /// Deserialize from SCALE bytes
+    /// Deserialize from SCALE bytes. Fails on trailing bytes.
     pub fn from_scale_bytes(bytes: &[u8]) -> Result<Self, codec::Error> {
-        Self::decode(&mut &bytes[..])
+        Self::decode_all(&mut &bytes[..])
     }
 
     /// CID of the SCALE encoding (see [`compute_cid`])
@@ -392,9 +391,9 @@ impl FileManifest {
         self.encode()
     }
 
-    /// Deserialize from SCALE bytes
+    /// Deserialize from SCALE bytes. Fails on trailing bytes.
     pub fn from_scale_bytes(bytes: &[u8]) -> Result<Self, codec::Error> {
-        Self::decode(&mut &bytes[..])
+        Self::decode_all(&mut &bytes[..])
     }
 
     /// CID of the SCALE encoding (see [`compute_cid`])
@@ -504,18 +503,17 @@ mod tests {
         DirectoryEntry::try_new(name, entry_type, h(name.as_bytes()), size, 1).unwrap()
     }
 
-    /// The TypeScript client reads directory and manifest blobs up to these
-    /// sizes (`DIRECTORY_NODE_MAX_SIZE`, `FILE_MANIFEST_MAX_SIZE` in
-    /// `packages/core/src/file-system.ts`) and asserts the same values.
+    /// Readers request directory and manifest blobs up to these sizes
+    /// ([`crate::tree::BlobLength::AtMost`]), so a change to them changes
+    /// which blobs a reader accepts.
     #[test]
-    fn max_encoded_len_matches_typescript() {
+    fn max_encoded_lengths_are_pinned() {
         use codec::MaxEncodedLen;
         assert_eq!(DirectoryNode::max_encoded_len(), 335_116);
         assert_eq!(FileManifest::max_encoded_len(), 2_380_698);
     }
 
-    /// Shared test vector: the TypeScript implementation asserts the same
-    /// encoding and CID.
+    /// Pinned encoding and CID: a change to the format changes them.
     #[test]
     fn directory_node_test_vector() {
         let mut dir = DirectoryNode::new_empty(7);
@@ -541,8 +539,7 @@ mod tests {
         );
     }
 
-    /// Shared test vector: the TypeScript implementation asserts the same
-    /// encoding and CID.
+    /// Pinned encoding and CID: a change to the format changes them.
     #[test]
     fn file_manifest_test_vector() {
         let manifest = FileManifest::for_content(
@@ -689,6 +686,29 @@ mod tests {
         .unwrap();
         let decoded = FileManifest::from_scale_bytes(&manifest.to_scale_bytes()).unwrap();
         assert_eq!(decoded, manifest);
+    }
+
+    /// A blob has one encoding, so its CID identifies the node: decoding
+    /// fails on trailing bytes and on non-canonical compact lengths.
+    #[test]
+    fn decode_rejects_trailing_bytes_and_non_canonical_lengths() {
+        let mut dir = DirectoryNode::new_empty(123);
+        dir.upsert_child(entry("file1.txt", EntryType::File, 1024))
+            .unwrap();
+        let bytes = dir.to_scale_bytes();
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(DirectoryNode::from_scale_bytes(&trailing).is_err());
+        // The child count 1 in the two-byte compact form: 0x0500, not 0x04.
+        let mut non_canonical = bytes[..8].to_vec();
+        non_canonical.extend([0x05, 0x00]);
+        non_canonical.extend(&bytes[9..]);
+        assert!(DirectoryNode::from_scale_bytes(&non_canonical).is_err());
+
+        let manifest = FileManifest::for_content(123, b"content", "text/plain", vec![]).unwrap();
+        let mut trailing = manifest.to_scale_bytes();
+        trailing.push(0);
+        assert!(FileManifest::from_scale_bytes(&trailing).is_err());
     }
 
     #[test]
