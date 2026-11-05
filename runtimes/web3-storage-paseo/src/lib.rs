@@ -177,7 +177,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
-    spec_version: 4_015,
+    spec_version: 4_018,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -195,8 +195,9 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     // * 6 for `leaf_version`, the new first field of the `MmrLeaf` inside that
     //   `MmrProof`;
     // * 7 for the `ChunkOutOfRange` variant of `ChallengeResponse`, which moves
-    //   `Deleted` and `Superseded` to the next variant index.
-    transaction_version: 7,
+    //   `Deleted` and `Superseded` to the next variant index;
+    // * 8 for removing `DriveRegistry` and `S3Registry` with all their calls (#475).
+    transaction_version: 8,
     system_version: 1,
 };
 
