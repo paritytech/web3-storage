@@ -262,7 +262,7 @@ async function main() {
     name: "13.8 Move the data and checkpoint with the new primary only",
     fn: async () => {
       assert.ok(old, "13.7 must pass first");
-      const bytes = await downloadChunk(PROVIDER_URL, old.hash);
+      const bytes = await downloadChunk(PROVIDER_URL, moved, old.hash);
       const next = await uploadChunk(SECOND_PROVIDER_URL, moved, bytes, client);
       assert.strictEqual(
         next.commit.mmr_root,
@@ -280,7 +280,7 @@ async function main() {
         "only the new primary should be in the snapshot bitfield"
       );
       assert.ok(
-        bytesEq(await downloadChunk(SECOND_PROVIDER_URL, old.hash), bytes),
+        bytesEq(await downloadChunk(SECOND_PROVIDER_URL, moved, old.hash), bytes),
         "new primary should serve the moved data"
       );
     },
