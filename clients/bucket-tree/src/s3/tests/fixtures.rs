@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Cross-language fixtures for the in-bucket file-system format.
+//! A pinned bucket of the file-system format.
 //!
 //! `writes_fs_fixture` runs a fixed sequence of FS and S3 writes into an
-//! in-memory store, checks the root CID against [`ROOT_CID`] and, when
-//! `FS_FIXTURE` names a file, writes the resulting bucket there as JSON. `just fs-fixture` writes
-//! `.test-vectors/fs-bucket.json`. The TypeScript test
-//! (`packages/bucket-tree/src/fixtures.test.ts`) reads that bucket and checks that
-//! its own write sequence produces the same blobs and commits.
+//! in-memory store, writes the bucket as JSON, loads it back, and checks the
+//! root CID against [`ROOT_CID`]. A change to the format changes the root.
 //!
 //! Fixture format:
 //! - `blobs`: CID -> base64 bytes, for every blob of at most one chunk.
@@ -30,7 +27,6 @@ const BUCKET: BucketId = 7;
 const MTIME: u64 = 1_700_000_000;
 const GENERATOR: &str = "byte i is i % 251";
 const BIG_SIZE: usize = 3 * CHUNK_SIZE + 100;
-const FIXTURE_ENV: &str = "FS_FIXTURE";
 
 /// Root CID of the bucket that `write_sequence` produces. It covers every
 /// directory node, manifest and content root, so a change to the bucket
@@ -302,7 +298,7 @@ fn load(fixture: &Value) -> MemoryStore {
     store
 }
 
-const ABOUT: &str = "Written by clients/bucket-tree/src/s3/tests/fixtures.rs (`just fs-fixture`); read by packages/bucket-tree/src/fixtures.test.ts.";
+const ABOUT: &str = "Written by clients/bucket-tree/src/s3/tests/fixtures.rs.";
 
 #[tokio::test]
 async fn writes_fs_fixture() {
@@ -314,13 +310,4 @@ async fn writes_fs_fixture() {
     let parsed: Value = serde_json::from_str(&produced).unwrap();
     assert_eq!(expected(&load(&parsed)).await, parsed["expected"]);
     assert_eq!(parsed["expected"]["root_cid"], ROOT_CID);
-
-    let Some(path) = std::env::var_os(FIXTURE_ENV) else {
-        return;
-    };
-    let path = std::path::Path::new(&path);
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).unwrap();
-    }
-    std::fs::write(path, &produced).unwrap();
 }

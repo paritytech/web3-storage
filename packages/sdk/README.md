@@ -98,9 +98,13 @@ data to it) and `endAgreement` (old provider leaves).
 `FsTree` (`Web3Storage.drive`) and `Objects` (`Web3Storage.objects`) keep
 their data in the Layer 0 bucket itself and use only the provider's Layer 0
 routes (`PUT /node`, `POST /commit`, `GET /node`, `GET /read`,
-`GET /commitment`, `GET /mmr_proof`). The code is in
-`packages/bucket-tree`: the format in `format.ts`, the tree in `tree.ts`, the
-S3 view in `objects.ts`.
+`GET /commitment`, `GET /mmr_proof`). The format, the tree and the S3 view
+are the Rust crate `clients/bucket-tree`, compiled to wasm;
+`packages/bucket-tree` loads it and implements its blob store over the
+provider's HTTP API. `pnpm install` builds the wasm into
+`packages/bucket-tree/pkg` and needs rustup and `wasm-bindgen-cli` at the
+version in `Cargo.lock`. Rebuild it after a change to the crate with
+`pnpm --filter @web3-storage/bucket-tree build:wasm`.
 
 - Directories and files are SCALE-encoded `DirectoryNode` and
   `FileManifest` blobs (`clients/bucket-tree/src/format.rs`). A blob's CID is

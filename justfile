@@ -427,17 +427,13 @@ file-system-demo:
 mmr-proof-vectors:
     MMR_PROOF_VECTORS="{{justfile_directory()}}/.test-vectors/mmr-proofs.json" cargo test --locked -q -p storage-primitives mmr::tests::proof_vectors
 
-# Write the file-system bucket that packages/layer1/src/fixtures.test.ts reads
-fs-fixture:
-    FS_FIXTURE="{{justfile_directory()}}/.test-vectors/fs-bucket.json" cargo test --locked -q -p bucket-tree writes_fs_fixture
-
 # ─── UI Tests ─────────────────────────────────────────────────────────────────
 #
 # Unit tests + Playwright e2e for drive-ui, provider, and explorer.
 # Requires a running local chain + provider node.
 
 # Run all UI unit tests (Vitest)
-test-ui-unit: mmr-proof-vectors fs-fixture
+test-ui-unit: mmr-proof-vectors
     pnpm run test:unit
 
 # Run drive-ui Playwright e2e (requires chain + provider running)

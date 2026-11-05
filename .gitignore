@@ -24,6 +24,9 @@ desktop.ini
 *.tmp
 .test-vectors/
 
+# Built by `pnpm install` (prepare script of packages/bucket-tree)
+packages/bucket-tree/pkg/
+
 # Local config
 .env
 .env.local

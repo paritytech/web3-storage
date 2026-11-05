@@ -2,11 +2,31 @@
 
 /**
  * @web3-storage/bucket-tree: a file system and S3-style objects stored in a
- * Layer 0 bucket. `format.ts` is the on-bucket format, `tree.ts` the
- * copy-on-write directory tree, `objects.ts` the S3 view of the tree.
+ * bucket. The format, the tree and the object mapping are the Rust crate
+ * `clients/bucket-tree`, compiled to wasm (`pkg/`, built by
+ * `scripts/build-wasm.sh`). This package loads the wasm and supplies the blob
+ * store over the provider's HTTP API. Needs a provider URL and a signer, no
+ * chain connection.
  */
 
-export * from "./format.js";
-export { ScaleError } from "./scale.js";
-export * from "./tree.js";
-export * from "./objects.js";
+export { FileSystemError, FsTree } from "./tree.js";
+export { ObjectError, Objects } from "./objects.js";
+export * from "./store.js";
+export type {
+  BlobStore,
+  DeleteOptions,
+  FileInfo,
+  FileRead,
+  GetObjectResponse,
+  HeadObjectResponse,
+  ListObjectsOptions,
+  ListObjectsResult,
+  ListOptions,
+  ObjectSummary,
+  PutFileOptions,
+  PutFileResult,
+  PutObjectInput,
+  PutObjectResult,
+  TreeEntry,
+  TreeWriteResult,
+} from "../pkg/bucket_tree.js";

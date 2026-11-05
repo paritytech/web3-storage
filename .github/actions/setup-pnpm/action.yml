@@ -32,6 +32,24 @@ runs:
         cache: pnpm
         cache-dependency-path: pnpm-lock.yaml
 
+    # `pnpm install` runs the prepare script of packages/bucket-tree, which
+    # builds the wasm module of clients/bucket-tree.
+    - name: Install Rust toolchain with the wasm32-unknown-unknown target
+      id: rust
+      shell: bash
+      run: |
+        toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
+        rustup toolchain install "$toolchain" --profile minimal --target wasm32-unknown-unknown
+        echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+        echo "wasm-bindgen=$(awk '/^name = "wasm-bindgen"$/ { getline; print }' Cargo.lock | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
+    - name: Install wasm-bindgen-cli at the Cargo.lock version
+      uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+      with:
+        tool: wasm-bindgen@${{ steps.rust.outputs.wasm-bindgen }}
+
     - name: Install workspace deps
       shell: bash
+      env:
+        RUSTUP_TOOLCHAIN: ${{ steps.rust.outputs.toolchain }}
       run: pnpm install --frozen-lockfile

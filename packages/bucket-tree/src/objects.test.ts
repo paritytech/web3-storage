@@ -1,289 +1,60 @@
 // SPDX-License-Identifier: Apache-2.0
 
+/** The wasm object mapping end to end, over a fake provider (see tree.test.ts). */
+
 import { describe, expect, it } from "vitest";
 import { makeSigner } from "@web3-storage/layer0";
 import { FakeProvider } from "@web3-storage/layer0/testing";
 
-import { Objects, paginateKeys } from "./objects.js";
-import { FsTree, providerBlobStore } from "./tree.js";
+import { ObjectError, Objects } from "./objects.js";
+import { providerBlobStore } from "./store.js";
+import { FsTree } from "./tree.js";
 
-const BUCKET = 9n;
+const signer = makeSigner("//Alice");
 const te = new TextEncoder();
 const td = new TextDecoder();
 
-function makeClient() {
+function setup() {
   const provider = new FakeProvider();
-  const tree = new FsTree(
-    providerBlobStore("http://provider.test", BUCKET, makeSigner("//Alice"), { fetch: provider.fetch }),
-  );
-  return { client: new Objects(tree), provider, tree };
+  const tree = new FsTree(providerBlobStore("http://provider.test", 5n, signer, { fetch: provider.fetch }));
+  return { tree, objects: new Objects(tree) };
 }
 
-describe("Objects", () => {
-  it("put/get/head round-trip content, type, metadata and etag", async () => {
-    const { client, provider } = makeClient();
-    const put = await client.putObject("dir/a b.txt", te.encode("body"), {
-      contentType: "text/plain",
-      metadata: { Origin: "test" },
+describe("Objects (wasm)", () => {
+  it("put, get, head and delete an object; the key is a file in the tree", async () => {
+    const { tree, objects } = setup();
+    const put = await objects.putObject("photos/cat.jpg", te.encode("meow"), {
+      contentType: "image/jpeg",
+      metadata: { "Camera-Model": "X100" },
     });
-    const got = await client.getObject("dir/a b.txt");
-    expect(td.decode(got.data)).toBe("body");
-    expect(got).toMatchObject({
-      key: "dir/a b.txt",
-      contentType: "text/plain",
-      size: 4,
-      metadata: { origin: "test" },
-      etag: put.cid,
-    });
-    const head = await client.headObject("dir/a b.txt");
-    const { data: _data, ...meta } = got;
-    expect(head).toEqual(meta);
-    expect(provider.calls.every((c) => !c.path.startsWith("/s3") && !c.path.startsWith("/fs"))).toBe(true);
+    expect(put).toMatchObject({ etag: put.cid, size: 4 });
+
+    const got = await objects.getObject("photos/cat.jpg");
+    expect(td.decode(got.data)).toBe("meow");
+    expect(got).toMatchObject({ key: "photos/cat.jpg", contentType: "image/jpeg", metadata: { "camera-model": "X100" } });
+    expect(got.lastModified % 1000).toBe(0);
+    expect(await objects.headObject("photos/cat.jpg")).toMatchObject({ etag: put.cid, size: 4 });
+    expect(td.decode((await tree.getFile("/photos/cat.jpg")).bytes)).toBe("meow");
+
+    await objects.deleteObject("photos/cat.jpg");
+    expect(await tree.list("/")).toEqual([]);
+    await expect(objects.getObject("photos/cat.jpg")).rejects.toMatchObject({ code: "ObjectNotFound" });
   });
 
-  it("stores an empty object without a content blob", async () => {
-    const { client } = makeClient();
-    const put = await client.putObject("empty", new Uint8Array(0));
-    // Empty content has no chunk tree: its root, and so its etag, is the zero hash.
-    expect(put.etag).toBe(`0x${"00".repeat(32)}`);
-    const got = await client.getObject("empty");
-    expect(got).toMatchObject({ size: 0, etag: put.etag });
-    expect(got.data).toEqual(new Uint8Array(0));
+  it("lists by prefix and delimiter, and pages with startAfter", async () => {
+    const { objects } = setup();
+    for (const key of ["a.txt", "b/1.txt", "b/2.txt", "c.txt"]) await objects.putObject(key, te.encode(key));
+    const top = await objects.listObjects({ delimiter: "/" });
+    expect(top.objects.map((o) => o.key)).toEqual(["a.txt", "c.txt"]);
+    expect(top.commonPrefixes).toEqual(["b/"]);
+    const first = await objects.listObjects({ maxKeys: 2 });
+    expect(first).toMatchObject({ isTruncated: true, nextStartAfter: "b/1.txt" });
+    expect((await objects.listAllObjects()).objects.map((o) => o.key)).toEqual(["a.txt", "b/1.txt", "b/2.txt", "c.txt"]);
   });
 
-  it("stores metadata lowercased and sorted, like the Rust client", async () => {
-    const { client } = makeClient();
-    await client.putObject("k", te.encode("x"), { metadata: { Zeta: "2", alpha: "1" } });
-    // Read order is stored order, so this checks the manifest is sorted by key.
-    const head = await client.headObject("k");
-    expect(Object.keys(head.metadata)).toEqual(["alpha", "zeta"]);
-    await expect(
-      client.putObject("k", te.encode("x"), { metadata: { A: "1", a: "2" } }),
-    ).rejects.toThrow(/appears twice/);
-  });
-
-  it("get of a missing key fails with NoSuchKey", async () => {
-    const { client } = makeClient();
-    await client.putObject("a/b", te.encode("x"));
-    await expect(client.getObject("a")).rejects.toThrow(/NoSuchKey: a/);
-    await expect(client.headObject("nope")).rejects.toThrow(/NoSuchKey: nope/);
-    await expect(client.getObject("a/b/c")).rejects.toThrow(/NoSuchKey/);
-  });
-
-  it("delete is a no-op for a missing key and prunes emptied directories", async () => {
-    const { client } = makeClient();
-    await client.deleteObject("missing/key");
-    await client.putObject("a/b/c", te.encode("x"));
-    await client.putObject("z", te.encode("y"));
-    await client.deleteObject("a"); // a directory, not a key
-    await client.deleteObject("a/b/c");
-    const listed = await client.listObjects();
-    expect(listed.objects.map((o) => o.key)).toEqual(["z"]);
-    expect(listed.commonPrefixes).toEqual([]);
-  });
-
-  it("validates object keys", async () => {
-    const { client } = makeClient();
-    for (const key of ["", "/a", "a/", "a//b", "./a", "a/..", "x".repeat(1025), `${"x".repeat(257)}/a`, "a\ud800", "\udc00/b"]) {
-      await expect(client.headObject(key), key).rejects.toThrow(/Object key must/);
-    }
-    for (const key of ["a", "a/b/c", "é/ü", "a b", "x".repeat(256)]) {
-      await expect(client.headObject(key), key).rejects.toThrow(/NoSuchKey/);
-    }
-  });
-});
-
-describe("Objects.listObjects", () => {
-  const keys = ["photos/2024/b.jpg", "photos/2024/a.jpg", "photos/2025/c.jpg", "photos/x.jpg", "readme", "B", "é"];
-
-  async function filled() {
-    const { client } = makeClient();
-    for (const key of keys) await client.putObject(key, te.encode(key));
-    return client;
-  }
-
-  it("sorts all keys by bytes, not by tree walk order", async () => {
-    const client = await filled();
-    const r = await client.listObjects();
-    expect(r.objects.map((o) => o.key)).toEqual([
-      "B",
-      "photos/2024/a.jpg",
-      "photos/2024/b.jpg",
-      "photos/2025/c.jpg",
-      "photos/x.jpg",
-      "readme",
-      "é",
-    ]);
-    expect(r.isTruncated).toBe(false);
-  });
-
-  it("applies prefix, delimiter, startAfter and maxKeys", async () => {
-    const client = await filled();
-    expect((await client.listObjects({ prefix: "photos/20" })).objects.map((o) => o.key)).toEqual([
-      "photos/2024/a.jpg",
-      "photos/2024/b.jpg",
-      "photos/2025/c.jpg",
-    ]);
-    const delimited = await client.listObjects({ prefix: "photos/", delimiter: "/" });
-    expect(delimited.commonPrefixes).toEqual(["photos/2024/", "photos/2025/"]);
-    expect(delimited.objects.map((o) => o.key)).toEqual(["photos/x.jpg"]);
-    const top = await client.listObjects({ delimiter: "/" });
-    expect(top.commonPrefixes).toEqual(["photos/"]);
-    expect(top.objects.map((o) => o.key)).toEqual(["B", "readme", "é"]);
-    const after = await client.listObjects({ startAfter: "photos/2025/c.jpg" });
-    expect(after.objects.map((o) => o.key)).toEqual(["photos/x.jpg", "readme", "é"]);
-    expect((await client.listObjects({ prefix: "nothing/here" })).objects).toEqual([]);
-  });
-
-  it("with delimiter / matches a full walk with fewer directory reads", async () => {
-    const { client, provider, tree } = makeClient();
-    const deep = [
-      "a.txt",
-      "b/1.txt",
-      "b/c/3.txt",
-      "b0.txt",
-      "photos/2024/01/01/img.jpg",
-      "photos/2024/01/02/img.jpg",
-      "photos/2024/02/01/img.jpg",
-      "photos/2025/01/01/img.jpg",
-    ];
-    for (const key of deep) await client.putObject(key, te.encode(key));
-    // File-system writes can leave directories without objects.
-    await tree.mkdir("/b/empty");
-    await tree.mkdir("/e/f");
-    const all = (await client.listAllObjects()).objects;
-
-    const prefixes = ["", "b", "b/", "b/c", "e/", "photos/", "photos/2024/", "photos/2024/0", "x/", "a.txt/"];
-    const startAfters = [
-      undefined,
-      "a.txt",
-      "b/",
-      "b/1.txt",
-      "b/c/3.txt",
-      "photos/2024/",
-      "photos/2024/01/01/img.jpg",
-      "photos/2024/01/02/img.jpg",
-      "zzz",
-    ];
-    for (const prefix of prefixes) {
-      for (const startAfter of startAfters) {
-        for (const maxKeys of [1, 2, 1000]) {
-          const opts = { prefix, delimiter: "/", startAfter, maxKeys };
-          const listed = await client.listObjects(opts);
-          const walked = paginateKeys(all, opts);
-          expect(listed, JSON.stringify(opts)).toEqual(walked);
-        }
-      }
-    }
-
-    // The root, `b`, `e` and `e/f`, and one path down `photos` to a file:
-    // 8 of the 15 directories.
-    const nodeReads = () => provider.calls.filter((c) => c.method === "GET" && c.path === "/node").length;
-    const before = nodeReads();
-    const top = await client.listObjects({ delimiter: "/" });
-    expect(top.commonPrefixes).toEqual(["b/", "photos/"]);
-    expect(nodeReads() - before).toBe(8);
-  });
-
-  it("pages with maxKeys and nextStartAfter", async () => {
-    const client = await filled();
-    const seen: string[] = [];
-    let startAfter: string | undefined;
-    for (;;) {
-      const page = await client.listObjects({ maxKeys: 3, startAfter });
-      seen.push(...page.objects.map((o) => o.key));
-      if (!page.isTruncated) break;
-      expect(page.objects).toHaveLength(3);
-      startAfter = page.nextStartAfter;
-    }
-    expect(seen).toHaveLength(keys.length);
-  });
-});
-
-describe("Objects.listObjects limits", () => {
-  it("clamps maxKeys to 1-1000", async () => {
-    const { client } = makeClient();
-    for (let i = 0; i < 3; i++) await client.putObject(`k${i}`, te.encode("x"));
-    const zero = await client.listObjects({ maxKeys: 0 });
-    expect(zero.objects.map((o) => o.key)).toEqual(["k0"]);
-    expect(zero.isTruncated).toBe(true);
-    expect(zero.nextStartAfter).toBe("k0");
-    const huge = await client.listObjects({ maxKeys: Number.MAX_SAFE_INTEGER });
-    expect(huge.objects).toHaveLength(3);
-    expect(huge.isTruncated).toBe(false);
-  });
-
-  it("listAllObjects returns every key from one root read", async () => {
-    const { client, provider } = makeClient();
-    for (const key of ["d/b", "d/a", "d/e/f", "z"]) await client.putObject(key, te.encode("x"));
-    const before = provider.calls.length;
-    const all = await client.listAllObjects({ prefix: "d/" });
-    expect(all.objects.map((o) => o.key)).toEqual(["d/a", "d/b", "d/e/f"]);
-    expect(all.commonPrefixes).toEqual([]);
-    const rootReads = provider.calls.slice(before).filter((c) => c.path === "/commitment");
-    expect(rootReads).toHaveLength(1);
-    expect(await client.listAllObjects({ delimiter: "/" })).toMatchObject({
-      objects: [{ key: "z" }],
-      commonPrefixes: ["d/"],
-    });
-  });
-});
-
-describe("paginateKeys", () => {
-  // The keys of the Rust `list_page` tests (clients/bucket-tree/src/s3/mod.rs).
-  const KEYS = ["a.txt", "b/1.txt", "b/2.txt", "b/c/3.txt", "b0.txt", "d/4.txt"];
-  const objects = KEYS.map((key) => ({ key, size: 1 }));
-  const page = (prefix: string, delimiter: string | undefined, startAfter: string | undefined, maxKeys: number) =>
-    paginateKeys(objects, { prefix, delimiter, startAfter, maxKeys });
-  const keysOf = (r: { objects: { key: string }[] }) => r.objects.map((o) => o.key);
-
-  it("sorts keys by bytes", () => {
-    // `b/` (0x2f) sorts before `b0` (0x30): S3 order, not tree walk order.
-    const shuffled = [...objects].reverse();
-    expect(keysOf(paginateKeys(shuffled, { prefix: "", maxKeys: 1000 }))).toEqual(KEYS);
-  });
-
-  it("without delimiter returns all matching keys", () => {
-    const all = page("", undefined, undefined, 1000);
-    expect(keysOf(all)).toEqual(KEYS);
-    expect(all.isTruncated).toBe(false);
-    expect(all.nextStartAfter).toBeUndefined();
-    expect(keysOf(page("b/", undefined, undefined, 1000))).toEqual(["b/1.txt", "b/2.txt", "b/c/3.txt"]);
-    expect(keysOf(page("b", undefined, undefined, 1000))).toEqual(["b/1.txt", "b/2.txt", "b/c/3.txt", "b0.txt"]);
-  });
-
-  it("with delimiter groups common prefixes", () => {
-    const top = page("", "/", undefined, 1000);
-    expect(keysOf(top)).toEqual(["a.txt", "b0.txt"]);
-    expect(top.commonPrefixes).toEqual(["b/", "d/"]);
-    const sub = page("b/", "/", undefined, 1000);
-    expect(keysOf(sub)).toEqual(["b/1.txt", "b/2.txt"]);
-    expect(sub.commonPrefixes).toEqual(["b/c/"]);
-    // An empty delimiter means no delimiter.
-    expect(keysOf(page("", "", undefined, 1000))).toEqual(KEYS);
-  });
-
-  it("startAfter skips keys and prefixes", () => {
-    expect(keysOf(page("", undefined, "b/2.txt", 1000))).toEqual(["b/c/3.txt", "b0.txt", "d/4.txt"]);
-    // A common prefix as startAfter skips every key under it.
-    const r = page("", "/", "b/", 1000);
-    expect(keysOf(r)).toEqual(["b0.txt"]);
-    expect(r.commonPrefixes).toEqual(["d/"]);
-  });
-
-  it("maxKeys truncates and pages", () => {
-    const first = page("", "/", undefined, 2);
-    expect(keysOf(first)).toEqual(["a.txt"]);
-    expect(first.commonPrefixes).toEqual(["b/"]);
-    expect(first.isTruncated).toBe(true);
-    expect(first.nextStartAfter).toBe("b/");
-
-    const second = page("", "/", first.nextStartAfter, 2);
-    expect(keysOf(second)).toEqual(["b0.txt"]);
-    expect(second.commonPrefixes).toEqual(["d/"]);
-    expect(second.isTruncated).toBe(false);
-    expect(second.nextStartAfter).toBeUndefined();
-
-    expect(page("", undefined, undefined, KEYS.length).isTruncated).toBe(false);
+  it("rejects an invalid key with an ObjectError", async () => {
+    const { objects } = setup();
+    await expect(objects.putObject("", te.encode("x"))).rejects.toBeInstanceOf(ObjectError);
+    await expect(objects.putObject("a/../b", te.encode("x"))).rejects.toMatchObject({ code: "InvalidObjectKey" });
   });
 });

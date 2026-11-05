@@ -141,7 +141,7 @@ async function main() {
       const after = await ownerS3.listObjects();
       assert.ok(!after.objects.some((o) => o.key === "meta.txt"), "deleted key should not be listed");
       assert.ok(after.objects.some((o) => o.key === "test.txt"), "other keys should remain");
-      await assert.rejects(ownerS3.getObject("meta.txt"), /NoSuchKey/, "deleted key should not be readable");
+      await assert.rejects(ownerS3.getObject("meta.txt"), { code: "ObjectNotFound" }, "deleted key should not be readable");
     },
   });
 
@@ -170,7 +170,7 @@ async function main() {
     fn: async () => {
       await assert.rejects(
         ownerS3.getObject("does-not-exist.txt"),
-        /NoSuchKey/,
+        { code: "ObjectNotFound" },
         "missing key should fail"
       );
     },
@@ -193,7 +193,7 @@ async function main() {
   tests.push({
     name: "3.9 Empty object key is rejected client-side",
     fn: async () => {
-      await assert.rejects(ownerS3.putObject("", enc("x")), /Object key must be/);
+      await assert.rejects(ownerS3.putObject("", enc("x")), { code: "InvalidObjectKey" });
     },
   });
 

@@ -42,6 +42,14 @@ let listing = objects.list_objects_v2(Default::default()).await?;
 with the provider (`ProviderClient::negotiate_terms`), then
 `AdminClient::create_bucket_with_primary`.
 
+## TypeScript
+
+The `wasm` feature exports the tree and the S3 objects through
+wasm-bindgen, over a blob store that JS implements. `@web3-storage/bucket-tree`
+(`packages/bucket-tree`) loads the build in `packages/bucket-tree/pkg`, which
+`pnpm install` creates. Rebuild it after a change to this crate with
+`pnpm --filter @web3-storage/bucket-tree build:wasm`.
+
 ## Examples and tests
 
 ```bash

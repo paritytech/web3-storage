@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ui: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || steps.filter.outputs.ui == 'true' }}
-      vectors: ${{ steps.filter.outputs.vectors == 'true' }}
+      rust: ${{ steps.filter.outputs.rust == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
@@ -45,8 +45,9 @@ jobs:
               - 'package.json'
               - '.github/actions/setup-pnpm/**'
               - '.github/workflows/ui-checks.yml'
-            # Inputs of the Rust test vectors that the TS unit tests read
-            vectors:
+            # Rust inputs of the TS packages: the test vectors that the unit
+            # tests read and the bucket-tree wasm that `pnpm install` builds
+            rust:
               - 'crates/primitives/storage/**'
               - 'clients/**'
               - 'Cargo.toml'
@@ -56,7 +57,7 @@ jobs:
   unit-tests:
     name: Unit tests (Vitest)
     needs: changes
-    if: needs.changes.outputs.ui == 'true' || needs.changes.outputs.vectors == 'true'
+    if: needs.changes.outputs.ui == 'true' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -77,20 +78,16 @@ jobs:
       - name: Typecheck sdk packages + examples
         run: pnpm run typecheck:packages
 
-      # Written by Rust tests, read by the TS unit tests:
-      # - mmr-proofs.json: `crates/primitives/storage/src/mmr.rs`, read by
-      #   packages/core/src/merkle.test.ts.
-      # - fs-bucket.json: `clients/bucket-tree/src/s3/tests/fixtures.rs`, read by
-      #   packages/layer1/src/fixtures.test.ts.
-      # Cached so a hit skips the Rust toolchain install and build. The key
-      # leaves out the provider crates that bucket-tree's tests depend on: those
-      # tests write the bucket to an in-memory store, so they do not change it.
+      # Written by a Rust test, read by the TS unit tests: mmr-proofs.json from
+      # `crates/primitives/storage/src/mmr.rs`, read by
+      # packages/core/src/merkle.test.ts. Cached so a hit skips the Rust
+      # toolchain install and build.
       - name: Cache Rust test vectors
         id: rust-test-vectors
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: .test-vectors
-          key: rust-test-vectors-${{ hashFiles('crates/primitives/storage/**', 'clients/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
+          key: rust-test-vectors-${{ hashFiles('crates/primitives/storage/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
 
       - name: Install Rust toolchain
         if: steps.rust-test-vectors.outputs.cache-hit != 'true'
@@ -101,7 +98,6 @@ jobs:
           rustup toolchain install "$toolchain" --profile minimal
           echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
 
-      # The bucket-tree tests build provider-node and rocksdb.
       - name: Rust build cache
         if: steps.rust-test-vectors.outputs.cache-hit != 'true'
         uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
@@ -114,8 +110,6 @@ jobs:
         run: |
           MMR_PROOF_VECTORS="$PWD/.test-vectors/mmr-proofs.json" \
             cargo test --locked -q -p storage-primitives mmr::tests::proof_vectors
-          FS_FIXTURE="$PWD/.test-vectors/fs-bucket.json" \
-            cargo test --locked -q -p bucket-tree writes_fs_fixture
 
       - name: Run unit tests
         run: pnpm run test:unit
@@ -123,7 +117,7 @@ jobs:
   build:
     name: Typecheck + build (${{ matrix.ui }})
     needs: changes
-    if: needs.changes.outputs.ui == 'true'
+    if: needs.changes.outputs.ui == 'true' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
