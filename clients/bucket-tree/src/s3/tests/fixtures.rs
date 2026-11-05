@@ -18,12 +18,13 @@
 
 use super::*;
 use crate::format::{chunk_hashes, compute_cid, Cid, CHUNK_SIZE};
-use crate::tree::BlobLength;
+use crate::tree::{memory_mmr, BlobLength};
 use base64::Engine as _;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use storage_primitives::{Commitment, MmrProof};
 
 const BUCKET: BucketId = 7;
 const MTIME: u64 = 1_700_000_000;
@@ -88,13 +89,12 @@ impl BlobStore for MemoryStore {
         Ok(())
     }
 
-    async fn last_leaf(&self, _bucket_id: BucketId) -> crate::Result<Option<Cid>> {
-        Ok(self
-            .commits
-            .lock()
-            .unwrap()
-            .last()
-            .and_then(|c| c.last().copied()))
+    async fn commitment(&self, _bucket_id: BucketId) -> crate::Result<Option<Commitment>> {
+        Ok(memory_mmr::commitment(&self.commits.lock().unwrap()))
+    }
+
+    async fn mmr_proof(&self, _bucket_id: BucketId, leaf_index: u64) -> crate::Result<MmrProof> {
+        Ok(memory_mmr::proof(&self.commits.lock().unwrap(), leaf_index))
     }
 }
 

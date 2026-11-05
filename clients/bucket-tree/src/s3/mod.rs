@@ -186,7 +186,7 @@ impl<S: BlobStore> Objects<S> {
         let content_type = options
             .content_type
             .unwrap_or_else(|| DEFAULT_MIME_TYPE.to_string());
-        let stat = self
+        let (_, stat) = self
             .tree
             .put_file(&path, data, &content_type, metadata)
             .await
@@ -241,7 +241,7 @@ impl<S: BlobStore> Objects<S> {
     pub async fn delete_object(&self, key: &str) -> Result<()> {
         let path = key_to_path(key)?;
         match self.tree.delete(&path, EmptyParents::Remove).await {
-            Ok(()) => Ok(()),
+            Ok(_) => Ok(()),
             // No object with this key: the path is missing, passes through
             // a file, or is a directory.
             Err(

@@ -30,11 +30,14 @@
 //! ```
 
 pub mod format;
+#[cfg(feature = "http")]
+mod http;
 pub mod s3;
 pub mod tree;
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+pub mod wasm;
 
 use crate::format::Cid;
-use storage_client::ClientError;
 use thiserror::Error;
 
 pub use storage_primitives::BucketId;
@@ -83,6 +86,7 @@ pub enum FsClientError {
     #[error("Invalid MMR proof for the last leaf of bucket {0}")]
     InvalidMmrProof(BucketId),
 
+    #[cfg(feature = "http")]
     #[error("Network error: {0}")]
     Network(#[from] reqwest::Error),
 
@@ -114,8 +118,10 @@ pub enum FsClientError {
     },
 }
 
-impl From<ClientError> for FsClientError {
-    fn from(e: ClientError) -> Self {
+#[cfg(feature = "http")]
+impl From<storage_client::ClientError> for FsClientError {
+    fn from(e: storage_client::ClientError) -> Self {
+        use storage_client::ClientError;
         match e {
             ClientError::Http(e) => Self::Network(e),
             ClientError::Chain(message) => Self::Blockchain(message),
