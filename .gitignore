@@ -3,6 +3,7 @@
 **/*.rs.bk
 coverage
 provider-data
+provider-data-2
 
 # pnpm content-addressable store (package cache; reconstructible from lockfiles)
 .pnpm-store/
@@ -22,6 +23,7 @@ desktop.ini
 # Test artifacts
 *.log
 *.tmp
+.test-vectors/
 
 # Local config
 .env
