@@ -13,9 +13,9 @@
 //! The root directory is the data root of the bucket's last MMR leaf. The
 //! TypeScript clients use the same format (`packages/core/src/file-system.ts`).
 
+use bounded_collections::{BoundedVec, Get};
 use codec::{Decode, Encode, MaxEncodedLen};
-use sp_core::H256;
-use sp_runtime::{traits::Get, BoundedVec};
+use primitive_types::H256;
 use storage_primitives::BucketId;
 
 // ============================================================================

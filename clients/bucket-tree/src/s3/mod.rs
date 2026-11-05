@@ -18,7 +18,7 @@
 use crate::format::{validate_entry_name, DirectoryEntry, MetadataEntry, DEFAULT_MIME_TYPE};
 use crate::tree::{BlobStore, EmptyParents, FileStat, Tree};
 use crate::FsClientError;
-use sp_core::H256;
+use primitive_types::H256;
 use std::collections::HashMap;
 use storage_primitives::BucketId;
 use thiserror::Error;
