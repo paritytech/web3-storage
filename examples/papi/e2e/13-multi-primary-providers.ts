@@ -141,7 +141,7 @@ async function main() {
         bucketId,
         secondUpload.commit.leaf_indices[0]
       );
-      const proof = await fetchChallengeProof(api, SECOND_PROVIDER_URL, challengeId);
+      const proof = await fetchChallengeProof(api, SECOND_PROVIDER_URL, challengeId, second);
       const result = await respondToChallenge(api, second, challengeId, proof);
       const events = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected ChallengeDefended event");
@@ -270,7 +270,7 @@ async function main() {
         moved,
         old.commit.leaf_indices[0]
       );
-      const proof = await fetchChallengeProof(api, SECOND_PROVIDER_URL, challengeId);
+      const proof = await fetchChallengeProof(api, SECOND_PROVIDER_URL, challengeId, second);
       const result = await respondToChallenge(api, second, challengeId, proof);
       const events = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected ChallengeDefended event");
