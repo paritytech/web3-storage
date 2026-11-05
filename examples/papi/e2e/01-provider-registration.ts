@@ -19,7 +19,12 @@
  *   1.11 accepting_primary=false blocks matching
  *   1.12 max_capacity=0 (unlimited)
  *
- * Usage: node e2e/01-provider-registration.js [chain_ws] [provider_url]
+ * //Charlie is registered with the URL of the second provider node, which runs
+ * as //Charlie for workflow 15.
+ *
+ * Usage: node e2e/01-provider-registration.js [chain_ws] [provider_url] [second_provider_url]
+ * (`provider_url` is not used; the runner passes the same arguments to every
+ * workflow.)
  */
 
 import assert from "node:assert";
@@ -37,7 +42,7 @@ import {
 import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
-const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
+const CHARLIE_URL = process.argv[4] || "http://127.0.0.1:3334";
 const UNIT = 1_000_000_000_000n;
 
 /**
@@ -88,7 +93,7 @@ async function main() {
     tests.push({
       name: "1.1 Register new provider",
       fn: async () => {
-        const result = await registerProvider(api, charlie, PROVIDER_URL, 1000n * UNIT);
+        const result = await registerProvider(api, charlie, CHARLIE_URL, 1000n * UNIT);
         const events = api.event.StorageProvider.ProviderRegistered.filter(result.events as never);
         assert.strictEqual(events.length, 1, "Expected ProviderRegistered event");
         const stored = (await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS))!;
@@ -144,7 +149,7 @@ async function main() {
       const decoded = new TextDecoder().decode(stored.multiaddr);
       assert.strictEqual(decoded, newAddr, "Multiaddr should be updated");
       // Restore original
-      const port = new URL(PROVIDER_URL).port;
+      const port = new URL(CHARLIE_URL).port;
       await updateProviderMultiaddr(api, charlie, `/ip4/127.0.0.1/tcp/${port}`);
     },
   });
