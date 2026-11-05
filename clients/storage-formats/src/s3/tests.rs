@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-mod fixtures;
-
 use super::*;
+use crate::format::CHUNK_SIZE;
+use crate::testing::{tree, MemoryStore};
 
 #[test]
 fn key_rules() {
@@ -138,9 +138,9 @@ fn list_max_keys_truncates_and_pages() {
 async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
     use std::sync::atomic::Ordering;
 
-    let store = fixtures::MemoryStore::default();
-    let t = fixtures::tree(&store);
-    let objects = Objects::new(fixtures::tree(&store));
+    let store = MemoryStore::default();
+    let t = tree(&store);
+    let objects = Objects::new(tree(&store));
     let keys = [
         "a.txt",
         "b/1.txt",
@@ -230,4 +230,55 @@ async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
         .unwrap();
     assert_eq!(listed.common_prefixes, ["b/", "photos/"]);
     assert_eq!(store.reads.load(Ordering::Relaxed), 8);
+}
+
+const BIG_SIZE: usize = 3 * CHUNK_SIZE + 100;
+
+/// Root CID of the bucket that `write_sequence` produces. It covers every
+/// directory node, manifest and content root, so a change to the bucket
+/// format changes it. Clients cannot read buckets written in an older
+/// format, so update it only with a reviewed format change.
+const ROOT_CID: &str = "0x7aa7bcb3d443e0b47cabae360f168099695e46c84433e79dce13852d9647ffe5";
+
+/// A fixed sequence of file and object writes, with a fixed clock.
+async fn write_sequence(store: &MemoryStore) {
+    let t = tree(store);
+    t.mkdir("/docs").await.unwrap();
+    t.put_file("/docs/a.txt", b"hello from a.txt\n", "text/plain", vec![])
+        .await
+        .unwrap();
+    t.put_file("/docs/old.txt", b"deleted later", "text/plain", vec![])
+        .await
+        .unwrap();
+    let big: Vec<u8> = (0..BIG_SIZE).map(|i| (i % 251) as u8).collect();
+    t.put_file("/big.bin", &big, DEFAULT_MIME_TYPE, vec![])
+        .await
+        .unwrap();
+    t.put_file("/empty", b"", DEFAULT_MIME_TYPE, vec![])
+        .await
+        .unwrap();
+    Objects::new(tree(store))
+        .put_object(
+            "photos/cat.jpg",
+            b"meow",
+            PutObjectOptions {
+                content_type: Some("image/jpeg".into()),
+                metadata: HashMap::from([
+                    ("Zeta".into(), "last".into()),
+                    ("alpha".into(), "first".into()),
+                    ("Camera-Model".into(), "X100".into()),
+                ]),
+            },
+        )
+        .await
+        .unwrap();
+    t.delete("/docs/old.txt", EmptyParents::Keep).await.unwrap();
+}
+
+#[tokio::test]
+async fn the_bucket_format_produces_the_pinned_root() {
+    let store = MemoryStore::default();
+    write_sequence(&store).await;
+    let root = tree(&store).load_root().await.unwrap().cid.unwrap();
+    assert_eq!(format!("{root:#x}"), ROOT_CID);
 }

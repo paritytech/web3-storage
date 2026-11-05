@@ -37,6 +37,9 @@ pub mod tree;
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 pub mod wasm;
 
+#[cfg(test)]
+mod testing;
+
 use crate::format::Cid;
 use thiserror::Error;
 

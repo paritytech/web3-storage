@@ -678,116 +678,23 @@ fn commit_order(cids: &[Cid]) -> Vec<Cid> {
     order
 }
 
-/// The MMR of an in-memory test store: one leaf per committed data root.
-#[cfg(test)]
-pub(crate) mod memory_mmr {
-    use super::*;
-    use storage_primitives::{mmr, MmrLeaf, LEAF_VERSION};
-
-    fn leaves(commits: &[Vec<Cid>]) -> Vec<MmrLeaf> {
-        commits
-            .iter()
-            .flatten()
-            .map(|&data_root| MmrLeaf {
-                leaf_version: LEAF_VERSION,
-                data_root,
-                data_size: 0,
-                total_size: 0,
-            })
-            .collect()
-    }
-
-    pub(crate) fn commitment(commits: &[Vec<Cid>]) -> Option<Commitment> {
-        let leaves = leaves(commits);
-        (!leaves.is_empty()).then(|| Commitment {
-            mmr_root: mmr::root(&leaves).unwrap(),
-            start_seq: 0,
-            leaf_count: leaves.len() as u64,
-        })
-    }
-
-    pub(crate) fn proof(commits: &[Vec<Cid>], leaf_index: u64) -> MmrProof {
-        mmr::proof(&leaves(commits), leaf_index)
-            .unwrap()
-            .expect("no leaf at this index")
-            .1
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use crate::testing::{tree, MemoryStore, BUCKET};
 
-    /// In-memory Layer 0: blobs by CID, and the committed leaves.
-    #[derive(Default)]
-    struct MemoryStore {
-        blobs: Mutex<HashMap<Cid, Vec<u8>>>,
-        commits: Mutex<Vec<Vec<Cid>>>,
-        /// Replaces the bytes returned for this CID.
-        tampered: Mutex<Option<(Cid, Vec<u8>)>>,
-    }
-
-    impl MemoryStore {
-        fn commits(&self) -> Vec<Vec<Cid>> {
-            self.commits.lock().unwrap().clone()
-        }
-
-        fn raw_commit(&self, data: &[u8]) {
-            let cid = compute_cid(data);
-            self.blobs.lock().unwrap().insert(cid, data.to_vec());
-            self.commits.lock().unwrap().push(vec![cid]);
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl BlobStore for MemoryStore {
-        async fn put_blob(&self, _bucket_id: BucketId, data: &[u8]) -> Result<Cid> {
-            let cid = compute_cid(data);
-            self.blobs.lock().unwrap().insert(cid, data.to_vec());
-            Ok(cid)
-        }
-
-        async fn get_blob(
-            &self,
-            _bucket_id: BucketId,
-            cid: Cid,
-            _length: BlobLength,
-        ) -> Result<Vec<u8>> {
-            if let Some((tampered, bytes)) = self.tampered.lock().unwrap().clone() {
-                if tampered == cid {
-                    return Ok(bytes);
-                }
-            }
-            self.blobs
-                .lock()
-                .unwrap()
-                .get(&cid)
-                .cloned()
-                .ok_or_else(|| FsClientError::StorageClient("missing blob".into()))
-        }
-
-        async fn commit(&self, _bucket_id: BucketId, data_roots: Vec<Cid>) -> Result<()> {
-            let blobs = self.blobs.lock().unwrap();
-            assert!(data_roots.iter().all(|c| blobs.contains_key(c)));
-            self.commits.lock().unwrap().push(data_roots);
-            Ok(())
-        }
-
-        async fn commitment(&self, _bucket_id: BucketId) -> Result<Option<Commitment>> {
-            Ok(memory_mmr::commitment(&self.commits.lock().unwrap()))
-        }
-
-        async fn mmr_proof(&self, _bucket_id: BucketId, leaf_index: u64) -> Result<MmrProof> {
-            Ok(memory_mmr::proof(&self.commits.lock().unwrap(), leaf_index))
-        }
-    }
-
-    const BUCKET: BucketId = 7;
-
-    fn tree(store: &MemoryStore) -> Tree<&MemoryStore> {
-        Tree::new(store, BUCKET)
+    /// A commit by another writer between the commitment and the proof
+    /// gives a proof of a larger MMR, which does not prove the commitment's
+    /// last leaf.
+    #[tokio::test]
+    async fn root_read_rejects_a_proof_of_a_later_mmr() {
+        let store = MemoryStore::default();
+        tree(&store).mkdir("/a").await.unwrap();
+        *store.commit_after_commitment.lock().unwrap() = Some(b"other writer".to_vec());
+        assert!(matches!(
+            tree(&store).load_root().await,
+            Err(FsClientError::InvalidMmrProof(BUCKET))
+        ));
     }
 
     fn names(entries: &[DirectoryEntry]) -> Vec<String> {
