@@ -375,32 +375,53 @@ export async function removeMember(
   );
 }
 
+/** A provider's `/commit` response. */
+export type ProviderCommit = {
+  mmr_root: string;
+  start_seq: number | string;
+  leaf_count: number | string;
+  provider_signature: string;
+};
+
+/** A provider and the commit it signed. */
+export type CheckpointSigner = {
+  provider: ChainSigner | { address: string };
+  commit: ProviderCommit;
+};
+
+/**
+ * Builds a `checkpoint` tx. The commitment comes from the first signer's
+ * commit; each signer adds its own `provider_signature`.
+ */
+export function checkpointTx(api: ParachainApi, bucketId: bigint, signers: CheckpointSigner[]) {
+  if (signers.length === 0) throw new Error("checkpointTx: at least one signer is required");
+  const { mmr_root, start_seq, leaf_count } = signers[0].commit;
+  return api.tx.StorageProvider.checkpoint({
+    bucket_id: bucketId,
+    commitment: {
+      mmr_root: asHex(mmr_root),
+      start_seq: BigInt(start_seq),
+      leaf_count: BigInt(leaf_count),
+    },
+    signatures: signers.map(({ provider, commit }) => [
+      provider.address,
+      decodeMultiSignature(commit.provider_signature),
+    ]),
+  });
+}
+
+/** Submits a `checkpoint` signed by `client`; see {@link checkpointTx}. */
 export async function submitClientCheckpoint(
   api: ParachainApi,
   client: ChainSigner,
-  provider: ChainSigner | { address: string },
   bucketId: bigint,
-  ck: {
-    mmr_root: string;
-    start_seq: number | string;
-    leaf_count: number | string;
-    provider_signature: string;
-  },
+  signers: CheckpointSigner[],
   opts: SubmitOpts = {},
 ) {
-  return submitTx(
-    api.tx.StorageProvider.checkpoint({
-      bucket_id: bucketId,
-      commitment: {
-        mmr_root: asHex(ck.mmr_root),
-        start_seq: BigInt(ck.start_seq),
-        leaf_count: BigInt(ck.leaf_count),
-      },
-      signatures: [[provider.address, decodeMultiSignature(ck.provider_signature)]],
-    }),
-    client.signer,
-    { label: "checkpoint", ...opts },
-  );
+  return submitTx(checkpointTx(api, bucketId, signers), client.signer, {
+    label: "checkpoint",
+    ...opts,
+  });
 }
 
 export async function challengeOffchain(

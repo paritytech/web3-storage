@@ -19,13 +19,12 @@
 import assert from "node:assert";
 import {
   addPrimaryProvider,
-  asHex,
   buildSignedTermsArgs,
   bytesEq,
   challengeCheckpoint,
+  checkpointTx,
   createBucket,
   currentRelayBlock,
-  decodeMultiSignature,
   downloadChunk,
   endAgreement,
   ensureProviderRegistered,
@@ -38,7 +37,6 @@ import {
   updateProviderMultiaddr,
   uploadChunk,
   waitForRelayBlock,
-  type ChainSigner,
   type ParachainApi,
 } from "@web3-storage/sdk";
 import {
@@ -52,33 +50,6 @@ import {
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 const SECOND_PROVIDER_URL = process.argv[4] || "http://127.0.0.1:3334";
-
-type Commit = {
-  mmr_root: string;
-  start_seq: number | string;
-  leaf_count: number | string;
-  provider_signature: string;
-};
-
-function checkpointTx(
-  api: ParachainApi,
-  bucketId: bigint,
-  commit: Commit,
-  signed: Array<{ provider: ChainSigner; commit: Commit }>,
-) {
-  return api.tx.StorageProvider.checkpoint({
-    bucket_id: bucketId,
-    commitment: {
-      mmr_root: asHex(commit.mmr_root),
-      start_seq: BigInt(commit.start_seq),
-      leaf_count: BigInt(commit.leaf_count),
-    },
-    signatures: signed.map(({ provider, commit }) => [
-      provider.address,
-      decodeMultiSignature(commit.provider_signature),
-    ]),
-  });
-}
 
 async function snapshotSigners(api: ParachainApi, bucketId: bigint): Promise<number[]> {
   const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
@@ -162,7 +133,7 @@ async function main() {
   tests.push({
     name: "13.3 Checkpoint with one of two required signatures is rejected",
     fn: async () => {
-      const tx = checkpointTx(api, bucketId, firstUpload.commit, [
+      const tx = checkpointTx(api, bucketId, [
         { provider: first, commit: firstUpload.commit },
       ]);
       await submitTxExpectFailure(tx, client.signer, "InsufficientSignatures", "13.3");
@@ -172,7 +143,7 @@ async function main() {
   tests.push({
     name: "13.4 Checkpoint signed by both providers",
     fn: async () => {
-      const tx = checkpointTx(api, bucketId, firstUpload.commit, [
+      const tx = checkpointTx(api, bucketId, [
         { provider: first, commit: firstUpload.commit },
         { provider: second, commit: secondUpload.commit },
       ]);
@@ -233,7 +204,7 @@ async function main() {
       ));
       old = await uploadChunk(PROVIDER_URL, moved, `switch-provider @ ${Date.now()}`, client);
       await submitTx(
-        checkpointTx(api, moved, old.commit, [{ provider: first, commit: old.commit }]),
+        checkpointTx(api, moved, [{ provider: first, commit: old.commit }]),
         client.signer,
         { label: "checkpoint (old primary)" }
       );
@@ -270,7 +241,7 @@ async function main() {
         "new primary should reach the same root"
       );
       await submitTx(
-        checkpointTx(api, moved, next.commit, [{ provider: second, commit: next.commit }]),
+        checkpointTx(api, moved, [{ provider: second, commit: next.commit }]),
         client.signer,
         { label: "checkpoint (new primary)" }
       );
