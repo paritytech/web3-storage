@@ -10,7 +10,6 @@
 
 use crate::substrate::SubstrateClient;
 use reqwest::Client as HttpClient;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -35,11 +34,32 @@ pub enum ClientError {
     #[error("Chain error: {0}")]
     Chain(String),
 
+    /// The provider node answered `/negotiate` with a non-success status.
+    /// `code` and `details` come from the node's JSON error body, and are
+    /// `None` when the body is not one.
+    #[error(
+        "Provider rejected /negotiate with status {status}: {}",
+        negotiate_reason(code, details)
+    )]
+    NegotiateRejected {
+        status: u16,
+        code: Option<String>,
+        details: Option<serde_json::Value>,
+    },
+
     #[error("Configuration error: {0}")]
     Config(String),
 
     #[error("Storage error: {0}")]
     Storage(String),
+}
+
+fn negotiate_reason(code: &Option<String>, details: &Option<serde_json::Value>) -> String {
+    match (code, details) {
+        (Some(code), Some(details)) => format!("{code} {details}"),
+        (Some(code), None) => code.clone(),
+        _ => "no error code".to_string(),
+    }
 }
 
 /// Configuration for connecting to the storage system.
@@ -140,43 +160,6 @@ impl BaseClient {
             .map(|s| s.as_str())
             .ok_or_else(|| ClientError::Config("No provider URLs configured".to_string()))
     }
-}
-
-// Common API types used across clients
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderInfo {
-    pub multiaddr: String,
-    pub stake: u128,
-    pub committed_bytes: u64,
-    pub price_per_byte: u128,
-    pub accepting_primary: bool,
-    pub reputation: u8,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BucketInfo {
-    pub bucket_id: u64,
-    pub min_providers: u32,
-    pub frozen: bool,
-    pub snapshot: Option<SnapshotInfo>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SnapshotInfo {
-    pub mmr_root: String,
-    pub start_seq: u64,
-    pub leaf_count: u64,
-    pub checkpoint_block: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgreementInfo {
-    pub provider: String,
-    pub max_bytes: u64,
-    pub payment_locked: u128,
-    pub expires_at: u32,
-    pub is_primary: bool,
 }
 
 /// Chunking strategy for data upload.
