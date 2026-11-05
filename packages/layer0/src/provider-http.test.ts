@@ -10,8 +10,10 @@ import {
   DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
+  hexToBytes,
   LEAF_VERSION,
   toHex,
+  u64le,
   verifyMmrProof,
 } from "@web3-storage/core";
 
@@ -388,13 +390,6 @@ describe("chunk uploads", () => {
 
 describe("fetchChallengeProof", () => {
   const challengeId = { deadline: 10, index: 0 };
-  const getValue = vi.fn(async () => ({
-    bucket_id: 1n,
-    target: { leaf_index: 2n, chunk_index: 0n },
-  }));
-  const api = {
-    query: { StorageProvider: { Challenges: { getValue } } },
-  } as unknown as ParachainApi;
   const leaf = {
     leaf_version: LEAF_VERSION,
     data_root: toHex(new Uint8Array(32).fill(1)),
@@ -402,6 +397,34 @@ describe("fetchChallengeProof", () => {
     total_size: 5,
   };
   const item = toHex(new Uint8Array(32).fill(2));
+  /**
+   * Commitment of a 2-leaf MMR whose leaf 0 is `l` and whose leaf 1 hashes to
+   * `item`, so the proof for leaf 0 is `[item]`.
+   */
+  const commitmentFor = (l: typeof leaf) => {
+    const leafHash = hashLeaf(
+      concatBytes(
+        Uint8Array.of(l.leaf_version),
+        hexToBytes(l.data_root),
+        u64le(BigInt(l.data_size)),
+        u64le(BigInt(l.total_size)),
+      ),
+    );
+    return {
+      mmr_root: toHex(hashChildren(leafHash, hexToBytes(item))),
+      start_seq: 0n,
+      leaf_count: 2n,
+    };
+  };
+  const commitment = commitmentFor(leaf);
+  const getValue = vi.fn(async () => ({
+    bucket_id: 1n,
+    target: { leaf_index: 0n, chunk_index: 0n },
+    commitment,
+  }));
+  const api = {
+    query: { StorageProvider: { Challenges: { getValue } } },
+  } as unknown as ParachainApi;
   const chunkProof = {
     chunk_data: bytesToBase64(enc.encode("chunk")),
     proof: [item],
@@ -428,14 +451,21 @@ describe("fetchChallengeProof", () => {
     const [mmrUrl, chunkUrl] = fetchMock.mock.calls.map((call) => new URL(call[0]));
     expect(mmrUrl.pathname).toBe("/mmr_proof");
     expect(mmrUrl.searchParams.get("bucket_id")).toBe("1");
-    expect(mmrUrl.searchParams.get("leaf_index")).toBe("2");
+    expect(mmrUrl.searchParams.get("leaf_index")).toBe("0");
+    expect(mmrUrl.searchParams.get("mmr_root")).toBe(commitment.mmr_root);
+    expect(mmrUrl.searchParams.get("start_seq")).toBe("0");
+    expect(mmrUrl.searchParams.get("leaf_count")).toBe("2");
     expect(chunkUrl.pathname).toBe("/chunk_proof");
     expect(chunkUrl.searchParams.get("data_root")).toBe(leaf.data_root);
     expect(chunkUrl.searchParams.get("chunk_index")).toBe("0");
   });
 
   it("answers a chunk index past the leaf's last chunk with ChunkOutOfRange, without /chunk_proof", async () => {
-    getValue.mockResolvedValueOnce({ bucket_id: 1n, target: { leaf_index: 2n, chunk_index: 1n } });
+    getValue.mockResolvedValueOnce({
+      bucket_id: 1n,
+      target: { leaf_index: 0n, chunk_index: 1n },
+      commitment,
+    });
     const fetchMock = stubFetch(() => ({ leaf, items: [item] }));
     const response = await fetchChallengeProof(api, PROVIDER, challengeId);
     expect(response).toEqual({
@@ -452,6 +482,11 @@ describe("fetchChallengeProof", () => {
 
   it("answers chunk index 0 of an empty leaf with ChunkOutOfRange", async () => {
     const empty = { ...leaf, data_size: 0, total_size: 0 };
+    getValue.mockResolvedValueOnce({
+      bucket_id: 1n,
+      target: { leaf_index: 0n, chunk_index: 0n },
+      commitment: commitmentFor(empty),
+    });
     const fetchMock = stubFetch(() => ({ leaf: empty, items: [item] }));
     const response = await fetchChallengeProof(api, PROVIDER, challengeId);
     expect(response).toEqual({
@@ -460,6 +495,25 @@ describe("fetchChallengeProof", () => {
         mmr_proof: { leaf: { ...empty, data_size: 0n, total_size: 0n }, items: [item] },
       },
     });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws for a proof that does not prove the challenged commitment, before /chunk_proof", async () => {
+    // A provider node that ignores the commitment parameters returns a proof
+    // for its current MMR, here one with three leaves.
+    const fetchMock = stubFetch(() => ({ leaf, items: [item, item] }));
+    await expect(fetchChallengeProof(api, PROVIDER, challengeId)).rejects.toThrow(
+      "does not prove leaf 0 of the challenged commitment",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws for a proof of another leaf's data, before /chunk_proof", async () => {
+    const other = { ...leaf, data_root: toHex(new Uint8Array(32).fill(3)) };
+    const fetchMock = stubFetch(() => ({ leaf: other, items: [item] }));
+    await expect(fetchChallengeProof(api, PROVIDER, challengeId)).rejects.toThrow(
+      "does not prove leaf 0 of the challenged commitment",
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

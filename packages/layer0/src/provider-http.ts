@@ -29,6 +29,7 @@ import {
   signProviderRequest,
   splitChunks,
   verifyChunkProof,
+  verifyMmrProof,
   type MmrProof,
   type ProviderRequestSigner,
   type TreeNode,
@@ -302,6 +303,13 @@ export type ChallengeResponse = Parameters<
  * the chunk, or `ChunkOutOfRange` with the leaf's MMR proof alone when the
  * challenged `chunk_index` is at or past the leaf's chunk count.
  *
+ * The MMR proof is for the commitment the challenge cites, not the bucket's
+ * current state: `respond_to_challenge` verifies against that commitment.
+ * `fetchChallengeProof` verifies the proof against that commitment, so a
+ * provider node that ignores the commitment parameters (one older than this
+ * client) makes it throw before the caller submits `respond_to_challenge` and
+ * pays its fee.
+ *
  * `signer` authenticates the `GET /mmr_proof` step, which is Reader-gated on
  * private buckets — a bucket member works, and so does the provider's own
  * account (the node grants its own account every Reader check).
@@ -329,10 +337,15 @@ export async function fetchChallengeProof(
         challengeId.index,
     );
 
+  const { commitment } = challenge;
+  const mmrRoot = asHex(commitment.mmr_root);
   const mmr = await providerFetch(providerUrl, "/mmr_proof", {
     params: {
       bucket_id: challenge.bucket_id,
       leaf_index: challenge.target.leaf_index,
+      mmr_root: mmrRoot,
+      start_seq: commitment.start_seq,
+      leaf_count: commitment.leaf_count,
     },
     sign: signer ? { signer: signer.signer, bucketId: challenge.bucket_id } : undefined,
   });
@@ -353,6 +366,30 @@ export async function fetchChallengeProof(
     },
     items: mmr.items.map((h: string) => asHex(h)),
   };
+  const provesCommitment = verifyMmrProof(
+    {
+      leaf: {
+        leafVersion: mmr_proof.leaf.leaf_version,
+        dataRoot: hexToBytes(mmr_proof.leaf.data_root),
+        dataSize: mmr_proof.leaf.data_size,
+        totalSize: mmr_proof.leaf.total_size,
+      },
+      items: mmr_proof.items.map(hexToBytes),
+    },
+    challenge.target.leaf_index,
+    hexToBytes(mmrRoot),
+    commitment.leaf_count,
+  );
+  if (!provesCommitment)
+    throw new Error(
+      "Provider /mmr_proof does not prove leaf " +
+        challenge.target.leaf_index +
+        " of the challenged commitment (root " +
+        mmrRoot +
+        ", " +
+        commitment.leaf_count +
+        " leaves): the provider node may be older than this client",
+    );
   if (challenge.target.chunk_index >= BigInt(leafChunkCount(mmr.leaf))) {
     return Enum("ChunkOutOfRange", { mmr_proof });
   }
