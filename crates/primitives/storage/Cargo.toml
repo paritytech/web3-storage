@@ -1,0 +1,30 @@
+[package]
+name = "storage-primitives"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Shared primitives for scalable Web3 storage"
+
+[dependencies]
+bitvec = { workspace = true }
+codec = { workspace = true, features = ["bit-vec"] }
+polkadot-ckb-merkle-mountain-range = { workspace = true }
+scale-info = { workspace = true, features = ["bit-vec"] }
+sp-core = { workspace = true }
+sp-io = { workspace = true }
+serde = { workspace = true, optional = true }
+
+[features]
+default = ["std"]
+std = [
+	"bitvec/std",
+	"codec/std",
+	"polkadot-ckb-merkle-mountain-range/std",
+	"scale-info/std",
+	"serde/std",
+	"sp-core/std",
+	"sp-io/std",
+]
+serde = ["bitvec/serde", "dep:serde", "sp-core/serde"]

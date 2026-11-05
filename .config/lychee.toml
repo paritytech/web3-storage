@@ -1,0 +1,3 @@
+# Checks relative Markdown links only; never hits the network, so a link
+# check can't fail CI because of rate limits or a flaky remote host.
+offline = true
