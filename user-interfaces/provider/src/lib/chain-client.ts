@@ -9,10 +9,10 @@
  * tracked the migration from the previous dual @polkadot/api + PAPI setup.
  */
 
-import { Enum, type PolkadotClient, type Transaction, type TxFinalizedPayload } from 'polkadot-api'
+import { type PolkadotClient, type Transaction, type TxFinalizedPayload } from 'polkadot-api'
 import { type InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { BehaviorSubject } from 'rxjs'
-import { getSs58Prefix, isSameAddress, submitTx } from '@web3-storage/sdk'
+import { getSs58Prefix, isSameAddress, submitTx, type ChallengeResponse } from '@web3-storage/sdk'
 import {
   clientReady$,
   connectToChain,
@@ -24,7 +24,7 @@ import {
 } from '@web3-storage/chain-client'
 
 export type { PolkadotClient }
-export { clientReady$, connectToChain, getClient, subscribeToBlocks }
+export { clientReady$, connectToChain, getClient, requireApi, subscribeToBlocks }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Connection state
@@ -600,77 +600,13 @@ export async function submitCompleteDeregister(
 
 // ── Challenge proof fetching & response submission ──────────────────────────
 
-export interface ChallengeProofData {
-  chunkData: Uint8Array
-  mmrProof: {
-    peaks: string[]
-    leaf: { dataRoot: string; dataSize: bigint; totalSize: bigint }
-    leafProof: { siblings: string[]; path: boolean[] }
-  }
-  chunkProof: { siblings: string[]; path: boolean[] }
-}
-
 /**
- * Fetch MMR proof + chunk proof from the provider node HTTP API.
- */
-export async function fetchChallengeProof(
-  providerHttp: string,
-  bucketId: number,
-  leafIndex: number,
-  chunkIndex: number,
-): Promise<ChallengeProofData> {
-  // Step 1: MMR proof
-  const mmrRes = await fetch(
-    `${providerHttp}/mmr_proof?bucket_id=${bucketId}&leaf_index=${leafIndex}`,
-  )
-  if (!mmrRes.ok) {
-    throw new Error(`MMR proof fetch failed: ${mmrRes.status} ${await mmrRes.text()}`)
-  }
-  const mmr = await mmrRes.json()
-
-  // Step 2: Chunk proof — provider hex_decode doesn't accept 0x prefix
-  const dataRoot: string = mmr.leaf.data_root
-  const dataRootBare = dataRoot.replace(/^0x/, '')
-  const chunkRes = await fetch(
-    `${providerHttp}/chunk_proof?data_root=${dataRootBare}&chunk_index=${chunkIndex}`,
-  )
-  if (!chunkRes.ok) {
-    throw new Error(`Chunk proof fetch failed: ${chunkRes.status} ${await chunkRes.text()}`)
-  }
-  const chunk = await chunkRes.json()
-
-  // Decode base64 chunk_data to Uint8Array
-  const chunkData = chunk.chunk_data
-    ? Uint8Array.from(atob(chunk.chunk_data), (c) => c.charCodeAt(0))
-    : new Uint8Array(0)
-
-  return {
-    chunkData,
-    mmrProof: {
-      peaks: mmr.proof.peaks as string[],
-      leaf: {
-        dataRoot,
-        dataSize: BigInt(mmr.leaf.data_size),
-        totalSize: BigInt(mmr.leaf.total_size),
-      },
-      leafProof: {
-        siblings: mmr.proof.siblings as string[],
-        path: mmr.proof.path as boolean[],
-      },
-    },
-    chunkProof: {
-      siblings: chunk.proof.siblings as string[],
-      path: chunk.proof.path as boolean[],
-    },
-  }
-}
-
-/**
- * Build and submit a `respond_to_challenge` extrinsic with a Proof response.
+ * Submit a `respond_to_challenge` extrinsic with the response that
+ * `fetchChallengeProof` built.
  */
 export async function submitRespondToChallenge(
   challengeId: { deadline: number; index: number },
-  proof: ChallengeProofData,
+  response: ChallengeResponse,
   signer: InjectedPolkadotAccount,
   onProgress?: TxProgressCallback,
 ): Promise<TxFinalizedPayload> {
@@ -679,25 +615,7 @@ export async function submitRespondToChallenge(
 
   const tx = a.tx.StorageProvider.respond_to_challenge({
     challenge_id: challengeId,
-    response: Enum('Proof', {
-      chunk_data: proof.chunkData,
-      mmr_proof: {
-        peaks: proof.mmrProof.peaks,
-        leaf: {
-          data_root: proof.mmrProof.leaf.dataRoot,
-          data_size: proof.mmrProof.leaf.dataSize,
-          total_size: proof.mmrProof.leaf.totalSize,
-        },
-        leaf_proof: {
-          siblings: proof.mmrProof.leafProof.siblings,
-          path: proof.mmrProof.leafProof.path,
-        },
-      },
-      chunk_proof: {
-        siblings: proof.chunkProof.siblings,
-        path: proof.chunkProof.path,
-      },
-    }),
+    response,
   })
 
   return submit(tx, signer, 'Challenge response', onProgress)

@@ -33,7 +33,7 @@ impl ChallengeProofSource for StorageProofSource {
         &self,
         data_root: sp_core::H256,
         chunk_index: u64,
-    ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), ChallengeError> {
+    ) -> Result<(Vec<u8>, Vec<sp_core::H256>), ChallengeError> {
         self.0
             .get_chunk_at_index(data_root, chunk_index)
             .map_err(|e| ChallengeError::Storage(e.to_string()))
@@ -105,8 +105,7 @@ mod tests {
 
         let (data, proof) = source.get_chunk_at_index(chunk_hash, 0).unwrap();
         assert_eq!(data, chunk_data);
-        assert!(proof.siblings.is_empty());
-        assert!(proof.path.is_empty());
+        assert!(proof.is_empty());
     }
 
     #[test]

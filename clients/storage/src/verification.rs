@@ -11,6 +11,7 @@ use crate::ClientError as Error;
 use sp_core::H256;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use storage_primitives::BucketId;
 
 /// Provider performance statistics.
 #[derive(Debug, Clone, Default)]
@@ -149,6 +150,7 @@ impl ClientVerifier {
     pub async fn spot_check<T>(
         &mut self,
         client: &T,
+        bucket_id: BucketId,
         data_root: &H256,
         chunk_index: u64,
     ) -> Result<bool, Error>
@@ -160,7 +162,9 @@ impl ClientVerifier {
         // Read the chunk
         let chunk_size = u64::from(storage_primitives::DEFAULT_CHUNK_SIZE);
         let offset = chunk_index * chunk_size;
-        let result = client.read_data(data_root, offset, chunk_size).await;
+        let result = client
+            .read_data(bucket_id, data_root, offset, chunk_size)
+            .await;
 
         let duration = start.elapsed();
         let provider_url = client.provider_url();
@@ -199,6 +203,7 @@ impl ClientVerifier {
     pub async fn spot_check_batch<T>(
         &mut self,
         client: &T,
+        bucket_id: BucketId,
         data_root: &H256,
         num_checks: usize,
         total_chunks: u64,
@@ -214,7 +219,10 @@ impl ClientVerifier {
 
         for _ in 0..num_checks {
             let chunk_index = rng.gen_range(0..total_chunks);
-            match self.spot_check(client, data_root, chunk_index).await {
+            match self
+                .spot_check(client, bucket_id, data_root, chunk_index)
+                .await
+            {
                 Ok(true) => passed += 1,
                 Ok(false) => failed += 1,
                 Err(_) => failed += 1,
@@ -280,9 +288,14 @@ impl Default for ClientVerifier {
 /// This allows the verifier to work with different client types.
 #[async_trait::async_trait]
 pub trait ProviderReadAccess {
-    /// Read data from a data root.
-    async fn read_data(&self, data_root: &H256, offset: u64, length: u64)
-        -> Result<Vec<u8>, Error>;
+    /// Read data from a data root in a bucket.
+    async fn read_data(
+        &self,
+        bucket_id: BucketId,
+        data_root: &H256,
+        offset: u64,
+        length: u64,
+    ) -> Result<Vec<u8>, Error>;
 
     /// Get the provider URL for tracking.
     fn provider_url(&self) -> &str;
