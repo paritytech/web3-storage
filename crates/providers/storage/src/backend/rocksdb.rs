@@ -51,6 +51,8 @@ const BUCKET_LOCK_TIMEOUT_MS: i64 = 30_000;
 pub struct DiskStorage {
     db: Arc<TransactionDB>,
     max_tree_walk_visits: u64,
+    #[cfg(test)]
+    get_node_calls: std::sync::atomic::AtomicU64,
 }
 
 /// The commitment the provider signs for the bucket in this state.
@@ -89,6 +91,8 @@ impl DiskStorage {
         Ok(Self {
             db: Arc::new(db),
             max_tree_walk_visits: super::MAX_TREE_WALK_VISITS,
+            #[cfg(test)]
+            get_node_calls: Default::default(),
         })
     }
 
@@ -96,6 +100,13 @@ impl DiskStorage {
     fn with_max_tree_walk_visits(mut self, max_visits: u64) -> Self {
         self.max_tree_walk_visits = max_visits;
         self
+    }
+
+    /// `get_node` calls since the last call to this method.
+    #[cfg(test)]
+    fn take_get_node_calls(&self) -> u64 {
+        self.get_node_calls
+            .swap(0, std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Options this engine opens its database with.
@@ -350,6 +361,9 @@ impl DiskStorage {
 
     /// Get a node by hash.
     pub fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode> {
+        #[cfg(test)]
+        self.get_node_calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let cf = self.db.cf_handle(CF_NODES)?;
         let key = hash.as_bytes();
         let value = self.db.get_cf(&cf, key).ok()??;
@@ -643,9 +657,9 @@ fn leaf_proof(leaves: &[MmrLeaf], leaf_index: u64) -> Result<(H256, MmrProof), E
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::build_merkle_tree;
+    use crate::backend::{build_merkle_tree, MAX_TREE_DEPTH};
     use rocksdb::DB;
-    use storage_primitives::{hash_leaf, DEFAULT_CHUNK_SIZE};
+    use storage_primitives::{hash_leaf, verify_merkle_proof, DEFAULT_CHUNK_SIZE};
     use tempfile::TempDir;
 
     /// Open the database at `path` directly, bypassing `DiskStorage::new` and
@@ -1417,6 +1431,86 @@ mod tests {
             Err(Error::TreeTooLarge { .. })
         ));
         assert!(storage.get_bucket(BUCKET).unwrap().leaves.is_empty());
+    }
+
+    /// 22 stored nodes span 2^21 chunks. A read follows one path through
+    /// them instead of visiting every chunk.
+    #[test]
+    fn read_of_a_deduplicated_tree_follows_one_path() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let root = diamond_tree(&storage, BUCKET, 21);
+        let count = 1u64 << 21;
+        let chunk = hash_leaf(&vec![0u8; DEFAULT_CHUNK_SIZE as usize]);
+
+        storage.take_get_node_calls();
+        let range = storage.get_chunks_in_range(root, 0..1).unwrap();
+        assert!(storage.take_get_node_calls() < 1000);
+        assert_eq!(range.len(), 1);
+        assert!(verify_merkle_proof(chunk, 0, count, &range[0].2, &root));
+
+        let (_, proof) = storage.get_chunk_at_index(root, count - 1).unwrap();
+        assert!(storage.take_get_node_calls() < 1000);
+        assert!(verify_merkle_proof(chunk, count - 1, count, &proof, &root));
+    }
+
+    /// A chain of 70 nodes is deeper than any chunk tree. A read rejects it
+    /// after about one pass down the chain.
+    #[test]
+    fn read_of_a_chain_deeper_than_the_limit_is_rejected() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let leaf = store_chunk_of_len(&storage, 1, 32);
+        for left_deep in [true, false] {
+            let mut root = leaf;
+            for _ in 0..70 {
+                root = if left_deep {
+                    store_parent(&storage, root, leaf)
+                } else {
+                    store_parent(&storage, leaf, root)
+                };
+            }
+
+            storage.take_get_node_calls();
+            assert!(matches!(
+                storage.get_chunks_in_range(root, 0..1),
+                Err(Error::NonCanonicalTree(_))
+            ));
+            assert!(storage.take_get_node_calls() <= 2 * (MAX_TREE_DEPTH as u64 + 1));
+        }
+    }
+
+    /// A read fails when its path reaches a missing node, and never returns
+    /// fewer chunks than asked for. A chunk whose path avoids the missing node
+    /// still reads.
+    #[test]
+    fn read_fails_when_its_path_reaches_a_missing_node() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let leaves: Vec<H256> = [1, 2, 3].map(|b| store_chunk(&storage, b)).to_vec();
+        let root = build_merkle_tree(&storage, BUCKET, &leaves).unwrap();
+        let delete = |hash: H256| {
+            let cf = storage.db.cf_handle(CF_NODES).unwrap();
+            storage.db.delete_cf(&cf, hash.as_bytes()).unwrap();
+        };
+
+        delete(leaves[1]);
+        assert!(matches!(
+            storage.get_chunks_in_range(root, 0..3),
+            Err(Error::NodeNotFound(_))
+        ));
+        assert!(matches!(
+            storage.get_chunk_at_index(root, 1),
+            Err(Error::NodeNotFound(_))
+        ));
+        assert!(storage.get_chunk_at_index(root, 2).is_ok());
+
+        delete(leaves[2]);
+        assert!(matches!(
+            storage.get_chunk_at_index(root, 0),
+            Err(Error::NodeNotFound(_))
+        ));
+        assert!(matches!(
+            storage.get_chunks_in_range(root, 0..1),
+            Err(Error::NodeNotFound(_))
+        ));
     }
 
     /// A tree with a missing node is incomplete data: serving the chunks that
