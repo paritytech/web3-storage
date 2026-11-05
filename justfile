@@ -228,7 +228,7 @@ start-provider BACKEND=PROVIDER_BACKEND PORT=PROVIDER_PORT STORAGE_PATH=PROVIDER
         --bind-addr "0.0.0.0:{{PORT}}" \
         --chain-rpc "{{ CHAIN_WS }}"
 
-# Second provider node for the multi-provider E2E workflow (13), signing as
+# Second provider node for the multi-provider E2E workflow (15), signing as
 # //Charlie. The workflow registers //Charlie on-chain itself.
 start-second-provider BACKEND="rocksdb" PORT=SECOND_PROVIDER_PORT STORAGE_PATH="./provider-data-2":
     #!/usr/bin/env bash
@@ -411,7 +411,7 @@ papi-provider-discovery BYTES="1073741824" DURATION="100" MAX_PRICE="10": papi-s
 # ============================================================
 
 # Run comprehensive E2E test suite (all workflows sequentially). Needs the
-# provider node (`just start-provider`) and, for workflow 13, the second
+# provider node (`just start-provider`) and, for workflows 01 and 15, the second
 # provider node (`just start-second-provider`).
 e2e PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL: papi-setup
     npx c8 --reporter=text --reporter=json --report-dir=examples/papi/coverage \
