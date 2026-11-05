@@ -3,19 +3,18 @@
 /**
  * Smart-contract end-to-end demo for the `SharedTeamDrive` example dApp.
  *
- * The contract owns a drive on-chain via the drive-registry precompile.
+ * The contract owns a drive (a plain Layer 0 bucket) via the
+ * storage-provider precompile.
  * Flow:
  *   1. Provider setup + account mapping.
  *   2. Deploy `SharedTeamDrive.sol`.
  *   3. Admin (`//Bob`) creates the team with `msg.value` covering the
  *      payment reserve.
- *   4. Admin invites Charlie (Reader).
+ *   4. Admin invites Charlie (Writer).
  *   5. Admin kicks Charlie.
- *   6. Admin disbands the team (deletes the drive).
  *
- * Asserts pallet events (`DriveCreated`, `DriveShared`, `DriveUnshared`,
- * `DriveDeleted`) and contract events (`TeamCreated`, `Invited`, `Kicked`,
- * `Disbanded`) fire for each step.
+ * Asserts pallet events (`BucketCreated`, `MemberSet`, `MemberRemoved`) and
+ * contract events (`TeamCreated`, `Invited`, `Kicked`) fire for each step.
  *
  * Usage: node sc-team-drive.js [chain_ws] [provider_url] [provider_seed] [client_seed]
  */
@@ -98,14 +97,21 @@ async function main() {
 
     // 1) Deploy. //Bob deploys so he becomes the admin (via msg.sender on
     //    the createTeam call later).
-    console.log("\n[1/4] Deploying SharedTeamDrive…");
+    console.log("\n[1/3] Deploying SharedTeamDrive…");
     const deployed = await deployContract(api, client, bytecode);
     console.log("  contract:", deployed.address);
+    const assertContractEvent = (events: Parameters<typeof decodeContractEmitted>[0], name: string) =>
+      assert.ok(
+        decodeContractEmitted(events, api, deployed.addressBytes, abi).some(
+          (l) => l.eventName === name
+        ),
+        `${name} event not emitted`
+      );
 
-    // 2) createTeam{value: 10 UNIT} — the contract becomes the drive owner,
+    // 2) createTeam{value: 10 UNIT} — the contract becomes the bucket admin,
     //    so the terms are negotiated with the contract's substrate-mapped
     //    account as owner; msg.value funds that account's payment reserve.
-    console.log("\n[2/4] createTeam{value: 10 UNIT}('team-cov', provider, terms[1MiB×50], sig)");
+    console.log("\n[2/3] createTeam{value: 10 UNIT}(provider, terms[1MiB×50], sig)");
     const contractAccount = h160ToSubstrate(deployed.addressBytes);
     const signed = await negotiatePrecompileTerms(api, providerUrl, contractAccount, {
       maxBytes: 1n << 20n, // 1 MiB capacity
@@ -113,7 +119,6 @@ async function main() {
       pricePerByte: PRICE_PER_BYTE,
     });
     const createData = encodeCall(abi, "createTeam", [
-      "team-cov",
       toHex(provider.publicKey),
       signed.terms,
       signed.signature,
@@ -121,28 +126,24 @@ async function main() {
     let r = await callContract(api, client, deployed.addressBytes, createData, {
       value: 10n * UNIT,
     });
-    const driveCreated = requireOneEvent(
+    const bucketCreated = requireOneEvent(
       r.events,
-      api.event.DriveRegistry.DriveCreated,
-      "DriveRegistry.DriveCreated"
+      api.event.StorageProvider.BucketCreated,
+      "StorageProvider.BucketCreated"
     );
-    const driveId = driveCreated.drive_id;
-    console.log("  driveId =", driveId.toString());
-    let logs = decodeContractEmitted(r.events, api, deployed.addressBytes, abi);
-    assert.ok(
-      logs.some((l) => l.eventName === "TeamCreated"),
-      "TeamCreated event not emitted"
-    );
+    console.log("  bucketId =", bucketCreated.bucket_id.toString());
+    assertContractEvent(r.events, "TeamCreated");
 
-    // 3) invite Charlie as Writer.
-    console.log("\n[3/4] invite(Charlie, Writer)");
+    // 3) invite Charlie as Writer, then kick him.
+    console.log("\n[3/3] invite(Charlie, Writer)");
     const inviteData = encodeCall(abi, "invite", [toHex(member.publicKey), SolRole.Writer]);
     r = await callContract(api, client, deployed.addressBytes, inviteData);
     requireOneEvent(
       r.events,
-      api.event.DriveRegistry.DriveShared,
-      "DriveRegistry.DriveShared"
+      api.event.StorageProvider.MemberSet,
+      "StorageProvider.MemberSet"
     );
+    assertContractEvent(r.events, "Invited");
 
     // kick Charlie.
     console.log("        kick(Charlie)");
@@ -150,24 +151,10 @@ async function main() {
     r = await callContract(api, client, deployed.addressBytes, kickData);
     requireOneEvent(
       r.events,
-      api.event.DriveRegistry.DriveUnshared,
-      "DriveRegistry.DriveUnshared"
+      api.event.StorageProvider.MemberRemoved,
+      "StorageProvider.MemberRemoved"
     );
-
-    // 4) disband.
-    console.log("\n[4/4] disband()");
-    const disbandData = encodeCall(abi, "disband", []);
-    r = await callContract(api, client, deployed.addressBytes, disbandData);
-    requireOneEvent(
-      r.events,
-      api.event.DriveRegistry.DriveDeleted,
-      "DriveRegistry.DriveDeleted"
-    );
-    logs = decodeContractEmitted(r.events, api, deployed.addressBytes, abi);
-    assert.ok(
-      logs.some((l) => l.eventName === "Disbanded"),
-      "Disbanded event not emitted"
-    );
+    assertContractEvent(r.events, "Kicked");
 
     console.log("\n✅ SharedTeamDrive flow completed");
   } finally {

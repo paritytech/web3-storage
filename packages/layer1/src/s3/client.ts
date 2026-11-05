@@ -1,41 +1,42 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * S3Client — S3Registry buckets/object-metadata (chain) + the provider
- * node's /s3 object HTTP surface. Chain ops delegate to the layer-0 pallet
- * wrappers (silent, no auto-retry, finalized submission + finalized reads by
- * default — UI-grade; tests/examples opt into in-block/best via
- * readOpts/submitMode); HTTP ops go through core's retrying fetch and are
- * signed with the signer's raw keypair, which the provider always requires.
+ * S3Client: S3 buckets on plain Layer 0 buckets. The chain stores no bucket
+ * name and no object metadata; a bucket is identified by its id. Objects
+ * are files in the bucket's file-system tree (../tree.ts): key `k` is path
+ * `/k`, and the directories between are created and removed implicitly.
+ * Only the provider's Layer 0 routes are used.
  *
- * Bytes are opaque here: client-side encryption (when used) wraps/unwraps
- * app-side, so CID verification covers exactly what the provider stores.
+ * Chain ops delegate to the layer-0 pallet wrappers (silent, no auto-retry,
+ * finalized submission and reads by default; tests and examples opt into
+ * best-block via readOpts/submitMode). Writes are signed with the signer,
+ * which needs a Writer or Admin role. Reads are unauthenticated: anyone who
+ * knows a CID can read the blob, so confidential objects need client-side
+ * encryption (bytes are opaque here). Every read is checked against the
+ * CIDs in the tree.
+ *
+ * One writer at a time: two clients that write the same bucket
+ * concurrently can lose one of the changes (the last commit wins).
  */
 
+import { compareBytes, FS_LIMITS, isValidEntryName, isWellFormedString } from "@web3-storage/core";
 import {
-  computeCid,
-  CidMismatchError,
-  DEFAULT_CHUNK_SIZE,
-  httpFetch,
-  toHex,
-} from "@web3-storage/core";
-import {
-  asHex,
-  createS3Bucket as createS3BucketTx,
-  deleteObjectMetadata as deleteObjectMetadataTx,
-  deleteS3Bucket as deleteS3BucketTx,
-  putObjectMetadata as putObjectMetadataTx,
+  createBucketWithPrimary as createBucketWithPrimaryTx,
   type WaitOpts,
 } from "@web3-storage/layer0";
 
 import { Layer1Client, type Layer1ClientOptions } from "../base-client.js";
-import { resolveBucketProviders, resolveCreationTerms } from "../provider-url.js";
+import { getBucketInfos, listMemberBuckets } from "../bucket-info.js";
+import { withHttpContext } from "../http-context.js";
+import { resolveCreationTerms } from "../provider-url.js";
+import { FileSystemError, parsePath, type FileInfo } from "../tree.js";
 import type {
   BucketInfo,
-  BucketRef,
   CreateBucketOptions,
   GetObjectResponse,
-  ObjectMetadata,
+  HeadObjectResponse,
+  ListObjectsOptions,
+  ListObjectsResult,
   ObjectSummary,
   PutObjectOptions,
   PutObjectResult,
@@ -43,39 +44,40 @@ import type {
 
 export type S3ClientOptions = Layer1ClientOptions;
 
-const utf8 = (s: string) => new TextEncoder().encode(s);
+/** Default and maximum `maxKeys` of `listObjects`, as in S3 and the Rust client. */
+const MAX_KEYS = 1000;
+
+const encoder = new TextEncoder();
 
 export class S3Client extends Layer1Client {
-  // ── Validation (S3 conventions, lifted from the original SDK stub) ──────
+  // ── Validation ──────────────────────────────────────────────────────────
 
-  validateBucketName(name: string): void {
-    if (name.length < 3 || name.length > 63) {
-      throw new Error("Bucket name must be 3-63 characters");
-    }
-    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
-      throw new Error(
-        "Bucket name must be lowercase alphanumeric with optional inner hyphens",
-      );
-    }
-  }
-
+  /**
+   * Throw unless `key` is a valid object key: well-formed UTF-16 (no lone
+   * surrogate), 1-1024 bytes of UTF-8, split
+   * on `/` into segments of 1-256 bytes, no empty segment (no leading,
+   * trailing or double `/`), and no `.` or `..` segment.
+   */
   validateObjectKey(key: string): void {
-    if (key.length < 1 || key.length > 1024) {
-      throw new Error("Object key must be 1-1024 characters");
+    if (!isWellFormedString(key)) throw new Error("Object key must not contain a lone UTF-16 surrogate");
+    const len = encoder.encode(key).length;
+    if (len < 1 || len > 1024) throw new Error(`Object key must be 1-1024 bytes: "${key}"`);
+    for (const segment of key.split("/")) {
+      if (!isValidEntryName(encoder.encode(segment))) {
+        throw new Error(`Object key must have valid segments (not empty, ".", ".." or over ${FS_LIMITS.maxEntryNameLength} bytes): "${key}"`);
+      }
     }
   }
 
   // ── Bucket chain ops ────────────────────────────────────────────────────
 
   /**
-   * Create an S3 bucket via the negotiate -> establish flow: pick a provider
-   * (explicit `opts.provider` or auto-discovered), POST /negotiate for signed
-   * terms (unless `opts.signedTerms` is supplied), then redeem them in
-   * create_s3_bucket — which opens the underlying Layer 0 bucket + agreement
-   * atomically.
+   * Create an S3 bucket: a Layer 0 bucket with one primary agreement. Picks
+   * a provider (explicit `opts.provider` or auto-discovered), POSTs
+   * /negotiate for signed terms (unless `opts.signedTerms` is supplied),
+   * then redeems them in `create_bucket_with_primary`.
    */
-  async createBucket(name: string, opts: CreateBucketOptions): Promise<BucketInfo> {
-    this.validateBucketName(name);
+  async createBucket(opts: CreateBucketOptions): Promise<{ bucketId: bigint; provider: string }> {
     const signer = this.requireSigner();
     const { provider, signedTerms } = await resolveCreationTerms(this.api, {
       owner: signer.address,
@@ -87,252 +89,255 @@ export class S3Client extends Layer1Client {
       readOpts: this.readOpts,
       fetchOpts: this.fetchOpts,
     });
-    const { s3BucketId, layer0BucketId } = await createS3BucketTx(
-      this.api,
-      signer,
-      name,
-      provider,
-      signedTerms,
-      { ...this.submitOpts(), visibility: opts.visibility },
-    );
-    return {
-      s3BucketId,
-      layer0BucketId,
-      name,
-      owner: signer.address,
-      createdAt: 0,
-      objectCount: 0n,
-      providerInfo: [{ account: provider.address, multiaddr: "", url: null }],
-    };
-  }
-
-  async headBucket(name: string): Promise<BucketInfo | null> {
-    const bucketId = await this.api.query.S3Registry.BucketNameToId.getValue(
-      utf8(name),
-      this.readOpts,
-    );
-    if (bucketId === undefined) return null;
-    const bucket = await this.api.query.S3Registry.S3Buckets.getValue(bucketId, this.readOpts);
-    if (!bucket) return null;
-    const [providerInfo] = await resolveBucketProviders(
-      this.api,
-      [bucket.layer0_bucket_id],
-      this.readOpts,
-    );
-    return {
-      s3BucketId: bucketId,
-      layer0BucketId: bucket.layer0_bucket_id,
-      name: new TextDecoder().decode(bucket.name),
-      owner: bucket.owner,
-      createdAt: Number(bucket.created_at),
-      objectCount: bucket.object_count,
-      providerInfo: providerInfo ?? [],
-    };
-  }
-
-  async listBuckets(owner?: string): Promise<BucketInfo[]> {
-    const who = owner ?? this.requireSigner().address;
-    const ids = await this.api.query.S3Registry.UserBuckets.getValue(who, this.readOpts);
-    if (!ids || ids.length === 0) return [];
-
-    // Batch the bucket lookups into one query instead of N round-trips.
-    const bucketValues = await this.api.query.S3Registry.S3Buckets.getValues(
-      ids.map((id) => [id] as const),
-      this.readOpts,
-    );
-
-    const buckets: BucketInfo[] = [];
-    const layer0BucketIds: bigint[] = [];
-    bucketValues.forEach((bucket, i) => {
-      if (!bucket) return;
-      buckets.push({
-        s3BucketId: ids[i]!,
-        layer0BucketId: bucket.layer0_bucket_id,
-        name: new TextDecoder().decode(bucket.name),
-        owner: bucket.owner,
-        createdAt: Number(bucket.created_at),
-        objectCount: bucket.object_count,
-        providerInfo: [],
-      });
-      layer0BucketIds.push(bucket.layer0_bucket_id);
+    const { bucketId } = await createBucketWithPrimaryTx(this.api, signer, provider, signedTerms, {
+      ...this.submitOpts(),
+      visibility: opts.visibility,
     });
-
-    // `providersByBucket[i]` aligns with `buckets[i]` (both built skipping nulls).
-    const providersByBucket = await resolveBucketProviders(
-      this.api,
-      layer0BucketIds,
-      this.readOpts,
-    );
-    buckets.forEach((bucket, i) => {
-      bucket.providerInfo = providersByBucket[i] ?? [];
-    });
-
-    return buckets;
+    return { bucketId, provider: provider.address };
   }
 
-  async deleteBucket(s3BucketId: bigint): Promise<void> {
-    await deleteS3BucketTx(this.api, this.requireSigner(), s3BucketId, this.submitOpts());
+  async headBucket(bucketId: bigint): Promise<BucketInfo | null> {
+    const [info] = await getBucketInfos(this.api, [bucketId], this.readOpts);
+    return info ?? null;
   }
 
-  // ── Object metadata chain ops ───────────────────────────────────────────
-
-  async getObjectMetadata(s3BucketId: bigint, key: string): Promise<ObjectMetadata | null> {
-    const stored = await this.api.query.S3Registry.Objects.getValue(
-      s3BucketId,
-      utf8(key),
-      this.readOpts,
-    );
-    if (!stored) return null;
-    const userMetadata: Record<string, string> = {};
-    const dec = new TextDecoder();
-    for (const entry of stored.user_metadata ?? []) {
-      userMetadata[dec.decode(entry.key)] = dec.decode(entry.value);
-    }
-    return {
-      key,
-      cid: asHex(stored.cid),
-      size: stored.size,
-      contentType: stored.content_type ? dec.decode(stored.content_type) : undefined,
-      userMetadata,
-    };
-  }
-
-  async putObjectMetadata(
-    s3BucketId: bigint,
-    key: string,
-    obj: { cid: Uint8Array; size: bigint },
-    contentType = "application/octet-stream",
-    userMetadata: Array<[string, string]> = [],
-  ): Promise<void> {
-    this.validateObjectKey(key);
-    await putObjectMetadataTx(
-      this.api,
-      this.requireSigner(),
-      s3BucketId,
-      key,
-      obj,
-      contentType,
-      userMetadata,
-      this.submitOpts(),
-    );
-  }
-
-  async deleteObjectMetadata(s3BucketId: bigint, key: string): Promise<void> {
-    await deleteObjectMetadataTx(
-      this.api,
-      this.requireSigner(),
-      s3BucketId,
-      key,
-      this.submitOpts(),
-    );
+  /**
+   * Every bucket `account` (default: the signer) is a member of, owned or
+   * shared. The chain does not record which buckets hold S3 objects, so
+   * this lists all of them.
+   */
+  async listBuckets(account?: string): Promise<BucketInfo[]> {
+    return listMemberBuckets(this.api, account ?? this.requireSigner().address, this.readOpts);
   }
 
   // ── Provider resolution ─────────────────────────────────────────────────
 
-  getProviderUrl(layer0BucketId: bigint): Promise<string> {
-    return this.providers.get(layer0BucketId);
+  getProviderUrl(bucketId: bigint): Promise<string> {
+    return this.providers.get(bucketId);
   }
 
-  invalidateProviderUrl(layer0BucketId?: bigint): void {
-    this.providers.invalidate(layer0BucketId);
+  invalidateProviderUrl(bucketId?: bigint): void {
+    this.providers.invalidate(bucketId);
   }
 
-  waitForProvider(layer0BucketId: bigint, opts?: WaitOpts): Promise<string> {
-    return this.providers.waitForProvider(layer0BucketId, opts);
+  waitForProvider(bucketId: bigint, opts?: WaitOpts): Promise<string> {
+    return this.providers.waitForProvider(bucketId, opts);
   }
 
-  // ── Object HTTP ops ─────────────────────────────────────────────────────
+  // ── Object ops (the tree in the bucket; see ../tree.ts) ───────────────
 
+  /**
+   * Store an object, replacing an existing one. Metadata keys are
+   * lowercased. Fails when the key's path collides with a stored key, e.g.
+   * `a/b` when `a` is an object. Requires a Writer or Admin role.
+   */
   async putObject(
-    bucket: BucketRef,
+    bucketId: bigint,
     key: string,
     data: Uint8Array,
     options: PutObjectOptions = {},
   ): Promise<PutObjectResult> {
     this.validateObjectKey(key);
-    const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
-    const headers: Record<string, string> = {
-      "Content-Type": options.contentType || "application/octet-stream",
-      ...(await this.authHeaders("PUT", bucket.layer0BucketId)),
-    };
-    for (const [k, v] of Object.entries(options.metadata ?? {})) {
-      headers[`x-amz-meta-${k}`] = v;
-    }
-    const response = await httpFetch(
-      `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
-      { method: "PUT", headers, body: data as BodyInit, signal: options.signal },
-      this.fetchOpts,
+    const userMetadata = lowercaseMetadata(options.metadata ?? {});
+    const tree = await this.openTree(bucketId, { write: true, signal: options.signal });
+    const r = await withHttpContext("Upload failed", () =>
+      tree.putFile(keyPath(key), data, { contentType: options.contentType, userMetadata }),
     );
-    if (!response.ok) {
-      throw new Error(`Upload failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
-    const body = await response.json().catch(() => ({}));
-    return { cid: body.data_root ?? body.etag, size: data.length };
+    return { cid: r.contentRoot, etag: r.contentRoot, rootCid: r.rootCid, size: r.size };
   }
 
+  /** Download an object and its metadata. The content is checked against the bucket's tree. */
   async getObject(
-    bucket: BucketRef,
+    bucketId: bigint,
     key: string,
-    opts: { signal?: AbortSignal; verify?: boolean } = {},
+    opts: { signal?: AbortSignal } = {},
   ): Promise<GetObjectResponse> {
-    const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
-    const response = await httpFetch(
-      `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
-      { signal: opts.signal, headers: await this.authHeaders("GET", bucket.layer0BucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) {
-      throw new Error(`Download failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
-    const data = new Uint8Array(await response.arrayBuffer());
-
-    if (opts.verify === false || bucket.s3BucketId === undefined) {
-      return { data, verified: false };
-    }
-
-    const meta = await this.getObjectMetadata(bucket.s3BucketId, key).catch(() => null);
-    if (!meta) return { data, verified: false };
-    const actual = toHex(computeCid(data)).toLowerCase();
-    if (actual === meta.cid.toLowerCase()) return { data, verified: true };
-    if (data.length <= DEFAULT_CHUNK_SIZE) {
-      // Single chunk: data_root == chunk hash, so a mismatch is proof of
-      // corrupted/substituted bytes — hard fail.
-      throw new CidMismatchError(meta.cid, actual);
-    }
-    // Multi-chunk: the on-chain cid is a Merkle root a flat hash can't
-    // reproduce; DAG-walk verification is tracked separately.
-    return { data, verified: false };
+    this.validateObjectKey(key);
+    const tree = await this.openTree(bucketId, { signal: opts.signal });
+    const file = await withHttpContext("Download failed", () => tree.getFile(keyPath(key)).catch(noSuchKey(key)));
+    return { ...objectHead(key, file), data: file.bytes };
   }
 
-  async deleteObject(bucket: BucketRef, key: string): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
-    const response = await httpFetch(
-      `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
-      { method: "DELETE", headers: await this.authHeaders("DELETE", bucket.layer0BucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) {
-      throw new Error(`Delete object failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
+  /** An object's metadata without its content. */
+  async headObject(
+    bucketId: bigint,
+    key: string,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<HeadObjectResponse> {
+    this.validateObjectKey(key);
+    const tree = await this.openTree(bucketId, { signal: opts.signal });
+    const file = await withHttpContext("Head failed", () => tree.statFile(keyPath(key)).catch(noSuchKey(key)));
+    return objectHead(key, file);
   }
 
-  async listObjects(bucket: BucketRef, prefix?: string): Promise<ObjectSummary[]> {
-    const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
-    const params = new URLSearchParams();
-    if (prefix) params.set("prefix", prefix);
-    const response = await httpFetch(
-      `${providerUrl}/s3/${bucket.layer0BucketId}/objects?${params.toString()}`,
-      { headers: await this.authHeaders("GET", bucket.layer0BucketId) },
-      this.fetchOpts,
+  /**
+   * Delete an object. Deleting a missing key succeeds (S3 semantics).
+   * Directories left empty are removed. Requires a Writer or Admin role.
+   */
+  async deleteObject(bucketId: bigint, key: string, opts: { signal?: AbortSignal } = {}): Promise<void> {
+    this.validateObjectKey(key);
+    const tree = await this.openTree(bucketId, { write: true, signal: opts.signal });
+    await withHttpContext("Delete object failed", () =>
+      tree.delete(keyPath(key), { missingOk: true, filesOnly: true, pruneEmptyParents: true }),
     );
-    if (!response.ok) throw new Error(`List objects failed: ${response.status}`);
-    const result = await response.json();
-    type WireObject = { key: string; size: number; last_modified?: number; etag?: string };
-    return ((result.contents ?? []) as WireObject[]).map((o) => ({
-      key: o.key,
-      size: o.size,
-      etag: o.etag,
-      lastModified: o.last_modified !== undefined ? o.last_modified * 1000 : undefined,
+  }
+
+  /**
+   * List objects in S3 key order (bytes ascending). `prefix` filters keys;
+   * `startAfter` skips keys up to and including it, and a common prefix
+   * equal to it; `delimiter` groups keys that contain it after the prefix
+   * into `commonPrefixes`; `maxKeys` (default 1000, clamped to 1-1000)
+   * limits objects plus common prefixes. On a truncated page, pass
+   * `nextStartAfter` as `startAfter` to continue.
+   *
+   * Each call reads the tree again, so pages can come from different
+   * bucket roots. Use {@link listAllObjects} to get every key from one read.
+   */
+  async listObjects(bucketId: bigint, options: ListObjectsOptions = {}): Promise<ListObjectsResult> {
+    const prefix = options.prefix ?? "";
+    const requested = options.maxKeys ?? MAX_KEYS;
+    if (Number.isNaN(requested)) throw new Error("maxKeys must be a number");
+    const maxKeys = Math.min(Math.max(Math.floor(requested), 1), MAX_KEYS);
+    const objects = await this.objectsUnder(bucketId, { ...options, prefix });
+    return paginateKeys(objects, { ...options, prefix, maxKeys });
+  }
+
+  /**
+   * Every object whose key starts with `prefix`, in S3 key order, from one
+   * read of the bucket's tree. With a `delimiter`, keys that contain it
+   * after the prefix are grouped into `commonPrefixes`. No page limit.
+   */
+  async listAllObjects(
+    bucketId: bigint,
+    options: { prefix?: string; delimiter?: string; signal?: AbortSignal } = {},
+  ): Promise<{ objects: ObjectSummary[]; commonPrefixes: string[] }> {
+    const prefix = options.prefix ?? "";
+    const objects = await this.objectsUnder(bucketId, { ...options, prefix });
+    const { objects: page, commonPrefixes } = paginateKeys(objects, {
+      prefix,
+      delimiter: options.delimiter,
+      maxKeys: Number.POSITIVE_INFINITY,
+    });
+    return { objects: page, commonPrefixes };
+  }
+
+  /** Every object under the deepest directory that `prefix` names, unsorted. */
+  private async objectsUnder(
+    bucketId: bigint,
+    opts: { prefix: string; delimiter?: string; startAfter?: string; signal?: AbortSignal },
+  ): Promise<ObjectSummary[]> {
+    const { prefix, delimiter, startAfter, signal } = opts;
+    const baseDir = prefix.includes("/") ? prefix.slice(0, prefix.lastIndexOf("/")) : "";
+    try {
+      parsePath(keyPath(baseDir));
+    } catch {
+      // No valid key lies under an invalid directory path.
+      return [];
+    }
+    const keyPrefix = baseDir === "" ? "" : `${baseDir}/`;
+    const relStartAfter = startAfter?.startsWith(keyPrefix) ? startAfter.slice(keyPrefix.length) : "";
+    const slash = relStartAfter.indexOf("/");
+    const startAfterInSubdir = slash >= 0 && slash + 1 < relStartAfter.length;
+    const tree = await this.openTree(bucketId, { signal });
+    if (delimiter === "/" && !startAfterInSubdir) {
+      const entries = await withHttpContext("List objects failed", () =>
+        tree.listNonEmpty(keyPath(baseDir)).catch((err: unknown) => {
+          if (err instanceof FileSystemError && (err.code === "NotFound" || err.code === "NotADirectory")) return [];
+          throw err;
+        }),
+      );
+      return entries.map((entry) => ({
+        key: keyPrefix + entry.name + (entry.entryType === "directory" ? "/" : ""),
+        size: Number(entry.size),
+        lastModified: Number(entry.mtime) * 1000,
+      }));
+    }
+    const files = await withHttpContext("List objects failed", () => tree.listFiles(keyPath(baseDir)));
+    return files.map(({ relativePath, entry }) => ({
+      key: keyPrefix + relativePath,
+      size: Number(entry.size),
+      lastModified: Number(entry.mtime) * 1000,
     }));
   }
+}
+
+/** Object key to tree path. An empty key is the root directory. */
+function keyPath(key: string): string {
+  return "/" + key;
+}
+
+function noSuchKey(key: string) {
+  return (err: unknown): never => {
+    if (err instanceof FileSystemError && ["NotFound", "NotADirectory", "IsADirectory"].includes(err.code)) {
+      throw new FileSystemError("NotFound", `NoSuchKey: ${key}`);
+    }
+    throw err;
+  };
+}
+
+function objectHead(key: string, file: FileInfo): HeadObjectResponse {
+  return {
+    key,
+    contentType: file.contentType,
+    size: Number(file.size),
+    metadata: file.userMetadata,
+    etag: file.contentRoot,
+    lastModified: Number(file.mtime) * 1000,
+  };
+}
+
+/**
+ * Lowercase the metadata keys, as the Rust S3 client does. Rejects two keys
+ * that are equal after lowercasing. The tree stores the entries sorted by key.
+ */
+function lowercaseMetadata(metadata: Record<string, string>): Record<string, string> {
+  const lowered: Record<string, string> = {};
+  for (const [k, v] of Object.entries(metadata)) {
+    const key = k.toLowerCase();
+    if (Object.hasOwn(lowered, key)) {
+      throw new Error(`Invalid metadata: key "${key}" appears twice after lowercasing`);
+    }
+    lowered[key] = v;
+  }
+  return lowered;
+}
+
+/**
+ * Select one page of `objects` with S3 list semantics, like the Rust
+ * client's `list_page`: sort by key bytes, keep keys that start with
+ * `prefix` and sort after `startAfter`. With a `delimiter`, keys that
+ * contain it after the prefix collapse into one common prefix (the key up
+ * to and including the delimiter); a common prefix equal to `startAfter` is
+ * skipped. `maxKeys` (at least 1) limits objects plus common prefixes. On a
+ * truncated page, `nextStartAfter` is the last key or common prefix of the
+ * page.
+ */
+export function paginateKeys(
+  objects: ObjectSummary[],
+  opts: { prefix: string; delimiter?: string; startAfter?: string; maxKeys: number },
+): ListObjectsResult {
+  const { prefix, startAfter, maxKeys } = opts;
+  const delimiter = opts.delimiter || undefined;
+  const after = startAfter === undefined ? undefined : encoder.encode(startAfter);
+  const sorted = objects
+    .map((object) => ({ object, bytes: encoder.encode(object.key) }))
+    .sort((a, b) => compareBytes(a.bytes, b.bytes));
+  const result: ListObjectsResult = { objects: [], commonPrefixes: [], isTruncated: false };
+  let last: string | undefined;
+  for (const { object, bytes } of sorted) {
+    const key = object.key;
+    if (!key.startsWith(prefix) || (after !== undefined && compareBytes(bytes, after) <= 0)) continue;
+    const at = delimiter ? key.indexOf(delimiter, prefix.length) : -1;
+    const group = at >= 0 ? key.slice(0, at + delimiter!.length) : undefined;
+    if (group !== undefined && (group === startAfter || group === last)) continue;
+    if (result.objects.length + result.commonPrefixes.length >= maxKeys) {
+      result.isTruncated = true;
+      break;
+    }
+    if (group !== undefined) result.commonPrefixes.push(group);
+    else result.objects.push(object);
+    last = group ?? key;
+  }
+  if (result.isTruncated) result.nextStartAfter = last;
+  return result;
 }

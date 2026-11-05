@@ -87,7 +87,6 @@ impl ProviderClient {
         stake: u128,
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Registering provider {} with stake {}",
@@ -98,22 +97,8 @@ impl ProviderClient {
         // Create the extrinsic
         let tx = extrinsics::register_provider(multiaddr.into_bytes(), public_key, stake);
 
-        // Submit and wait for inclusion
-        let tx_progress = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
-
-        // Wait for finalization
-        tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        // Submit and wait for finalization
+        chain.submit(&tx).await?;
 
         tracing::info!("Provider registered successfully");
         Ok(())
@@ -147,7 +132,6 @@ impl ProviderClient {
     /// Change pricing, availability, or other settings.
     pub async fn update_settings(&self, settings: ProviderSettings) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Updating settings for provider {}: price_per_byte={}",
@@ -163,20 +147,10 @@ impl ProviderClient {
             settings.replica_sync_price,
             settings.accepting_extensions,
             settings.max_capacity,
+            settings.min_agreement_bytes,
         );
 
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        chain.submit(&tx).await?;
 
         tracing::info!("Provider settings updated");
         Ok(())
@@ -185,7 +159,6 @@ impl ProviderClient {
     /// Add more stake to your provider account.
     pub async fn add_stake(&self, additional_stake: u128) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Adding stake {} for provider {}",
@@ -195,18 +168,7 @@ impl ProviderClient {
 
         let tx = extrinsics::add_stake(additional_stake);
 
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        chain.submit(&tx).await?;
 
         tracing::info!("Stake added successfully");
         Ok(())
@@ -215,24 +177,12 @@ impl ProviderClient {
     /// Deregister as a provider (requires no active agreements).
     pub async fn deregister(&self) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!("Deregistering provider {}", self.provider_account());
 
         let tx = extrinsics::deregister_provider();
 
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        chain.submit(&tx).await?;
 
         tracing::info!("Provider deregistered successfully");
         Ok(())
@@ -284,10 +234,19 @@ impl ProviderClient {
             .map_err(ClientError::Http)?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Chain(format!(
-                "provider node rejected /negotiate with status {}",
-                response.status()
-            )));
+            let status = response.status().as_u16();
+            let body = response.json::<serde_json::Value>().await.ok();
+            let code = body
+                .as_ref()
+                .and_then(|b| b.get("error"))
+                .and_then(|c| c.as_str())
+                .map(str::to_owned);
+            let details = body.and_then(|mut b| b.get_mut("details").map(serde_json::Value::take));
+            return Err(ClientError::NegotiateRejected {
+                status,
+                code,
+                details,
+            });
         }
 
         response
@@ -371,7 +330,6 @@ impl ProviderClient {
         signature: &sp_runtime::MultiSignature,
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Confirming replica sync for bucket {} with {} roots",
@@ -381,18 +339,7 @@ impl ProviderClient {
 
         let tx = extrinsics::confirm_replica_sync(bucket_id, mmr_roots, signature);
 
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        chain.submit(&tx).await?;
 
         tracing::info!("Replica sync confirmed successfully");
         Ok(())
@@ -409,15 +356,15 @@ impl ProviderClient {
     /// - `chunk_data`: The actual chunk data being proven
     /// - `mmr_proof`: MMR proof showing the leaf is in the committed MMR
     /// - `chunk_proof`: Merkle proof showing the chunk is in the leaf's data tree
+    ///   (sibling hashes from the chunk up to the data root)
     pub async fn respond_to_challenge(
         &self,
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
         mmr_proof: &storage_primitives::MmrProof,
-        chunk_proof: &storage_primitives::MerkleProof,
+        chunk_proof: &[H256],
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Responding to challenge {:?} with {} bytes",
@@ -432,20 +379,7 @@ impl ProviderClient {
             chunk_proof,
         );
 
-        let tx_progress = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
-
-        tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        chain.submit(&tx).await?;
 
         tracing::info!("Challenge response submitted successfully");
         Ok(())
@@ -478,8 +412,8 @@ impl ProviderClient {
                 challenge_id: (c.deadline, c.index),
                 bucket_id: c.bucket_id,
                 deadline: c.deadline,
-                leaf_index: c.leaf_index,
-                chunk_index: c.chunk_index,
+                leaf_index: c.target.leaf_index,
+                chunk_index: c.target.chunk_index,
             })
             .collect())
     }
@@ -558,6 +492,9 @@ pub struct ProviderSettings {
     pub accepting_extensions: bool,
     /// Maximum storage capacity in bytes. 0 = unlimited.
     pub max_capacity: u64,
+    /// Smallest agreement size, in bytes, that the provider accepts.
+    /// 0 = no minimum.
+    pub min_agreement_bytes: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -613,4 +550,85 @@ pub struct CapacityInfo {
     /// `update_provider_settings` sets a non-zero one. It exposes no
     /// required-stake figure, so none is reported here.
     pub stake: u128,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agreement::NegotiateRequest;
+    use axum::{http::StatusCode, routing::post, Router};
+    use serde_json::json;
+
+    async fn serve(status: StatusCode, body: &'static str) -> String {
+        let app = Router::new().route(
+            "/negotiate",
+            post(move || async move {
+                (
+                    status,
+                    [("content-type", "application/json")],
+                    body.to_string(),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    fn request() -> NegotiateRequest {
+        NegotiateRequest {
+            owner: AccountId32::new([7u8; 32]),
+            max_bytes: 99,
+            duration: 50,
+            price_per_byte: 5,
+            nonce: 0,
+            bucket: None,
+            replica_params: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn negotiate_reports_status_code_and_details() {
+        let url = serve(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            r#"{"error":"max_bytes_below_minimum","details":{"requested":99,"min_agreement_bytes":100}}"#,
+        )
+        .await;
+        let err = ProviderClient::negotiate_terms(&url, &request())
+            .await
+            .unwrap_err();
+        match &err {
+            ClientError::NegotiateRejected {
+                status,
+                code,
+                details,
+            } => {
+                assert_eq!(*status, 422);
+                assert_eq!(code.as_deref(), Some("max_bytes_below_minimum"));
+                assert_eq!(
+                    details.as_ref().unwrap(),
+                    &json!({"requested": 99, "min_agreement_bytes": 100})
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert!(err.to_string().contains("max_bytes_below_minimum"));
+    }
+
+    #[tokio::test]
+    async fn negotiate_keeps_status_for_a_non_json_body() {
+        let url = serve(StatusCode::BAD_GATEWAY, "Bad Gateway").await;
+        let err = ProviderClient::negotiate_terms(&url, &request())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ClientError::NegotiateRejected {
+                status: 502,
+                code: None,
+                details: None
+            }
+        ));
+    }
 }

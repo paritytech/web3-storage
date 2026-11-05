@@ -44,11 +44,7 @@ export {
 
 export {
   createBucketViaApi,
-  deleteBucketViaApi,
-  cleanupBuckets,
   createDriveViaApi,
-  deleteDriveViaApi,
-  cleanupDrives,
   type CreateBucketOptions,
   type BucketHandle,
   type CreateDriveOptions,

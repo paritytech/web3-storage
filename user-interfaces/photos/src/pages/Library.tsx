@@ -2,7 +2,7 @@
 //
 // Reads the Photos contract's `libraryOf` for the selected account (unsigned)
 // and renders State A ("no library" — the interactive create flow) vs State B
-// ("drive #N" — albums, upload, grid, lightbox, and the on-chain metadata anchor).
+// ("Bucket #N" — albums, upload, grid, lightbox, and the on-chain metadata anchor).
 
 import { useEffect, useRef, useState } from 'react'
 import { Image, Anchor, AlertTriangle, Settings2, X } from 'lucide-react'
@@ -103,24 +103,24 @@ export function Library() {
   }, [account?.address, connectionStatus, contract?.address, network.id, refresh])
 
   // ── State B: bind the album layer once a library is confirmed on-chain ──
-  // initLibrary resolves the drive's `/fs` context and loads its albums; it is
-  // idempotent for the same drive, so the re-reads triggered by `refresh` (e.g.
+  // initLibrary binds the library bucket and loads its albums; it is
+  // idempotent for the same bucket, so the re-reads triggered by `refresh` (e.g.
   // after a `setRoot`) just refresh the listings. `onAnchored` bumps `refresh`
   // so the displayed on-chain anchor updates after each mutation.
   const readyState = state.kind === 'ready' ? state : null
   useEffect(() => {
     if (!readyState || !readyState.library.exists || !account) return
     void initLibrary(
-      readyState.library.driveId,
+      readyState.library.bucketId,
       readyState.contract,
       account,
       readyState.library.rootCid,
       () => setRefresh((n) => n + 1),
     )
-    // Key on the library-exists/driveId transition, not just `state.kind`: creating
+    // Key on the library-exists/bucketId transition, not just `state.kind`: creating
     // a library in-session flips `exists` false→true while `kind` stays 'ready', so
     // depending on `kind` alone would leave the album layer unbound until a reload.
-  }, [readyState?.library.exists, readyState?.library.driveId, account?.address, network.id])
+  }, [readyState?.library.exists, readyState?.library.bucketId, account?.address, network.id])
 
   // Tear down the album layer (release object URLs, drop caches) when the
   // account or network changes, or the page unmounts.
@@ -225,7 +225,7 @@ export function Library() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
-              <Image className="h-5 w-5 text-purple-500" /> Drive #{library.driveId.toString()}
+              <Image className="h-5 w-5 text-purple-500" /> Bucket #{library.bucketId.toString()}
             </CardTitle>
             <Badge variant="success">Library active</Badge>
           </div>

@@ -24,7 +24,7 @@ import {
   OnChainChallenge,
   OnChainBucketDetails,
 } from '@/lib/chain-client'
-import { isSameAddress } from '@web3-storage/sdk'
+import { fetchChallengeProof, isSameAddress } from '@web3-storage/sdk'
 import { getProviderHttp } from '@/state/network.state'
 import { challengeKey } from '@/state/challengeKey'
 
@@ -49,6 +49,7 @@ export interface ProviderSettings {
   replicaSyncPrice: bigint | null
   acceptingExtensions: boolean
   maxCapacity: bigint
+  minAgreementBytes: bigint
 }
 
 export interface Agreement {
@@ -531,24 +532,19 @@ export async function respondToChallenge(
   signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
   onProgress?: (status: import('@/lib/chain-client').TxStatus) => void,
 ): Promise<void> {
-  const { fetchChallengeProof, submitRespondToChallenge } = await import('@/lib/chain-client')
+  const { requireApi, submitRespondToChallenge } = await import('@/lib/chain-client')
+  const challengeId = { deadline: challenge.deadline, index: challenge.id }
 
   // Step 1: Fetch proofs from provider node
   onProgress?.({ type: 'signing', message: 'Fetching proof from provider node...' })
-  const proof = await fetchChallengeProof(
-    getProviderHttp(),
-    challenge.bucketId,
-    challenge.leafIndex,
-    challenge.chunkIndex,
-  )
+  const proof = await fetchChallengeProof(requireApi(), getProviderHttp(), challengeId, {
+    signer: signer.txCreator,
+    address: signer.address,
+    publicKey: signer.txCreator.publicKey,
+  })
 
   // Step 2: Submit on-chain
-  await submitRespondToChallenge(
-    { deadline: challenge.deadline, index: challenge.id },
-    proof,
-    signer,
-    onProgress,
-  )
+  await submitRespondToChallenge(challengeId, proof, signer, onProgress)
 
   setChallengeStatus(challenge, 'responded')
 }
@@ -638,6 +634,7 @@ function convertProviderSettings(chain: OnChainProviderSettings): ProviderSettin
     replicaSyncPrice: chain.replicaSyncPrice,
     acceptingExtensions: chain.acceptingExtensions,
     maxCapacity: chain.maxCapacity,
+    minAgreementBytes: chain.minAgreementBytes,
   }
 }
 

@@ -5,7 +5,7 @@
 //! including the bootstrap scan on `Resubscribed` and lag recovery.
 
 use super::{alice_account, test_state, test_state_with_data, wait_for};
-use provider_chain::BlockEvent;
+use provider_events::BlockEvent;
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -15,8 +15,9 @@ use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::{
-    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, DetectedChallenge,
-    ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponse,
+    DetectedChallenge, ReplicaSyncChainClient, ReplicaSyncCoordinator,
+    ReplicaSyncCoordinatorConfig,
 };
 
 // ── challenge responder ───────────────────────────────────────────────────────
@@ -63,9 +64,7 @@ impl ChallengeChainClient for MockChallengeClient {
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
-        _chunk_data: Vec<u8>,
-        _mmr_proof: storage_primitives::MmrProof,
-        _chunk_proof: storage_primitives::MerkleProof,
+        _response: ChallengeResponse,
     ) -> Result<H256, ChallengeError> {
         self.submitted.lock().unwrap().push(challenge_id);
         Ok(H256::zero())
@@ -313,6 +312,13 @@ impl ReplicaSyncChainClient for MockReplicaClient {
         Ok(vec![])
     }
 
+    async fn fetch_replica_endpoints(
+        &self,
+        _bucket_id: BucketId,
+    ) -> Result<Vec<String>, provider_replica::ChainClientError> {
+        Ok(vec![])
+    }
+
     async fn submit_sync_confirmation(
         &self,
         _bucket_id: BucketId,
@@ -380,7 +386,7 @@ async fn replica_agreement_event_triggers_duty_pass() {
 async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
     // A client checkpoint on a bucket we hold locally must trigger a duty pass, and
     // the resulting duty (new root, no reachable primaries) must surface as
-    // PrimaryUnavailable through the callback — all without any network.
+    // SourcesUnavailable through the callback — all without any network.
     let (state, _dir) = test_state();
     state
         .storage
@@ -447,7 +453,7 @@ async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
     assert!(
         matches!(
             results.lock().unwrap()[0],
-            storage_provider_node::SyncResult::PrimaryUnavailable { bucket_id: 7, .. }
+            storage_provider_node::SyncResult::SourcesUnavailable { bucket_id: 7, .. }
         ),
         "unexpected result: {:?}",
         results.lock().unwrap()[0]

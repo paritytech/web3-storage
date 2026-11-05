@@ -69,6 +69,14 @@ function requiredStakeForCapacity(maxCapacity: bigint): bigint {
   return maxCapacity * MIN_STAKE_PER_BYTE
 }
 
+// The runtime rejects settings with `min_agreement_bytes > max_capacity` when the
+// capacity is limited (`MinAgreementBytesExceedsMaxCapacity`).
+function minAgreementBytesExceedsCapacity(settings: ProviderSettings): boolean {
+  return settings.maxCapacity > 0n && settings.minAgreementBytes > settings.maxCapacity
+}
+
+const MIN_AGREEMENT_BYTES_ERROR = 'Min agreement size cannot exceed max capacity.'
+
 // Registration wizard steps
 type WizardStep = 'connect' | 'stake' | 'settings' | 'confirm' | 'complete'
 
@@ -101,6 +109,7 @@ export function Registration() {
     replicaSyncPrice: null,
     acceptingExtensions: true,
     maxCapacity: 1_099_511_627_776n, // 1 TB (2^40 bytes)
+    minAgreementBytes: 0n,
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -443,6 +452,26 @@ export function Registration() {
                 </p>
               </div>
               <div className="space-y-2">
+                <Label htmlFor="minAgreementBytes">Min Agreement Size (bytes)</Label>
+                <Input
+                  id="minAgreementBytes"
+                  data-testid="registration-min-agreement-bytes-input"
+                  type="number"
+                  value={settings.minAgreementBytes.toString()}
+                  onChange={(e) =>
+                    setSettings({ ...settings, minAgreementBytes: BigInt(e.target.value || '0') })
+                  }
+                />
+                <p className="text-xs text-gray-500">
+                  {settings.minAgreementBytes === 0n ? '0 = no minimum' : formatBytes(Number(settings.minAgreementBytes))}
+                </p>
+                {minAgreementBytesExceedsCapacity(settings) && (
+                  <p data-testid="registration-min-agreement-bytes-error" className="text-xs text-red-400">
+                    {MIN_AGREEMENT_BYTES_ERROR}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="replicaSyncPrice">Replica Sync Price (per sync confirmation)</Label>
                 <Input
                   id="replicaSyncPrice"
@@ -528,7 +557,12 @@ export function Registration() {
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Back
               </Button>
-              <Button data-testid="registration-settings-continue" className="flex-1" onClick={() => setStep('confirm')}>
+              <Button
+                data-testid="registration-settings-continue"
+                className="flex-1"
+                onClick={() => setStep('confirm')}
+                disabled={minAgreementBytesExceedsCapacity(settings)}
+              >
                 Review & Confirm
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
@@ -566,6 +600,10 @@ export function Registration() {
               <div className="flex justify-between">
                 <span className="text-gray-400">Max Capacity</span>
                 <span>{formatBytes(Number(settings.maxCapacity))}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Min Agreement Size</span>
+                <span>{settings.minAgreementBytes === 0n ? 'No minimum' : formatBytes(Number(settings.minAgreementBytes))}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Duration Range</span>
@@ -925,6 +963,25 @@ function SettingsManager() {
               <p className="text-xs text-gray-500">{settings.maxCapacity === 0n ? '0 = unlimited' : formatBytes(Number(settings.maxCapacity))}</p>
             </div>
             <div className="space-y-2">
+              <Label htmlFor="minAgreementBytes">Min Agreement Size</Label>
+              <Input
+                id="minAgreementBytes"
+                data-testid="settings-min-agreement-bytes-input"
+                type="number"
+                className={settings.minAgreementBytes === 0n ? 'text-gray-500' : ''}
+                value={settings.minAgreementBytes.toString()}
+                onChange={(e) =>
+                  setSettings({ ...settings, minAgreementBytes: BigInt(e.target.value || '0') })
+                }
+              />
+              <p className="text-xs text-gray-500">{settings.minAgreementBytes === 0n ? '0 = no minimum' : formatBytes(Number(settings.minAgreementBytes))}</p>
+              {minAgreementBytesExceedsCapacity(settings) && (
+                <p data-testid="settings-min-agreement-bytes-error" className="text-xs text-red-400">
+                  {MIN_AGREEMENT_BYTES_ERROR}
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="replicaSyncPrice">Replica Sync Price (per sync confirmation)</Label>
               <Input
                 id="replicaSyncPrice"
@@ -1013,7 +1070,7 @@ function SettingsManager() {
         className="w-full"
         size="lg"
         onClick={handleUpdate}
-        disabled={isSubmitting}
+        disabled={isSubmitting || minAgreementBytesExceedsCapacity(settings)}
       >
         {isSubmitting ? (
           <>

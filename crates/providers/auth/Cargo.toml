@@ -9,7 +9,7 @@ description = "Provider HTTP authentication: signed Authorization header buildin
 
 [dependencies]
 async-trait = { workspace = true }
-hex = { workspace = true, features = ["std"] }
+array-bytes = { workspace = true }
 moka = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
 storage-primitives = { workspace = true, features = ["std"] }

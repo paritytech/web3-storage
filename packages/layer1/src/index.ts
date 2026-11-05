@@ -2,10 +2,28 @@
 
 /**
  * @web3-storage/layer1 — the two interchangeable storage interfaces (#123):
- * file-system drives and S3-style buckets, both over layer 0.
+ * file-system drives and S3-style buckets, both plain layer 0 buckets.
  */
 export * from "./fs/index.js";
 export * from "./s3/index.js";
+export {
+  DEFAULT_CONTENT_TYPE,
+  FileSystemError,
+  FsTree,
+  parsePath,
+  providerBlobStore,
+  validateEntryName,
+  type BlobStore,
+  type DeleteOptions,
+  type FileInfo,
+  type FileRead,
+  type FileSystemErrorCode,
+  type PutFileOptions,
+  type PutFileResult,
+  type TreeEntry,
+  type TreeWriteResult,
+} from "./tree.js";
+export { getBucketInfos, listMemberBuckets } from "./bucket-info.js";
 export {
   ProviderUrlResolver,
   negotiateProviderTerms,

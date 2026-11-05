@@ -8,30 +8,7 @@ import type { Visibility } from "@web3-storage/layer0";
 import type { ProviderChoice } from "../provider-url.js";
 
 export type { PrimaryProviderInfo } from "../provider-url.js";
-import type { PrimaryProviderInfo } from "../provider-url.js";
-
-export interface BucketInfo {
-  s3BucketId: bigint;
-  layer0BucketId: bigint;
-  name: string;
-  owner: string;
-  /** Creation block number (u32). */
-  createdAt: number;
-  /** On-chain object count (u64); bigint to avoid precision loss above 2^53. */
-  objectCount: bigint;
-  /** Primary providers of the underlying layer-0 bucket. */
-  providerInfo: PrimaryProviderInfo[];
-}
-
-/**
- * Bucket handle for object ops. HTTP routes key off `layer0BucketId`;
- * `s3BucketId` is only needed to verify downloads against on-chain metadata
- * — without it, getObject returns `verified: false`.
- */
-export interface BucketRef {
-  layer0BucketId: bigint;
-  s3BucketId?: bigint;
-}
+export type { BucketInfo, BucketMember, MemberRole } from "../bucket-info.js";
 
 export interface CreateBucketOptions {
   /** Bytes the agreement covers — the negotiated terms' max_bytes. */
@@ -46,43 +23,64 @@ export interface CreateBucketOptions {
   visibility?: Visibility;
 }
 
-export interface ObjectMetadata {
-  key: string;
-  /** 0x-hex blake2b-256 data_root. */
-  cid: string;
-  size: bigint;
-  contentType?: string;
-  userMetadata: Record<string, string>;
-}
-
 export interface PutObjectOptions {
   contentType?: string;
-  /** Round-tripped as x-amz-meta-* headers. */
+  /** User metadata, stored in the object's manifest. Keys are lowercased. */
   metadata?: Record<string, string>;
   signal?: AbortSignal;
 }
 
 export interface PutObjectResult {
-  /** data_root CID (falls back to the provider's etag field). */
-  cid?: string;
+  /** CID of the object content (its `data_root`), 0x-hex. */
+  cid: string;
+  /** Same as `cid`. */
+  etag: string;
+  /** CID of the bucket's new root directory, 0x-hex. */
+  rootCid: string;
   size: number;
 }
 
-export interface GetObjectResponse {
+export interface HeadObjectResponse {
+  key: string;
+  /** Stored content type (`application/octet-stream` when none was given). */
+  contentType: string;
+  size: number;
+  /** User metadata with lowercased keys. */
+  metadata: Record<string, string>;
+  /** CID of the object content, 0x-hex. */
+  etag: string;
+  /** Milliseconds since epoch (stored with second precision). */
+  lastModified: number;
+}
+
+export interface GetObjectResponse extends HeadObjectResponse {
   data: Uint8Array;
-  /**
-   * True when the bytes hash to the on-chain CID. False when no on-chain
-   * metadata exists, or the payload spans multiple chunks (data_root is then
-   * a Merkle root a flat hash can't reproduce — DAG-walk verification is
-   * tracked separately). Single-chunk mismatches THROW CidMismatchError
-   * instead of returning false.
-   */
-  verified: boolean;
 }
 
 export interface ObjectSummary {
   key: string;
   size: number;
+  /** Not set by `listObjects`; use `headObject` for the content CID. */
   etag?: string;
+  /** Milliseconds since epoch (stored with second precision). */
   lastModified?: number;
+}
+
+export interface ListObjectsOptions {
+  prefix?: string;
+  /** Keys containing this after the prefix are grouped into `commonPrefixes`. */
+  delimiter?: string;
+  /** Return only keys after this one (S3 `start-after`). */
+  startAfter?: string;
+  /** Maximum objects plus common prefixes to return (default 1000). */
+  maxKeys?: number;
+  signal?: AbortSignal;
+}
+
+export interface ListObjectsResult {
+  objects: ObjectSummary[];
+  commonPrefixes: string[];
+  isTruncated: boolean;
+  /** When truncated: pass as `startAfter` to get the next page. */
+  nextStartAfter?: string;
 }

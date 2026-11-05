@@ -23,7 +23,7 @@ import {
   type CreateLibraryError,
   type SubmitCreateLibraryResult,
 } from '@/lib/photos-contract-write'
-import { listProviders, type PhotosProvider } from '@/lib/photos-providers'
+import { belowMinimumReason, listProviders, type PhotosProvider } from '@/lib/photos-providers'
 
 export type CreationStage =
   | 'idle'
@@ -36,7 +36,7 @@ export type CreationStage =
 export interface CreationState {
   stage: CreationStage
   error?: CreateLibraryError
-  driveId?: bigint
+  bucketId?: bigint
 }
 
 export interface CreateLibraryInput {
@@ -45,7 +45,6 @@ export interface CreateLibraryInput {
   provider: PhotosProvider
   sizeBytes: bigint
   durationBlocks: number
-  name: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,7 +107,7 @@ export async function retryCreate(): Promise<void> {
  */
 export async function createLibrary(input: CreateLibraryInput): Promise<void> {
   lastInput = input
-  const { account, contract, provider, sizeBytes, durationBlocks, name } = input
+  const { account, contract, provider, sizeBytes, durationBlocks } = input
   const api = requireApi()
   const signer = account.txCreator
 
@@ -149,6 +148,14 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
       })
       return
     }
+    const belowMinimum = belowMinimumReason(info.min_agreement_bytes, sizeBytes)
+    if (belowMinimum) {
+      creation$.next({
+        stage: 'failed',
+        error: { kind: 'min-size', message: `${belowMinimum}. Increase the size or pick another provider.` },
+      })
+      return
+    }
     const pricePerByte = info.price_per_byte
     const { value } = computePaymentAndValue(pricePerByte, sizeBytes, durationBlocks)
 
@@ -184,7 +191,6 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
       const { terms, signature } = toContractTerms(contractOwner.publicKey, negotiated.signed)
       const data = encodeCreateLibrary({
         userAccount: toHex(signer.publicKey) as `0x${string}`,
-        name,
         provider: providerAccountToBytes32(provider.account),
         terms,
         signature,
@@ -204,7 +210,7 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
       return
     }
 
-    creation$.next({ stage: 'ready', driveId: result.driveId })
+    creation$.next({ stage: 'ready', bucketId: result.bucketId })
   } catch (err) {
     creation$.next({ stage: 'failed', error: { kind: 'unknown', message: formatThrown(err) } })
   }

@@ -18,10 +18,12 @@ import { getSs58AddressInfo } from "@polkadot-api/substrate-bindings";
 import {
   buildSignedTermsArgs,
   httpFetch,
+  leafChunkCount,
   negotiateTerms,
   parseMultiaddrToUrl,
   removeMember as removeMemberTx,
   requireOneEvent,
+  signProviderRequest,
   resolveExpiredChallenge as resolveExpiredChallengeTx,
   getBucketVisibility as getBucketVisibilityQuery,
   setBucketVisibility as setBucketVisibilityTx,
@@ -35,7 +37,7 @@ import {
   type Visibility,
 } from "@web3-storage/sdk";
 import { S3Client as SdkS3Client } from "@web3-storage/sdk/s3";
-import type { PrimaryProviderInfo } from "@web3-storage/sdk/s3";
+import type { BucketInfo, BucketMember, MemberRole } from "@web3-storage/sdk/s3";
 import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = ChainSigner["signer"];
@@ -43,7 +45,7 @@ export type Signer = ChainSigner["signer"];
 // Re-export the SDK negotiate primitives + types the create-bucket components
 // (NewBucketDialog, ProviderPickerPanel) and the state layer import from here.
 export { buildSignedTermsArgs, negotiateTerms };
-export type { NegotiateRequest, SignedTerms, Visibility };
+export type { BucketInfo, BucketMember, MemberRole, NegotiateRequest, SignedTerms, Visibility };
 
 /** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
 export const parseMultiaddrToHttp = parseMultiaddrToUrl;
@@ -53,18 +55,7 @@ export function isValidSs58(address: string): boolean {
   return getSs58AddressInfo(address).isValid;
 }
 
-// ── View types (UI-shaped; the SDK's S3Client returns its own structs that we
-// map onto these so components keep a stable surface) ───────────────────────────
-
-export interface BucketInfo {
-  s3BucketId: bigint;
-  name: string;
-  layer0BucketId: bigint;
-  owner: string;
-  createdAt: bigint;
-  /** Primary providers of the underlying layer-0 bucket. */
-  providerInfo: PrimaryProviderInfo[];
-}
+// ── View types (UI-shaped; buckets use the SDK's `BucketInfo` as is) ─────────
 
 export interface S3ObjectInfo {
   key: string;
@@ -89,6 +80,8 @@ export interface AvailableProvider {
   minDuration: number;
   maxDuration: number;
   acceptingPrimary: boolean;
+  /** Smallest agreement `max_bytes` the provider accepts; `0n` = no minimum. */
+  minAgreementBytes: bigint;
   agreementsTotal: number;
 }
 
@@ -124,13 +117,6 @@ function byFreeCapacityDesc(a: AvailableProvider, b: AvailableProvider): number 
   if (a.availableCapacity === undefined) return -1;
   if (b.availableCapacity === undefined) return 1;
   return b.availableCapacity > a.availableCapacity ? 1 : -1;
-}
-
-export type MemberRole = "Admin" | "Writer" | "Reader";
-
-export interface BucketMember {
-  account: string;
-  role: MemberRole;
 }
 
 export interface CheckpointInfo {
@@ -271,51 +257,32 @@ export class S3Client {
   // ── S3 Bucket operations (on-chain, via the SDK's S3Client) ─────────────────
 
   /**
-   * Redeem provider-signed terms in `create_s3_bucket` (negotiate→establish).
-   * The terms are pre-negotiated by the create-bucket UI; `providerUrl` primes
-   * nothing here — the SDK resolves the provider from chain on first use.
+   * Redeem provider-signed terms in `create_bucket_with_primary`
+   * (negotiate→establish). The terms are pre-negotiated by the create-bucket
+   * UI. Returns the new Layer 0 bucket id.
    */
   async createBucket(
-    name: string,
     providerAccount: string,
     providerUrl: string,
     signed: SignedTerms,
     visibility?: Visibility,
-  ): Promise<BucketInfo> {
-    const info = await this.requireS3().createBucket(name, {
+  ): Promise<bigint> {
+    const { bucketId } = await this.requireS3().createBucket({
       maxCapacity: BigInt(signed.terms.max_bytes),
       duration: signed.terms.duration,
       provider: { address: providerAccount, url: providerUrl },
       signedTerms: signed,
       visibility,
     });
-    return {
-      s3BucketId: info.s3BucketId,
-      name: info.name,
-      layer0BucketId: info.layer0BucketId,
-      owner: info.owner,
-      createdAt: BigInt(info.createdAt),
-      providerInfo: [{ account: providerAccount, multiaddr: "", url: providerUrl }],
-    };
+    return bucketId;
   }
 
+  /** Every bucket the signer is a member of (`StorageProvider.MemberBuckets`). */
   async listBuckets(): Promise<BucketInfo[]> {
-    const list = await this.requireS3().listBuckets();
-    return list.map((b) => ({
-      s3BucketId: b.s3BucketId,
-      name: b.name,
-      layer0BucketId: b.layer0BucketId,
-      owner: b.owner,
-      createdAt: BigInt(b.createdAt),
-      providerInfo: b.providerInfo,
-    }));
+    return this.requireS3().listBuckets();
   }
 
-  async deleteBucket(s3BucketId: bigint): Promise<void> {
-    await this.requireS3().deleteBucket(s3BucketId);
-  }
-
-  // ── S3 Object operations (HTTP, via the SDK's S3Client) ─────────────────────
+  // ── S3 Object operations (the bucket's own tree, via the SDK's S3Client) ───
 
   async putObject(
     bucketId: bigint,
@@ -323,20 +290,26 @@ export class S3Client {
     data: Uint8Array,
     options?: { signal?: AbortSignal },
   ): Promise<UploadResult> {
-    const result = await this.requireS3().putObject({ layer0BucketId: bucketId }, key, data, {
+    const result = await this.requireS3().putObject(bucketId, key, data, {
       signal: options?.signal,
     });
-    return { cid: result.cid ?? "", size: result.size };
+    return { cid: result.cid, size: result.size };
   }
 
+  /** Download an object by key. The SDK checks the content against the bucket's tree. */
   async getObject(bucketId: bigint, key: string): Promise<Uint8Array> {
-    const { data } = await this.requireS3().getObject({ layer0BucketId: bucketId }, key);
+    const { data } = await this.requireS3().getObject(bucketId, key);
     return data;
   }
 
+  /**
+   * Every object whose key starts with `prefix`, in key order, from one
+   * read of the bucket's tree (paging would read the tree once per page
+   * and could mix two bucket roots).
+   */
   async listObjects(bucketId: bigint, prefix?: string): Promise<S3ObjectInfo[]> {
-    const summaries = await this.requireS3().listObjects({ layer0BucketId: bucketId }, prefix);
-    return summaries.map((o) => ({
+    const { objects } = await this.requireS3().listAllObjects(bucketId, { prefix });
+    return objects.map((o) => ({
       key: o.key,
       size: o.size,
       lastModified: o.lastModified ?? 0,
@@ -345,7 +318,7 @@ export class S3Client {
   }
 
   async deleteObject(bucketId: bigint, key: string): Promise<void> {
-    await this.requireS3().deleteObject({ layer0BucketId: bucketId }, key);
+    await this.requireS3().deleteObject(bucketId, key);
   }
 
   // ── Members (read is a chain query; writes go through layer0 wrappers) ───────
@@ -403,6 +376,7 @@ export class S3Client {
       minDuration: info.min_duration,
       maxDuration: info.max_duration,
       acceptingPrimary: info.accepting_primary,
+      minAgreementBytes: info.min_agreement_bytes,
       agreementsTotal: info.stats.agreements_total,
     }));
 
@@ -446,6 +420,7 @@ export class S3Client {
           minDuration: info.min_duration ?? 0,
           maxDuration: info.max_duration ?? 0,
           acceptingPrimary: info.accepting_primary ?? false,
+          minAgreementBytes: BigInt(info.min_agreement_bytes ?? 0),
           replicaSyncPrice:
             info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
           acceptingExtensions: info.accepting_extensions ?? false,
@@ -537,14 +512,15 @@ export class S3Client {
       bucket_id: Number(bucketId).toString(),
       leaf_index: leafIndex.toString(),
     });
-    const response = await httpFetch(`${providerUrl}/mmr_proof?${params.toString()}`);
+    // Reader-gated on private buckets — sign as the connected owner.
+    const headers = await signProviderRequest(this.requireOwner().signer, "GET", bucketId);
+    const response = await httpFetch(`${providerUrl}/mmr_proof?${params.toString()}`, { headers });
     if (!response.ok) {
       throw new Error(`MMR proof request failed: ${response.status}`);
     }
     const result = await response.json();
-    const dataSize: number = result.leaf?.data_size ?? 0;
-    const chunkSize = 262144; // 256 KiB — DEFAULT_CHUNK_SIZE
-    return dataSize === 0 ? 1 : Math.ceil(dataSize / chunkSize);
+    if (!result.leaf) throw new Error("MMR proof response has no leaf");
+    return leafChunkCount(result.leaf);
   }
 
   /** Slash the provider of a challenge that expired unanswered; anyone may call it. */

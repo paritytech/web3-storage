@@ -11,7 +11,6 @@ import { test, expect } from "../fixtures";
 import {
   Bob,
   createBucketViaApi,
-  cleanupBuckets,
 } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
@@ -23,12 +22,7 @@ test.setTimeout(180_000);
 // node's auto-coordinator) so the Buckets / Agreements pages have a row.
 test.beforeAll(async () => {
   test.setTimeout(120_000);
-  await createBucketViaApi(Bob, { name: `display-${Date.now()}`, pricePerByte: 1000n });
-});
-
-test.afterAll(async () => {
-  test.setTimeout(60_000);
-  await cleanupBuckets(Bob);
+  await createBucketViaApi(Bob);
 });
 
 test("Overview shows provider info for registered Eve", async ({ localPage }) => {

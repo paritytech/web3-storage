@@ -16,6 +16,7 @@ import {
   getAgreementNonce,
   parseMultiaddrToUrl,
   resolveProviderEndpoint,
+  toSs58,
   waitForPrimaryProvider,
   type ParachainApi,
   type WaitOpts,
@@ -38,24 +39,19 @@ export interface PrimaryProviderInfo {
 }
 
 /**
- * Resolve the primary-provider info for each given layer-0 bucket id, batching
- * every storage read into a single query per pallet map (no per-bucket /
- * per-provider round-trips). Returns an array aligned with `bucketIds` — each
- * entry is that bucket's primary providers (possibly empty).
+ * Resolve the primary-provider info for each given layer-0 bucket record,
+ * reading every provider in one batched query. Returns an array aligned
+ * with `buckets`; each entry is that bucket's primary providers (possibly
+ * empty).
  */
 export async function resolveBucketProviders(
   api: ParachainApi,
-  bucketIds: bigint[],
+  buckets: ({ primary_providers: string[] } | undefined)[],
   readOpts: { at: "best" | "finalized" } = { at: "finalized" },
 ): Promise<PrimaryProviderInfo[][]> {
-  if (bucketIds.length === 0) return [];
-  const bucketInfo = await api.query.StorageProvider.Buckets.getValues(
-    bucketIds.map((id) => [id] as const),
-    readOpts,
-  );
-
+  if (buckets.length === 0) return [];
   const providerAccounts = [
-    ...new Set(bucketInfo.flatMap((info) => info?.primary_providers ?? [])),
+    ...new Set(buckets.flatMap((info) => info?.primary_providers ?? [])),
   ];
   const providerRecords = await api.query.StorageProvider.Providers.getValues(
     providerAccounts.map((account) => [account] as const),
@@ -70,7 +66,7 @@ export async function resolveBucketProviders(
     providerMap.set(account, { account, multiaddr, url: parseMultiaddrToUrl(multiaddr) });
   });
 
-  return bucketInfo.map((info) =>
+  return buckets.map((info) =>
     (info?.primary_providers ?? [])
       .map((account) => providerMap.get(account))
       .filter((p): p is PrimaryProviderInfo => p != null),
@@ -155,30 +151,52 @@ export interface ProviderChoice {
   url?: string;
 }
 
+/** Largest u128: requests no price cap from `find_matching_providers`. */
+const NO_PRICE_CAP = (1n << 128n) - 1n;
+/** Largest u32: `find_matching_providers` returns every registered provider. */
+const ALL_PROVIDERS = 0xffff_ffff;
+
 /**
- * Pick an on-chain provider that is accepting primary agreements and exposes a
- * resolvable HTTP endpoint. `urlOverride` (a dev/test provider URL) wins over
- * the registered multiaddr — the local dev provider registers as the accepting
- * provider, and all UIs/examples point at one URL. Throws when none qualifies.
+ * Pick an on-chain provider that would accept a primary agreement for
+ * `maxBytes` over `duration` and exposes a resolvable HTTP endpoint. The
+ * `find_matching_providers` runtime API decides eligibility: a provider
+ * qualifies when it reports no partial-match reason. `urlOverride` (a dev/test
+ * provider URL) wins over the registered multiaddr — the local dev provider
+ * registers as the accepting provider, and all UIs/examples point at one URL.
+ * Throws when none qualifies.
  */
 export async function discoverAcceptingProvider(
   api: ParachainApi,
   {
+    maxBytes,
+    duration,
     readOpts = { at: "finalized" },
     urlOverride,
-  }: { readOpts?: { at: "best" | "finalized" }; urlOverride?: string } = {},
+  }: {
+    maxBytes: bigint;
+    duration: number;
+    readOpts?: { at: "best" | "finalized" };
+    urlOverride?: string;
+  },
 ): Promise<{ address: string; url: string }> {
-  const entries = await api.query.StorageProvider.Providers.getEntries(readOpts);
-  for (const entry of entries) {
-    const address = entry.keyArgs[0];
-    const provider = entry.value;
-    if (!provider?.settings?.accepting_primary) continue;
+  const matches = await api.apis.StorageProviderApi.find_matching_providers(
+    {
+      bytes_needed: maxBytes,
+      min_duration: duration,
+      max_price_per_byte: NO_PRICE_CAP,
+      primary_only: true,
+    },
+    ALL_PROVIDERS,
+    readOpts,
+  );
+  for (const match of matches) {
+    if (match.partial_reason !== undefined) continue;
     const url =
-      urlOverride ?? parseMultiaddrToUrl(new TextDecoder().decode(provider.multiaddr));
-    if (url) return { address, url };
+      urlOverride ?? parseMultiaddrToUrl(new TextDecoder().decode(match.info.multiaddr));
+    if (url) return { address: toSs58(match.account), url };
   }
   throw new Error(
-    "no provider is accepting primary agreements (register one, or pass an explicit provider)",
+    `no provider accepts a primary agreement of ${maxBytes} bytes for ${duration} blocks (register one, or pass an explicit provider)`,
   );
 }
 
@@ -203,10 +221,10 @@ export interface ResolveCreationTermsOpts {
 }
 
 /**
- * The negotiate half of the negotiate -> establish flow for bucket/drive
+ * The negotiate half of the negotiate -> establish flow for bucket
  * creation: pick a provider (explicit or discovered), POST /negotiate, and
- * return the provider account + provider-signed terms ready for the establish_*
- * / create_drive / create_s3_bucket extrinsics. Pass `signedTerms` to skip the
+ * return the provider account + provider-signed terms ready for
+ * `create_bucket_with_primary`. Pass `signedTerms` to skip the
  * HTTP round-trip entirely (the caller pre-negotiated).
  */
 export async function resolveCreationTerms(
@@ -243,6 +261,8 @@ export async function resolveCreationTerms(
     }
   } else {
     choice = await discoverAcceptingProvider(api, {
+      maxBytes: opts.maxBytes,
+      duration: opts.duration,
       readOpts: opts.readOpts,
       urlOverride: opts.urlOverride,
     });

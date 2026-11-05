@@ -6,9 +6,7 @@
 //! that are specific to the checkpoint workflow (signatures, multi-provider
 //! setups). Unit tests for the checkpoint types live in `src/checkpoint.rs`.
 
-mod common;
-
-use common::{make_client, start_test_provider};
+use client_test_support::{make_client, start_providers, start_test_provider};
 use storage_client::ChunkingStrategy;
 
 // ============================================================================
@@ -64,7 +62,7 @@ async fn test_checkpoint_signature_available_after_commit() {
 
 #[tokio::test]
 async fn test_multiple_providers_track_commitments_independently() {
-    let urls = common::start_providers(3).await;
+    let urls = start_providers(3).await;
 
     // Each provider gets a different bucket's data.
     for (i, url) in urls.iter().enumerate() {
