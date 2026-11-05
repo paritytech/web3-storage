@@ -464,9 +464,15 @@ async fn get_mmr_proof(
     )
     .await?;
 
+    let commitment = query.commitment()?;
     let (bucket_id, leaf_index) = (query.bucket_id, query.leaf_index);
     let mmr_proof = state
-        .blocking_storage(move |storage| storage.get_mmr_proof(bucket_id, leaf_index))
+        .blocking_storage(move |storage| match commitment {
+            Some(commitment) => {
+                storage.get_mmr_proof_for_commitment(bucket_id, &commitment, leaf_index)
+            }
+            None => storage.get_mmr_proof(bucket_id, leaf_index),
+        })
         .await??;
 
     Ok(Json(mmr_proof))
