@@ -15,8 +15,12 @@ import { signedTermsBucketId } from "@web3-storage/papi";
 
 export { signedTermsBucketId };
 
-import { asHex, hexToBytes, type ParachainApi } from "../address.js";
-import { getProviderNodeInfo, type ChallengeResponse } from "../provider-http.js";
+import { asHex, hexToBytes, sameAddress, type ParachainApi } from "../address.js";
+import {
+  getProviderNodeInfo,
+  type ChallengeResponse,
+  type ProviderCommit,
+} from "../provider-http.js";
 import type { ChainSigner } from "../signers.js";
 import { READ_OPTS, requireOneEvent, submitTx, submitTxFinalized, type SubmitOpts } from "../tx.js";
 
@@ -375,14 +379,6 @@ export async function removeMember(
   );
 }
 
-/** A provider's `/commit` response. */
-export type ProviderCommit = {
-  mmr_root: string;
-  start_seq: number | string;
-  leaf_count: number | string;
-  provider_signature: string;
-};
-
 /** A provider and the commit it signed. */
 export type CheckpointSigner = {
   provider: ChainSigner | { address: string };
@@ -390,24 +386,43 @@ export type CheckpointSigner = {
 };
 
 /**
- * Builds a `checkpoint` tx. The commitment comes from the first signer's
- * commit; each signer adds its own `provider_signature`.
+ * Builds a `checkpoint` tx. Throws before building it when a signer signed a
+ * different commitment (`mmr_root`, `start_seq`, `leaf_count`) than the first
+ * signer: the chain would reject the tx with `InvalidSignature` without naming
+ * the provider. Also throws when a provider is listed twice: the chain counts a
+ * repeated signer once, so the duplicate adds fee and no signature.
  */
 export function checkpointTx(api: ParachainApi, bucketId: bigint, signers: CheckpointSigner[]) {
   if (signers.length === 0) throw new Error("checkpointTx: at least one signer is required");
-  const { mmr_root, start_seq, leaf_count } = signers[0].commit;
+  const commitment = commitmentOf(signers[0].commit);
+  signers.forEach(({ provider, commit }, i) => {
+    const other = commitmentOf(commit);
+    if (
+      other.mmr_root.toLowerCase() !== commitment.mmr_root.toLowerCase() ||
+      other.start_seq !== commitment.start_seq ||
+      other.leaf_count !== commitment.leaf_count
+    ) {
+      throw new Error(
+        `checkpointTx: ${provider.address} signed a different commitment than ` +
+          signers[0].provider.address,
+      );
+    }
+    if (signers.slice(0, i).some((s) => sameAddress(s.provider.address, provider.address))) {
+      throw new Error(`checkpointTx: ${provider.address} is listed more than once`);
+    }
+  });
   return api.tx.StorageProvider.checkpoint({
     bucket_id: bucketId,
-    commitment: {
-      mmr_root: asHex(mmr_root),
-      start_seq: BigInt(start_seq),
-      leaf_count: BigInt(leaf_count),
-    },
+    commitment,
     signatures: signers.map(({ provider, commit }) => [
       provider.address,
       decodeMultiSignature(commit.provider_signature),
     ]),
   });
+}
+
+function commitmentOf({ mmr_root, start_seq, leaf_count }: ProviderCommit) {
+  return { mmr_root: asHex(mmr_root), start_seq: BigInt(start_seq), leaf_count: BigInt(leaf_count) };
 }
 
 /** Submits a `checkpoint` signed by `client`; see {@link checkpointTx}. */
