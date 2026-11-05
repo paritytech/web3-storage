@@ -1,0 +1,24 @@
+[package]
+name = "provider-storage"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Storage engine for provider nodes: backends and MMR commitments"
+
+[dependencies]
+storage-primitives = { workspace = true, features = ["std"] }
+codec = { workspace = true, features = ["std"] }
+rocksdb = { workspace = true }
+sp-core = { workspace = true, features = ["std"] }
+tempfile = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
+
+[features]
+test-helpers = ["dep:tempfile"]
+
+[dev-dependencies]
+array-bytes = { workspace = true }
+tempfile = { workspace = true }
