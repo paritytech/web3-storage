@@ -55,11 +55,14 @@ importers:
         specifier: ~7.0.2
         version: 7.0.2
 
-  packages/core:
+  packages/bucket-tree:
     dependencies:
-      '@polkadot-labs/hdkd-helpers':
-        specifier: ^0.0.34
-        version: 0.0.34
+      '@web3-storage/core':
+        specifier: workspace:*
+        version: link:../core
+      '@web3-storage/layer0':
+        specifier: workspace:*
+        version: link:../layer0
     devDependencies:
       '@types/node':
         specifier: ^26.6.5
@@ -71,14 +74,11 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@types/node@26.6.5)(vite@8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
-  packages/file-system:
+  packages/core:
     dependencies:
-      '@web3-storage/core':
-        specifier: workspace:*
-        version: link:../core
-      '@web3-storage/layer0':
-        specifier: workspace:*
-        version: link:../layer0
+      '@polkadot-labs/hdkd-helpers':
+        specifier: ^0.0.34
+        version: 0.0.34
     devDependencies:
       '@types/node':
         specifier: ^26.6.5
@@ -157,12 +157,12 @@ importers:
 
   packages/sdk:
     dependencies:
+      '@web3-storage/bucket-tree':
+        specifier: workspace:*
+        version: link:../bucket-tree
       '@web3-storage/core':
         specifier: workspace:*
         version: link:../core
-      '@web3-storage/file-system':
-        specifier: workspace:*
-        version: link:../file-system
       '@web3-storage/layer0':
         specifier: workspace:*
         version: link:../layer0

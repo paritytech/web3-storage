@@ -6,7 +6,7 @@
 //! in-memory store, checks the root CID against [`ROOT_CID`] and, when
 //! `FS_FIXTURE` names a file, writes the resulting bucket there as JSON. `just fs-fixture` writes
 //! `.test-vectors/fs-bucket.json`. The TypeScript test
-//! (`packages/file-system/src/fixtures.test.ts`) reads that bucket and checks that
+//! (`packages/bucket-tree/src/fixtures.test.ts`) reads that bucket and checks that
 //! its own write sequence produces the same blobs and commits.
 //!
 //! Fixture format:
@@ -302,7 +302,7 @@ fn load(fixture: &Value) -> MemoryStore {
     store
 }
 
-const ABOUT: &str = "Written by clients/file-system/src/s3/tests/fixtures.rs (`just fs-fixture`); read by packages/file-system/src/fixtures.test.ts.";
+const ABOUT: &str = "Written by clients/bucket-tree/src/s3/tests/fixtures.rs (`just fs-fixture`); read by packages/bucket-tree/src/fixtures.test.ts.";
 
 #[tokio::test]
 async fn writes_fs_fixture() {

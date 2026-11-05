@@ -12,7 +12,7 @@ packages/
   layer0/   @web3-storage/layer0   the chain binding: typed PAPI wrappers per
                                    pallet, signers, tx submission, watchValue
                                    waits, provider-node HTTP, ./revive
-  file-system/ @web3-storage/file-system  a file system and S3-style
+  file-system/ @web3-storage/bucket-tree  a file system and S3-style
                                    objects stored in a bucket: the on-bucket
                                    format, FsTree and Objects; needs a
                                    provider URL and a signer, no chain
@@ -99,11 +99,11 @@ data to it) and `endAgreement` (old provider leaves).
 their data in the Layer 0 bucket itself and use only the provider's Layer 0
 routes (`PUT /node`, `POST /commit`, `GET /node`, `GET /read`,
 `GET /commitment`, `GET /mmr_proof`). The code is in
-`packages/file-system`: the format in `format.ts`, the tree in `tree.ts`, the
+`packages/bucket-tree`: the format in `format.ts`, the tree in `tree.ts`, the
 S3 view in `objects.ts`.
 
 - Directories and files are SCALE-encoded `DirectoryNode` and
-  `FileManifest` blobs (`clients/file-system/src/format.rs`). A blob's CID is
+  `FileManifest` blobs (`clients/bucket-tree/src/format.rs`). A blob's CID is
   its `data_root` (`computeDataRoot`).
 - The root directory's CID is the bucket's last MMR leaf. A bucket with no
   leaves is an empty drive.

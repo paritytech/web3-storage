@@ -230,7 +230,7 @@ describe("Objects.listObjects limits", () => {
 });
 
 describe("paginateKeys", () => {
-  // The keys of the Rust `list_page` tests (clients/file-system/src/s3/mod.rs).
+  // The keys of the Rust `list_page` tests (clients/bucket-tree/src/s3/mod.rs).
   const KEYS = ["a.txt", "b/1.txt", "b/2.txt", "b/c/3.txt", "b0.txt", "d/4.txt"];
   const objects = KEYS.map((key) => ({ key, size: 1 }));
   const page = (prefix: string, delimiter: string | undefined, startAfter: string | undefined, maxKeys: number) =>

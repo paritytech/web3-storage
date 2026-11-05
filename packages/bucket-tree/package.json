@@ -1,5 +1,5 @@
 {
-  "name": "@web3-storage/file-system",
+  "name": "@web3-storage/bucket-tree",
   "version": "0.1.0",
   "private": true,
   "description": "A file system and S3-style objects stored in a Layer 0 bucket: the on-bucket format, the copy-on-write tree and the object view. Needs a provider URL and a signer, no chain connection.",

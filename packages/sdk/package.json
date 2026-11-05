@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@web3-storage/core": "workspace:*",
-    "@web3-storage/file-system": "workspace:*",
+    "@web3-storage/bucket-tree": "workspace:*",
     "@web3-storage/layer0": "workspace:*",
     "polkadot-api": "^3.3.0"
   },

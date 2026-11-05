@@ -3,9 +3,9 @@
 //! The file tree against an in-process provider node, over Layer 0 routes
 //! only. No chain is needed.
 
+use bucket_tree::format::{compute_cid, DirectoryNode, DEFAULT_MIME_TYPE};
+use bucket_tree::{EmptyParents, FsClientError, Tree};
 use client_test_support::{make_client, start_test_provider};
-use file_system_client::format::{compute_cid, DirectoryNode, DEFAULT_MIME_TYPE};
-use file_system_client::{EmptyParents, FsClientError, Tree};
 
 const BUCKET: u64 = 1;
 
@@ -204,7 +204,7 @@ async fn raw_commit_is_not_a_file_system_root() {
 /// check rejects them; a 64-byte leaf blob still reads.
 #[tokio::test]
 async fn sizeless_read_of_internal_node_fails_the_cid_check() {
-    use file_system_client::{BlobLength, BlobStore};
+    use bucket_tree::{BlobLength, BlobStore};
     use storage_client::ChunkingStrategy;
 
     // Over 256 KiB, so that `/read` (which counts 256 KiB chunks) returns

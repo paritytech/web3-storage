@@ -532,7 +532,7 @@ For most users, consider using the **Layer 1 File System Client** instead, which
 
 **Layer 1 Documentation:** See [File System Client](../file-system/README.md)
 
-**Layer 1 Client:** `clients/file-system/`
+**Layer 1 Client:** `clients/bucket-tree/`
 
 ## Status
 

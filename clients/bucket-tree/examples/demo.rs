@@ -5,12 +5,12 @@
 //! client instance, store objects in the same tree, delete, and add and
 //! remove a member.
 //!
-//! Usage: cargo run -p file-system-client --example demo <chain_ws> <provider_url>
+//! Usage: cargo run -p bucket-tree --example demo <chain_ws> <provider_url>
 //! (`just file-system-demo`).
 
-use file_system_client::format::DEFAULT_MIME_TYPE;
-use file_system_client::s3::{ListObjectsParams, Objects, PutObjectOptions};
-use file_system_client::{BucketId, EmptyParents, Tree};
+use bucket_tree::format::DEFAULT_MIME_TYPE;
+use bucket_tree::s3::{ListObjectsParams, Objects, PutObjectOptions};
+use bucket_tree::{BucketId, EmptyParents, Tree};
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
 use storage_client::{

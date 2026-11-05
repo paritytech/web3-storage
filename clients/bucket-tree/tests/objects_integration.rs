@@ -3,9 +3,9 @@
 //! S3 object operations against an in-process provider node, over Layer 0
 //! routes only. No chain is needed.
 
+use bucket_tree::s3::{ListObjectsParams, Objects, PutObjectOptions, S3ClientError};
+use bucket_tree::Tree;
 use client_test_support::{make_client, start_test_provider};
-use file_system_client::s3::{ListObjectsParams, Objects, PutObjectOptions, S3ClientError};
-use file_system_client::Tree;
 use std::collections::HashMap;
 use storage_client::StorageUserClient;
 

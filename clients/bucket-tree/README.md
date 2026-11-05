@@ -21,7 +21,7 @@ and checkpoint it with `storage_client::CheckpointManager`.
 ## Usage
 
 ```rust
-use file_system_client::{s3::Objects, EmptyParents, Tree};
+use bucket_tree::{s3::Objects, EmptyParents, Tree};
 use storage_client::{Signer, StorageUserClient};
 
 let store = StorageUserClient::for_provider("http://127.0.0.1:3333", Signer::from_seed("//Alice")?)?;
@@ -45,13 +45,13 @@ with the provider (`ProviderClient::negotiate_terms`), then
 ## Examples and tests
 
 ```bash
-cargo test -p file-system-client
+cargo test -p bucket-tree
 just file-system-demo   # examples/demo.rs, needs a running chain and provider
 ```
 
 ## Documentation
 
-- API reference: `cargo doc -p file-system-client --no-deps --open`
+- API reference: `cargo doc -p bucket-tree --no-deps --open`
 - [Layer 0 design](../../docs/design/scalable-web3-storage.md)
 
 ## License

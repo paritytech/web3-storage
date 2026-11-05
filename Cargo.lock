@@ -1570,6 +1570,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "bucket-tree"
+version = "0.1.0"
+dependencies = [
+ "array-bytes 6.2.3",
+ "async-trait",
+ "axum",
+ "base64",
+ "client-test-support",
+ "parity-scale-codec",
+ "reqwest",
+ "serde_json",
+ "sp-core",
+ "sp-runtime",
+ "storage-client",
+ "storage-primitives",
+ "subxt-signer 0.50.2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
 name = "build-helper"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3306,28 +3328,6 @@ checksum = "21ef72acf95ec3d7dbf61275be556299490a245f017cf084bd23b4f68cf9407c"
 dependencies = [
  "libc",
  "winapi",
-]
-
-[[package]]
-name = "file-system-client"
-version = "0.1.0"
-dependencies = [
- "array-bytes 6.2.3",
- "async-trait",
- "axum",
- "base64",
- "client-test-support",
- "parity-scale-codec",
- "reqwest",
- "serde_json",
- "sp-core",
- "sp-runtime",
- "storage-client",
- "storage-primitives",
- "subxt-signer 0.50.2",
- "thiserror 2.0.18",
- "tokio",
- "tracing-subscriber 0.3.23",
 ]
 
 [[package]]

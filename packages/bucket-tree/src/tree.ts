@@ -5,7 +5,7 @@
  * the same tree.
  *
  * Format: `DirectoryNode` and `FileManifest` from
- * `clients/file-system/src/format.rs`, SCALE-encoded, each stored as a blob whose
+ * `clients/bucket-tree/src/format.rs`, SCALE-encoded, each stored as a blob whose
  * CID is its `data_root`. A directory entry points at a child directory's
  * node or a file's manifest; a manifest lists the content chunk hashes.
  *

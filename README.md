@@ -95,7 +95,7 @@ just file-system-demo       # Terminal 3
 ### File System Commands
 
 ```bash
-cargo test -p file-system-client   # Unit and integration tests
+cargo test -p bucket-tree   # Unit and integration tests
 just file-system-demo       # Demo against a running chain + provider
 ```
 
@@ -135,7 +135,7 @@ just file-system-demo        # File system and S3 objects demo
 
 # Tests
 cargo test --workspace       # All unit + integration tests
-cargo test -p file-system-client  # File system and S3 objects
+cargo test -p bucket-tree  # File system and S3 objects
 ```
 
 ## Documentation

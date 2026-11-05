@@ -2,7 +2,7 @@
 
 /**
  * Minimal SCALE codec for the file-system format types (`DirectoryNode`,
- * `FileManifest`) of `clients/file-system/src/format.rs`. Covers only what those
+ * `FileManifest`) of `clients/bucket-tree/src/format.rs`. Covers only what those
  * types use: compact lengths, `u8` enum indices, `u32`/`u64` little-endian,
  * `H256`, and bounded byte vectors. Bounds are checked on encode and decode.
  */

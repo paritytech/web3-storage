@@ -421,7 +421,7 @@ e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
 
 # File system and S3 objects demo (used by CI; assumes chain + provider already running)
 file-system-demo:
-    cargo run --release -p file-system-client --example demo -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+    cargo run --release -p bucket-tree --example demo -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Write the MMR proof vectors that packages/core/src/merkle.test.ts reads
 mmr-proof-vectors:
@@ -429,7 +429,7 @@ mmr-proof-vectors:
 
 # Write the file-system bucket that packages/layer1/src/fixtures.test.ts reads
 fs-fixture:
-    FS_FIXTURE="{{justfile_directory()}}/.test-vectors/fs-bucket.json" cargo test --locked -q -p file-system-client writes_fs_fixture
+    FS_FIXTURE="{{justfile_directory()}}/.test-vectors/fs-bucket.json" cargo test --locked -q -p bucket-tree writes_fs_fixture
 
 # ─── UI Tests ─────────────────────────────────────────────────────────────────
 #

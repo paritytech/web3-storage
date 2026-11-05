@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use file_system_client::{s3::Objects, Tree};
+//! use bucket_tree::{s3::Objects, Tree};
 //! use storage_client::{Signer, StorageUserClient};
 //!
 //! let store = StorageUserClient::for_provider("http://127.0.0.1:3333", Signer::from_seed("//Alice")?)?;

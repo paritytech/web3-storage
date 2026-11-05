@@ -30,7 +30,7 @@ import {
   type Visibility,
   type WaitOpts,
 } from "@web3-storage/layer0";
-import { FsTree, Objects, providerBlobStore } from "@web3-storage/file-system";
+import { FsTree, Objects, providerBlobStore } from "@web3-storage/bucket-tree";
 
 export interface Web3StorageOptions {
   api: ParachainApi;

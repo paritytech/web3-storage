@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The file-system format of `clients/file-system/src/format.rs`: `DirectoryNode`
+ * The file-system format of `clients/bucket-tree/src/format.rs`: `DirectoryNode`
  * and `FileManifest`, SCALE-encoded byte for byte like the Rust types. The
  * FS and S3 clients store these as blobs in a Layer 0 bucket. A blob's CID is
  * its `data_root` ({@link computeDataRoot}).
