@@ -4,13 +4,14 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.8 |
+| **Version** | 2.9 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.9 | Stake, agreements and provider signatures reworked for virtual providers (stake changeable and snapshotted per agreement; no stake-per-byte rule; quotes contain no price or version, the client pins `expected_version`; per-owner quote nonce; one-step deregistration; owner-only extension; replacement agreements (virtual providers only); provider refund; `ProviderSignatures` sets; `MaxPrimarySlots` counts physical signers; duplicate challenge responses dropped for free; `extend_challenge`; replica syncs must advance the commitment, `historical_roots` keep commitments; replacement agreements for replicas activate by `confirm_replica_sync`; an activation flag on `checkpoint` and `confirm_replica_sync` selects the pending replacement; replica syncs sign `ReplicaSyncPayload` (`version`, `genesis_hash`, `bucket_id`, `agreement_id`, `roots`); every provider-signed payload includes the genesis hash; `BucketId` and `AgreementId` are newtypes; every checkpoint meets the signature rules on its own and replaces the snapshot's signers; it repeats the current commitment or appends to its MMR with a consistency proof (`MmrConsistencyProof`), so canonical history is linear; a deletion is an admin checkpoint that starts a new MMR at the current end and re-appends the kept leaves, `Deleted` checks the snapshot; proof types use bounded lists (`chunk_proof` by `MaxProofDepth`, `MmrProof.items` by 49 with `leaf_count` capped at 2^48 in `checkpoint`); `/delete` takes `keep_from_seq` and `/checkpoint-signature` returns the consistency proof; a challenge records its kind, agreement, commitment, the virtual snapshot and liable signers (replica challenges cannot be answered with `Superseded`), so agreements and payments ignore open challenges; a frozen bucket can be deleted only with no agreements left; a slash bumps `version`, and calls that snapshot stake require `MinProviderStake`; `remove_slashed` removed: a slashed provider's agreement runs to expiry and the owner decides on payment; a challenge that ends in a slash refunds the challenger's deposit, and the challenger pays its own creation fee; a challenge on a deleted bucket settles as a cancellation (full refund, no slash), so open challenges do not block `delete_bucket`; slashed stake and burned payments go to the runtime-configured `OnSlash` and `OnBurn` handlers instead of a `Treasury` account; `last_stake_event` bumps another virtual of a slashed member only if the member's remaining stake is below what it owes there; a challenged provider keeps its stake locks, and a challenged virtual provider locks its members' stake (`pending_challenges`), which replaces the per-bucket pending-challenge map; provider discovery off-chain; `create_bucket_with_storage`, provider-initiated checkpoints, `find_matching_providers`, `challenge_candidates` removed; typed runtime API responses). **Read**: "Provider Stake", "Storage Agreements", "The Challenge Game", "MMR Commitments", "Freeze" here; impl doc "Pallet Config", "Append-only mode", "Commitment liability", "Changeable Stake" (incl. "Stake under open challenges"), "Stake vs. capacity", "Storage Model" (pruning rule), `Challenge`, `checkpoint`, "MMR Proof", "Verification", "Term Pinning", "Replacement agreements", `confirm_replica_sync`, "Provider Public Key & Signature Type", `CommitmentPayload` ("Chain binding"), "Transaction extension for raced calls", "Runtime API", "Off-Chain: Provider Node API"; [Virtual Provider Extension](./001-virtual-provider-extension.md). |
 | 2.8 | Introduced storage deposits and `delete_bucket`. |
 | 2.7 | Layer-0 read access spelled out: bucket-bound reads gate at Reader on primaries; hash-keyed lookups (`/node`, `/read`, `/chunk_proof`, `/fetch_nodes`) take a bucket id but are **capability reads** — possession of the hash grants the bytes, with the enumeration surfaces gated; operator self-read allowance. **Read**: "Read access at Layer 0" under Bucket Visibility & Access. |
 | 2.6 | Chunk tree fixed: a binary RFC 9162 Merkle tree over 256 KiB chunks (only the last chunk is shorter), chunk and node hashes with different prefixes, no padding, chunk count derived from the leaf's `data_size`, empty data rejected, a `chunk_index` at or beyond the chunk count answered with the leaf alone. `MmrLeaf` starts with `leaf_version`, which defines the leaf's fields, `CHUNK_SIZE` and the tree shape. Proofs carry only hashes: `MmrProof { leaf, items }` with `polkadot-ckb-merkle-mountain-range` as the reference implementation and the leaf position taken from the challenge, a chunk proof is the sibling list, `GET /mmr_proof` returns `items` and `GET /chunk_proof` a sibling list. **Read**: "Content-Addressed Chunks", "MMR Commitments"; "Hash Prefixes", "Chunk Tree", "MMR Leaf", "MMR Proof", `POST /commit`, `GET /mmr_proof`, `GET /chunk_proof` and `verify_challenge_response` in [Implementation Details](./scalable-web3-storage-implementation.md). |
@@ -356,10 +357,10 @@ The fundamental unit is the **bucket**—an on-chain container that groups relat
 
 ```
 Bucket (on-chain, stable identifier)
-├── bucket_id: u64              // permanent, never reused
+├── bucket_id: BucketId         // permanent, never reused
 ├── members: [Admin, Writers, Readers]
 ├── min_providers: u32          // quorum for checkpoints
-├── primary_providers: [A, B]   // admin-controlled, max ~5
+├── primary_providers: [A, B]   // admin-controlled, max `MaxPrimarySlots` signing slots
 ├── snapshot: { mmr_root, start_seq, leaf_count }
 └── storage agreements → providers
 ```
@@ -370,8 +371,8 @@ A content hash names data but doesn't guarantee anyone stores it. A bucket makes
 
 - **Stable identity**: The bucket_id never changes, even as providers come and go. Applications reference buckets, not
   providers. Switch providers without breaking links. Each provider joins a bucket with one agreement, at bucket
-  creation or later, and a bucket whose agreements have all ended remains on-chain; the admin can add a new provider
-  later.
+  creation or later, and a bucket whose agreements have all ended remains on-chain until its admins delete it; the
+  admin can add a new provider later.
 
 - **Explicit availability**: On-chain state shows exactly which providers have agreements. No guessing, no DHT lookups,
   no hoping.
@@ -380,8 +381,9 @@ A content hash names data but doesn't guarantee anyone stores it. A bucket makes
   snapshots at any point. Version N is always accessible even after version N+1 exists.
 
 - **Permissionless persistence**: A frozen bucket (append-only) can be funded by anyone—not just the owner. You care
-  about open-source documentation? Fund a replica. You care about historical records? Extend the agreements. Data
-  survives even if the original owner disappears.
+  about open-source documentation, or historical records? Fund a replica (permissionless), and the data survives even
+  if the original owner disappears. A frozen bucket can be deleted only while no agreement, primary or replica, exists. (Extending an existing *primary* agreement is owner-only — a third party keeps data
+  alive by adding its own replica, not by mutating someone else's agreement.)
 
 ### Two Classes of Providers
 
@@ -391,7 +393,7 @@ Providers fall into two categories with different trust models:
 - Added only by bucket admin, by redeeming a provider-signed quote (`create_bucket_with_primary`, `add_primary_provider`)
 - Receive writes directly from clients
 - Count toward `min_providers` for checkpoints
-- Limited to ~5 per bucket (prevents bloat)
+- Limited to `MaxPrimarySlots` signing slots per bucket (prevents bloat)
 
 **Replica Providers** (permissionless):
 - Added by anyone (you, a third party, a charity) by redeeming a provider-signed quote (`add_replica_provider`)
@@ -516,8 +518,9 @@ Both directions always allowed, but asymmetric:
   cannot.
 
 **Anti-censorship is enforced—and cuts against privacy.** Two on-chain rules:
-replica agreements cannot be early-terminated (the admin has no rights over
-them), and a replica must answer challenges from *anyone* or lose its stake.
+the admin cannot end a replica agreement early (only its owner can, and only
+against an activated successor of a virtual provider), and a replica must
+answer challenges from *anyone* or lose its stake.
 So flipping private cannot silence what a replica already holds—intentional,
 replicas exist partly to protect the public against a hostile admin (see "Why
 this split?" above). The user-facing rule: **be careful what you make
@@ -596,20 +599,34 @@ Every provider-bucket relationship is governed by a storage agreement:
 StorageAgreement
 ├── owner: AccountId        // can top up, transfer ownership
 ├── max_bytes: u64          // quota for this provider
-├── payment_locked: Balance // prepaid storage payment
-├── price_per_byte: Balance // locked at creation
+├── payment_locked: Balance // prepaid storage payment (price consumed at creation)
+├── stake: Balance          // provider stake snapshotted at creation/extension
+├── agreement_id: AgreementId // per-bucket id; commitments bind to it
 ├── expires_at: Block       // when agreement ends
 ├── role: Primary | Replica
 └── (replica only) sync_balance, sync_price, last_sync
 ```
 
+**The agreement fixes the terms it was struck under.** Payment is prepaid, so price needs no separate snapshot; the
+provider's stake *is* snapshotted, so a provider can change its stake for future deals without touching this one (see
+"Provider Stake"). Clients pin the provider's terms `version` when requesting, so they never receive an agreement on
+worse terms than they chose.
+
 **Binding commitment**: Neither party can exit early. Provider committed to store for the agreed duration. Client
-committed to pay for the agreed duration.
+committed to pay for the agreed duration. The one exception is a replacement (virtual providers only): the owner may end an agreement early
+against a proven successor, settling it as an extension would (impl doc "Replacement agreements").
+
+**Refund**: a provider that finds it cannot serve an agreement adequately may give the remaining payment back to the
+owner at any time before settlement. The agreement runs on unpaid until expiry and the provider stays liable for
+everything it already committed to — a refund ends no obligation and avoids no slash. It replaces the burn: the provider
+loses the payment either way, but the client gets it back instead of paying extra to destroy it, and the provider's
+record shows `refunds` rather than `burns` — an admitted failure rather than a punished one. Nothing is left to exploit:
+a refund only gives money away.
 
 **Why binding?**
 - Providers need predictability to provision storage
 - Clients need assurance data won't be dropped mid-term
-- Price volatility is handled by locking price at creation/extension
+- Price volatility is handled by prepaying at creation/extension; stake volatility by snapshotting stake into the agreement
 - Third parties can rely on data staying available until agreement expiration (at least)
 
 ### Provider Stake
@@ -618,9 +635,9 @@ Providers register with a global stake that covers all their agreements:
 
 ```
 Provider
-├── stake: Balance          // total locked stake
-├── committed_bytes: u64    // sum of max_bytes across agreements
-├── stats: { agreements, extensions, burns,
+├── stake: Balance          // stake for NEW agreements (raiseable/lowerable)
+├── committed_bytes: u64    // sum of max_bytes across agreements (verifiable)
+├── stats: { agreements, extensions, burns, refunds,
 │            challenges_received_authorized,  // responded-to, from counterparties
 │            challenges_received_public,      // responded-to, from strangers
 │            challenges_failed }              // slashed — tier-independent
@@ -630,6 +647,16 @@ Provider
 **Full stake at risk**: A single failed challenge slashes the provider's *entire stake*, not just the stake for that
 bucket. This makes cheating economics absurd—deleting 1% of data to save $0.12/year risks losing thousands of dollars in
 stake.
+
+**Stake is changeable, agreements snapshot it.** A provider can raise stake any time and lower it without weakening
+existing agreements: each agreement records the stake in force when it was struck (as it already does for price), and the
+provider stays liable at each agreement's snapshot until that agreement ends. `stake` is just the figure applied to *new*
+agreements; a lowering only frees capital once the agreements made under the higher figure expire and no open
+challenge can slash the provider. (This is done with
+O(1) bookkeeping, not by scanning agreements — see the implementation doc's "Changeable Stake".)
+
+**Stake is not tied to capacity.** No stake-per-byte requirement is enforced, against either `committed_bytes` or the
+advertised `max_capacity`.
 
 ### The Challenge Game
 
@@ -661,8 +688,9 @@ below):
    - Invalid proof: Response rejected (provider pays the tx fee); the
      challenge stays open until the deadline
    - No proof by the deadline: anyone submits `resolve_expired_challenge`
-     (free on success); provider's full stake slashed; challenger made whole
-     from the slash (deposit and tx fees refunded—no reward beyond costs)
+     (free on success); provider's full stake slashed; challenger's
+     deposit refunded; it pays its own fee for creating the challenge (no
+     reward from the slash)
 ```
 
 **Stake is never touched on a valid response.** The only thing in play is who
@@ -720,7 +748,7 @@ would make griefing cheap). Faster responses cost the provider less:
 
 The general public is not on this table: the challenger always pays 100%. (The
 failure case—no response by the deadline—is separate: the provider's full stake
-is slashed and the challenger is made whole from it, per Resolution above.)
+is slashed and the challenger gets its deposit back, per Resolution above.)
 
 The net effect: a provider's *monetary* challenge exposure is bounded to the
 counterparties it chose to accept—strangers can be a nuisance but can't drain
@@ -742,7 +770,7 @@ but not satisfactory. Burning is a punishment signal:
 In addition to the challenging mechanism, this burn instead of pay possibility is part of guaranteeing/incentivizing
 good enough retrievability, not just storing.
 
-Note: Burn can also mean to transfer the funds into the DAP (Dynamic Allocation Pool).
+Note: burned payments and slashed stake go to a destination the runtime configures; on Polkadot system parachains the funds are forwarded to the DAP (Dynamic Allocation Pool) on Asset Hub.
 
 **Avoiding abuse**
 
@@ -1026,8 +1054,8 @@ The MMR hashes its leaves and nodes with the same `0x00` and `0x01` prefixes: a 
 `leaf_version` defines everything a verifier needs to check a leaf: its fields, its `CHUNK_SIZE`, the chunk tree shape and the hash prefixes. Version 1 is the format in this document. A new version can change any of them; leaves of different versions share one MMR, and each leaf verifies under its own version.
 
 **Append**: Add new leaf with new data_root
-**Delete**: Increase start_seq (old leaves no longer in range)
-**Freeze**: Lock start_seq—bucket becomes append-only forever
+**Delete**: Start a new MMR at the current end (start_seq + leaf_count); leaves to keep are appended to it again with new sequence numbers. Old leaves are below the new start_seq.
+**Freeze**: Lock start_seq—bucket becomes append-only forever. A frozen bucket can be deleted by its admins only once it has no agreements left (no primary, no replica).
 
 ### Client-Controlled Layout
 
@@ -1131,7 +1159,7 @@ Verification:
 ├── On-chain checkpoints = timestamped proof
 
 Compliance:
-├── Frozen = deletions impossible
+├── Frozen = deletions impossible (the bucket can be deleted only once no agreements are left)
 ├── Checkpoints = provider acknowledgments recorded
 ├── Slashing = accountability for data loss
 ```
@@ -1367,6 +1395,10 @@ Properties:
 - "Refund me or I burn" now costs the blackmailer extra each time.
 - A burn signals the client was so dissatisfied they paid extra to punish.
 - Makes burns rare but meaningful.
+
+With `refund_agreement` the demand has an on-chain form. That changes little: a threat carried out still costs the client
+the premium, and a provider that gives in records an `agreements_refunded` entry, which clients read as an admitted failure — so giving in is
+not free for the provider either. Vetting counterparties remains its defence.
 
 Default behavior matters: most clients will pay (the default action). Burning requires an active decision and extra cost. This filters for legitimate dissatisfaction.
 

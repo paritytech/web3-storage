@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"discovery","label":"Discovery","focus":["client","chain"],"note":"The client reads the bucket, its agreements and each provider's multiaddr from the chain through the runtime API."},{"id":"read","label":"Read and verify","focus":["client","primary","chain"],"note":"The client checks each chunk hash, the Merkle path to data_root, and the MMR proof to the on-chain mmr_root."},{"id":"fallback","label":"Fallback","focus":["client","replica","chain"],"note":"If a provider does not serve or the data does not match, the client reads from another provider. A challenge is the last resort."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"discovery","label":"Discovery","focus":["client","chain"],"note":"The client reads the bucket, its agreements and each provider's endpoint (a virtual provider: its members') through the runtime API."},{"id":"read","label":"Read and verify","focus":["client","primary","chain"],"note":"The client checks each chunk hash, the Merkle path to data_root, and the MMR proof to the on-chain mmr_root."},{"id":"fallback","label":"Fallback","focus":["client","replica","chain"],"note":"If a provider does not serve or the data does not match, the client reads from another provider. A challenge is the last resort."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -254,11 +254,11 @@
         </g>
         </g>
 
-        <g data-edge-from="chain" data-edge-to="client" data-edge-label="multiaddr, public_key" data-edge-key="4" data-edge-id="endpoint">
+        <g data-edge-from="chain" data-edge-to="client" data-edge-label="endpoint, public_key" data-edge-key="4" data-edge-id="endpoint">
           <path data-composition-edge-from="chain" data-composition-edge-to="client" data-composition-edge-id="endpoint" data-composition-points="512.6666666666667,334;164,334" d="M 512.6666666666667 334 L 164 334" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="277.73333333333335" y="314" width="121.2" height="16" rx="3" class="c-mask"/>
-          <text x="338.33333333333337" y="324" class="t-muted" font-size="9" text-anchor="middle">multiaddr, public_key</text>
+          <rect x="280.33333333333337" y="314" width="116" height="16" rx="3" class="c-mask"/>
+          <text x="338.33333333333337" y="324" class="t-muted" font-size="9" text-anchor="middle">endpoint, public_key</text>
         </g>
         </g>
 

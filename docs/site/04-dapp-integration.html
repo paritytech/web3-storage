@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"setup","label":"Set up storage","focus":["choose","quote","create"],"note":"Pick providers on-chain, get a signed quote over HTTP, redeem it in one or two transactions."},{"id":"write","label":"Write data","focus":["create","upload","commit","checkpoint"],"note":"Upload to every primary, keep each provider_signature from POST /commit, checkpoint with at least min_providers signatures."},{"id":"verify","label":"Read and dispute","focus":["read","served","challenge","keep"],"note":"Every read checks chunk hashes. Challenge only a provider that does not serve data."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"setup","label":"Set up storage","focus":["choose","quote","create"],"note":"Page the provider directory and rank it off-chain, get a signed quote over HTTP, redeem it with the provider version you read."},{"id":"write","label":"Write data","focus":["create","upload","commit","checkpoint"],"note":"Upload to every primary, keep the provider_signatures from POST /commit, checkpoint with at least min_providers signing slots."},{"id":"verify","label":"Read and dispute","focus":["read","served","challenge","keep"],"note":"Every read checks chunk hashes. Challenge only a provider that does not serve data."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -174,7 +174,7 @@
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read"
          data-preset-badge-editorial-plate="WEB3 STORAGE / PLATE 04">
-      <svg viewBox="0 0 1073 696" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+      <svg viewBox="0 0 1093 696" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
         <title id="archify-diagram-title">dApp Integration Flow</title>
         <desc id="archify-diagram-description">A workflow diagram.</desc>
         <!-- Definitions -->
@@ -200,208 +200,211 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Swimlanes -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="1005" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="1025" height="106" rx="10" class="c-lane" stroke-width="1"/>
         <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / dApp client</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="190" width="1005" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="190" width="1025" height="106" rx="10" class="c-lane" stroke-width="1"/>
         <text x="54" y="212" class="t-dim" font-size="10" font-weight="600">02 / Provider HTTP</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="328" width="1005" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="328" width="1025" height="106" rx="10" class="c-lane" stroke-width="1"/>
         <text x="54" y="350" class="t-dim" font-size="10" font-weight="600">03 / Chain</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="466" width="1005" height="106" rx="10" class="c-lane" stroke-width="1"/>
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="exception-lane" data-composition-frame-id="lane-3-exception" x="46" y="472" width="993" height="94" rx="8" class="c-security-group" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="466" width="1025" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="exception-lane" data-composition-frame-id="lane-3-exception" x="46" y="472" width="1013" height="94" rx="8" class="c-security-group" stroke-width="1"/>
         <text x="54" y="488" class="t-security" font-size="10" font-weight="600">EX / Dispute</text>
 
         <!-- Phase headers -->
-        <line x1="72" y1="35" x2="284" y2="35" class="a-default" stroke-width="1.1"/>
-        <rect x="72" y="27" width="212" height="16" rx="4" class="c-mask"/>
-        <text x="178" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Set up</text>
-        <line x1="340" y1="35" x2="600" y2="35" class="a-emphasis" stroke-width="1.1"/>
-        <rect x="340" y="27" width="260" height="16" rx="4" class="c-mask"/>
-        <text x="470" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">Write</text>
-        <line x1="748" y1="35" x2="1003" y2="35" class="a-default" stroke-width="1.1"/>
-        <rect x="748" y="27" width="255" height="16" rx="4" class="c-mask"/>
-        <text x="875.5" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Use and keep</text>
+        <line x1="77" y1="35" x2="289" y2="35" class="a-default" stroke-width="1.1"/>
+        <rect x="77" y="27" width="212" height="16" rx="4" class="c-mask"/>
+        <text x="183" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Set up</text>
+        <line x1="350" y1="35" x2="615" y2="35" class="a-emphasis" stroke-width="1.1"/>
+        <rect x="350" y="27" width="265" height="16" rx="4" class="c-mask"/>
+        <text x="482.5" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">Write</text>
+        <line x1="768" y1="35" x2="1023" y2="35" class="a-default" stroke-width="1.1"/>
+        <rect x="768" y="27" width="255" height="16" rx="4" class="c-mask"/>
+        <text x="895.5" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Use and keep</text>
 
         <!-- Workflow groups -->
 
 
         <!-- Edge paths -->
-        <path data-edge-from="served" data-edge-to="challenge" data-edge-label="no" data-edge-key="0" data-edge-id="e-challenge" data-composition-points="1022,127;1057,127;1057,534;1027,534" d="M 1022 127 L 1057 127 L 1057 534 L 1027 534" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="commit" data-edge-to="checkpoint" data-edge-label="signatures" data-edge-key="1" data-edge-id="e-checkpoint" data-composition-points="554,284;554,312;645,312;645,396;629,396" d="M 554 284 L 554 312 L 645 312 L 645 396 L 629 396" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="upload" data-edge-to="commit" data-edge-key="2" data-edge-id="e-commit" data-composition-points="456,258;484,258" d="M 456 258 L 484 258" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="quote" data-edge-to="create" data-edge-key="3" data-edge-id="e-create" data-composition-points="238,284;238,362" d="M 238 284 L 238 362" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="served" data-edge-to="keep" data-edge-label="yes" data-edge-key="4" data-edge-id="e-keep" data-composition-points="957,146;957,243;1053,243;1053,396;1037,396" d="M 957 146 L 957 243 L 1053 243 L 1053 396 L 1037 396" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="choose" data-edge-to="quote" data-edge-label="request quote" data-edge-key="5" data-edge-id="e-quote" data-composition-points="188,120;204,120;204,174;238,174;238,232" d="M 188 120 L 204 120 L 204 174 L 238 174 L 238 232" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="checkpoint" data-edge-to="read" data-edge-key="6" data-edge-id="e-read" data-composition-points="629,389;676.5,389;676.5,120;724,120" d="M 629 389 L 676.5 389 L 676.5 120 L 724 120" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="checkpoint" data-edge-to="replica" data-edge-label="more redundancy" data-edge-key="7" data-edge-id="e-replica" data-composition-points="554,430;554,450;794,450;794,422" d="M 554 430 L 554 450 L 794 450 L 794 422" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="read" data-edge-to="served" data-edge-key="8" data-edge-id="e-served" data-composition-points="864,120;892,120" d="M 864 120 L 892 120" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="create" data-edge-to="upload" data-edge-key="9" data-edge-id="e-upload" data-composition-points="313,396;386,396;386,292" d="M 313 396 L 386 396 L 386 292" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="served" data-edge-to="challenge" data-edge-label="no" data-edge-key="0" data-edge-id="e-challenge" data-composition-points="1042,127;1077,127;1077,534;1052,534" d="M 1042 127 L 1077 127 L 1077 534 L 1052 534" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="commit" data-edge-to="checkpoint" data-edge-label="signatures" data-edge-key="1" data-edge-id="e-checkpoint" data-composition-points="569,284;569,312;665,312;665,396;649,396" d="M 569 284 L 569 312 L 665 312 L 665 396 L 649 396" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="upload" data-edge-to="commit" data-edge-key="2" data-edge-id="e-commit" data-composition-points="466,258;494,258" d="M 466 258 L 494 258" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="quote" data-edge-to="create" data-edge-key="3" data-edge-id="e-create" data-composition-points="243,292;243,362" d="M 243 292 L 243 362" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="served" data-edge-to="keep" data-edge-label="yes" data-edge-key="4" data-edge-id="e-keep" data-composition-points="977,146;977,243;1073,243;1073,396;1057,396" d="M 977 146 L 977 243 L 1073 243 L 1073 396 L 1057 396" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="choose" data-edge-to="quote" data-edge-label="request quote" data-edge-key="5" data-edge-id="e-quote" data-composition-points="198,120;214,120;214,174;243,174;243,224" d="M 198 120 L 214 120 L 214 174 L 243 174 L 243 224" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="checkpoint" data-edge-to="read" data-edge-key="6" data-edge-id="e-read" data-composition-points="649,389;696.5,389;696.5,120;744,120" d="M 649 389 L 696.5 389 L 696.5 120 L 744 120" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="checkpoint" data-edge-to="replica" data-edge-label="more redundancy" data-edge-key="7" data-edge-id="e-replica" data-composition-points="569,430;569,446;814,446;814,430" d="M 569 430 L 569 446 L 814 446 L 814 430" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="read" data-edge-to="served" data-edge-key="8" data-edge-id="e-served" data-composition-points="884,120;912,120" d="M 884 120 L 912 120" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="create" data-edge-to="upload" data-edge-key="9" data-edge-id="e-upload" data-composition-points="318,396;396,396;396,292" d="M 318 396 L 396 396 L 396 292" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
 
         <!-- Nodes -->
-        <g id="node-choose" data-node-id="choose" data-node-label="Choose Providers" tabindex="0" role="button" aria-label="Focus Choose Providers, find_matching_providers, dApp client › Set up" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="find_matching_providers" data-node-tag="runtime API" data-node-context="dApp client › Set up">
-          <title>Choose Providers · find_matching_providers · dApp client › Set up · runtime API</title>
-          <rect x="48" y="86" width="140" height="68" rx="6" class="c-mask"/>
-          <rect x="48" y="86" width="140" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
+        <g id="node-choose" data-node-id="choose" data-node-label="Choose Providers" tabindex="0" role="button" aria-label="Focus Choose Providers, providers(offset, limit), dApp client › Set up" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="providers(offset, limit)" data-node-tag="ranked off-chain" data-node-context="dApp client › Set up">
+          <title>Choose Providers · providers(offset, limit) · dApp client › Set up · ranked off-chain</title>
+          <rect x="48" y="86" width="150" height="68" rx="6" class="c-mask"/>
+          <rect x="48" y="86" width="150" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(54 92) scale(0.6875)">
             <rect x="2" y="3" width="12" height="10" rx="2"/>
             <path d="M2 6.5h12"/>
             <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
             <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="118" y="107" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Choose Providers</text>
-          <text data-detail="context" x="118" y="124" class="t-muted" font-size="8" text-anchor="middle">find_matching_providers</text>
-        <text data-detail="fine" x="118" y="142" class="t-frontend" font-size="7" text-anchor="middle">runtime API</text>
+          <text data-node-label="" data-detail-anchor="" x="123" y="107" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Choose Providers</text>
+          <text data-detail="context" x="123" y="124" class="t-muted" font-size="8" text-anchor="middle">providers(offset, limit)</text>
+        <text data-detail="fine" x="123" y="142" class="t-frontend" font-size="7" text-anchor="middle">ranked off-chain</text>
         </g>
 
         <g id="node-read" data-node-id="read" data-node-label="Read and Verify" tabindex="0" role="button" aria-label="Focus Read and Verify, GET /read, hash check, dApp client › Use and keep" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="GET /read, hash check" data-node-tag="background spot checks" data-node-context="dApp client › Use and keep">
           <title>Read and Verify · GET /read, hash check · dApp client › Use and keep · background spot checks</title>
-          <rect x="724" y="86" width="140" height="68" rx="6" class="c-mask"/>
-          <rect x="724" y="86" width="140" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(730 92) scale(0.6875)">
+          <rect x="744" y="86" width="140" height="68" rx="6" class="c-mask"/>
+          <rect x="744" y="86" width="140" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(750 92) scale(0.6875)">
             <rect x="2" y="3" width="12" height="10" rx="2"/>
             <path d="M2 6.5h12"/>
             <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
             <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="794" y="107" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Read and Verify</text>
-          <text data-detail="context" x="794" y="124" class="t-muted" font-size="8" text-anchor="middle">GET /read, hash check</text>
-        <text data-detail="fine" x="794" y="142" class="t-frontend" font-size="7" text-anchor="middle">background spot checks</text>
+          <text data-node-label="" data-detail-anchor="" x="814" y="107" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Read and Verify</text>
+          <text data-detail="context" x="814" y="124" class="t-muted" font-size="8" text-anchor="middle">GET /read, hash check</text>
+        <text data-detail="fine" x="814" y="142" class="t-frontend" font-size="7" text-anchor="middle">background spot checks</text>
         </g>
 
         <g id="node-served" data-node-id="served" data-node-label="Chunk served?" tabindex="0" role="button" aria-label="Focus Chunk served?, data matches hash, dApp client › Use and keep" aria-pressed="false" data-node-kind="security" data-node-sublabel="data matches hash" data-node-context="dApp client › Use and keep">
           <title>Chunk served? · data matches hash · dApp client › Use and keep</title>
-          <rect x="892" y="94" width="130" height="52" rx="6" class="c-mask"/>
-          <rect x="892" y="94" width="130" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(898 100) scale(0.6875)">
+          <rect x="912" y="94" width="130" height="52" rx="6" class="c-mask"/>
+          <rect x="912" y="94" width="130" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(918 100) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="957" y="115" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Chunk served?</text>
-          <text data-detail="context" x="957" y="132" class="t-muted" font-size="8" text-anchor="middle">data matches hash</text>
+          <text data-node-label="" data-detail-anchor="" x="977" y="115" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Chunk served?</text>
+          <text data-detail="context" x="977" y="132" class="t-muted" font-size="8" text-anchor="middle">data matches hash</text>
         </g>
 
-        <g id="node-quote" data-node-id="quote" data-node-label="POST /negotiate" tabindex="0" role="button" aria-label="Focus POST /negotiate, signed AgreementTerms, Provider HTTP › Set up" aria-pressed="false" data-node-kind="backend" data-node-sublabel="signed AgreementTerms" data-node-context="Provider HTTP › Set up">
-          <title>POST /negotiate · signed AgreementTerms · Provider HTTP › Set up</title>
-          <rect x="168" y="232" width="140" height="52" rx="6" class="c-mask"/>
-          <rect x="168" y="232" width="140" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(174 238) scale(0.6875)">
+        <g id="node-quote" data-node-id="quote" data-node-label="POST /negotiate" tabindex="0" role="button" aria-label="Focus POST /negotiate, signed AgreementTerms, Provider HTTP › Set up" aria-pressed="false" data-node-kind="backend" data-node-sublabel="signed AgreementTerms" data-node-tag="nonce: AgreementNonces" data-node-context="Provider HTTP › Set up">
+          <title>POST /negotiate · signed AgreementTerms · Provider HTTP › Set up · nonce: AgreementNonces</title>
+          <rect x="168" y="224" width="150" height="68" rx="6" class="c-mask"/>
+          <rect x="168" y="224" width="150" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(174 230) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="238" y="253" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">POST /negotiate</text>
-          <text data-detail="context" x="238" y="270" class="t-muted" font-size="8" text-anchor="middle">signed AgreementTerms</text>
+          <text data-node-label="" data-detail-anchor="" x="243" y="245" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">POST /negotiate</text>
+          <text data-detail="context" x="243" y="262" class="t-muted" font-size="8" text-anchor="middle">signed AgreementTerms</text>
+        <text data-detail="fine" x="243" y="280" class="t-backend" font-size="7" text-anchor="middle">nonce: AgreementNonces</text>
         </g>
 
         <g id="node-upload" data-node-id="upload" data-node-label="Upload" tabindex="0" role="button" aria-label="Focus Upload, POST /exists, PUT /node, Provider HTTP › Write" aria-pressed="false" data-node-kind="backend" data-node-sublabel="POST /exists, PUT /node" data-node-tag="bottom-up" data-node-context="Provider HTTP › Write">
           <title>Upload · POST /exists, PUT /node · Provider HTTP › Write · bottom-up</title>
-          <rect x="316" y="224" width="140" height="68" rx="6" class="c-mask"/>
-          <rect x="316" y="224" width="140" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(322 230) scale(0.6875)">
+          <rect x="326" y="224" width="140" height="68" rx="6" class="c-mask"/>
+          <rect x="326" y="224" width="140" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(332 230) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="386" y="245" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Upload</text>
-          <text data-detail="context" x="386" y="262" class="t-muted" font-size="8" text-anchor="middle">POST /exists, PUT /node</text>
-        <text data-detail="fine" x="386" y="280" class="t-backend" font-size="7" text-anchor="middle">bottom-up</text>
+          <text data-node-label="" data-detail-anchor="" x="396" y="245" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Upload</text>
+          <text data-detail="context" x="396" y="262" class="t-muted" font-size="8" text-anchor="middle">POST /exists, PUT /node</text>
+        <text data-detail="fine" x="396" y="280" class="t-backend" font-size="7" text-anchor="middle">bottom-up</text>
         </g>
 
-        <g id="node-commit" data-node-id="commit" data-node-label="POST /commit" tabindex="0" role="button" aria-label="Focus POST /commit, keep provider_signature, Provider HTTP › Write" aria-pressed="false" data-node-kind="backend" data-node-sublabel="keep provider_signature" data-node-context="Provider HTTP › Write">
-          <title>POST /commit · keep provider_signature · Provider HTTP › Write</title>
-          <rect x="484" y="232" width="140" height="52" rx="6" class="c-mask"/>
-          <rect x="484" y="232" width="140" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(490 238) scale(0.6875)">
+        <g id="node-commit" data-node-id="commit" data-node-label="POST /commit" tabindex="0" role="button" aria-label="Focus POST /commit, keep provider_signatures, Provider HTTP › Write" aria-pressed="false" data-node-kind="backend" data-node-sublabel="keep provider_signatures" data-node-context="Provider HTTP › Write">
+          <title>POST /commit · keep provider_signatures · Provider HTTP › Write</title>
+          <rect x="494" y="232" width="150" height="52" rx="6" class="c-mask"/>
+          <rect x="494" y="232" width="150" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(500 238) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="554" y="253" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">POST /commit</text>
-          <text data-detail="context" x="554" y="270" class="t-muted" font-size="8" text-anchor="middle">keep provider_signature</text>
+          <text data-node-label="" data-detail-anchor="" x="569" y="253" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">POST /commit</text>
+          <text data-detail="context" x="569" y="270" class="t-muted" font-size="8" text-anchor="middle">keep provider_signatures</text>
         </g>
 
-        <g id="node-create" data-node-id="create" data-node-label="Create Bucket" tabindex="0" role="button" aria-label="Focus Create Bucket, create_bucket_with_primary, Chain › Set up" aria-pressed="false" data-node-kind="database" data-node-sublabel="create_bucket_with_primary" data-node-tag="or create_bucket" data-node-context="Chain › Set up">
-          <title>Create Bucket · create_bucket_with_primary · Chain › Set up · or create_bucket</title>
-          <rect x="163" y="362" width="150" height="68" rx="6" class="c-mask"/>
-          <rect x="163" y="362" width="150" height="68" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(169 368) scale(0.6875)">
+        <g id="node-create" data-node-id="create" data-node-label="Create Bucket" tabindex="0" role="button" aria-label="Focus Create Bucket, create_bucket_with_primary, Chain › Set up" aria-pressed="false" data-node-kind="database" data-node-sublabel="create_bucket_with_primary" data-node-tag="expected_version" data-node-context="Chain › Set up">
+          <title>Create Bucket · create_bucket_with_primary · Chain › Set up · expected_version</title>
+          <rect x="168" y="362" width="150" height="68" rx="6" class="c-mask"/>
+          <rect x="168" y="362" width="150" height="68" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(174 368) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="238" y="383" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Create Bucket</text>
-          <text data-detail="context" x="238" y="400" class="t-muted" font-size="8" text-anchor="middle">create_bucket_with_primary</text>
-        <text data-detail="fine" x="238" y="418" class="t-database" font-size="7" text-anchor="middle">or create_bucket</text>
+          <text data-node-label="" data-detail-anchor="" x="243" y="383" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Create Bucket</text>
+          <text data-detail="context" x="243" y="400" class="t-muted" font-size="8" text-anchor="middle">create_bucket_with_primary</text>
+        <text data-detail="fine" x="243" y="418" class="t-database" font-size="7" text-anchor="middle">expected_version</text>
         </g>
 
-        <g id="node-checkpoint" data-node-id="checkpoint" data-node-label="checkpoint" tabindex="0" role="button" aria-label="Focus checkpoint, min_providers signatures, Chain › Write" aria-pressed="false" data-node-kind="database" data-node-sublabel="min_providers signatures" data-node-tag="GET /checkpoint-signature" data-node-context="Chain › Write">
-          <title>checkpoint · min_providers signatures · Chain › Write · GET /checkpoint-signature</title>
-          <rect x="479" y="362" width="150" height="68" rx="6" class="c-mask"/>
-          <rect x="479" y="362" width="150" height="68" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(485 368) scale(0.6875)">
+        <g id="node-checkpoint" data-node-id="checkpoint" data-node-label="checkpoint" tabindex="0" role="button" aria-label="Focus checkpoint, (AccountId, Signature) pairs, Chain › Write" aria-pressed="false" data-node-kind="database" data-node-sublabel="(AccountId, Signature) pairs" data-node-tag="GET /checkpoint-signature" data-node-context="Chain › Write">
+          <title>checkpoint · (AccountId, Signature) pairs · Chain › Write · GET /checkpoint-signature</title>
+          <rect x="489" y="362" width="160" height="68" rx="6" class="c-mask"/>
+          <rect x="489" y="362" width="160" height="68" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(495 368) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="554" y="383" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">checkpoint</text>
-          <text data-detail="context" x="554" y="400" class="t-muted" font-size="8" text-anchor="middle">min_providers signatures</text>
-        <text data-detail="fine" x="554" y="418" class="t-database" font-size="7" text-anchor="middle">GET /checkpoint-signature</text>
+          <text data-node-label="" data-detail-anchor="" x="569" y="383" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">checkpoint</text>
+          <text data-detail="context" x="569" y="400" class="t-muted" font-size="8" text-anchor="middle">(AccountId, Signature) pairs</text>
+        <text data-detail="fine" x="569" y="418" class="t-database" font-size="7" text-anchor="middle">GET /checkpoint-signature</text>
         </g>
 
-        <g id="node-replica" data-node-id="replica" data-node-label="add_replica_provider" tabindex="0" role="button" aria-label="Focus add_replica_provider, with a replica quote, Chain › Use and keep" aria-pressed="false" data-node-kind="database" data-node-sublabel="with a replica quote" data-node-context="Chain › Use and keep">
-          <title>add_replica_provider · with a replica quote · Chain › Use and keep</title>
-          <rect x="719" y="370" width="150" height="52" rx="6" class="c-mask"/>
-          <rect x="719" y="370" width="150" height="52" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(725 376) scale(0.6875)">
+        <g id="node-replica" data-node-id="replica" data-node-label="add_replica_provider" tabindex="0" role="button" aria-label="Focus add_replica_provider, with a replica quote, Chain › Use and keep" aria-pressed="false" data-node-kind="database" data-node-sublabel="with a replica quote" data-node-tag="expected_version" data-node-context="Chain › Use and keep">
+          <title>add_replica_provider · with a replica quote · Chain › Use and keep · expected_version</title>
+          <rect x="739" y="362" width="150" height="68" rx="6" class="c-mask"/>
+          <rect x="739" y="362" width="150" height="68" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(745 368) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="794" y="391" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">add_replica_provider</text>
-          <text data-detail="context" x="794" y="408" class="t-muted" font-size="8" text-anchor="middle">with a replica quote</text>
+          <text data-node-label="" data-detail-anchor="" x="814" y="383" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">add_replica_provider</text>
+          <text data-detail="context" x="814" y="400" class="t-muted" font-size="8" text-anchor="middle">with a replica quote</text>
+        <text data-detail="fine" x="814" y="418" class="t-database" font-size="7" text-anchor="middle">expected_version</text>
         </g>
 
         <g id="node-keep" data-node-id="keep" data-node-label="Extend or Settle" tabindex="0" role="button" aria-label="Focus Extend or Settle, extend_agreement, end_agreement, Chain › Use and keep" aria-pressed="false" data-node-kind="database" data-node-sublabel="extend_agreement, end_agreement" data-node-tag="Pay | Burn" data-node-context="Chain › Use and keep">
           <title>Extend or Settle · extend_agreement, end_agreement · Chain › Use and keep · Pay | Burn</title>
-          <rect x="877" y="362" width="160" height="68" rx="6" class="c-mask"/>
-          <rect x="877" y="362" width="160" height="68" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(883 368) scale(0.6875)">
+          <rect x="897" y="362" width="160" height="68" rx="6" class="c-mask"/>
+          <rect x="897" y="362" width="160" height="68" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(903 368) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="957" y="383" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Extend or Settle</text>
-          <text data-detail="context" x="957" y="400" class="t-muted" font-size="8" text-anchor="middle">extend_agreement, end_agreement</text>
-        <text data-detail="fine" x="957" y="418" class="t-database" font-size="7" text-anchor="middle">Pay | Burn</text>
+          <text data-node-label="" data-detail-anchor="" x="977" y="383" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Extend or Settle</text>
+          <text data-detail="context" x="977" y="400" class="t-muted" font-size="8" text-anchor="middle">extend_agreement, end_agreement</text>
+        <text data-detail="fine" x="977" y="418" class="t-database" font-size="7" text-anchor="middle">Pay | Burn</text>
         </g>
 
-        <g id="node-challenge" data-node-id="challenge" data-node-label="Challenge" tabindex="0" role="button" aria-label="Focus Challenge, challenge_* (3 modes), Dispute › Use and keep" aria-pressed="false" data-node-kind="security" data-node-sublabel="challenge_* (3 modes)" data-node-context="Dispute › Use and keep">
-          <title>Challenge · challenge_* (3 modes) · Dispute › Use and keep</title>
-          <rect x="887" y="508" width="140" height="52" rx="6" class="c-mask"/>
-          <rect x="887" y="508" width="140" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(893 514) scale(0.6875)">
+        <g id="node-challenge" data-node-id="challenge" data-node-label="Challenge" tabindex="0" role="button" aria-label="Focus Challenge, challenge_* (3 modes), Dispute › Use and keep" aria-pressed="false" data-node-kind="security" data-node-sublabel="challenge_* (3 modes)" data-node-tag="timeout: resolve_expired_challenge" data-node-context="Dispute › Use and keep">
+          <title>Challenge · challenge_* (3 modes) · Dispute › Use and keep · timeout: resolve_expired_challenge</title>
+          <rect x="902" y="500" width="150" height="68" rx="6" class="c-mask"/>
+          <rect x="902" y="500" width="150" height="68" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(908 506) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="957" y="529" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Challenge</text>
-          <text data-detail="context" x="957" y="546" class="t-muted" font-size="8" text-anchor="middle">challenge_* (3 modes)</text>
+          <text data-node-label="" data-detail-anchor="" x="977" y="521" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Challenge</text>
+          <text data-detail="context" x="977" y="538" class="t-muted" font-size="8" text-anchor="middle">challenge_* (3 modes)</text>
+        <text data-detail="fine" x="977" y="556" class="t-security" font-size="6.9" text-anchor="middle">timeout: resolve_expired_challenge</text>
         </g>
 
         <!-- Edge labels -->
         <g data-detail="context" data-edge-from="served" data-edge-to="challenge" data-edge-label="no" data-edge-key="0" data-edge-id="e-challenge">
-          <rect x="1024.5" y="107" width="30" height="14" rx="3" class="c-mask"/>
-          <text x="1039.5" y="117" class="t-security" font-size="8" text-anchor="middle">no</text>
+          <rect x="1044.5" y="107" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="1059.5" y="117" class="t-security" font-size="8" text-anchor="middle">no</text>
         </g>
         <g data-detail="context" data-edge-from="commit" data-edge-to="checkpoint" data-edge-label="signatures" data-edge-key="1" data-edge-id="e-checkpoint">
-          <rect x="570.5" y="292" width="58" height="14" rx="3" class="c-mask"/>
-          <text x="599.5" y="302" class="t-backend" font-size="8" text-anchor="middle">signatures</text>
+          <rect x="588" y="292" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="617" y="302" class="t-backend" font-size="8" text-anchor="middle">signatures</text>
         </g>
 
 
         <g data-detail="context" data-edge-from="served" data-edge-to="keep" data-edge-label="yes" data-edge-key="4" data-edge-id="e-keep">
-          <rect x="990" y="223" width="30" height="14" rx="3" class="c-mask"/>
-          <text x="1005" y="233" class="t-backend" font-size="8" text-anchor="middle">yes</text>
+          <rect x="1010" y="223" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="1025" y="233" class="t-backend" font-size="8" text-anchor="middle">yes</text>
         </g>
         <g data-detail="context" data-edge-from="choose" data-edge-to="quote" data-edge-label="request quote" data-edge-key="5" data-edge-id="e-quote">
-          <rect x="184.8" y="154" width="72.4" height="14" rx="3" class="c-mask"/>
-          <text x="221" y="164" class="t-backend" font-size="8" text-anchor="middle">request quote</text>
+          <rect x="192.3" y="154" width="72.4" height="14" rx="3" class="c-mask"/>
+          <text x="228.5" y="164" class="t-backend" font-size="8" text-anchor="middle">request quote</text>
         </g>
 
         <g data-detail="context" data-edge-from="checkpoint" data-edge-to="replica" data-edge-label="more redundancy" data-edge-key="7" data-edge-id="e-replica">
-          <rect x="633" y="430" width="82" height="14" rx="3" class="c-mask"/>
-          <text x="674" y="440" class="t-database" font-size="8" text-anchor="middle">more redundancy</text>
+          <rect x="650.5" y="426" width="82" height="14" rx="3" class="c-mask"/>
+          <text x="691.5" y="436" class="t-database" font-size="8" text-anchor="middle">more redundancy</text>
         </g>
 
 
@@ -618,10 +621,13 @@
           <h3>Setup and write</h3>
         </div>
         <ul>
+          <li>&bull; Discovery is off-chain: page providers(offset, limit) from the runtime API and rank by stake, price and stats yourself</li>
+          <li>&bull; A quote has no price and no version. Read ProviderInfoResponse.version and pass it as expected_version to create_bucket_with_primary, add_primary_provider, add_replica_provider, extend_agreement, top_up_agreement and create_replacement; ProviderVersionMismatch means the provider worsened its terms</li>
+          <li>&bull; The quote nonce is the owner&#39;s AgreementNonces value; one quote per nonce is redeemable, NonceMismatch otherwise</li>
           <li>&bull; Create the bucket with create_bucket_with_primary, or create_bucket then add_primary_provider</li>
           <li>&bull; Primaries do not sync with each other: upload to every primary</li>
-          <li>&bull; Keep the provider_signature from POST /commit: it is the evidence for challenge_offchain</li>
-          <li>&bull; checkpoint takes a GET /checkpoint-signature signature from at least min_providers primaries</li>
+          <li>&bull; Keep the provider_signatures from POST /commit: they are the evidence for challenge_offchain</li>
+          <li>&bull; checkpoint takes (AccountId, Signature) pairs from GET /checkpoint-signature for at least min_providers signing slots, the consistency_proof from one primary for an append, and activate_replacements (false unless you activate a pending replacement)</li>
         </ul>
       </div>
 
@@ -634,7 +640,8 @@
           <li>&bull; challenge_offchain: with a commit signature; for buckets with frequent writes</li>
           <li>&bull; challenge_checkpoint: against the on-chain snapshot; for cold buckets</li>
           <li>&bull; challenge_replica: against the root a replica confirmed on-chain</li>
-          <li>&bull; The provider has ChallengeTimeout to respond (12 Challenge protocol)</li>
+          <li>&bull; The provider has ChallengeTimeout to respond; an invalid response is rejected and the challenge stays open (12 Challenge protocol)</li>
+          <li>&bull; Only a timeout slashes: anyone calls resolve_expired_challenge after the deadline</li>
         </ul>
       </div>
 

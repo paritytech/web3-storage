@@ -53,7 +53,7 @@
           "primaries",
           "replica"
         ],
-        "note": "A challenge requires an on-chain response; no response by the deadline slashes the full stake."
+        "note": "A challenge requires an on-chain response; no response by the deadline slashes the stake."
       }
     ]
   },
@@ -92,7 +92,7 @@
       "type": "backend",
       "label": "Primary Providers",
       "sublabel": "receive writes, sign checkpoints",
-      "tag": "admin or bucket creator, max 5",
+      "tag": "added by admin, max MaxPrimarySlots slots",
       "pos": [
         140,
         290
@@ -326,7 +326,7 @@
       "dot": "rose",
       "title": "Enforcement",
       "items": [
-        "An unanswered challenge slashes the entire stake",
+        "An unanswered challenge slashes a physical provider's entire stake, or per_provider_stake per liable member of a virtual one",
         "Private bucket: members and primary-agreement owners challenge primaries",
         "Counterparty challenges cost the provider part of the response fee"
       ]

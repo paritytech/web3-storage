@@ -4,14 +4,14 @@
   "meta": {
     "title": "Changing a Primary Provider",
     "quality_profile": "showcase",
-    "viewBox": [1060, 860],
+    "viewBox": [1060, 900],
     "column_fit": "spread",
     "views": [
       {
         "id": "add",
         "label": "Add new primary",
         "focus": ["admin", "new", "pallet"],
-        "note": "The admin redeems terms that the new primary signed for the existing bucket."
+        "note": "The admin redeems terms that the new primary signed for the existing bucket. expected_version pins the provider's terms."
       },
       {
         "id": "move",
@@ -21,9 +21,9 @@
       },
       {
         "id": "handover",
-        "label": "Checkpoint and end",
+        "label": "Checkpoint and expiry",
         "focus": ["admin", "old", "pallet"],
-        "note": "The new primary signs a checkpoint before the old agreement ends."
+        "note": "The new primary signs a checkpoint while the old one is still bound. The old agreement ends at expiry; there is no early end."
       }
     ]
   },
@@ -36,29 +36,30 @@
   "segments": [
     { "from": 150, "to": 330, "label": "Add the new primary to the bucket" },
     { "from": 350, "to": 560, "label": "Client moves the data" },
-    { "from": 580, "to": 770, "label": "Checkpoint, then end the old agreement" }
+    { "from": 580, "to": 810, "label": "Checkpoint, then let the old agreement expire" }
   ],
   "messages": [
-    { "id": "negotiate", "from": "admin", "to": "new", "y": 185, "label": "POST /negotiate (bucket = bucket_id, nonce)", "variant": "default" },
-    { "id": "terms", "from": "new", "to": "admin", "y": 222, "label": "AgreementTerms, BucketTarget::Existing + signature", "variant": "return" },
-    { "id": "add", "from": "admin", "to": "pallet", "y": 262, "label": "add_primary_provider(bucket_id, provider, terms, sig)", "variant": "emphasis" },
+    { "id": "negotiate", "from": "admin", "to": "new", "y": 185, "label": "POST /negotiate (owner, bucket = bucket_id, nonce)", "variant": "default" },
+    { "id": "terms", "from": "new", "to": "admin", "y": 222, "label": "terms (BucketTarget::Existing) + provider_signatures, no price", "variant": "return" },
+    { "id": "add", "from": "admin", "to": "pallet", "y": 262, "label": "add_primary_provider(bucket_id, provider, terms, sigs, expected_version)", "variant": "emphasis" },
     { "id": "added", "from": "pallet", "to": "admin", "y": 302, "label": "ProviderAddedToBucket, StorageAgreementEstablished", "variant": "return" },
     { "id": "download", "from": "admin", "to": "old", "y": 385, "label": "GET /node (skip with a local copy)", "variant": "dashed" },
     { "id": "nodes", "from": "old", "to": "admin", "y": 422, "label": "nodes, checked against data roots", "variant": "return" },
     { "id": "upload", "from": "admin", "to": "new", "y": 462, "label": "PUT /node, bottom-up", "variant": "default" },
-    { "id": "commit", "from": "admin", "to": "new", "y": 500, "label": "POST /commit(data_roots)", "variant": "default" },
-    { "id": "signed", "from": "new", "to": "admin", "y": 537, "label": "provider_signature", "variant": "return" },
-    { "id": "checkpoint", "from": "admin", "to": "pallet", "y": 615, "label": "checkpoint or extend_checkpoint with new signature", "variant": "emphasis" },
+    { "id": "commit", "from": "admin", "to": "new", "y": 500, "label": "POST /commit (agreement_id, data_roots)", "variant": "default" },
+    { "id": "signed", "from": "new", "to": "admin", "y": 537, "label": "provider_signatures", "variant": "return" },
+    { "id": "checkpoint", "from": "admin", "to": "pallet", "y": 615, "label": "checkpoint with the new primary's signature", "variant": "emphasis" },
     { "id": "signer", "from": "pallet", "to": "admin", "y": 652, "label": "new primary in snapshot.primary_signers", "variant": "return" },
-    { "id": "end", "from": "admin", "to": "pallet", "y": 700, "label": "end_agreement(old): early, or after expires_at", "variant": "security" },
-    { "id": "removed", "from": "pallet", "to": "old", "y": 740, "label": "AgreementEnded or PrimaryAgreementEndedEarly", "variant": "return" }
+    { "id": "end", "from": "admin", "to": "pallet", "y": 700, "label": "after expires_at: end_agreement(old, EndAction::Pay | Burn)", "variant": "default" },
+    { "id": "claim", "from": "old", "to": "pallet", "y": 740, "label": "or after SettlementTimeout: claim_expired_agreement", "variant": "dashed" },
+    { "id": "removed", "from": "pallet", "to": "old", "y": 780, "label": "AgreementEnded or AgreementExpiredClaimed; removed from primary_providers", "variant": "return" }
   ],
   "activations": [
     { "participant": "new", "from": 180, "to": 227, "type": "backend" },
     { "participant": "pallet", "from": 257, "to": 307, "type": "backend" },
     { "participant": "old", "from": 380, "to": 427, "type": "backend" },
     { "participant": "new", "from": 457, "to": 542, "type": "backend" },
-    { "participant": "pallet", "from": 610, "to": 745, "type": "backend" }
+    { "participant": "pallet", "from": 610, "to": 785, "type": "backend" }
   ],
   "cards": [
     {
@@ -67,7 +68,9 @@
       "items": [
         "Both primaries are in bucket.primary_providers until the old agreement ends",
         "The new primary signs a checkpoint while the old one is still bound",
-        "A free slot under MaxPrimaryProviders is required"
+        "Each checkpoint replaces primary_signers with its own signers and needs min_providers on its own",
+        "The bucket's slot layout must stay within MaxPrimarySlots; a virtual provider takes one slot per member",
+        "The quote contains no price or version; expected_version fails the call with ProviderVersionMismatch if the provider's terms changed"
       ]
     },
     {
@@ -75,25 +78,27 @@
       "title": "The client moves the data",
       "items": [
         "Primaries do not sync with each other",
-        "A client that keeps a local copy only uploads",
-        "Otherwise the change costs a full download and a full upload"
+        "A client that keeps a local copy only uploads; otherwise the change costs a full download and a full upload",
+        "Provider-to-provider fetch is a Future Direction; today the new primary gets the data only from the client"
       ]
     },
     {
       "dot": "amber",
-      "title": "Ending the old agreement",
+      "title": "Removing the old primary",
       "items": [
-        "After expires_at: owner settles with end_agreement, or the provider calls claim_expired_agreement after SettlementTimeout",
-        "Before expiry: the admin ends it with end_agreement; the full remaining payment is paid or burned",
-        "Blocked while a challenge against the old primary is unresolved"
+        "The agreement is binding: no early end by the admin or the provider. The admin lets it expire",
+        "After expires_at the owner calls end_agreement with EndAction::Pay or Burn within SettlementTimeout; after that the provider calls claim_expired_agreement",
+        "An open challenge against the old primary blocks neither call: the challenge contains what its resolution needs"
       ]
     },
     {
       "dot": "slate",
-      "title": "Not current behaviour",
+      "title": "Virtual providers: replacement agreement",
       "items": [
-        "Provider-to-provider fetch is a Future Direction in the design",
-        "Today the new primary gets the data only from the client"
+        "create_replacement(bucket_id, provider, additional_duration, expected_version) (owner only, NotVirtual otherwise) stores a pending successor: new agreement_id, current member set, stake snapshot",
+        "The new member set syncs and signs. The first checkpoint with activate_replacements (primary) or confirm_replica_sync with activate_replacement (replica) activates it; the old agreement settles as an extension would",
+        "If the old agreement expires first the successor lapses: ReplacementExpired, its payment is released to the owner",
+        "While pending, extend_agreement and top_up_agreement are rejected and there is no cancel"
       ]
     }
   ]

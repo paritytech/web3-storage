@@ -51,22 +51,22 @@
     { "id": "create", "from": "admin", "to": "pallet", "y": 185, "label": "create_bucket(min_providers, visibility)", "variant": "emphasis" },
     { "id": "created", "from": "pallet", "to": "admin", "y": 225, "label": "BucketCreated", "variant": "return" },
 
-    { "id": "neg-new", "from": "admin", "to": "primary", "y": 300, "label": "POST /negotiate, bucket: null, nonce", "variant": "default" },
-    { "id": "terms-new", "from": "primary", "to": "admin", "y": 340, "label": "signed AgreementTerms, BucketTarget::New", "variant": "return" },
-    { "id": "redeem-new", "from": "admin", "to": "pallet", "y": 380, "label": "create_bucket_with_primary(provider, terms, sig, visibility)", "variant": "emphasis" },
-    { "id": "hold-new", "from": "pallet", "to": "holds", "y": 420, "label": "hold AgreementPayment", "variant": "security" },
+    { "id": "neg-new", "from": "admin", "to": "primary", "y": 300, "label": "POST /negotiate: owner, bucket: null, max_bytes, duration, nonce", "variant": "default", "note": "nonce = AgreementNonces[owner], read from chain" },
+    { "id": "terms-new", "from": "primary", "to": "admin", "y": 340, "label": "AgreementTerms (BucketTarget::New) + provider_signatures", "variant": "return", "note": "no price, no version in the quote" },
+    { "id": "redeem-new", "from": "admin", "to": "pallet", "y": 380, "label": "create_bucket_with_primary(provider, terms, sigs, expected_version, visibility)", "variant": "emphasis" },
+    { "id": "hold-new", "from": "pallet", "to": "holds", "y": 420, "label": "hold AgreementPayment at the provider's current price", "variant": "security" },
     { "id": "ev-new", "from": "pallet", "to": "admin", "y": 455, "label": "BucketCreated, ProviderAddedToBucket, StorageAgreementEstablished", "variant": "return" },
 
-    { "id": "neg-existing", "from": "admin", "to": "primary", "y": 525, "label": "POST /negotiate, bucket: id, nonce", "variant": "default" },
-    { "id": "terms-existing", "from": "primary", "to": "admin", "y": 565, "label": "signed AgreementTerms, BucketTarget::Existing(id)", "variant": "return" },
-    { "id": "redeem-existing", "from": "admin", "to": "pallet", "y": 605, "label": "add_primary_provider(bucket_id, provider, terms, sig)", "variant": "emphasis" },
-    { "id": "hold-existing", "from": "pallet", "to": "holds", "y": 645, "label": "hold AgreementPayment", "variant": "security" },
+    { "id": "neg-existing", "from": "admin", "to": "primary", "y": 525, "label": "POST /negotiate: owner, bucket: id, max_bytes, duration, nonce", "variant": "default" },
+    { "id": "terms-existing", "from": "primary", "to": "admin", "y": 565, "label": "AgreementTerms (BucketTarget::Existing(id)) + provider_signatures", "variant": "return" },
+    { "id": "redeem-existing", "from": "admin", "to": "pallet", "y": 605, "label": "add_primary_provider(bucket_id, provider, terms, sigs, expected_version)", "variant": "emphasis" },
+    { "id": "hold-existing", "from": "pallet", "to": "holds", "y": 645, "label": "hold AgreementPayment at the provider's current price", "variant": "security" },
     { "id": "ev-existing", "from": "pallet", "to": "admin", "y": 680, "label": "ProviderAddedToBucket, StorageAgreementEstablished", "variant": "return" },
 
-    { "id": "neg-replica", "from": "funder", "to": "replica", "y": 750, "label": "POST /negotiate, bucket: id, nonce, replica_params", "variant": "default" },
-    { "id": "terms-replica", "from": "replica", "to": "funder", "y": 790, "label": "signed AgreementTerms, Existing(id) + replica_params", "variant": "return" },
-    { "id": "redeem-replica", "from": "funder", "to": "pallet", "y": 830, "label": "add_replica_provider(bucket_id, provider, terms, sig)", "variant": "emphasis" },
-    { "id": "hold-replica", "from": "pallet", "to": "holds", "y": 870, "label": "hold AgreementPayment + sync_balance", "variant": "security" },
+    { "id": "neg-replica", "from": "funder", "to": "replica", "y": 750, "label": "POST /negotiate: owner, bucket: id, max_bytes, duration, nonce, replica_params", "variant": "default" },
+    { "id": "terms-replica", "from": "replica", "to": "funder", "y": 790, "label": "AgreementTerms (Existing(id), replica_params) + provider_signatures", "variant": "return" },
+    { "id": "redeem-replica", "from": "funder", "to": "pallet", "y": 830, "label": "add_replica_provider(bucket_id, provider, terms, sigs, expected_version)", "variant": "emphasis" },
+    { "id": "hold-replica", "from": "pallet", "to": "holds", "y": 870, "label": "hold AgreementPayment: storage payment + sync_balance", "variant": "security" },
     { "id": "ev-replica", "from": "pallet", "to": "funder", "y": 905, "label": "ReplicaAgreementEstablished", "variant": "return" }
   ],
   "activations": [
@@ -95,19 +95,21 @@
       "items": [
         "terms.bucket matches the call (TermsBucketMismatch); terms.owner matches the origin (TermsOwnerMismatch)",
         "now <= terms.valid_until <= now + RequestTimeout (TermsExpired / TermsValidityTooLong)",
-        "Signature over blake2_256(context | SCALE(terms)); terms.nonce equals AgreementNonces[owner], which redemption advances (NonceMismatch)",
-        "Provider active, terms.max_bytes > 0 and within capacity and stake (CapacityExceeded / InsufficientStakeForBytes)",
-        "The client reads AgreementNonces[owner] at the best block and sends it as nonce; the provider signs it unchanged. One quote per nonce: on NonceMismatch, read it again and request a new quote"
+        "sigs (ProviderSignatures) over blake2_256(context | genesis_hash | SCALE(terms)): one entry for a physical provider, at least k members for a virtual one",
+        "terms.nonce equals AgreementNonces[owner]; redemption advances it. On NonceMismatch the client reads it again and requests a new quote",
+        "Term pinning: expected_version equals the provider's version (ProviderVersionMismatch). The quote contains no price and no version",
+        "Provider registered with stake >= MinProviderStake (StakeBelowMinimum), duration within its bounds, terms.max_bytes > 0 (InvalidMaxBytesRequest) and within capacity (CapacityExceeded). No stake-per-byte check"
       ]
     },
     {
       "dot": "amber",
-      "title": "Role-specific checks",
+      "title": "Role-specific checks and what is written",
       "items": [
-        "Primary: replica_params = None, ProviderNotAcceptingPrimary, MaxPrimaryProvidersReached",
+        "Primary: replica_params = None, ProviderNotAcceptingPrimary, MaxPrimarySlotsExceeded (a virtual provider takes one slot per member)",
         "Replica: replica_params = Some (MissingReplicaTerms), ProviderNotAcceptingReplicas",
         "Existing bucket: BucketNotFound, AgreementAlreadyExists",
-        "Held payment: terms.price_per_byte * terms.max_bytes * terms.duration"
+        "Held payment: provider.settings.price_per_byte * terms.max_bytes * terms.duration, price read from ProviderInfo at redemption, prepaid",
+        "StorageAgreement gets a per-bucket agreement_id and snapshots provider.stake; a replica also snapshots replica_sync_price as sync_price"
       ]
     }
   ]

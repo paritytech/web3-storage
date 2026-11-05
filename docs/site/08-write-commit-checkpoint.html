@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"upload","label":"Upload","focus":["writer","primary_a"],"note":"Upload stores content-addressed nodes. It does not change the MMR."},{"id":"commit","label":"Commit","focus":["writer","primary_a","primary_b"],"note":"Each primary signs a CommitmentPayload for the new MMR state. The signature is the immediate guarantee."},{"id":"checkpoint","label":"Checkpoint","focus":["writer","primary_a","pallet","bucket"],"note":"The chain records the Commitment and which primaries signed it."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"upload","label":"Upload","focus":["writer","primary_a"],"note":"Upload stores content-addressed nodes. It does not change the MMR."},{"id":"commit","label":"Commit","focus":["writer","primary_a","primary_b"],"note":"Each primary signs a CommitmentPayload naming the bucket_id, agreement_id and genesis hash. The signature is the immediate guarantee."},{"id":"checkpoint","label":"Checkpoint","focus":["writer","primary_a","pallet","bucket"],"note":"The chain checks that the commitment repeats or extends the snapshot or, for an admin deletion, starts a new MMR; it records the signers."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -241,21 +241,22 @@
         <text data-detail="fine" x="176" y="244" class="t-dim" font-size="7">Writer role; 507 quota_exceeded</text>
         </g>
 
-        <g data-edge-from="writer" data-edge-to="primary_a" data-edge-label="POST /commit (data_roots)" data-edge-key="2" data-edge-id="commit">
+        <g data-edge-from="writer" data-edge-to="primary_a" data-edge-label="POST /commit (agreement_id, data_roots)" data-edge-key="2" data-edge-id="commit">
           <path data-composition-edge-from="writer" data-composition-edge-to="primary_a" data-composition-edge-id="commit" data-composition-points="164,286;422,286" d="M 164 286 L 422 286" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="222" y="266" width="142" height="16" rx="3" class="c-mask"/>
-          <text x="293" y="276" class="t-backend" font-size="9" text-anchor="middle">POST /commit (data_roots)</text>
+          <rect x="185.6" y="266" width="214.8" height="16" rx="3" class="c-mask"/>
+          <text x="293" y="276" class="t-backend" font-size="9" text-anchor="middle">POST /commit (agreement_id, data_roots)</text>
         </g>
         <text data-detail="fine" x="176" y="304" class="t-dim" font-size="7">Writer role</text>
         </g>
 
-        <g data-edge-from="primary_a" data-edge-to="writer" data-edge-label="mmr_root, start_seq, leaf_count, provider_signature" data-edge-key="3" data-edge-id="signature">
+        <g data-edge-from="primary_a" data-edge-to="writer" data-edge-label="mmr_root, start_seq, leaf_count, provider_signatures" data-edge-key="3" data-edge-id="signature">
           <path data-composition-edge-from="primary_a" data-composition-edge-to="writer" data-composition-edge-id="signature" data-composition-points="422,322;164,322" d="M 422 322 L 164 322" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="154.4" y="302" width="277.2" height="16" rx="3" class="c-mask"/>
-          <text x="293" y="312" class="t-muted" font-size="9" text-anchor="middle">mmr_root, start_seq, leaf_count, provider_signature</text>
+          <rect x="151.79999999999998" y="302" width="282.40000000000003" height="16" rx="3" class="c-mask"/>
+          <text x="293" y="312" class="t-muted" font-size="9" text-anchor="middle">mmr_root, start_seq, leaf_count, provider_signatures</text>
         </g>
+        <text data-detail="fine" x="176" y="340" class="t-dim" font-size="7">signed over CommitmentPayload</text>
         </g>
 
         <g data-edge-from="writer" data-edge-to="primary_b" data-edge-label="same upload and commit" data-edge-key="4" data-edge-id="mirror">
@@ -267,37 +268,37 @@
         <text data-detail="fine" x="176" y="380" class="t-dim" font-size="7">primaries do not sync with each other</text>
         </g>
 
-        <g data-edge-from="primary_b" data-edge-to="writer" data-edge-label="provider_signature" data-edge-key="5" data-edge-id="signature_b">
+        <g data-edge-from="primary_b" data-edge-to="writer" data-edge-label="provider_signatures" data-edge-key="5" data-edge-id="signature_b">
           <path data-composition-edge-from="primary_b" data-composition-edge-to="writer" data-composition-edge-id="signature_b" data-composition-points="694,398;164,398" d="M 694 398 L 164 398" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="376.2" y="378" width="105.60000000000001" height="16" rx="3" class="c-mask"/>
-          <text x="429" y="388" class="t-muted" font-size="9" text-anchor="middle">provider_signature</text>
+          <rect x="373.6" y="378" width="110.8" height="16" rx="3" class="c-mask"/>
+          <text x="429" y="388" class="t-muted" font-size="9" text-anchor="middle">provider_signatures</text>
         </g>
         </g>
 
-        <g data-edge-from="writer" data-edge-to="primary_a" data-edge-label="GET /checkpoint-signature" data-edge-key="6" data-edge-id="checkpoint_sig">
+        <g data-edge-from="writer" data-edge-to="primary_a" data-edge-label="GET /checkpoint-signature?bucket_id&amp;agreement_id&amp;prev_start_seq&amp;prev_leaf_count" data-edge-key="6" data-edge-id="checkpoint_sig">
           <path data-composition-edge-from="writer" data-composition-edge-to="primary_a" data-composition-edge-id="checkpoint_sig" data-composition-points="164,458;422,458" d="M 164 458 L 422 458" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="222" y="438" width="142" height="16" rx="3" class="c-mask"/>
-          <text x="293" y="448" class="t-backend" font-size="9" text-anchor="middle">GET /checkpoint-signature</text>
+          <rect x="81.6" y="438" width="422.8" height="16" rx="3" class="c-mask"/>
+          <text x="293" y="448" class="t-backend" font-size="9" text-anchor="middle">GET /checkpoint-signature?bucket_id&amp;agreement_id&amp;prev_start_seq&amp;prev_leaf_count</text>
         </g>
-        <text data-detail="fine" x="176" y="476" class="t-dim" font-size="7">signs the same CommitmentPayload</text>
+        <text data-detail="fine" x="176" y="476" class="t-dim" font-size="7">signs the same CommitmentPayload; adds consistency_proof for an append</text>
         </g>
 
-        <g data-edge-from="writer" data-edge-to="pallet" data-edge-label="checkpoint(bucket_id, commitment, signatures)" data-edge-key="7" data-edge-id="checkpoint">
+        <g data-edge-from="writer" data-edge-to="pallet" data-edge-label="checkpoint(bucket_id, commitment, consistency_proof, signatures, activate_replacements)" data-edge-key="7" data-edge-id="checkpoint">
           <path data-composition-edge-from="writer" data-composition-edge-to="pallet" data-composition-edge-id="checkpoint" data-composition-points="164,494;966,494" d="M 164 494 L 966 494" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g data-detail="context">
-          <rect x="442" y="474" width="246" height="16" rx="3" class="c-mask"/>
-          <text x="565" y="484" class="t-backend" font-size="9" text-anchor="middle">checkpoint(bucket_id, commitment, signatures)</text>
+          <rect x="332.79999999999995" y="474" width="464.40000000000003" height="16" rx="3" class="c-mask"/>
+          <text x="565" y="484" class="t-backend" font-size="9" text-anchor="middle">checkpoint(bucket_id, commitment, consistency_proof, signatures, activate_replacements)</text>
         </g>
-        <text data-detail="fine" x="176" y="512" class="t-dim" font-size="7">needs min_providers signatures</text>
+        <text data-detail="fine" x="176" y="512" class="t-dim" font-size="7">needs min_providers physical signers</text>
         </g>
 
-        <g data-edge-from="pallet" data-edge-to="bucket" data-edge-label="snapshot + primary_signers" data-edge-key="8" data-edge-id="snapshot">
+        <g data-edge-from="pallet" data-edge-to="bucket" data-edge-label="snapshot: commitment; primary_signers replaced" data-edge-key="8" data-edge-id="snapshot">
           <path data-composition-edge-from="pallet" data-composition-edge-to="bucket" data-composition-edge-id="snapshot" data-composition-points="980,530;1238,530" d="M 980 530 L 1238 530" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="1035.4" y="510" width="147.20000000000002" height="16" rx="3" class="c-mask"/>
-          <text x="1109" y="520" class="t-backend" font-size="9" text-anchor="middle">snapshot + primary_signers</text>
+          <rect x="983.4" y="510" width="251.20000000000002" height="16" rx="3" class="c-mask"/>
+          <text x="1109" y="520" class="t-backend" font-size="9" text-anchor="middle">snapshot: commitment; primary_signers replaced</text>
         </g>
         </g>
 
@@ -309,13 +310,13 @@
         </g>
         </g>
 
-        <g data-edge-from="writer" data-edge-to="pallet" data-edge-label="extend_checkpoint(additional_signatures)" data-edge-key="10" data-edge-id="extend">
+        <g data-edge-from="writer" data-edge-to="pallet" data-edge-label="extend_checkpoint(bucket_id, additional_signatures)" data-edge-key="10" data-edge-id="extend">
           <path data-composition-edge-from="writer" data-composition-edge-to="pallet" data-composition-edge-id="extend" data-composition-points="164,600;966,600" d="M 164 600 L 966 600" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <g data-detail="context">
-          <rect x="455" y="580" width="220" height="16" rx="3" class="c-mask"/>
-          <text x="565" y="590" class="t-messagebus" font-size="9" text-anchor="middle">extend_checkpoint(additional_signatures)</text>
+          <rect x="426.4" y="580" width="277.2" height="16" rx="3" class="c-mask"/>
+          <text x="565" y="590" class="t-messagebus" font-size="9" text-anchor="middle">extend_checkpoint(bucket_id, additional_signatures)</text>
         </g>
-        <text data-detail="fine" x="176" y="618" class="t-dim" font-size="7">anyone may call; adds signers only</text>
+        <text data-detail="fine" x="176" y="618" class="t-dim" font-size="7">anyone may call; adds late signers only</text>
         </g>
 
         <!-- Segment Labels -->
@@ -612,6 +613,7 @@
           <li>&bull; Signature only: challenge_offchain</li>
           <li>&bull; After checkpoint: challenge_checkpoint</li>
           <li>&bull; Snapshot liability: primary_signers only</li>
+          <li>&bull; A commitment names one agreement_id and the genesis hash; it is void when that agreement ends</li>
         </ul>
       </div>
 
@@ -623,7 +625,23 @@
         <ul>
           <li>&bull; The client uploads to each primary</li>
           <li>&bull; Primary missing from snapshot: re-upload</li>
-          <li>&bull; After checkpoint: prune non-canonical roots</li>
+          <li>&bull; After checkpoint: prune a non-canonical branch once the canonical end is past its end</li>
+          <li>&bull; Virtual primary: a coordinator member fans the write out and returns at least k member signatures; in checkpoint they are all-or-nothing (at least k or none)</li>
+          <li>&bull; activate_replacements: set only to activate a pending replacement of a virtual provider; extend_checkpoint never activates one</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>What a checkpoint may change</h3>
+        </div>
+        <ul>
+          <li>&bull; Identical: the snapshot&#39;s commitment again; its signers replace primary_signers</li>
+          <li>&bull; Append: same start_seq, larger leaf_count, and a consistency_proof (MmrConsistencyProof) that the snapshot&#39;s MMR is a prefix of the new one</li>
+          <li>&bull; Deletion, admin only: start_seq = snapshot start_seq + leaf_count, no proof; a new MMR with the kept leaves appended again</li>
+          <li>&bull; Every checkpoint meets min_providers on its own and replaces primary_signers; canonical history is linear</li>
+          <li>&bull; No snapshot counts as an empty MMR at start_seq 0; an empty MMR has mmr_root H256::zero()</li>
         </ul>
       </div>
     </div>

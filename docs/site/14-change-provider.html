@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"add","label":"Add new primary","focus":["admin","new","pallet"],"note":"The admin redeems terms that the new primary signed for the existing bucket."},{"id":"move","label":"Move the data","focus":["admin","old","new"],"note":"The client downloads from a provider that has the data and uploads to the new primary."},{"id":"handover","label":"Checkpoint and end","focus":["admin","old","pallet"],"note":"The new primary signs a checkpoint before the old agreement ends."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"add","label":"Add new primary","focus":["admin","new","pallet"],"note":"The admin redeems terms that the new primary signed for the existing bucket. expected_version pins the provider's terms."},{"id":"move","label":"Move the data","focus":["admin","old","new"],"note":"The client downloads from a provider that has the data and uploads to the new primary."},{"id":"handover","label":"Checkpoint and expiry","focus":["admin","old","pallet"],"note":"The new primary signs a checkpoint while the old one is still bound. The old agreement ends at expiry; there is no early end."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -174,7 +174,7 @@
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read"
          data-preset-badge-editorial-plate="WEB3 STORAGE / PLATE 04">
-      <svg viewBox="0 0 1060 860" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+      <svg viewBox="0 0 1060 900" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
         <title id="archify-diagram-title">Changing a Primary Provider</title>
         <desc id="archify-diagram-description">A sequence diagram.</desc>
         <!-- Definitions -->
@@ -204,13 +204,13 @@
 
         <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="1" x="48" y="350" width="964" height="210" rx="10" class="c-lane" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="2" x="48" y="580" width="964" height="190" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="2" x="48" y="580" width="964" height="230" rx="10" class="c-lane" stroke-width="1"/>
 
         <!-- Lifelines -->
-        <path d="M 157 142 L 157 795" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
-        <path d="M 413 142 L 413 795" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
-        <path d="M 669 142 L 669 795" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
-        <path d="M 925 142 L 925 795" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 157 142 L 157 835" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 413 142 L 413 835" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 669 142 L 669 835" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 925 142 L 925 835" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
 
         <!-- Activations -->
         <rect x="664" y="180" width="10" height="47" rx="3" class="c-mask"/>
@@ -221,31 +221,31 @@
         <rect x="408" y="380" width="10" height="47" rx="3" class="c-backend" stroke-width="1"/>
         <rect x="664" y="457" width="10" height="85" rx="3" class="c-mask"/>
         <rect x="664" y="457" width="10" height="85" rx="3" class="c-backend" stroke-width="1"/>
-        <rect x="920" y="610" width="10" height="135" rx="3" class="c-mask"/>
-        <rect x="920" y="610" width="10" height="135" rx="3" class="c-backend" stroke-width="1"/>
+        <rect x="920" y="610" width="10" height="175" rx="3" class="c-mask"/>
+        <rect x="920" y="610" width="10" height="175" rx="3" class="c-backend" stroke-width="1"/>
 
         <!-- Messages -->
-        <g data-edge-from="admin" data-edge-to="new" data-edge-label="POST /negotiate (bucket = bucket_id, nonce)" data-edge-key="0" data-edge-id="negotiate">
+        <g data-edge-from="admin" data-edge-to="new" data-edge-label="POST /negotiate (owner, bucket = bucket_id, nonce)" data-edge-key="0" data-edge-id="negotiate">
           <path data-composition-edge-from="admin" data-composition-edge-to="new" data-composition-edge-id="negotiate" data-composition-points="164,185;662,185" d="M 164 185 L 662 185" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="295.2" y="165" width="235.6" height="16" rx="3" class="c-mask"/>
-          <text x="413" y="175" class="t-backend" font-size="9" text-anchor="middle">POST /negotiate (bucket = bucket_id, nonce)</text>
+          <rect x="277" y="165" width="272" height="16" rx="3" class="c-mask"/>
+          <text x="413" y="175" class="t-backend" font-size="9" text-anchor="middle">POST /negotiate (owner, bucket = bucket_id, nonce)</text>
         </g>
         </g>
 
-        <g data-edge-from="new" data-edge-to="admin" data-edge-label="AgreementTerms, BucketTarget::Existing + signature" data-edge-key="1" data-edge-id="terms">
+        <g data-edge-from="new" data-edge-to="admin" data-edge-label="terms (BucketTarget::Existing) + provider_signatures, no price" data-edge-key="1" data-edge-id="terms">
           <path data-composition-edge-from="new" data-composition-edge-to="admin" data-composition-edge-id="terms" data-composition-points="662,222;164,222" d="M 662 222 L 164 222" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="277" y="202" width="272" height="16" rx="3" class="c-mask"/>
-          <text x="413" y="212" class="t-muted" font-size="9" text-anchor="middle">AgreementTerms, BucketTarget::Existing + signature</text>
+          <rect x="245.79999999999998" y="202" width="334.40000000000003" height="16" rx="3" class="c-mask"/>
+          <text x="413" y="212" class="t-muted" font-size="9" text-anchor="middle">terms (BucketTarget::Existing) + provider_signatures, no price</text>
         </g>
         </g>
 
-        <g data-edge-from="admin" data-edge-to="pallet" data-edge-label="add_primary_provider(bucket_id, provider, terms, sig)" data-edge-key="2" data-edge-id="add">
+        <g data-edge-from="admin" data-edge-to="pallet" data-edge-label="add_primary_provider(bucket_id, provider, terms, sigs, expected_version)" data-edge-key="2" data-edge-id="add">
           <path data-composition-edge-from="admin" data-composition-edge-to="pallet" data-composition-edge-id="add" data-composition-points="164,262;918,262" d="M 164 262 L 918 262" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g data-detail="context">
-          <rect x="397.2" y="242" width="287.6" height="16" rx="3" class="c-mask"/>
-          <text x="541" y="252" class="t-backend" font-size="9" text-anchor="middle">add_primary_provider(bucket_id, provider, terms, sig)</text>
+          <rect x="347.79999999999995" y="242" width="386.40000000000003" height="16" rx="3" class="c-mask"/>
+          <text x="541" y="252" class="t-backend" font-size="9" text-anchor="middle">add_primary_provider(bucket_id, provider, terms, sigs, expected_version)</text>
         </g>
         </g>
 
@@ -281,27 +281,27 @@
         </g>
         </g>
 
-        <g data-edge-from="admin" data-edge-to="new" data-edge-label="POST /commit(data_roots)" data-edge-key="7" data-edge-id="commit">
+        <g data-edge-from="admin" data-edge-to="new" data-edge-label="POST /commit (agreement_id, data_roots)" data-edge-key="7" data-edge-id="commit">
           <path data-composition-edge-from="admin" data-composition-edge-to="new" data-composition-edge-id="commit" data-composition-points="164,500;662,500" d="M 164 500 L 662 500" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="344.6" y="480" width="136.8" height="16" rx="3" class="c-mask"/>
-          <text x="413" y="490" class="t-backend" font-size="9" text-anchor="middle">POST /commit(data_roots)</text>
+          <rect x="305.6" y="480" width="214.8" height="16" rx="3" class="c-mask"/>
+          <text x="413" y="490" class="t-backend" font-size="9" text-anchor="middle">POST /commit (agreement_id, data_roots)</text>
         </g>
         </g>
 
-        <g data-edge-from="new" data-edge-to="admin" data-edge-label="provider_signature" data-edge-key="8" data-edge-id="signed">
+        <g data-edge-from="new" data-edge-to="admin" data-edge-label="provider_signatures" data-edge-key="8" data-edge-id="signed">
           <path data-composition-edge-from="new" data-composition-edge-to="admin" data-composition-edge-id="signed" data-composition-points="662,537;164,537" d="M 662 537 L 164 537" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="360.2" y="517" width="105.60000000000001" height="16" rx="3" class="c-mask"/>
-          <text x="413" y="527" class="t-muted" font-size="9" text-anchor="middle">provider_signature</text>
+          <rect x="357.6" y="517" width="110.8" height="16" rx="3" class="c-mask"/>
+          <text x="413" y="527" class="t-muted" font-size="9" text-anchor="middle">provider_signatures</text>
         </g>
         </g>
 
-        <g data-edge-from="admin" data-edge-to="pallet" data-edge-label="checkpoint or extend_checkpoint with new signature" data-edge-key="9" data-edge-id="checkpoint">
+        <g data-edge-from="admin" data-edge-to="pallet" data-edge-label="checkpoint with the new primary&#39;s signature" data-edge-key="9" data-edge-id="checkpoint">
           <path data-composition-edge-from="admin" data-composition-edge-to="pallet" data-composition-edge-id="checkpoint" data-composition-points="164,615;918,615" d="M 164 615 L 918 615" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g data-detail="context">
-          <rect x="405" y="595" width="272" height="16" rx="3" class="c-mask"/>
-          <text x="541" y="605" class="t-backend" font-size="9" text-anchor="middle">checkpoint or extend_checkpoint with new signature</text>
+          <rect x="423.2" y="595" width="235.6" height="16" rx="3" class="c-mask"/>
+          <text x="541" y="605" class="t-backend" font-size="9" text-anchor="middle">checkpoint with the new primary&#39;s signature</text>
         </g>
         </g>
 
@@ -313,19 +313,27 @@
         </g>
         </g>
 
-        <g data-edge-from="admin" data-edge-to="pallet" data-edge-label="end_agreement(old): early, or after expires_at" data-edge-key="11" data-edge-id="end">
-          <path data-composition-edge-from="admin" data-composition-edge-to="pallet" data-composition-edge-id="end" data-composition-points="164,700;918,700" d="M 164 700 L 918 700" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <g data-edge-from="admin" data-edge-to="pallet" data-edge-label="after expires_at: end_agreement(old, EndAction::Pay | Burn)" data-edge-key="11" data-edge-id="end">
+          <path data-composition-edge-from="admin" data-composition-edge-to="pallet" data-composition-edge-id="end" data-composition-points="164,700;918,700" d="M 164 700 L 918 700" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="415.4" y="680" width="251.20000000000002" height="16" rx="3" class="c-mask"/>
-          <text x="541" y="690" class="t-security" font-size="9" text-anchor="middle">end_agreement(old): early, or after expires_at</text>
+          <rect x="381.6" y="680" width="318.8" height="16" rx="3" class="c-mask"/>
+          <text x="541" y="690" class="t-backend" font-size="9" text-anchor="middle">after expires_at: end_agreement(old, EndAction::Pay | Burn)</text>
         </g>
         </g>
 
-        <g data-edge-from="pallet" data-edge-to="old" data-edge-label="AgreementEnded or PrimaryAgreementEndedEarly" data-edge-key="12" data-edge-id="removed">
-          <path data-composition-edge-from="pallet" data-composition-edge-to="old" data-composition-edge-id="removed" data-composition-points="918,740;420,740" d="M 918 740 L 420 740" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="old" data-edge-to="pallet" data-edge-label="or after SettlementTimeout: claim_expired_agreement" data-edge-key="12" data-edge-id="claim">
+          <path data-composition-edge-from="old" data-composition-edge-to="pallet" data-composition-edge-id="claim" data-composition-points="420,740;918,740" d="M 420 740 L 918 740" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <g data-detail="context">
-          <rect x="548.6" y="720" width="240.8" height="16" rx="3" class="c-mask"/>
-          <text x="669" y="730" class="t-muted" font-size="9" text-anchor="middle">AgreementEnded or PrimaryAgreementEndedEarly</text>
+          <rect x="530.4" y="720" width="277.2" height="16" rx="3" class="c-mask"/>
+          <text x="669" y="730" class="t-messagebus" font-size="9" text-anchor="middle">or after SettlementTimeout: claim_expired_agreement</text>
+        </g>
+        </g>
+
+        <g data-edge-from="pallet" data-edge-to="old" data-edge-label="AgreementEnded or AgreementExpiredClaimed; removed from primary_providers" data-edge-key="13" data-edge-id="removed">
+          <path data-composition-edge-from="pallet" data-composition-edge-to="old" data-composition-edge-id="removed" data-composition-points="918,780;420,780" d="M 918 780 L 420 780" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-detail="context">
+          <rect x="473.2" y="760" width="391.6" height="16" rx="3" class="c-mask"/>
+          <text x="669" y="770" class="t-muted" font-size="9" text-anchor="middle">AgreementEnded or AgreementExpiredClaimed; removed from primary_providers</text>
         </g>
         </g>
 
@@ -339,8 +347,8 @@
           <text x="62" y="341" class="t-dim" font-size="9" font-weight="600">Client moves the data</text>
         </g>
         <g data-graph-role="segment-label" data-segment-id="2">
-          <rect x="56" y="558" width="211.6" height="18" rx="3" class="c-mask"/>
-          <text x="62" y="571" class="t-dim" font-size="9" font-weight="600">Checkpoint, then end the old agreement</text>
+          <rect x="56" y="558" width="248" height="18" rx="3" class="c-mask"/>
+          <text x="62" y="571" class="t-dim" font-size="9" font-weight="600">Checkpoint, then let the old agreement expire</text>
         </g>
 
         <!-- Participants -->
@@ -391,26 +399,22 @@
 
         <!-- Legend -->
         <g data-legend="">
-          <text x="40" y="786" class="t-primary" font-size="12" font-weight="650">Legend</text>
-          <g data-legend-semantic-kind="emphasis" data-legend-x="40" data-legend-baseline="806" data-legend-width="78">
-            <path d="M 40 803 L 74 803" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-            <text x="83" y="806" class="t-muted" font-size="10" font-weight="500">request</text>
+          <text x="40" y="826" class="t-primary" font-size="12" font-weight="650">Legend</text>
+          <g data-legend-semantic-kind="emphasis" data-legend-x="40" data-legend-baseline="846" data-legend-width="78">
+            <path d="M 40 843 L 74 843" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+            <text x="83" y="846" class="t-muted" font-size="10" font-weight="500">request</text>
           </g>
-          <g data-legend-semantic-kind="return" data-legend-x="140" data-legend-baseline="806" data-legend-width="73">
-            <path d="M 140 803 L 174 803" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
-            <text x="183" y="806" class="t-muted" font-size="10" font-weight="500">return</text>
+          <g data-legend-semantic-kind="return" data-legend-x="140" data-legend-baseline="846" data-legend-width="73">
+            <path d="M 140 843 L 174 843" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+            <text x="183" y="846" class="t-muted" font-size="10" font-weight="500">return</text>
           </g>
-          <g data-legend-semantic-kind="security" data-legend-x="235" data-legend-baseline="806" data-legend-width="83">
-            <path d="M 235 803 L 269 803" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-            <text x="278" y="806" class="t-muted" font-size="10" font-weight="500">security</text>
+          <g data-legend-semantic-kind="dashed" data-legend-x="235" data-legend-baseline="846" data-legend-width="98">
+            <path d="M 235 843 L 269 843" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+            <text x="278" y="846" class="t-muted" font-size="10" font-weight="500">async trace</text>
           </g>
-          <g data-legend-semantic-kind="dashed" data-legend-x="340" data-legend-baseline="806" data-legend-width="98">
-            <path d="M 340 803 L 374 803" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-            <text x="383" y="806" class="t-muted" font-size="10" font-weight="500">async trace</text>
-          </g>
-          <g data-legend-semantic-kind="default" data-legend-x="460" data-legend-baseline="806" data-legend-width="118">
-            <path d="M 460 803 L 494 803" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-            <text x="503" y="806" class="t-muted" font-size="10" font-weight="500">default message</text>
+          <g data-legend-semantic-kind="default" data-legend-x="355" data-legend-baseline="846" data-legend-width="118">
+            <path d="M 355 843 L 389 843" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+            <text x="398" y="846" class="t-muted" font-size="10" font-weight="500">default message</text>
           </g>
         </g>
       </svg>
@@ -607,7 +611,9 @@
         <ul>
           <li>&bull; Both primaries are in bucket.primary_providers until the old agreement ends</li>
           <li>&bull; The new primary signs a checkpoint while the old one is still bound</li>
-          <li>&bull; A free slot under MaxPrimaryProviders is required</li>
+          <li>&bull; Each checkpoint replaces primary_signers with its own signers and needs min_providers on its own</li>
+          <li>&bull; The bucket&#39;s slot layout must stay within MaxPrimarySlots; a virtual provider takes one slot per member</li>
+          <li>&bull; The quote contains no price or version; expected_version fails the call with ProviderVersionMismatch if the provider&#39;s terms changed</li>
         </ul>
       </div>
 
@@ -618,31 +624,33 @@
         </div>
         <ul>
           <li>&bull; Primaries do not sync with each other</li>
-          <li>&bull; A client that keeps a local copy only uploads</li>
-          <li>&bull; Otherwise the change costs a full download and a full upload</li>
+          <li>&bull; A client that keeps a local copy only uploads; otherwise the change costs a full download and a full upload</li>
+          <li>&bull; Provider-to-provider fetch is a Future Direction; today the new primary gets the data only from the client</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot amber"></div>
-          <h3>Ending the old agreement</h3>
+          <h3>Removing the old primary</h3>
         </div>
         <ul>
-          <li>&bull; After expires_at: owner settles with end_agreement, or the provider calls claim_expired_agreement after SettlementTimeout</li>
-          <li>&bull; Before expiry: the admin ends it with end_agreement; the full remaining payment is paid or burned</li>
-          <li>&bull; Blocked while a challenge against the old primary is unresolved</li>
+          <li>&bull; The agreement is binding: no early end by the admin or the provider. The admin lets it expire</li>
+          <li>&bull; After expires_at the owner calls end_agreement with EndAction::Pay or Burn within SettlementTimeout; after that the provider calls claim_expired_agreement</li>
+          <li>&bull; An open challenge against the old primary blocks neither call: the challenge contains what its resolution needs</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot slate"></div>
-          <h3>Not current behaviour</h3>
+          <h3>Virtual providers: replacement agreement</h3>
         </div>
         <ul>
-          <li>&bull; Provider-to-provider fetch is a Future Direction in the design</li>
-          <li>&bull; Today the new primary gets the data only from the client</li>
+          <li>&bull; create_replacement(bucket_id, provider, additional_duration, expected_version) (owner only, NotVirtual otherwise) stores a pending successor: new agreement_id, current member set, stake snapshot</li>
+          <li>&bull; The new member set syncs and signs. The first checkpoint with activate_replacements (primary) or confirm_replica_sync with activate_replacement (replica) activates it; the old agreement settles as an extension would</li>
+          <li>&bull; If the old agreement expires first the successor lapses: ReplacementExpired, its payment is released to the owner</li>
+          <li>&bull; While pending, extend_agreement and top_up_agreement are rejected and there is no cancel</li>
         </ul>
       </div>
     </div>
