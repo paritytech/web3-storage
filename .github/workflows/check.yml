@@ -124,7 +124,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Check workspace dependency inheritance
-        uses: RomarQ/cargo-workspace-inheritance-check@ca470feb48c8ca8d62c25c72bc5a4cad4a1775b5 # v1.3.0
+        uses: RomarQ/cargo-workspace-inheritance-check@717b065c21bd6544c3e285ddeb401152966aa856 # v1.4.0
         with:
           promotion-failure: true
           promotion-threshold: 1
@@ -143,7 +143,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           shared-key: "web3-storage-cache-check"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/staging-provider' }}
@@ -170,7 +170,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           shared-key: "web3-storage-cache-clippy"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/staging-provider' }}
@@ -196,7 +196,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           shared-key: "web3-storage-cache-tests"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/staging-provider' }}
@@ -221,7 +221,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           shared-key: "web3-storage-cache-benchmarks"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/staging-provider' }}

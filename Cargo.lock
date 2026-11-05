@@ -2694,20 +2694,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dashmap"
-version = "6.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
-dependencies = [
- "cfg-if",
- "crossbeam-utils",
- "hashbrown 0.14.5",
- "lock_api",
- "once_cell",
- "parking_lot_core",
-]
-
-[[package]]
 name = "debugid"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5892,6 +5878,7 @@ dependencies = [
 name = "pallet-storage-provider"
 version = "0.1.0"
 dependencies = [
+ "bitvec",
  "frame-benchmarking",
  "frame-support",
  "frame-system",
@@ -7052,12 +7039,8 @@ name = "provider-storage"
 version = "0.1.0"
 dependencies = [
  "array-bytes 6.2.3",
- "dashmap",
  "parity-scale-codec",
- "parking_lot",
  "rocksdb",
- "serde",
- "serde_json",
  "sp-core",
  "storage-primitives",
  "tempfile",
@@ -8521,9 +8504,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
+checksum = "76a5c54c7310e7b8b9577c286d7e399ddd876c3e12b3ed917a8aabc4b96e9e8c"
 dependencies = [
  "base64",
  "bs58",
@@ -8541,9 +8524,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
+checksum = "84d57bc0c8b9a17920c178daa6bb924850d54a9c97ab45194bb8c17ad66bb660"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -9739,6 +9722,7 @@ dependencies = [
 name = "storage-primitives"
 version = "0.1.0"
 dependencies = [
+ "bitvec",
  "parity-scale-codec",
  "polkadot-ckb-merkle-mountain-range",
  "scale-info",

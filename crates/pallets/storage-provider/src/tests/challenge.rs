@@ -19,7 +19,7 @@ pub(super) fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x01], // bit 0 set = provider at index 0 signed
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1], // bit 0 set = provider at index 0 signed
             });
         }
     });
@@ -42,7 +42,7 @@ pub(super) fn advance_snapshot_root(bucket_id: u64) {
                 leaf_count: 10,
             },
             checkpoint_block: 1,
-            primary_signers: vec![0x01],
+            primary_signers: bitvec::bitvec![u8, Lsb0; 1],
         });
     });
 }
@@ -168,7 +168,7 @@ fn challenge_checkpoint_fails_provider_not_signed() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x01], // only bit 0 set
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1, 0], // only bit 0 set
                 });
             }
         });
@@ -306,7 +306,7 @@ fn respond_to_challenge_superseded_works() {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x01],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1],
             });
         });
 
@@ -357,6 +357,62 @@ fn challenge_slashes_provider_on_timeout() {
         let provider = Providers::<Test>::get(2).unwrap();
         assert!(provider.stake < provider_stake_before);
         assert_eq!(provider.stats.challenges_failed, 1);
+    });
+}
+
+/// The fee split measures the response time from the stored creation block,
+/// so changing `ChallengeTimeout` while a challenge is open does not change
+/// its split.
+#[test]
+fn cost_split_ignores_challenge_timeout_change() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
+        let challenger_balance_before = Balances::free_balance(3);
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        ));
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+        assert_eq!(Challenges::<Test>::get(101, 0).unwrap().created_at, 1);
+
+        // Respond five blocks later: response time 5, challenger pays 80%.
+        // Deriving the creation block as `deadline - ChallengeTimeout` would
+        // give 101 - 50 = 51, a response time of 0 and a 90% split.
+        crate::mock::ChallengeTimeout::set(50);
+        run_to_block(6);
+        advance_snapshot_root(bucket_id);
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            challenge_id,
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        assert_eq!(Balances::free_balance(3), challenger_balance_before - 80);
+        assert!(frame_system::Pallet::<Test>::events()
+            .iter()
+            .any(|r| matches!(
+                r.event,
+                RuntimeEvent::StorageProvider(crate::Event::ChallengeDefended {
+                    response_time_blocks: 5,
+                    ..
+                })
+            )));
     });
 }
 
@@ -697,7 +753,7 @@ fn two_challenges_same_deadline_resolve_independently() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x03], // bits 0 and 1 set
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1, 1], // bits 0 and 1 set
                 });
             }
         });
@@ -782,7 +838,7 @@ fn responding_to_sibling_preserves_other_challenge_index() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x03],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1, 1],
                 });
             }
         });
@@ -822,7 +878,7 @@ fn responding_to_sibling_preserves_other_challenge_index() {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x03],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1, 1],
             });
         });
 
@@ -966,7 +1022,7 @@ fn respond_to_challenge_superseded_emits_defended_event() {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x01],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1],
             });
         });
 
@@ -997,7 +1053,7 @@ fn respond_to_challenge_superseded_emits_defended_event() {
 //
 // `primary_signers` is positional: bit `i` belongs to `primary_providers[i]`.
 // Removing a primary shifts every later provider down one index, so the
-// bitfield must be re-indexed to match — otherwise `has_provider_signed` reads
+// bitfield must be re-indexed to match — otherwise `primary_signers[i]` is
 // the wrong bit for every surviving provider after the removed one.
 //
 // Both removal paths (`finalize_agreement` via admin early-termination, and
@@ -1029,7 +1085,7 @@ fn setup_three_primaries_snapshot() -> u64 {
             },
             checkpoint_block: 1,
             // bits {0, 2} set: provider 2 (idx 0) and 4 (idx 2) signed.
-            primary_signers: vec![0b0000_0101],
+            primary_signers: bitvec::bitvec![u8, Lsb0; 1, 0, 1],
         });
     });
 
@@ -1045,11 +1101,11 @@ fn assert_reindexed_after_removing_lead(bucket_id: u64) {
     // New layout: idx 0 -> old bit 1 (provider 3, unsigned) = clear;
     // idx 1 -> old bit 2 (provider 4, signed) = set => 0b0000_0010.
     assert!(
-        !snapshot.has_provider_signed(0),
+        !snapshot.primary_signers[0],
         "provider 3 (new index 0) must read as not-signed"
     );
     assert!(
-        snapshot.has_provider_signed(1),
+        snapshot.primary_signers[1],
         "provider 4 (new index 1) must read as signed"
     );
 
@@ -1174,9 +1230,8 @@ fn challenge_count_per_deadline_is_capped() {
 // ─────────────────────────────────────────────────────────────────────────────
 mod challenge_tests {
     use super::*;
-    use codec::Encode;
     use frame_support::{dispatch::Pays, pallet_prelude::DispatchResult, BoundedVec};
-    use sp_core::{Pair, H256};
+    use sp_core::H256;
     use storage_primitives::{
         hash_children, hash_leaf, mmr, BucketSnapshot, ChallengeId, ChunkLocation, Commitment,
         EndAction, MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
@@ -1256,7 +1311,7 @@ mod challenge_tests {
                 leaf_count,
             },
             checkpoint_block: System::block_number(),
-            primary_signers: vec![0b0000_0001],
+            primary_signers: bitvec::bitvec![u8, Lsb0; 1],
         };
         Buckets::<Test>::mutate(0u64, |bucket| {
             let bucket = bucket.as_mut().expect("bucket exists");
@@ -1806,7 +1861,7 @@ mod challenge_tests {
                         leaf_count: 1,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0b0000_0001],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             });
 
@@ -1995,7 +2050,7 @@ mod challenge_tests {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0b0000_0001],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             });
 
@@ -2084,7 +2139,7 @@ mod challenge_tests {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0b0000_0001],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             });
 
@@ -2188,8 +2243,8 @@ mod challenge_tests {
             assert_eq!(Balances::free_balance(999), treasury_before + stake);
             assert_eq!(Balances::total_issuance(), issuance_before);
             assert_eq!(held(HoldReason::ChallengeDeposit, 3), 0);
-            assert_eq!(PendingChallenges::<Test>::get(2), 0);
-            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+            assert!(!PendingChallenges::<Test>::contains_key(2));
+            assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
             assert!(Challenges::<Test>::get(101, 0).is_none());
             assert_eq!(NextChallengeIndex::<Test>::get(101), 0);
             let expected = RuntimeEvent::StorageProvider(crate::Event::ChallengeSlashed {
@@ -2348,6 +2403,7 @@ mod challenge_tests {
                 replica_sync_price: Some(1u64),
                 accepting_extensions: true,
                 max_capacity: 0,
+                min_agreement_bytes: 0,
             };
             assert_ok!(StorageProvider::update_provider_settings(
                 RuntimeOrigin::signed(4),
@@ -2385,6 +2441,8 @@ mod challenge_tests {
                     }),
                 },
                 started_at: 1,
+                depositor: 1,
+                deposit: agreement_deposit(1),
             };
             StorageAgreements::<Test>::insert(0u64, 4u64, replica_agreement);
             // Provider 4 stats need challenges_received bump infra — bump
@@ -2463,6 +2521,8 @@ mod challenge_tests {
                     last_sync: None::<ReplicaSyncRecord<u64>>,
                 },
                 started_at: 1,
+                depositor: 1,
+                deposit: agreement_deposit(1),
             };
             StorageAgreements::<Test>::insert(bucket_id, 4u64, replica_agreement);
 
@@ -2494,18 +2554,15 @@ mod challenge_tests {
         start_seq: u64,
         leaf_count: u64,
     ) -> sp_runtime::MultiSignature {
-        let pair = provider_signer(provider);
-        let payload = storage_primitives::CommitmentPayload::new(
+        sign_commitment_by(
+            provider,
             bucket_id,
             Commitment {
                 mmr_root,
                 start_seq,
                 leaf_count,
             },
-        );
-        // `verify_signature` checks the raw encoded payload (sr25519 hashes
-        // internally), so sign the encoding directly — no extra blake2 round.
-        sp_runtime::MultiSignature::Sr25519(pair.sign(&payload.encode()))
+        )
     }
 
     // Counter lifecycle ───────────────────────────────────────────────────────
@@ -2544,8 +2601,8 @@ mod challenge_tests {
                     chunk_proof,
                 },
             ));
-            assert_eq!(PendingChallenges::<Test>::get(2), 0);
-            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+            assert!(!PendingChallenges::<Test>::contains_key(2));
+            assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
         });
     }
 
@@ -2626,8 +2683,8 @@ mod challenge_tests {
                 Providers::<Test>::get(2).unwrap().stats.challenges_failed,
                 1
             );
-            assert_eq!(PendingChallenges::<Test>::get(2), 0);
-            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+            assert!(!PendingChallenges::<Test>::contains_key(2));
+            assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
         });
     }
 
@@ -2726,6 +2783,8 @@ mod challenge_tests {
                     }),
                 },
                 started_at: 1,
+                depositor: 1,
+                deposit: agreement_deposit(1),
             };
             StorageAgreements::<Test>::insert(bucket_id, 4u64, replica_agreement);
 
@@ -2755,6 +2814,35 @@ mod challenge_tests {
                 ),
                 Error::<Test>::AgreementExpired
             );
+        });
+    }
+
+    /// After `remove_slashed` the agreement is gone but the challenge is still
+    /// open; bucket removal must stay blocked until it is resolved.
+    #[test]
+    fn bucket_removal_blocked_by_a_challenge_outliving_its_agreement() {
+        new_test_ext().execute_with(|| {
+            let id = open_challenge();
+            slash_provider_stake(2);
+            assert_ok!(StorageProvider::remove_slashed(
+                RuntimeOrigin::signed(5),
+                0,
+                2
+            ));
+            assert!(StorageAgreements::<Test>::iter_prefix(0).next().is_none());
+
+            assert_noop!(
+                StorageProvider::delete_bucket(RuntimeOrigin::signed(1), 0),
+                Error::<Test>::BucketHasPendingChallenge
+            );
+
+            System::set_block_number(102);
+            assert_ok!(StorageProvider::resolve_expired_challenge(
+                RuntimeOrigin::signed(5),
+                id
+            ));
+            assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
+            assert_ok!(StorageProvider::delete_bucket(RuntimeOrigin::signed(1), 0));
         });
     }
 
@@ -2800,7 +2888,7 @@ mod challenge_tests {
                     chunk_proof,
                 },
             ));
-            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+            assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
 
             // Now early termination succeeds.
             assert_ok!(StorageProvider::end_agreement(
@@ -2849,7 +2937,7 @@ mod challenge_tests {
                     index: 0,
                 }
             ));
-            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+            assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
 
             // Provider 2 was slashed but the agreement row remains; the claim
             // path is unblocked by the (now-zero) pending counter.
@@ -2947,7 +3035,7 @@ mod challenge_tests {
                     index: 0,
                 }
             ));
-            assert_eq!(PendingChallenges::<Test>::get(2), 0);
+            assert!(!PendingChallenges::<Test>::contains_key(2));
 
             // With the challenge resolved and committed_bytes zero, completion
             // succeeds.

@@ -3,6 +3,7 @@
 //! Tests for the storage provider pallet.
 
 use crate::{mock::*, *};
+use bitvec::prelude::Lsb0;
 use frame_support::{assert_err, assert_noop, assert_ok};
 use storage_primitives::{BucketTarget, ProviderRole, Role};
 
@@ -33,6 +34,29 @@ fn event_position(pred: impl Fn(&Event<Test>) -> bool) -> usize {
 fn held(reason: HoldReason, who: u64) -> u64 {
     use frame_support::traits::fungible::InspectHold;
     Balances::balance_on_hold(&reason.into(), &who)
+}
+
+/// An account with storage deposits on hold cannot be reaped: end the
+/// owner's primary agreement and delete the bucket first, which releases
+/// every deposit the owner holds for that bucket.
+fn release_owner_records(owner: u64, bucket_id: u64, provider: u64) {
+    assert_ok!(StorageProvider::end_agreement(
+        RuntimeOrigin::signed(owner),
+        bucket_id,
+        provider,
+        storage_primitives::EndAction::Pay,
+    ));
+    assert_ok!(StorageProvider::delete_bucket(
+        RuntimeOrigin::signed(owner),
+        bucket_id
+    ));
+}
+
+/// An agreement deposit ticket held on `owner`, for tests that write
+/// agreements into storage directly.
+fn agreement_deposit(owner: u64) -> TicketOf<Test> {
+    use frame_support::traits::Consideration;
+    <Test as Config>::StorageDeposit::new(&owner, StorageProvider::agreement_footprint()).unwrap()
 }
 
 /// A provider that actually charges, so agreements escrow a non-zero amount.
@@ -83,6 +107,7 @@ mod auto_matching;
 mod bucket;
 mod challenge;
 mod checkpoint;
+mod deposits;
 mod end_agreement;
 mod error_paths;
 mod extend_topup;

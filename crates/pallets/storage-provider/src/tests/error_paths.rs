@@ -8,7 +8,7 @@ fn create_bucket_fails_too_many_buckets() {
     // MaxBucketsPerMember = 100 in mock, so create 100 then fail on 101st
     new_test_ext().execute_with(|| {
         for _ in 0..100 {
-            create_bucket(1, 0);
+            create_bucket(1, 1);
         }
 
         // `create_bucket_internal` mutates NextBucketId before the member
@@ -16,7 +16,7 @@ fn create_bucket_fails_too_many_buckets() {
         assert_err!(
             StorageProvider::create_bucket_internal(
                 &1,
-                0,
+                1,
                 None,
                 storage_primitives::Visibility::Public
             ),
@@ -28,7 +28,7 @@ fn create_bucket_fails_too_many_buckets() {
 #[test]
 fn set_member_fails_max_members() {
     new_test_ext().execute_with(|| {
-        create_bucket(1, 0);
+        create_bucket(1, 1);
 
         // MaxMembers = 100 in mock. Account 1 is already a member (admin).
         // Add 99 more to hit the limit.
@@ -53,34 +53,28 @@ fn set_member_fails_max_members() {
 fn freeze_bucket_fails_min_providers_not_met() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
+        register_provider(3, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
+        setup_added_primary(3, 1, bucket_id, 50, 200);
 
-        // Set min_providers to 0 first so we can create a snapshot
-        assert_ok!(StorageProvider::set_min_providers(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            0
-        ));
-
-        // Create snapshot with no sigs
+        // Snapshot signed by one of the two primaries (min_providers = 1)
+        let commitment = Commitment {
+            mmr_root: sp_core::H256::repeat_byte(0xAA),
+            start_seq: 0,
+            leaf_count: 10,
+        };
         assert_ok!(StorageProvider::checkpoint(
             RuntimeOrigin::signed(1),
             bucket_id,
-            Commitment {
-                mmr_root: sp_core::H256::repeat_byte(0xAA),
-                start_seq: 0,
-                leaf_count: 10,
-            },
-            Default::default(),
+            commitment,
+            sign_commitment(bucket_id, commitment, &[2]),
         ));
 
-        // Now set min_providers to 2 (but only 0 signers in snapshot)
-        // Can't set above primary_providers.len() - which is 1
-        // So set to 1 and the snapshot has 0 signers
+        // Raise min_providers above the snapshot's one signer
         assert_ok!(StorageProvider::set_min_providers(
             RuntimeOrigin::signed(1),
             bucket_id,
-            1
+            2
         ));
 
         assert_noop!(
@@ -147,7 +141,7 @@ fn set_min_providers_fails_not_admin() {
 #[test]
 fn set_min_providers_fails_exceeds_providers() {
     new_test_ext().execute_with(|| {
-        create_bucket(1, 0);
+        create_bucket(1, 1);
 
         // Bucket has 0 primary providers, can't set min_providers to 1
         assert_noop!(
@@ -160,24 +154,29 @@ fn set_min_providers_fails_exceeds_providers() {
 #[test]
 fn freeze_bucket_already_frozen() {
     new_test_ext().execute_with(|| {
-        create_bucket(1, 0);
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
 
         // Create snapshot
+        let commitment = Commitment {
+            mmr_root: sp_core::H256::repeat_byte(0xAA),
+            start_seq: 0,
+            leaf_count: 10,
+        };
         assert_ok!(StorageProvider::checkpoint(
             RuntimeOrigin::signed(1),
-            0,
-            Commitment {
-                mmr_root: sp_core::H256::repeat_byte(0xAA),
-                start_seq: 0,
-                leaf_count: 10,
-            },
-            Default::default(),
+            bucket_id,
+            commitment,
+            sign_commitment(bucket_id, commitment, &[2]),
         ));
 
-        assert_ok!(StorageProvider::freeze_bucket(RuntimeOrigin::signed(1), 0));
+        assert_ok!(StorageProvider::freeze_bucket(
+            RuntimeOrigin::signed(1),
+            bucket_id
+        ));
 
         assert_noop!(
-            StorageProvider::freeze_bucket(RuntimeOrigin::signed(1), 0),
+            StorageProvider::freeze_bucket(RuntimeOrigin::signed(1), bucket_id),
             Error::<Test>::BucketFrozen
         );
     });

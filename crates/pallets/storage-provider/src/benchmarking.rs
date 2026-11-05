@@ -5,7 +5,10 @@
 
 use super::{Pallet as StorageProvider, *};
 use frame_benchmarking::v2::*;
-use frame_support::{pallet_prelude::*, traits::fungible::Mutate};
+use frame_support::{
+    pallet_prelude::*,
+    traits::{fungible::Mutate, Consideration},
+};
 use frame_system::{Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
@@ -74,6 +77,7 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
             replica_sync_price: Some(1000u32.into()),
             accepting_extensions: true,
             max_capacity: 1_000_000_000,
+            min_agreement_bytes: 0,
         },
     );
 
@@ -81,8 +85,7 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
 }
 
 fn setup_bucket<T: Config>(admin: &T::AccountId) -> BucketId {
-    // Use min_providers=0 so benchmarks can create checkpoints with empty signatures
-    Pallet::<T>::create_bucket_internal(admin, 0, None, Visibility::Private)
+    Pallet::<T>::create_bucket_internal(admin, 1, None, Visibility::Private)
         .expect("create_bucket_internal succeeds")
 }
 
@@ -210,7 +213,12 @@ fn add_primary_to_bucket<T: Config>(
 
     Buckets::<T>::mutate(bucket_id, |maybe| {
         if let Some(b) = maybe {
-            let _ = b.primary_providers.try_push(provider.clone());
+            b.primary_providers
+                .try_push(provider.clone())
+                .expect("bucket has room for another primary");
+            if let Some(snapshot) = b.snapshot.as_mut() {
+                snapshot.primary_signers.push(false);
+            }
         }
     });
 
@@ -223,6 +231,9 @@ fn add_primary_to_bucket<T: Config>(
         extensions_blocked: false,
         role: ProviderRole::Primary,
         started_at: anchor_block,
+        depositor: admin.clone(),
+        deposit: T::StorageDeposit::new(admin, StorageProvider::<T>::agreement_footprint())
+            .expect("benchmark admin cannot fund the agreement deposit"),
     };
     StorageAgreements::<T>::insert(bucket_id, provider, agreement);
 
@@ -251,6 +262,7 @@ fn insert_challenge<T: Config>(
         target,
         deposit: 100u32.into(),
         authorized: true,
+        created_at: deadline.saturating_sub(T::ChallengeTimeout::get()),
     };
     Challenges::<T>::insert(deadline, 0u16, challenge);
     storage_primitives::ChallengeId { deadline, index: 0 }
@@ -297,6 +309,32 @@ fn register_sr25519_key<T: Config>(
         }
     });
     public_key
+}
+
+/// Checkpoint `commitment` on `bucket_id`, signed by its primary `provider`,
+/// whose key [`setup_primary_agreement`] registered under `provider_index`.
+fn checkpoint_signed_by<T: Config>(
+    admin: &T::AccountId,
+    bucket_id: BucketId,
+    provider: &T::AccountId,
+    provider_index: u32,
+    commitment: Commitment,
+) {
+    let key = register_sr25519_key::<T>(provider, KEY_TYPE, provider_index);
+    let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment);
+    let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, &key, &codec::Encode::encode(&payload))
+        .expect("signing should work");
+    let signatures: BoundedVec<(T::AccountId, sp_runtime::MultiSignature), T::MaxPrimaryProviders> =
+        alloc::vec![(provider.clone(), sp_runtime::MultiSignature::Sr25519(sig))]
+            .try_into()
+            .expect("one signature fits MaxPrimaryProviders");
+    Pallet::<T>::checkpoint(
+        RawOrigin::Signed(admin.clone()).into(),
+        bucket_id,
+        commitment,
+        signatures,
+    )
+    .expect("checkpoint succeeds");
 }
 
 #[benchmarks]
@@ -377,6 +415,7 @@ mod benchmarks {
             replica_sync_price: Some(5000u32.into()),
             accepting_extensions: true,
             max_capacity: 1_000_000_000,
+            min_agreement_bytes: 1_000,
         };
 
         #[extrinsic_call]
@@ -422,10 +461,11 @@ mod benchmarks {
     #[benchmark]
     fn set_bucket_min_providers() {
         let admin = funded_account::<T>("admin", 0);
-        let bucket_id = setup_bucket::<T>(&admin);
+        let provider = create_provider::<T>(0);
+        let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
         #[extrinsic_call]
-        set_min_providers(RawOrigin::Signed(admin), bucket_id, 0);
+        set_min_providers(RawOrigin::Signed(admin), bucket_id, 1);
     }
 
     #[benchmark]
@@ -443,27 +483,18 @@ mod benchmarks {
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // `freeze_bucket` requires the `snapshot` to meet `min_providers`.
-        // Drop the floor to 0 first so both subsequent calls succeed.
-        let _ =
-            Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);
-
         // Need to create a checkpoint first
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
-
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
+        checkpoint_signed_by::<T>(
+            &admin,
             bucket_id,
+            &provider,
+            0,
             Commitment {
                 mmr_root,
                 start_seq: 0,
                 leaf_count: 10,
             },
-            signatures,
         );
 
         #[extrinsic_call]
@@ -530,6 +561,29 @@ mod benchmarks {
 
         #[extrinsic_call]
         create_bucket(RawOrigin::Signed(admin), 1, Visibility::Private);
+    }
+
+    /// Worst case: a bucket with `MaxMembers` members, each with a deposit
+    /// to release and a reverse-index entry to clear.
+    #[benchmark]
+    fn delete_bucket(m: Linear<1, { T::MaxMembers::get() }>) {
+        let admin = funded_account::<T>("admin", 0);
+        let bucket_id = setup_bucket::<T>(&admin);
+        for i in 1..m {
+            let member = funded_account::<T>("member", i);
+            Pallet::<T>::set_member_internal(
+                &admin,
+                bucket_id,
+                member,
+                storage_primitives::Role::Reader,
+            )
+            .expect("benchmark admin cannot add a member");
+        }
+
+        #[extrinsic_call]
+        delete_bucket(RawOrigin::Signed(admin), bucket_id);
+
+        assert!(Buckets::<T>::get(bucket_id).is_none());
     }
 
     /// Worst case: full signature verification + owner-nonce check and
@@ -789,24 +843,23 @@ mod benchmarks {
             provider_keys.push((provider, key));
         }
 
-        // Submit initial checkpoint with 0 signatures (min_providers=0).
-        // The snapshot bitfield has all bits unset, so every extend_checkpoint
-        // signature triggers a real verification + bit-set operation.
-        let empty_sigs: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
+        // Checkpoint signed by provider 0, then clear the signer bitfield so
+        // every extend_checkpoint signature triggers a real verification +
+        // bit-set. A chain reaches this state when the snapshot's only
+        // signer is removed from the primaries and a new primary is added.
         let commitment = Commitment {
             mmr_root,
             start_seq: 0,
             leaf_count: 10,
         };
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
-            bucket_id,
-            commitment,
-            empty_sigs,
-        );
+        checkpoint_signed_by::<T>(&admin, bucket_id, &provider_keys[0].0, 0, commitment);
+        Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
+            let snapshot = maybe_bucket
+                .as_mut()
+                .and_then(|b| b.snapshot.as_mut())
+                .expect("checkpoint created the snapshot");
+            snapshot.primary_signers.fill(false);
+        });
 
         let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment);
         let encoded_payload = codec::Encode::encode(&payload);
@@ -836,38 +889,25 @@ mod benchmarks {
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Drop min_providers to 0 so the bootstrapping checkpoint with
-        // empty signatures is accepted (create_bucket_with_primary_internal
-        // anchors the bucket at min_providers=1).
-        let _ =
-            Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);
-
         // Create checkpoint first
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
-
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
+        checkpoint_signed_by::<T>(
+            &admin,
             bucket_id,
+            &provider,
+            0,
             Commitment {
                 mmr_root,
                 start_seq: 0,
                 leaf_count: 10,
             },
-            signatures,
         );
 
         // Set provider's bit in snapshot bitfield (provider is at index 0)
         Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 if let Some(snapshot) = bucket.snapshot.as_mut() {
-                    if snapshot.primary_signers.is_empty() {
-                        snapshot.primary_signers.push(0);
-                    }
-                    snapshot.primary_signers[0] |= 1; // Set bit 0
+                    snapshot.primary_signers.set(0, true);
                 }
             }
         });
@@ -935,26 +975,18 @@ mod benchmarks {
         let replica_provider = create_provider::<T>(1);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Drop min_providers to 0 so the bootstrapping checkpoint with
-        // empty signatures is accepted.
-        let _ =
-            Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);
-
         // Create checkpoint so bucket has a snapshot
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
+        checkpoint_signed_by::<T>(
+            &admin,
             bucket_id,
+            &provider,
+            0,
             Commitment {
                 mmr_root,
                 start_seq: 0,
                 leaf_count: 10,
             },
-            signatures,
         );
 
         // Open the replica agreement via the signed-terms helper.
@@ -1141,29 +1173,21 @@ mod benchmarks {
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Drop min_providers to 0 so the bootstrapping checkpoint below
-        // with empty signatures is accepted.
-        let _ =
-            Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);
-
         // `Superseded` requires the bucket to have a snapshot whose
         // (start_seq + leaf_count) exceeds the challenged sequence. A
         // checkpoint with leaf_count > 0 satisfies this for our challenge
         // at seq 0.
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
+        checkpoint_signed_by::<T>(
+            &admin,
             bucket_id,
+            &provider,
+            0,
             Commitment {
                 mmr_root,
                 start_seq: 0,
                 leaf_count: 10,
             },
-            signatures,
         );
 
         let challenge_id = insert_challenge::<T>(
@@ -1198,26 +1222,18 @@ mod benchmarks {
         let replica_provider = create_provider::<T>(1);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Drop min_providers to 0 so the bootstrapping checkpoint with
-        // empty signatures is accepted.
-        let _ =
-            Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);
-
         // Create checkpoint so bucket has a snapshot with known mmr_root
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
+        checkpoint_signed_by::<T>(
+            &admin,
             bucket_id,
+            &provider,
+            0,
             Commitment {
                 mmr_root,
                 start_seq: 0,
                 leaf_count: 10,
             },
-            signatures,
         );
 
         // Open the replica agreement via the signed-terms helper.
@@ -1282,6 +1298,7 @@ mod benchmarks {
             },
             deposit,
             authorized: false,
+            created_at: deadline.saturating_sub(T::ChallengeTimeout::get()),
         };
         Challenges::<T>::insert(deadline, 0u16, challenge);
         PendingChallenges::<T>::insert(&provider, 1u32);

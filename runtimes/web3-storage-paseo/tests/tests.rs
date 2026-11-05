@@ -3,7 +3,10 @@
 #![cfg(test)]
 
 use frame_support::{
-    assert_ok, dispatch::GetDispatchInfo, pallet_prelude::Hooks, traits::Currency,
+    assert_ok,
+    dispatch::GetDispatchInfo,
+    pallet_prelude::Hooks,
+    traits::{fungible::InspectHold, Currency},
 };
 use pallet_storage_provider::Call as StorageProviderCall;
 use parachains_common::{AccountId, AuraId, Hash as PcHash, Signature as PcSignature};
@@ -14,9 +17,10 @@ use sp_runtime::{transaction_validity, ApplyExtrinsicResult, BuildStorage};
 use storage_paseo_runtime::{
     paseo_constants::currency::UNIT, xcm_config::LocationToAccountId, AllPalletsWithoutSystem,
     Balance, Balances, Block, BlockNumber, Runtime, RuntimeCall, RuntimeEvent,
-    RuntimeGenesisConfig, RuntimeOrigin, SessionKeys, StorageProvider, System, TxExtension,
-    UncheckedExtrinsic, WeightToFee,
+    RuntimeGenesisConfig, RuntimeHoldReason, RuntimeOrigin, SessionKeys, StorageProvider, System,
+    TxExtension, UncheckedExtrinsic, WeightToFee,
 };
+use storage_primitives::AgreementTerms;
 use xcm::latest::prelude::*;
 use xcm_runtime_apis::conversions::LocationToAccountHelper;
 
@@ -25,6 +29,14 @@ use xcm_runtime_apis::conversions::LocationToAccountHelper;
 //
 
 const ALICE: [u8; 32] = [1u8; 32];
+
+/// The provider's stake alone; the account also holds a storage deposit.
+fn stake_on_hold(who: &AccountId) -> Balance {
+    Balances::balance_on_hold(
+        &RuntimeHoldReason::StorageProvider(pallet_storage_provider::HoldReason::ProviderStake),
+        who,
+    )
+}
 
 /// Set both clocks the runtime reads: `System` (parachain height) and the
 /// relay-chain number served by `RelaychainDataProvider`, which the storage
@@ -147,6 +159,39 @@ fn register_provider_for(account: Sr25519Keyring, stake: Balance) {
             stake,
         }),
     ));
+}
+
+/// Build primary [`AgreementTerms`] for `owner` with the standard test shape.
+fn primary_terms(
+    owner: AccountId,
+    max_bytes: u64,
+    duration: u32,
+) -> pallet_storage_provider::AgreementTermsOf<Runtime> {
+    AgreementTerms {
+        nonce: pallet_storage_provider::AgreementNonces::<Runtime>::get(&owner),
+        owner,
+        max_bytes,
+        duration,
+        price_per_byte: 0,
+        // `valid_until` is checked against the pallet's relay-chain clock,
+        // not the parachain height.
+        valid_until: pallet_storage_provider::Pallet::<Runtime>::current_anchor_block()
+            + <Runtime as pallet_storage_provider::Config>::RequestTimeout::get(),
+        bucket: storage_primitives::BucketTarget::New,
+        replica_params: None,
+    }
+}
+
+/// Sign SCALE-encoded agreement terms with the provider keyring's sr25519 key.
+///
+/// `register_provider_for` stores the keyring's raw public key in the pallet,
+/// so signatures produced here verify against that stored key.
+fn sign_primary_terms(
+    provider: Sr25519Keyring,
+    terms: &pallet_storage_provider::AgreementTermsOf<Runtime>,
+) -> sp_runtime::MultiSignature {
+    let hash = sp_io::hashing::blake2_256(&terms.signing_payload());
+    sp_runtime::MultiSignature::Sr25519(provider.pair().sign(&hash))
 }
 
 fn new_test_ext() -> sp_io::TestExternalities {
@@ -443,7 +488,7 @@ fn should_deregister_provider() {
         let stake = default_stake();
         register_provider_for(account, stake);
 
-        assert_eq!(Balances::reserved_balance(&who), stake);
+        assert_eq!(stake_on_hold(&who), stake);
 
         // Step 1: announce. Record stays, stake stays reserved, deregister_at stamped.
         assert_ok_ok(construct_and_apply_extrinsic(
@@ -455,7 +500,7 @@ fn should_deregister_provider() {
         let deregister_at = provider
             .deregister_at
             .expect("deregister_at must be set after announce");
-        assert_eq!(Balances::reserved_balance(&who), stake);
+        assert_eq!(stake_on_hold(&who), stake);
 
         // Step 2: premature completion is rejected.
         let result = construct_and_apply_extrinsic(
@@ -521,7 +566,7 @@ fn should_cancel_deregister_announcement() {
         assert!(provider.settings.accepting_primary);
         assert!(provider.settings.accepting_extensions);
         // Stake stays reserved throughout — never went anywhere.
-        assert_eq!(Balances::reserved_balance(&who), stake);
+        assert_eq!(stake_on_hold(&who), stake);
     });
 }
 
@@ -540,6 +585,7 @@ fn should_update_provider_settings() {
             replica_sync_price: Some(3),
             accepting_extensions: false,
             max_capacity: 1_024 * 1_024,
+            min_agreement_bytes: 512,
         };
 
         assert_ok_ok(construct_and_apply_extrinsic(
@@ -767,6 +813,221 @@ fn should_fail_xcm_unpaid_execution_from_unauthorized_origin() {
     });
 }
 
+// ===============================
+// Tests for the bucket lifecycle.
+// ===============================
+
+/// Register `account` as a provider and configure it to accept primary
+/// agreements with unlimited capacity and a wide duration window, so the
+/// E2E flows can submit signed terms with arbitrary durations.
+fn register_accepting_provider_for(account: Sr25519Keyring, stake: Balance) {
+    register_provider_for(account, stake);
+    assert_ok_ok(construct_and_apply_extrinsic(
+        Some(account.pair()),
+        RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::update_provider_settings {
+            settings: pallet_storage_provider::ProviderSettings {
+                min_duration: 1,
+                max_duration: 1_000_000,
+                price_per_byte: 0,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0, // Unlimited
+                min_agreement_bytes: 0,
+            },
+        }),
+    ));
+}
+
+/// End-to-end bucket lifecycle: provider setup → signed-terms
+/// `create_bucket_with_primary` → add a member → remove the member. Drives
+/// and S3 buckets are plain buckets, so this is the flow both clients use.
+#[test]
+fn bucket_lifecycle_e2e() {
+    new_test_ext().execute_with(|| {
+        advance_block();
+
+        let provider = Sr25519Keyring::Bob;
+        let owner = Sr25519Keyring::Alice;
+        let owner_id: AccountId = owner.to_account_id();
+        let member_id: AccountId = Sr25519Keyring::Charlie.to_account_id();
+
+        // 1. Provider registers + accepts primary agreements.
+        register_accepting_provider_for(provider, default_stake());
+        let _ = Balances::deposit_creating(&owner_id, 10 * UNIT);
+
+        // 2. Owner redeems provider-signed terms to create the bucket.
+        let bucket_id = pallet_storage_provider::NextBucketId::<Runtime>::get();
+        let terms = primary_terms(owner_id.clone(), 1_000_000, 500);
+        let sig = sign_primary_terms(provider, &terms);
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(owner.pair()),
+            RuntimeCall::StorageProvider(
+                StorageProviderCall::<Runtime>::create_bucket_with_primary {
+                    provider: provider.to_account_id(),
+                    terms,
+                    sig,
+                    visibility: storage_primitives::Visibility::Private,
+                },
+            ),
+        ));
+        System::assert_has_event(RuntimeEvent::StorageProvider(
+            pallet_storage_provider::Event::BucketCreated {
+                bucket_id,
+                admin: owner_id.clone(),
+            },
+        ));
+        let agreement = pallet_storage_provider::StorageAgreements::<Runtime>::get(
+            bucket_id,
+            provider.to_account_id(),
+        )
+        .expect("primary agreement must be stored");
+        assert_eq!(agreement.max_bytes, 1_000_000);
+        assert!(
+            pallet_storage_provider::MemberBuckets::<Runtime>::get(&owner_id).contains(&bucket_id)
+        );
+
+        // 3. Add Charlie as Reader, then remove him.
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(owner.pair()),
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::set_member {
+                bucket_id,
+                member: member_id.clone(),
+                role: storage_primitives::Role::Reader,
+            }),
+        ));
+        System::assert_has_event(RuntimeEvent::StorageProvider(
+            pallet_storage_provider::Event::MemberSet {
+                bucket_id,
+                member: member_id.clone(),
+                role: storage_primitives::Role::Reader,
+            },
+        ));
+        assert!(
+            pallet_storage_provider::MemberBuckets::<Runtime>::get(&member_id).contains(&bucket_id)
+        );
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(owner.pair()),
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::remove_member {
+                bucket_id,
+                member: member_id.clone(),
+            }),
+        ));
+        System::assert_has_event(RuntimeEvent::StorageProvider(
+            pallet_storage_provider::Event::MemberRemoved {
+                bucket_id,
+                member: member_id.clone(),
+            },
+        ));
+        assert!(
+            !pallet_storage_provider::MemberBuckets::<Runtime>::get(&member_id)
+                .contains(&bucket_id)
+        );
+    });
+}
+
+// ===============================
+// Tests for the bucket lifecycle via XCM.
+// ===============================
+
+/// End-to-end bucket lifecycle dispatched via XCM from a sibling parachain:
+/// the call's `Signed` origin is the *derived sovereign* of the
+/// `(Parachain(N), AccountId32(Alice))` location, so the provider must sign
+/// terms with `terms.owner = derived` (not Alice's keyring account).
+#[test]
+fn bucket_lifecycle_via_xcm_e2e() {
+    let alice_on_para = alice_on_sibling_parachain(4_000);
+    let provider = Sr25519Keyring::Bob;
+    let member_id: AccountId = Sr25519Keyring::Charlie.to_account_id();
+
+    xcm_test_ext().execute_with(|| {
+        // The dispatch origin is the sovereign `AccountId` derived from
+        // Alice-on-para; that account becomes the bucket admin.
+        let derived: AccountId =
+            LocationToAccountHelper::<AccountId, LocationToAccountId>::convert_location(
+                alice_on_para.clone().into(),
+            )
+            .expect("Alice-on-para must convert to an account");
+
+        // 1. Provider setup; fund the derived account for fees.
+        register_accepting_provider_for(provider, default_stake());
+        let _ = Balances::deposit_creating(&derived, 10 * UNIT);
+
+        let bucket_id = pallet_storage_provider::NextBucketId::<Runtime>::get();
+        let fee: Asset = (Location::parent(), UNIT).into();
+
+        // 2. Provider signs terms for the derived sovereign + XCM dispatches.
+        let terms = primary_terms(derived.clone(), 1_000_000, 500);
+        let sig = sign_primary_terms(provider, &terms);
+        let create_call = RuntimeCall::StorageProvider(
+            StorageProviderCall::<Runtime>::create_bucket_with_primary {
+                provider: provider.to_account_id(),
+                terms,
+                sig,
+                visibility: storage_primitives::Visibility::Private,
+            },
+        );
+        assert_ok!(
+            RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
+                (alice_on_para.clone(), OriginKind::SovereignAccount),
+                create_call,
+                Some(fee.clone()),
+            )
+            .ensure_complete()
+        );
+        System::assert_has_event(RuntimeEvent::StorageProvider(
+            pallet_storage_provider::Event::BucketCreated {
+                bucket_id,
+                admin: derived.clone(),
+            },
+        ));
+
+        // 3. Add Charlie via XCM from the same origin.
+        let set_member_call =
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::set_member {
+                bucket_id,
+                member: member_id.clone(),
+                role: storage_primitives::Role::Reader,
+            });
+        assert_ok!(
+            RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
+                (alice_on_para.clone(), OriginKind::SovereignAccount),
+                set_member_call,
+                Some(fee.clone()),
+            )
+            .ensure_complete()
+        );
+        System::assert_has_event(RuntimeEvent::StorageProvider(
+            pallet_storage_provider::Event::MemberSet {
+                bucket_id,
+                member: member_id.clone(),
+                role: storage_primitives::Role::Reader,
+            },
+        ));
+
+        // 4. Remove Charlie via XCM.
+        let remove_member_call =
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::remove_member {
+                bucket_id,
+                member: member_id.clone(),
+            });
+        assert_ok!(
+            RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
+                (alice_on_para, OriginKind::SovereignAccount),
+                remove_member_call,
+                Some(fee),
+            )
+            .ensure_complete()
+        );
+        assert!(
+            !pallet_storage_provider::MemberBuckets::<Runtime>::get(&member_id)
+                .contains(&bucket_id)
+        );
+    });
+}
+
 //
 // Genesis config presets
 //
@@ -837,7 +1098,7 @@ fn previewnet_preset_registers_default_provider() {
         assert!(provider.settings.accepting_extensions);
         assert_eq!(provider.settings.max_capacity, 1_099_511_627);
 
-        assert_eq!(Balances::reserved_balance(&alice), 1_200_000_000_000 * UNIT);
+        assert_eq!(stake_on_hold(&alice), 1_200_000_000_000 * UNIT);
 
         // The two genesis buckets from local_testnet are preserved.
         assert_eq!(pallet_storage_provider::NextBucketId::<Runtime>::get(), 2);
