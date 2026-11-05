@@ -124,7 +124,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Check workspace dependency inheritance
-        uses: RomarQ/cargo-workspace-inheritance-check@ca470feb48c8ca8d62c25c72bc5a4cad4a1775b5 # v1.3.0
+        uses: RomarQ/cargo-workspace-inheritance-check@717b065c21bd6544c3e285ddeb401152966aa856 # v1.4.0
         with:
           promotion-failure: true
           promotion-threshold: 1
@@ -143,7 +143,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           shared-key: "web3-storage-cache-check"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
@@ -170,7 +170,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           shared-key: "web3-storage-cache-clippy"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
@@ -196,7 +196,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           shared-key: "web3-storage-cache-tests"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
@@ -221,7 +221,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           shared-key: "web3-storage-cache-benchmarks"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
@@ -229,14 +229,6 @@ jobs:
       - name: Run test pallet-storage-provider
         run: |
           cargo test -p pallet-storage-provider --features runtime-benchmarks
-
-      - name: Run test pallet-s3-registry
-        run: |
-          cargo test -p pallet-s3-registry --features runtime-benchmarks
-
-      - name: Run test pallet-drive-registry
-        run: |
-          cargo test -p pallet-drive-registry --features runtime-benchmarks
 
   coverage:
     name: Rust coverage
@@ -260,24 +252,26 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           shared-key: "web3-storage-cache-coverage"
           save-if: false
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-llvm-cov
 
       - name: Install diff-cover
         # Drives the patch-coverage gate. Minimum version comes from
         # .github/env, shared with the local check in scripts/coverage.sh.
-        # The bullseye CI image ships an unmanaged pip and runs as root, so
-        # a plain system-wide install works.
+        # The bookworm CI image's Python is marked externally managed
+        # (PEP 668), so pip rejects a system-wide install without this flag.
+        # The container is discarded after the job, so there is nothing to
+        # break.
         run: |
           source .github/env
-          python3 -m pip install --quiet "diff-cover>=${DIFF_COVER_MIN_VERSION}"
+          python3 -m pip install --quiet --break-system-packages "diff-cover>=${DIFF_COVER_MIN_VERSION}"
 
       - name: Measure coverage
         # Package list + exclusions live in scripts/coverage.sh, shared with
@@ -306,7 +300,7 @@ jobs:
 
       - name: Upload coverage artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: rust-coverage
           path: |

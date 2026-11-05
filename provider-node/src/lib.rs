@@ -9,7 +9,7 @@
 //! - Committing data to the bucket's MMR
 //! - Syncing data between providers (for replicas)
 
-pub mod chain_connection;
+pub(crate) mod chain_connection;
 pub(crate) mod chain_follower;
 pub mod challenge_proofs;
 pub mod cli;
@@ -21,7 +21,7 @@ pub(crate) mod subxt_client;
 pub use challenge_proofs::StorageProofSource;
 pub use provider_challenge::{
     self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
-    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
+    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle, ChallengeResponse,
     ChallengeResponseResult, DetectedChallenge, ResponderCommand,
 };
 /// The chain-state coordinator lives in the `provider-coordinator` crate; keep

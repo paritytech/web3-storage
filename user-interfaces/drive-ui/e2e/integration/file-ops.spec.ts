@@ -4,25 +4,20 @@
  * File operations specs.
  *
  * Cover the core upload / download / delete / abort flows. Abort uses
- * page.route() to inject latency on the upload PUT so the cancel click has a
- * deterministic window — without the route intercept, the tests race.
+ * page.route() to delay the provider's `PUT /node` requests so the cancel
+ * click happens before the upload commits. Without the delay, the test races.
  */
 import { test, expect } from "../fixtures";
-import { Bob, cleanupDrives } from "@web3-storage/test-helpers";
 import { createDriveViaUi } from "../helpers/createDriveViaUi";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-test.afterEach(async () => {
-  await cleanupDrives(Bob);
-});
-
 async function selectFreshDrive(page: import("@playwright/test").Page) {
-  const driveId = await createDriveViaUi(page, `file-ops-${Date.now()}`);
-  await page.getByTestId(`drive-list-item-${driveId}`).click();
+  const bucketId = await createDriveViaUi(page);
+  await page.getByTestId(`drive-list-item-${bucketId}`).click();
   await expect(page.getByTestId("file-browser")).toBeVisible();
-  return { driveId };
+  return { bucketId };
 }
 
 test("multi-file upload appears in entries table", async ({ localPage }) => {
@@ -90,15 +85,19 @@ test("delete file removes the row", async ({ localPage }) => {
 test("abort upload mid-flight (no error toast)", async ({ localPage }) => {
   await selectFreshDrive(localPage);
 
-  // Inject latency on PUT to /fs/<bucketId>/file?path=... (drive-client's
-  // uploadFile target) so we have a window to click cancel before the
-  // upload completes and the button vanishes.
-  await localPage.route("**/fs/*/file*", async (route) => {
-    if (route.request().method() === "PUT") {
-      await new Promise((r) => setTimeout(r, 5_000));
-    }
-    await route.continue();
-  });
+  // Delay every `PUT /node` (the upload stores the file's blobs with it
+  // before `POST /commit` adds them to the drive) so the cancel click
+  // happens before the commit. The browser aborts the delayed request, so
+  // continuing it fails; ignore that error.
+  await localPage.route(
+    (url) => url.pathname.endsWith("/node"),
+    async (route) => {
+      if (route.request().method() === "PUT") {
+        await new Promise((r) => setTimeout(r, 5_000));
+      }
+      await route.continue().catch(() => {});
+    },
+  );
 
   await localPage.getByTestId("upload-input").setInputFiles({
     name: "abort.bin",

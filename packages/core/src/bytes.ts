@@ -36,6 +36,28 @@ export function bytesEq(
   return true;
 }
 
+/** Lexicographic comparison of two byte arrays (Rust `[u8]`/`str` ordering). */
+export function compareBytes(a: Uint8Array, b: Uint8Array): number {
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return a.length - b.length;
+}
+
+/** Concatenate byte arrays into one new array. */
+export function concatBytes(...arrays: Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const a of arrays) total += a.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const a of arrays) {
+    out.set(a, off);
+    off += a.length;
+  }
+  return out;
+}
+
 export function bytesToBase64(bytes: Uint8Array): string {
   let bin = "";
   const CHUNK = 0x8000; // String.fromCharCode arg-count limit headroom

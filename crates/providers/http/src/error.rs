@@ -46,21 +46,6 @@ pub enum Error {
     #[error("Rate limiter failed: {0}")]
     RateLimiterFailed(String),
 
-    #[error("Object not found: bucket {bucket_id}, key {key}")]
-    ObjectNotFound { bucket_id: u64, key: String },
-
-    #[error("Invalid object key: {0}")]
-    InvalidObjectKey(String),
-
-    #[error("File not found: bucket {bucket_id}, path {path}")]
-    FileNotFound { bucket_id: u64, path: String },
-
-    #[error("Not a file: bucket {bucket_id}, path {path}")]
-    NotAFile { bucket_id: u64, path: String },
-
-    #[error("Invalid path: {0}")]
-    InvalidPath(String),
-
     #[error(transparent)]
     Auth(#[from] AuthError),
 
@@ -148,6 +133,43 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "missing": children })),
                     },
                 ),
+                StorageError::InvalidChildCount(count) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_child_count".to_string(),
+                        details: Some(serde_json::json!({ "expected": 2, "actual": count })),
+                    },
+                ),
+                StorageError::ChunkTooLarge { size } => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "chunk_too_large".to_string(),
+                        details: Some(serde_json::json!({
+                            "size": size,
+                            "max": storage_primitives::DEFAULT_CHUNK_SIZE,
+                        })),
+                    },
+                ),
+                StorageError::ChunkIndexOutOfRange {
+                    chunk_index,
+                    chunk_count,
+                } => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "chunk_index_out_of_range".to_string(),
+                        details: Some(serde_json::json!({
+                            "chunk_index": chunk_index,
+                            "chunk_count": chunk_count,
+                        })),
+                    },
+                ),
+                StorageError::InvalidNode => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_node".to_string(),
+                        details: None,
+                    },
+                ),
                 StorageError::QuotaExceeded { used, max } => (
                     StatusCode::INSUFFICIENT_STORAGE,
                     ErrorResponse {
@@ -169,6 +191,13 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "data_root": root })),
                     },
                 ),
+                StorageError::CommitmentNotReproducible(reason) => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "commitment_not_reproducible".to_string(),
+                        details: Some(serde_json::json!({ "reason": reason })),
+                    },
+                ),
                 StorageError::InvalidHash { expected, actual } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
@@ -179,7 +208,17 @@ impl IntoResponse for Error {
                         })),
                     },
                 ),
-                e @ (StorageError::RocksDb(_) | StorageError::ColumnFamilyMissing(_)) => (
+                StorageError::NonCanonicalTree(root) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "non_canonical_tree".to_string(),
+                        details: Some(serde_json::json!({ "data_root": root })),
+                    },
+                ),
+                e @ (StorageError::RocksDb(_)
+                | StorageError::ColumnFamilyMissing(_)
+                | StorageError::IncompatibleFormat(_)
+                | StorageError::Mmr(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ErrorResponse {
                         error: "internal_error".to_string(),
@@ -240,41 +279,6 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "serialization_error".to_string(),
                     details: Some(serde_json::json!({ "message": e.to_string() })),
-                },
-            ),
-            Error::ObjectNotFound { bucket_id, key } => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "object_not_found".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "key": key })),
-                },
-            ),
-            Error::InvalidObjectKey(key) => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "invalid_object_key".to_string(),
-                    details: Some(serde_json::json!({ "key": key })),
-                },
-            ),
-            Error::FileNotFound { bucket_id, path } => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "file_not_found".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "path": path })),
-                },
-            ),
-            Error::NotAFile { bucket_id, path } => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "not_a_file".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "path": path })),
-                },
-            ),
-            Error::InvalidPath(msg) => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "invalid_path".to_string(),
-                    details: Some(serde_json::json!({ "message": msg })),
                 },
             ),
             Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
@@ -459,6 +463,25 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
+            status_of(Error::from(provider_storage::Error::NonCanonicalTree(
+                "x".into()
+            ))),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::ChunkTooLarge {
+                size: 2
+            })),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::ChunkIndexOutOfRange {
+                chunk_index: 1,
+                chunk_count: 1
+            })),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
             status_of(Error::from(provider_storage::Error::QuotaExceeded {
                 used: 0,
                 max: 0
@@ -467,6 +490,12 @@ mod tests {
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::BucketNotFound(1))),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::from(
+                provider_storage::Error::CommitmentNotReproducible("x".into())
+            )),
             StatusCode::NOT_FOUND
         );
         assert_eq!(
@@ -513,35 +542,6 @@ mod tests {
         );
         assert_eq!(
             status_of(Error::decode("node data", "invalid base64")),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_of(Error::ObjectNotFound {
-                bucket_id: 1,
-                key: "k".into()
-            }),
-            StatusCode::NOT_FOUND
-        );
-        assert_eq!(
-            status_of(Error::InvalidObjectKey("k".into())),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_of(Error::FileNotFound {
-                bucket_id: 1,
-                path: "/a".into()
-            }),
-            StatusCode::NOT_FOUND
-        );
-        assert_eq!(
-            status_of(Error::NotAFile {
-                bucket_id: 1,
-                path: "/a".into()
-            }),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_of(Error::InvalidPath("p".into())),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(

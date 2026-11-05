@@ -12,7 +12,7 @@
 import { parachain } from "@polkadot-api/descriptors";
 import {
   buildSignedTermsArgs,
-  createDrive as createDriveTx,
+  createBucketWithPrimary,
   negotiateTerms,
   parseMultiaddrToUrl,
   getBucketVisibility as getBucketVisibilityQuery,
@@ -39,7 +39,6 @@ export const parseMultiaddrToHttp = parseMultiaddrToUrl;
 
 export type {
   BucketMember,
-  CreateDriveOptions,
   DriveInfo,
   FsEntry,
   MemberRole,
@@ -47,7 +46,6 @@ export type {
 } from "@web3-storage/sdk/fs";
 import type {
   BucketMember,
-  CreateDriveOptions,
   DriveInfo,
   FsEntry,
   MemberRole,
@@ -252,21 +250,6 @@ export class DriveClient {
 
   // ── Drive on-chain operations ─────────────────────────────────────────────
 
-  async createDrive(options: CreateDriveOptions): Promise<DriveInfo> {
-    const { driveId, bucketId, provider } = await this.requireFs().createDrive(options);
-    return {
-      driveId,
-      bucketId,
-      owner: this.signerAddress ?? "",
-      name: options.name ?? null,
-      maxCapacity: options.maxCapacity,
-      createdAt: 0,
-      storagePeriod: options.storagePeriod,
-      expiresAt: 0,
-      providerInfo: [{ account: provider, multiaddr: "", url: options.provider?.url ?? null }],
-    };
-  }
-
   /**
    * Every registered provider via the `providers` runtime API, sorted by free
    * capacity descending. Used by the provider picker to surface candidates
@@ -358,23 +341,20 @@ export class DriveClient {
   }
 
   /**
-   * Redeem provider-signed agreement terms on chain to open a Layer-0 bucket
-   * + primary agreement and register the drive on top — atomically in one
-   * extrinsic (via the layer-0 `createDrive` wrapper, submitted finalized).
+   * Redeem provider-signed agreement terms on chain in
+   * `create_bucket_with_primary`: opens a Layer 0 bucket with one primary
+   * agreement. The bucket is the drive.
    *
    * **Step 2 of drive creation.** Step 1 is the HTTP `negotiateTerms` call
    * against the chosen provider; splitting the two lets a failed on-chain
    * submit be retried without re-negotiating (terms valid until
-   * `terms.valid_until`). `providerUrl` is used only to prime the provider
-   * URL cache for the first upload.
+   * `terms.valid_until`).
    */
   async submitCreateDrive(
-    name: string | undefined,
     providerAccount: string,
-    providerUrl: string,
     signed: SignedTerms,
     visibility?: Visibility,
-  ): Promise<DriveInfo> {
+  ): Promise<{ bucketId: bigint }> {
     const api = this.requireApi();
     const owner = this.requireOwner();
 
@@ -382,38 +362,22 @@ export class DriveClient {
     // head right after this resolves, so an in-block ("best") submit would
     // race a reorg and the just-created drive could be missing from the
     // refreshed list. `retryStale: 0` — a user retry is the right UX for a UI.
-    const { driveId, bucketId } = await createDriveTx(
+    const { bucketId } = await createBucketWithPrimary(
       api,
       owner,
-      name ?? "",
       { address: providerAccount },
       signed,
       { mode: "finalized", retryStale: 0, visibility },
     );
-
-    return {
-      driveId,
-      bucketId,
-      owner: owner.address,
-      name: name ?? null,
-      maxCapacity: BigInt(signed.terms.max_bytes),
-      createdAt: 0,
-      storagePeriod: signed.terms.duration,
-      expiresAt: 0,
-      providerInfo: [{ account: providerAccount, multiaddr: "", url: providerUrl }],
-    };
+    return { bucketId };
   }
 
   listDrives(): Promise<DriveInfo[]> {
     return this.requireFs().listDrives(this.signerAddress ?? undefined);
   }
 
-  getDrive(driveId: bigint): Promise<DriveInfo | null> {
-    return this.requireFs().getDrive(driveId);
-  }
-
-  async deleteDrive(driveId: bigint): Promise<void> {
-    await this.requireFs().deleteDrive(driveId);
+  getDrive(bucketId: bigint): Promise<DriveInfo | null> {
+    return this.requireFs().getDrive(bucketId);
   }
 
   // ── FS HTTP operations ────────────────────────────────────────────────────

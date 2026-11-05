@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Client-side drive enumeration + metadata-root recompute over the shared
+// Client-side bucket enumeration + metadata-root recompute over the shared
 // FileSystemClient. These aren't part of the SDK: they trust nothing the
 // provider claims about content — they download every file and re-hash it
 // locally. Kept free of any browser/chain-client coupling (the caller passes
@@ -11,7 +11,7 @@ import type { FileSystemClient } from '@web3-storage/sdk/fs'
 import type { LocalIndex } from './local-index'
 
 /**
- * Enumerate the drive's full entry set as `MerkleEntry[]`, trusting nothing the
+ * Enumerate the bucket's full entry set as `MerkleEntry[]`, trusting nothing the
  * provider claims about content: list the whole tree, then for each file
  * download its bytes and recompute `data_root` locally (directories use a zero
  * root). Each leaf's `size` is the length of the bytes we actually downloaded —
@@ -47,13 +47,13 @@ export async function enumerateEntries(
 }
 
 /**
- * Recompute the drive's metadata Merkle root from a fresh recursive listing, and
+ * Recompute the bucket's metadata Merkle root from a fresh recursive listing, and
  * seed `index` from it. Directories contribute a zero root; each file's `data_root`
  * is taken from the index (seeded by uploads we locally verified) and only
  * downloaded + re-hashed when absent — no re-download of just-uploaded photos.
  *
  * This is the fallback path used when the persisted index doesn't match the
- * on-chain anchor (cold cache or a drive mutated elsewhere). It fully repopulates
+ * on-chain anchor (cold cache or a bucket changed elsewhere). It fully repopulates
  * `index` — files *and* directories — so the caller can then treat it as
  * authoritative and anchor future roots from `index.root()` alone.
  */

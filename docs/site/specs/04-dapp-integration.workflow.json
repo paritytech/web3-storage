@@ -1,0 +1,312 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "dApp Integration Flow",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "setup",
+        "label": "Set up storage",
+        "focus": [
+          "choose",
+          "quote",
+          "create"
+        ],
+        "note": "Pick providers on-chain, get a signed quote over HTTP, redeem it in one or two transactions."
+      },
+      {
+        "id": "write",
+        "label": "Write data",
+        "focus": [
+          "create",
+          "upload",
+          "commit",
+          "checkpoint"
+        ],
+        "note": "Upload to every primary, keep each provider_signature from POST /commit, checkpoint with at least min_providers signatures."
+      },
+      {
+        "id": "verify",
+        "label": "Read and dispute",
+        "focus": [
+          "read",
+          "served",
+          "challenge",
+          "keep"
+        ],
+        "note": "Every read checks chunk hashes. Challenge only a provider that does not serve data."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "client",
+      "label": "dApp client"
+    },
+    {
+      "id": "provider",
+      "label": "Provider HTTP"
+    },
+    {
+      "id": "chain",
+      "label": "Chain"
+    },
+    {
+      "id": "dispute",
+      "label": "Dispute",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "setup_phase",
+      "label": "Set up",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "write_phase",
+      "label": "Write",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "use_phase",
+      "label": "Use and keep",
+      "fromCol": 4,
+      "toCol": 5
+    }
+  ],
+  "mainPath": [
+    "choose",
+    "quote",
+    "create",
+    "upload",
+    "commit",
+    "checkpoint",
+    "read",
+    "served",
+    "keep"
+  ],
+  "nodes": [
+    {
+      "id": "choose",
+      "lane": "client",
+      "col": 0,
+      "type": "frontend",
+      "label": "Choose Providers",
+      "sublabel": "find_matching_providers",
+      "tag": "runtime API",
+      "width": 140
+    },
+    {
+      "id": "quote",
+      "lane": "provider",
+      "col": 1,
+      "type": "backend",
+      "label": "POST /negotiate",
+      "sublabel": "signed AgreementTerms",
+      "width": 140
+    },
+    {
+      "id": "create",
+      "lane": "chain",
+      "col": 1,
+      "type": "database",
+      "label": "Create Bucket",
+      "sublabel": "create_bucket_with_primary",
+      "tag": "or create_bucket",
+      "width": 150
+    },
+    {
+      "id": "upload",
+      "lane": "provider",
+      "col": 2,
+      "type": "backend",
+      "label": "Upload",
+      "sublabel": "POST /exists, PUT /node",
+      "tag": "bottom-up",
+      "width": 140
+    },
+    {
+      "id": "commit",
+      "lane": "provider",
+      "col": 3,
+      "type": "backend",
+      "label": "POST /commit",
+      "sublabel": "keep provider_signature",
+      "width": 140
+    },
+    {
+      "id": "checkpoint",
+      "lane": "chain",
+      "col": 3,
+      "type": "database",
+      "label": "checkpoint",
+      "sublabel": "min_providers signatures",
+      "tag": "GET /checkpoint-signature",
+      "width": 150
+    },
+    {
+      "id": "replica",
+      "lane": "chain",
+      "col": 4,
+      "type": "database",
+      "label": "add_replica_provider",
+      "sublabel": "with a replica quote",
+      "width": 150
+    },
+    {
+      "id": "read",
+      "lane": "client",
+      "col": 4,
+      "type": "frontend",
+      "label": "Read and Verify",
+      "sublabel": "GET /read, hash check",
+      "tag": "background spot checks",
+      "width": 140
+    },
+    {
+      "id": "served",
+      "lane": "client",
+      "col": 5,
+      "type": "security",
+      "label": "Chunk served?",
+      "sublabel": "data matches hash",
+      "width": 130
+    },
+    {
+      "id": "keep",
+      "lane": "chain",
+      "col": 5,
+      "type": "database",
+      "label": "Extend or Settle",
+      "sublabel": "extend_agreement, end_agreement",
+      "tag": "Pay | Burn",
+      "width": 160
+    },
+    {
+      "id": "challenge",
+      "lane": "dispute",
+      "col": 5,
+      "type": "security",
+      "label": "Challenge",
+      "sublabel": "challenge_* (3 modes)",
+      "width": 140
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-quote",
+      "from": "choose",
+      "to": "quote",
+      "label": "request quote",
+      "role": "main",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "top"
+    },
+    {
+      "id": "e-create",
+      "from": "quote",
+      "to": "create",
+      "role": "main",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "e-upload",
+      "from": "create",
+      "to": "upload",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-commit",
+      "from": "upload",
+      "to": "commit",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-checkpoint",
+      "from": "commit",
+      "to": "checkpoint",
+      "label": "signatures",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-read",
+      "from": "checkpoint",
+      "to": "read",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-served",
+      "from": "read",
+      "to": "served",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-keep",
+      "from": "served",
+      "to": "keep",
+      "label": "yes",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-challenge",
+      "from": "served",
+      "to": "challenge",
+      "label": "no",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "e-replica",
+      "from": "checkpoint",
+      "to": "replica",
+      "label": "more redundancy",
+      "role": "branch",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Setup and write",
+      "items": [
+        "Create the bucket with create_bucket_with_primary, or create_bucket then add_primary_provider",
+        "Primaries do not sync with each other: upload to every primary",
+        "Keep the provider_signature from POST /commit: it is the evidence for challenge_offchain",
+        "checkpoint takes a GET /checkpoint-signature signature from at least min_providers primaries"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Challenge modes",
+      "items": [
+        "challenge_offchain: with a commit signature; for buckets with frequent writes",
+        "challenge_checkpoint: against the on-chain snapshot; for cold buckets",
+        "challenge_replica: against the root a replica confirmed on-chain",
+        "The provider has ChallengeTimeout to respond (12 Challenge protocol)"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Keep the data stored",
+      "items": [
+        "extend_agreement before expiry; end_agreement Pay or Burn within SettlementTimeout",
+        "add_replica_provider with a replica quote for more redundancy",
+        "Change a primary: add the new one, upload, checkpoint with its signature (14 Changing a primary provider)"
+      ]
+    }
+  ]
+}

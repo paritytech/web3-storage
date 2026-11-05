@@ -4,6 +4,7 @@
 docs/
 ├── getting-started/   — quickstart
 ├── design/            — canonical system design (review-gated)
+├── site/              — architecture diagrams and dApp guide, derived from design/
 └── drafts/            — unratified / WIP notes (need triage)
 ```
 
@@ -33,6 +34,10 @@ The canonical system design. Changes require review (see [`.github/CODEOWNERS`](
 - **[Scalable Web3 Storage](./design/scalable-web3-storage.md)** — architecture, economic model, comparisons with Filecoin/IPFS/Arweave, rebuttals to common review concerns.
 - **[Implementation Details](./design/scalable-web3-storage-implementation.md)** — pallet extrinsics, provider HTTP API, MMR layout, challenge mechanism, replica sync.
 
+## Site
+
+**[`site/`](./site/)** — architecture and workflow diagrams for web3-storage developers, and a guide for dApp developers. Every page is derived from `design/`; when `design/` changes, update the site in the same PR (`/generate-docs` skill, checked in CI by [`scripts/check-docs-site.sh`](../scripts/check-docs-site.sh)).
+
 ## Drafts
 
 Unratified / WIP notes. **These need triage** ([#308](https://github.com/paritytech/web3-storage/issues/308)) — each should be reviewed and either promoted into `design/` (design-of-record), folded into an existing doc, or dropped.
@@ -43,7 +48,7 @@ Unratified / WIP notes. **These need triage** ([#308](https://github.com/parityt
 - **[Checkpoint Protocol](./drafts/CHECKPOINT_PROTOCOL.md)** — multi-provider checkpoint coordination.
 - **[Provider-Initiated Checkpoints](./drafts/provider-initiated-checkpoints.md)** — extension where providers proactively commit state; removed in #306, archived (design + implementation) for potential re-evaluation.
 - **[Client-Side Encryption](./drafts/CLIENT_SIDE_ENCRYPTION.md)** — wire format, cipher choice.
-- **[S3 Metadata Index](./drafts/S3_METADATA_INDEX.md)** — how prefix/delimiter queries are served.
+- **[S3 Metadata Index](./drafts/S3_METADATA_INDEX.md)** — a provider-side index for S3 prefix/delimiter queries. The provider node does not implement this index.
 - **[Challenge Economics — Extensions](./drafts/challenge-economics-extensions.md)** — speculative "Capped Split for the general public"; also records that the design's two-tier challenger split isn't implemented yet.
 
 ## Clients

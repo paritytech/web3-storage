@@ -70,7 +70,7 @@ Object key is passed as a `?key=` query parameter.
 1. Read raw body bytes
 2. Split into 256 KiB chunks
 3. Hash + store each chunk via `Storage::store_node()`
-4. Build balanced Merkle tree via `build_padded_merkle_tree()`
+4. Build Merkle tree via `build_merkle_tree()`
 5. Commit data_root to MMR via `Storage::commit()`
 6. Extract content_type and x-amz-meta-* headers
 7. Create `ObjectMeta`, insert into index, persist to disk

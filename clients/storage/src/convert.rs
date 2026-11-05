@@ -26,7 +26,7 @@ pub fn to_sp_account(a: &subxt::utils::AccountId32) -> sp_runtime::AccountId32 {
 /// Render a chain-side account as the `0x…` hex string the SDK's public
 /// structs carry.
 pub fn account_hex(a: &subxt::utils::AccountId32) -> String {
-    format!("0x{}", hex::encode(a.0))
+    array_bytes::bytes2hex("0x", a.0)
 }
 
 /// Decode an account carried by a runtime-API response, where accounts arrive
@@ -131,24 +131,16 @@ pub fn challenge_id(deadline: u32, index: u16) -> rt::ChallengeId<u32> {
     rt::ChallengeId { deadline, index }
 }
 
-/// [`storage_primitives::MerkleProof`] → generated twin.
-pub fn merkle_proof(p: &storage_primitives::MerkleProof) -> rt::MerkleProof {
-    rt::MerkleProof {
-        siblings: p.siblings.clone(),
-        path: p.path.clone(),
-    }
-}
-
 /// [`storage_primitives::MmrProof`] → generated twin.
-pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::MmrProof {
-    rt::MmrProof {
-        peaks: p.peaks.clone(),
-        leaf: rt::MmrLeaf {
+pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::mmr::MmrProof {
+    rt::mmr::MmrProof {
+        leaf: rt::mmr::MmrLeaf {
+            leaf_version: p.leaf.leaf_version,
             data_root: p.leaf.data_root,
             data_size: p.leaf.data_size,
             total_size: p.leaf.total_size,
         },
-        leaf_proof: merkle_proof(&p.leaf_proof),
+        items: p.items.clone(),
     }
 }
 

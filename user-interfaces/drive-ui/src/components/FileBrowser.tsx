@@ -189,7 +189,7 @@ export default function FileBrowser() {
   if (!selectedDrive) return null;
 
   const breadcrumbs = () => {
-    const driveName = selectedDrive.name || `Drive ${selectedDrive.driveId}`;
+    const driveName = `Bucket #${selectedDrive.bucketId}`;
     const segments = [{ name: driveName, path: "/" }];
     if (currentPath !== "/") {
       const parts = currentPath.split("/").filter(Boolean);

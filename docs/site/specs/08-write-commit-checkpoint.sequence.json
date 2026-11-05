@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Upload, Commit, Checkpoint",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1380,
+      690
+    ],
+    "column_fit": "spread",
+    "views": [
+      {
+        "id": "upload",
+        "label": "Upload",
+        "focus": [
+          "writer",
+          "primary_a"
+        ],
+        "note": "Upload stores content-addressed nodes. It does not change the MMR."
+      },
+      {
+        "id": "commit",
+        "label": "Commit",
+        "focus": [
+          "writer",
+          "primary_a",
+          "primary_b"
+        ],
+        "note": "Each primary signs a CommitmentPayload for the new MMR state. The signature is the immediate guarantee."
+      },
+      {
+        "id": "checkpoint",
+        "label": "Checkpoint",
+        "focus": [
+          "writer",
+          "primary_a",
+          "pallet",
+          "bucket"
+        ],
+        "note": "The chain records the Commitment and which primaries signed it."
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "writer",
+      "type": "external",
+      "label": "Client (Writer)"
+    },
+    {
+      "id": "primary_a",
+      "type": "backend",
+      "label": "Primary A"
+    },
+    {
+      "id": "primary_b",
+      "type": "backend",
+      "label": "Primary B"
+    },
+    {
+      "id": "pallet",
+      "type": "backend",
+      "label": "Storage Pallet"
+    },
+    {
+      "id": "bucket",
+      "type": "database",
+      "label": "Bucket"
+    }
+  ],
+  "segments": [
+    {
+      "from": 165,
+      "to": 245,
+      "label": "Upload: content-addressed, quota-checked"
+    },
+    {
+      "from": 265,
+      "to": 415,
+      "label": "Commit: provider signs the new MMR state"
+    },
+    {
+      "from": 435,
+      "to": 620,
+      "label": "Checkpoint: canonical state and liability"
+    }
+  ],
+  "messages": [
+    {
+      "id": "exists",
+      "from": "writer",
+      "to": "primary_a",
+      "y": 190,
+      "label": "POST /exists \u2192 missing hashes",
+      "variant": "default"
+    },
+    {
+      "id": "upload",
+      "from": "writer",
+      "to": "primary_a",
+      "y": 226,
+      "label": "PUT /node, children first",
+      "variant": "emphasis",
+      "note": "Writer role; 507 quota_exceeded"
+    },
+    {
+      "id": "commit",
+      "from": "writer",
+      "to": "primary_a",
+      "y": 286,
+      "label": "POST /commit (data_roots)",
+      "variant": "default",
+      "note": "Writer role"
+    },
+    {
+      "id": "signature",
+      "from": "primary_a",
+      "to": "writer",
+      "y": 322,
+      "label": "mmr_root, start_seq, leaf_count, provider_signature",
+      "variant": "return"
+    },
+    {
+      "id": "mirror",
+      "from": "writer",
+      "to": "primary_b",
+      "y": 362,
+      "label": "same upload and commit",
+      "variant": "default",
+      "note": "primaries do not sync with each other"
+    },
+    {
+      "id": "signature_b",
+      "from": "primary_b",
+      "to": "writer",
+      "y": 398,
+      "label": "provider_signature",
+      "variant": "return"
+    },
+    {
+      "id": "checkpoint_sig",
+      "from": "writer",
+      "to": "primary_a",
+      "y": 458,
+      "label": "GET /checkpoint-signature",
+      "variant": "default",
+      "note": "signs the same CommitmentPayload"
+    },
+    {
+      "id": "checkpoint",
+      "from": "writer",
+      "to": "pallet",
+      "y": 494,
+      "label": "checkpoint(bucket_id, commitment, signatures)",
+      "variant": "emphasis",
+      "note": "needs min_providers signatures"
+    },
+    {
+      "id": "snapshot",
+      "from": "pallet",
+      "to": "bucket",
+      "y": 530,
+      "label": "snapshot + primary_signers",
+      "variant": "default"
+    },
+    {
+      "id": "checkpointed",
+      "from": "pallet",
+      "to": "writer",
+      "y": 564,
+      "label": "BucketCheckpointed",
+      "variant": "return"
+    },
+    {
+      "id": "extend",
+      "from": "writer",
+      "to": "pallet",
+      "y": 600,
+      "label": "extend_checkpoint(additional_signatures)",
+      "variant": "dashed",
+      "note": "anyone may call; adds signers only"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "primary_a",
+      "from": 185,
+      "to": 328,
+      "type": "backend"
+    },
+    {
+      "participant": "primary_b",
+      "from": 357,
+      "to": 404,
+      "type": "backend"
+    },
+    {
+      "participant": "primary_a",
+      "from": 453,
+      "to": 464,
+      "type": "backend"
+    },
+    {
+      "participant": "pallet",
+      "from": 489,
+      "to": 606,
+      "type": "backend"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Upload and commit are separate",
+      "items": [
+        "Upload stores nodes; the MMR does not change",
+        "Commit adds data_roots; the provider is liable",
+        "Uploads within quota do not conflict"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Signature before checkpoint",
+      "items": [
+        "Signature only: challenge_offchain",
+        "After checkpoint: challenge_checkpoint",
+        "Snapshot liability: primary_signers only"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Multiple primaries",
+      "items": [
+        "The client uploads to each primary",
+        "Primary missing from snapshot: re-upload",
+        "After checkpoint: prune non-canonical roots"
+      ]
+    }
+  ]
+}

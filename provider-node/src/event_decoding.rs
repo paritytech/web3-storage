@@ -1,185 +1,160 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Decoding raw on-chain events into [`BlockEvent`]s.
+//! Decoding a finalized block's raw events into [`BlockContents`]: the
+//! [`BlockEvent`]s for the coordinators and the provider-lifecycle accounts.
 //!
 //! Events decode through the static `storage-subxt` bindings, so a runtime
 //! change that reshapes one of these events surfaces as a decode failure
-//! (logged, backstopped by the safety-net scans) instead of silently
-//! yielding `None` on dynamic field lookups.
+//! instead of silently yielding `None` on dynamic field lookups. See
+//! [`decode_block_contents`] for how each kind of failure is handled.
 
+use provider_coordinator::BlockContents;
 use provider_events::BlockEvent;
 use sp_runtime::AccountId32;
-use storage_subxt::api::storage_provider::events as pallet_events;
-use subxt::PolkadotConfig;
+use storage_subxt::api::{
+    storage_provider::{events as pallet_events, Event as StorageProviderEvent},
+    Event,
+};
+use subxt::{events::Event as RawEvent, PolkadotConfig};
 
-/// Maps a decoded pallet event into its coordinator-relevant [`BlockEvent`].
-///
-/// A local trait rather than `std::convert::From`: neither `BlockEvent`
-/// (defined in `provider-events`) nor the pallet event types (defined in
-/// `storage-subxt`) are local to this crate, so a foreign `From` impl would
-/// violate the orphan rules. The trait itself being local is enough.
-trait IntoBlockEvent {
-    fn into_block_event(self) -> BlockEvent;
+/// Whether `event` is a storage-provider event that changes a bucket's member
+/// set. A decode failure of one of these escalates instead of being dropped;
+/// see [`escalate_membership_decode_failure`].
+fn is_membership_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
+    event.is::<pallet_events::BucketCreated>()
+        || event.is::<pallet_events::MemberSet>()
+        || event.is::<pallet_events::MemberRemoved>()
+        || event.is::<pallet_events::BucketDeleted>()
+        || event.is::<pallet_events::BucketVisibilityChanged>()
 }
 
-impl IntoBlockEvent for pallet_events::ChallengeCreated {
-    fn into_block_event(self) -> BlockEvent {
-        BlockEvent::ChallengeCreated {
-            deadline: self.challenge_id.deadline,
-            index: self.challenge_id.index,
-            bucket_id: self.bucket_id,
-            provider: AccountId32::new(self.provider.0),
-        }
-    }
+/// Whether `event` is a storage-provider event that maps to a [`BlockEvent`]
+/// other than a membership change, or to a provider-lifecycle account.
+pub(crate) fn is_other_relevant_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
+    event.is::<pallet_events::ChallengeCreated>()
+        || event.is::<pallet_events::ReplicaAgreementEstablished>()
+        || event.is::<pallet_events::BucketCheckpointed>()
+        || event.is::<pallet_events::ProviderRegistered>()
+        || event.is::<pallet_events::ProviderSettingsUpdated>()
+        || event.is::<pallet_events::ProviderMultiaddrUpdated>()
+        || event.is::<pallet_events::DeregisterAnnounced>()
+        || event.is::<pallet_events::DeregisterCancelled>()
+        || event.is::<pallet_events::ProviderDeregistered>()
 }
 
-impl IntoBlockEvent for pallet_events::ReplicaAgreementEstablished {
-    fn into_block_event(self) -> BlockEvent {
-        BlockEvent::ReplicaAgreementEstablished {
-            bucket_id: self.bucket_id,
-            provider: AccountId32::new(self.provider.0),
-        }
-    }
-}
-
-impl IntoBlockEvent for pallet_events::BucketCheckpointed {
-    fn into_block_event(self) -> BlockEvent {
-        BlockEvent::BucketCheckpointed {
-            bucket_id: self.bucket_id,
-        }
-    }
-}
-
-impl IntoBlockEvent for pallet_events::BucketCreated {
-    fn into_block_event(self) -> BlockEvent {
-        BlockEvent::BucketMembershipChanged {
-            bucket_id: self.bucket_id,
-        }
-    }
-}
-
-impl IntoBlockEvent for pallet_events::MemberSet {
-    fn into_block_event(self) -> BlockEvent {
-        BlockEvent::BucketMembershipChanged {
-            bucket_id: self.bucket_id,
-        }
-    }
-}
-
-impl IntoBlockEvent for pallet_events::MemberRemoved {
-    fn into_block_event(self) -> BlockEvent {
-        BlockEvent::BucketMembershipChanged {
-            bucket_id: self.bucket_id,
-        }
-    }
-}
-
-impl IntoBlockEvent for pallet_events::BucketDeleted {
-    fn into_block_event(self) -> BlockEvent {
-        BlockEvent::BucketMembershipChanged {
-            bucket_id: self.bucket_id,
-        }
-    }
-}
-
-impl IntoBlockEvent for pallet_events::BucketVisibilityChanged {
-    fn into_block_event(self) -> BlockEvent {
-        BlockEvent::BucketMembershipChanged {
-            bucket_id: self.bucket_id,
-        }
-    }
-}
-
-/// Decode one block's events into the coordinator-relevant [`BlockEvent`]s.
+/// Decode the relevant events of one block into [`BlockContents`], each once;
+/// other events are skipped without decoding.
 ///
 /// A membership-changing event whose fields fail to decode is escalated
 /// rather than dropped: unlike the other event kinds, silently missing one
 /// means a revocation is never applied and survives for the full
-/// `--auth-cache-ttl` on a node that is otherwise connected and healthy. See
-/// [`decode_membership`].
-// TODO: the try-each-variant chain below scales poorly as more events become
-// coordinator-relevant; revisit a direct pallet-event -> BlockEvent mapping
-// together with the dynamic-subxt vs runtime-API decision.
-pub fn decode_block_events(
+/// `--auth-cache-ttl` on a node that is otherwise connected and healthy. Any
+/// other relevant event that fails to decode is logged and skipped:
+/// - a missed [`BlockEvent`] is covered by the coordinators' safety-net scans;
+/// - a missed lifecycle account is covered by the next lifecycle event for
+///   the provider, except after `ProviderDeregistered`: then only the
+///   bootstrap refresh on reconnect corrects the state.
+pub fn decode_block_contents(
     events: &subxt::events::Events<PolkadotConfig>,
     block_number: u32,
-) -> Vec<BlockEvent> {
-    events
-        .iter()
-        .filter_map(|event| event.ok())
-        .filter_map(|event| {
-            decode::<pallet_events::ChallengeCreated>(&event)
-                .map(IntoBlockEvent::into_block_event)
-                .or_else(|| {
-                    decode::<pallet_events::ReplicaAgreementEstablished>(&event)
-                        .map(IntoBlockEvent::into_block_event)
-                })
-                .or_else(|| {
-                    decode::<pallet_events::BucketCheckpointed>(&event)
-                        .map(IntoBlockEvent::into_block_event)
-                })
-                .or_else(|| decode_membership::<pallet_events::BucketCreated>(&event, block_number))
-                .or_else(|| decode_membership::<pallet_events::MemberSet>(&event, block_number))
-                .or_else(|| decode_membership::<pallet_events::MemberRemoved>(&event, block_number))
-                .or_else(|| decode_membership::<pallet_events::BucketDeleted>(&event, block_number))
-                .or_else(|| {
-                    decode_membership::<pallet_events::BucketVisibilityChanged>(
-                        &event,
-                        block_number,
-                    )
-                })
-        })
-        .collect()
-}
-
-/// Statically decode `event` as `E` when its pallet/event identity matches;
-/// `None` otherwise. An event that matches but fails to decode (a runtime
-/// whose event shape drifted from the bindings) is logged and skipped — the
-/// coordinators' safety-net scans cover the miss.
-fn decode<E: subxt::events::DecodeAsEvent>(
-    event: &subxt::events::Event<'_, PolkadotConfig>,
-) -> Option<E> {
-    match event.decode_fields_as::<E>()? {
-        Ok(decoded) => Some(decoded),
-        Err(e) => {
-            tracing::warn!(
+) -> BlockContents {
+    let mut contents = BlockContents {
+        events: Vec::new(),
+        lifecycle: Vec::new(),
+    };
+    for event in events.iter().filter_map(|event| event.ok()) {
+        // Only events a coordinator uses are decoded; the check compares
+        // names, which is cheaper than a decode.
+        let membership = is_membership_event(&event);
+        if !membership && !is_other_relevant_event(&event) {
+            continue;
+        }
+        match event.decode_as::<Event>() {
+            Ok(Event::StorageProvider(decoded)) => {
+                contents.lifecycle.extend(lifecycle_account(&decoded));
+                contents.events.extend(block_event(decoded));
+            }
+            Ok(_) => {}
+            Err(e) if membership => contents.events.push(escalate_membership_decode_failure(
+                event.pallet_name(),
+                event.event_name(),
+                block_number,
+                e,
+            )),
+            Err(e) => tracing::warn!(
                 "failed to decode {}::{} against the static bindings: {e}",
                 event.pallet_name(),
                 event.event_name(),
-            );
-            None
+            ),
         }
     }
+    contents
 }
 
-/// Like [`decode`], but for a membership-changing event: a decode failure
-/// cannot be silently dropped like the other event kinds, since there is no
-/// bucket id left to invalidate and the safety net is a plain TTL, not a
-/// rescan. So it escalates instead, via [`escalate_membership_decode_failure`].
-fn decode_membership<E>(
-    event: &subxt::events::Event<'_, PolkadotConfig>,
-    block_number: u32,
-) -> Option<BlockEvent>
-where
-    E: subxt::events::DecodeAsEvent + IntoBlockEvent,
-{
-    match event.decode_fields_as::<E>()? {
-        Ok(decoded) => Some(decoded.into_block_event()),
-        Err(e) => Some(escalate_membership_decode_failure(
-            event.pallet_name(),
-            event.event_name(),
-            block_number,
-            e,
-        )),
+/// The provider account of a provider-lifecycle event, or `None` for any
+/// other event.
+fn lifecycle_account(event: &StorageProviderEvent) -> Option<AccountId32> {
+    match event {
+        StorageProviderEvent::ProviderDeregistered { provider, .. }
+        | StorageProviderEvent::ProviderRegistered { provider, .. }
+        | StorageProviderEvent::ProviderSettingsUpdated { provider, .. }
+        | StorageProviderEvent::ProviderMultiaddrUpdated { provider, .. }
+        | StorageProviderEvent::DeregisterAnnounced { provider, .. }
+        | StorageProviderEvent::DeregisterCancelled { provider } => {
+            Some(AccountId32::new(provider.0))
+        }
+        // A new arm above also needs a check in `is_other_relevant_event`;
+        // without it, `decode_block_contents` skips that event.
+        _ => None,
     }
 }
 
-/// A membership event that matched its pallet/event name but whose fields
-/// failed to decode is treated as unknown-scope rather than dropped: which
-/// bucket changed can no longer be named, so every cached member set is
-/// invalidated instead, the same reaction as a lagged or restarted feed - but
-/// via a variant of its own, since nothing actually reconnected and the other
-/// coordinators have no reason to run their full-scan reaction to this.
+/// The coordinator-relevant [`BlockEvent`] for a decoded storage-provider
+/// event, or `None` if no coordinator reacts to it.
+fn block_event(event: StorageProviderEvent) -> Option<BlockEvent> {
+    match event {
+        StorageProviderEvent::ChallengeCreated {
+            challenge_id,
+            bucket_id,
+            provider,
+            ..
+        } => Some(BlockEvent::ChallengeCreated {
+            deadline: challenge_id.deadline,
+            index: challenge_id.index,
+            bucket_id,
+            provider: AccountId32::new(provider.0),
+        }),
+        StorageProviderEvent::ReplicaAgreementEstablished {
+            bucket_id,
+            provider,
+            ..
+        } => Some(BlockEvent::ReplicaAgreementEstablished {
+            bucket_id,
+            provider: AccountId32::new(provider.0),
+        }),
+        StorageProviderEvent::BucketCheckpointed { bucket_id, .. } => {
+            Some(BlockEvent::BucketCheckpointed { bucket_id })
+        }
+        StorageProviderEvent::BucketCreated { bucket_id, .. }
+        | StorageProviderEvent::MemberSet { bucket_id, .. }
+        | StorageProviderEvent::MemberRemoved { bucket_id, .. }
+        | StorageProviderEvent::BucketDeleted { bucket_id }
+        | StorageProviderEvent::BucketVisibilityChanged { bucket_id, .. } => {
+            Some(BlockEvent::BucketMembershipChanged { bucket_id })
+        }
+        // A new arm above also needs a check in `is_membership_event` or
+        // `is_other_relevant_event`; without it, `decode_block_contents`
+        // skips that event.
+        _ => None,
+    }
+}
+
+/// A membership event that failed to decode against the static bindings is
+/// treated as unknown-scope rather than dropped: which bucket changed can no
+/// longer be named, so every cached member set is invalidated instead, the
+/// same reaction as a lagged or restarted feed - but via a variant of its own,
+/// since nothing actually reconnected and the other coordinators have no
+/// reason to run their full-scan reaction to this.
 fn escalate_membership_decode_failure(
     pallet: &str,
     event_name: &str,
@@ -205,7 +180,7 @@ mod tests {
 
     #[test]
     fn replica_agreement_established_maps_bucket_and_account() {
-        let ev = pallet_events::ReplicaAgreementEstablished {
+        let ev = StorageProviderEvent::ReplicaAgreementEstablished {
             bucket_id: 11,
             provider: subxt::utils::AccountId32([4u8; 32]),
             owner: subxt::utils::AccountId32([2u8; 32]),
@@ -221,10 +196,10 @@ mod tests {
             },
             expires_at: 150,
         };
-        let BlockEvent::ReplicaAgreementEstablished {
+        let Some(BlockEvent::ReplicaAgreementEstablished {
             bucket_id,
             provider,
-        } = ev.into_block_event()
+        }) = block_event(ev)
         else {
             panic!("expected ReplicaAgreementEstablished");
         };
@@ -234,7 +209,7 @@ mod tests {
 
     #[test]
     fn bucket_checkpointed_maps_bucket_id() {
-        let checkpointed = pallet_events::BucketCheckpointed {
+        let checkpointed = StorageProviderEvent::BucketCheckpointed {
             bucket_id: 22,
             commitment: Commitment {
                 mmr_root: subxt::utils::H256([1u8; 32]),
@@ -244,14 +219,14 @@ mod tests {
             providers: vec![subxt::utils::AccountId32([4u8; 32])],
         };
         assert!(matches!(
-            checkpointed.into_block_event(),
-            BlockEvent::BucketCheckpointed { bucket_id: 22 }
+            block_event(checkpointed),
+            Some(BlockEvent::BucketCheckpointed { bucket_id: 22 })
         ));
     }
 
     #[test]
     fn challenge_created_maps_id_and_account() {
-        let ev = pallet_events::ChallengeCreated {
+        let ev = StorageProviderEvent::ChallengeCreated {
             challenge_id: ChallengeId {
                 deadline: 1234,
                 index: 7,
@@ -261,12 +236,12 @@ mod tests {
             challenger: subxt::utils::AccountId32([9u8; 32]),
             respond_by: 1234,
         };
-        let BlockEvent::ChallengeCreated {
+        let Some(BlockEvent::ChallengeCreated {
             deadline,
             index,
             bucket_id,
             provider,
-        } = ev.into_block_event()
+        }) = block_event(ev)
         else {
             panic!("expected ChallengeCreated");
         };
@@ -278,13 +253,13 @@ mod tests {
 
     #[test]
     fn bucket_created_maps_bucket_id() {
-        let ev = pallet_events::BucketCreated {
+        let ev = StorageProviderEvent::BucketCreated {
             bucket_id: 9,
             admin: subxt::utils::AccountId32([4u8; 32]),
         };
         assert!(matches!(
-            ev.into_block_event(),
-            BlockEvent::BucketMembershipChanged { bucket_id: 9 }
+            block_event(ev),
+            Some(BlockEvent::BucketMembershipChanged { bucket_id: 9 })
         ));
     }
 
@@ -292,35 +267,35 @@ mod tests {
     fn member_set_maps_bucket_id() {
         use storage_subxt::api::runtime_types::storage_primitives::Role;
 
-        let ev = pallet_events::MemberSet {
+        let ev = StorageProviderEvent::MemberSet {
             bucket_id: 7,
             member: subxt::utils::AccountId32([3u8; 32]),
             role: Role::Writer,
         };
         assert!(matches!(
-            ev.into_block_event(),
-            BlockEvent::BucketMembershipChanged { bucket_id: 7 }
+            block_event(ev),
+            Some(BlockEvent::BucketMembershipChanged { bucket_id: 7 })
         ));
     }
 
     #[test]
     fn member_removed_maps_bucket_id() {
-        let ev = pallet_events::MemberRemoved {
+        let ev = StorageProviderEvent::MemberRemoved {
             bucket_id: 7,
             member: subxt::utils::AccountId32([3u8; 32]),
         };
         assert!(matches!(
-            ev.into_block_event(),
-            BlockEvent::BucketMembershipChanged { bucket_id: 7 }
+            block_event(ev),
+            Some(BlockEvent::BucketMembershipChanged { bucket_id: 7 })
         ));
     }
 
     #[test]
     fn bucket_deleted_maps_bucket_id() {
-        let ev = pallet_events::BucketDeleted { bucket_id: 8 };
+        let ev = StorageProviderEvent::BucketDeleted { bucket_id: 8 };
         assert!(matches!(
-            ev.into_block_event(),
-            BlockEvent::BucketMembershipChanged { bucket_id: 8 }
+            block_event(ev),
+            Some(BlockEvent::BucketMembershipChanged { bucket_id: 8 })
         ));
     }
 
@@ -328,13 +303,13 @@ mod tests {
     fn bucket_visibility_changed_maps_bucket_id() {
         use storage_subxt::api::runtime_types::storage_primitives::Visibility;
 
-        let ev = pallet_events::BucketVisibilityChanged {
+        let ev = StorageProviderEvent::BucketVisibilityChanged {
             bucket_id: 6,
             visibility: Visibility::Private,
         };
         assert!(matches!(
-            ev.into_block_event(),
-            BlockEvent::BucketMembershipChanged { bucket_id: 6 }
+            block_event(ev),
+            Some(BlockEvent::BucketMembershipChanged { bucket_id: 6 })
         ));
     }
 

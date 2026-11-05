@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Per-drive persistence for the client-maintained `LocalIndex`, so a reload
-// needn't re-download the whole drive to recompute its anchored root. On load the
+// Per-bucket persistence for the client-maintained `LocalIndex`, so a reload
+// needn't re-download the whole bucket to recompute its anchored root. On load the
 // persisted index is revalidated against the on-chain anchor (see `album.state.ts`),
 // so a stale snapshot is harmless — it just falls back to a provider recompute.
 //
@@ -50,7 +50,7 @@ async function withStore<T>(
 }
 
 /**
- * Load the persisted index for `key` (`${network}:${driveId}`), or null if absent
+ * Load the persisted index for `key` (`${network}:${bucketId}`), or null if absent
  * or IndexedDB is unavailable. Never throws — a persistence miss degrades to a
  * provider recompute, so failures are swallowed to a null.
  */

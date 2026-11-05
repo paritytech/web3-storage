@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
 // Album State — the M6 "State B" interaction layer. Once a library exists, this
-// drives the provider's `/fs` API (the browser port of the M2/M3 headless flow):
+// drives the library bucket's file system through the SDK's FileSystemClient
+// (the browser port of the M2/M3 headless flow):
 // list/create albums (directories), upload photos with a client-generated
 // thumbnail, render a grid from those thumbnails, and open a photo full-res. Every
 // mutation refreshes its listing immediately and then schedules a background
 // re-anchor (`scheduleReanchor`): a single-flight, coalescing worker recomputes the
-// drive's metadata Merkle root locally and anchors it on-chain via `setRoot`
+// bucket's metadata Merkle root locally and anchors it on-chain via `setRoot`
 // (copy-on-write; the root moves each time) without blocking further interaction.
 //
 // Mirrors `library.state.ts` conventions: raw `BehaviorSubject`s, `bind` hooks,
@@ -20,7 +21,7 @@ import type { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { fromHex, type ParachainApi } from '@web3-storage/papi'
 import { requireApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
-import { getFsClient, resolveBucketId } from '@/lib/fs-client'
+import { getFsClient, setFsSigner } from '@/lib/fs-client'
 import { recomputeRoot } from '@/lib/fs-root'
 import { computeDataRoot, toHex } from '@web3-storage/sdk'
 import { LocalIndex } from '@/lib/local-index'
@@ -105,15 +106,14 @@ export const [useEditorOpen] = bind(editorOpen$, false)
 let api: ParachainApi | null = null
 let signer: InjectedPolkadotAccount['txCreator'] | null = null
 let contractBytes: Uint8Array | null = null
-let currentDriveId: bigint | null = null
 
 /**
- * Client-maintained drive index — the source of truth for the anchored metadata
+ * Client-maintained bucket index — the source of truth for the anchored metadata
  * root, updated on every upload/edit/delete. `indexAuthoritative` is true once the
- * index is known to fully describe the tree (a freshly-created drive, a persisted
+ * index is known to fully describe the tree (a freshly-created bucket, a persisted
  * snapshot that matched the on-chain anchor, or a completed provider recompute); it
- * then anchors from `index.root()` with no downloads. `indexKey` is the per-drive
- * IndexedDB key (`${parachainWs}:${driveId}`) the index persists under.
+ * then anchors from `index.root()` with no downloads. `indexKey` is the per-bucket
+ * IndexedDB key (`${parachainWs}:${bucketId}`) the index persists under.
  */
 let index = new LocalIndex()
 let indexAuthoritative = false
@@ -137,13 +137,12 @@ let anchorRunning = false
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Bind the album layer to a library: resolve its `/fs` context from chain state
- * and load its albums. Safe to call repeatedly; re-resolves only when the drive
- * changes. `onAnchored` is invoked after each successful `setRoot` so the page
+ * Bind the album layer to a library's bucket and load its albums. Safe to call
+ * repeatedly; resets the session only when the bucket changes. `onAnchored` is invoked after each successful `setRoot` so the page
  * can refresh the on-chain anchor it displays.
  */
 export async function initLibrary(
-  driveId: bigint,
+  bucketId: bigint,
   contract: ResolvedContract,
   account: InjectedPolkadotAccount,
   rootCid: `0x${string}`,
@@ -151,22 +150,21 @@ export async function initLibrary(
 ): Promise<void> {
   api = requireApi()
   signer = account.txCreator
+  setFsSigner({ signer: account.txCreator, address: account.address, publicKey: account.txCreator.publicKey })
   contractBytes = fromHex(contract.address)
   anchoredCallback = onAnchored
 
-  if (currentDriveId === driveId && bucketId$.getValue() !== null) {
-    // Same drive — keep caches/selection, just refresh listings.
+  if (bucketId$.getValue() === bucketId) {
+    // Same bucket — keep caches/selection, just refresh listings.
     await loadAlbums()
     return
   }
 
   resetSession()
-  currentDriveId = driveId
   libraryError$.next(undefined)
+  bucketId$.next(bucketId)
   try {
-    const bucketId = await resolveBucketId(driveId)
-    bucketId$.next(bucketId)
-    await loadPersistedIndex(driveId, rootCid)
+    await loadPersistedIndex(bucketId, rootCid)
     await loadAlbums()
   } catch (err) {
     libraryError$.next(err instanceof Error ? err.message : 'Could not reach the storage provider.')
@@ -174,15 +172,15 @@ export async function initLibrary(
 }
 
 /**
- * Seed the in-memory index for `driveId` from its persisted snapshot, trusting it
+ * Seed the in-memory index for `bucketId` from its persisted snapshot, trusting it
  * only if its root still matches the on-chain anchor. A match ⇒ authoritative:
  * future roots anchor from `index.root()` with no downloads. A miss or mismatch
- * (cold cache, a freshly-created drive with no snapshot, or a drive mutated
+ * (cold cache, a freshly-created bucket with no snapshot, or a bucket changed
  * elsewhere) ⇒ start empty and fall back to a provider recompute on the next
  * anchor, which repopulates the index and persists it for subsequent reloads.
  */
-async function loadPersistedIndex(driveId: bigint, rootCid: `0x${string}`): Promise<void> {
-  indexKey = `${getParachainWs()}:${driveId}`
+async function loadPersistedIndex(bucketId: bigint, rootCid: `0x${string}`): Promise<void> {
+  indexKey = `${getParachainWs()}:${bucketId}`
   const persisted = await loadIndex(indexKey)
   if (persisted && toHex(persisted.root()).toLowerCase() === rootCid.toLowerCase()) {
     index = persisted
@@ -490,7 +488,7 @@ export async function renamePhoto(item: GridItem, rawName: string): Promise<void
 }
 
 /**
- * Delete a photo (and its thumbnail) from the album. Removes the FS index entries;
+ * Delete a photo (and its thumbnail) from the album. Removes their directory entries;
  * the underlying blobs linger in the MMR (no GC), matching the app's copy-on-write
  * model. Refreshes the grid and schedules a background re-anchor.
  */
@@ -512,9 +510,9 @@ export async function deletePhoto(item: GridItem): Promise<void> {
   }
 }
 
-/** Tear down the album layer (on wallet/network/drive change). */
+/** Tear down the album layer (on wallet/network/bucket change). */
 export function resetLibrary(): void {
-  currentDriveId = null
+  setFsSigner(null)
   bucketId$.next(null)
   resetSession()
 }
@@ -564,7 +562,7 @@ async function runAnchorWorker(): Promise<void> {
 /** Recompute the metadata root from the live tree and anchor it via `setRoot`. */
 async function runReanchor(): Promise<void> {
   // Snapshot the session up front: a background anchor can outlive a library/account
-  // switch that reassigns these module-level vars, and it must sign for the drive it
+  // switch that reassigns these module-level vars, and it must sign for the bucket it
   // started on (not whatever is selected by the time the slow recompute finishes).
   const bucketId = bucketId$.getValue()
   const sessionApi = api
@@ -603,12 +601,12 @@ async function runReanchor(): Promise<void> {
   }
 }
 
-/** PUT a blob, assert the provider's `data_root` matches our local computation, and record it in the index. */
+/** Store a file, assert the returned `data_root` matches our local computation, and record it in the index. */
 async function putVerified(bucketId: bigint, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
   const res = await getFsClient().uploadFile(bucketId, path, bytes, { contentType })
   const localRoot = computeDataRoot(bytes)
-  if (!res.dataRoot || rootToBytes32(localRoot).toLowerCase() !== res.dataRoot.toLowerCase()) {
-    throw new Error(`Provider stored ${path} with a different content root than computed locally.`)
+  if (rootToBytes32(localRoot).toLowerCase() !== res.dataRoot.toLowerCase()) {
+    throw new Error(`Stored ${path} with a different content root than computed locally.`)
   }
   index.setFile(path, localRoot, BigInt(bytes.length))
   // A rewritten thumbnail must not keep being served from its stale cached URL.

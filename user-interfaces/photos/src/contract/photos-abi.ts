@@ -19,7 +19,7 @@ export const PHOTOS_ABI = [
       {
         "indexed": true,
         "internalType": "uint64",
-        "name": "driveId",
+        "name": "bucketId",
         "type": "uint64"
       },
       {
@@ -44,7 +44,7 @@ export const PHOTOS_ABI = [
       {
         "indexed": true,
         "internalType": "uint64",
-        "name": "driveId",
+        "name": "bucketId",
         "type": "uint64"
       },
       {
@@ -60,14 +60,28 @@ export const PHOTOS_ABI = [
   {
     "inputs": [
       {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "name": "bucketOwner",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "bytes32",
         "name": "userAccount",
         "type": "bytes32"
-      },
-      {
-        "internalType": "string",
-        "name": "name",
-        "type": "string"
       },
       {
         "internalType": "bytes32",
@@ -139,12 +153,12 @@ export const PHOTOS_ABI = [
                 "type": "uint128"
               }
             ],
-            "internalType": "struct IDriveRegistry.PrimitiveReplicaTerms",
+            "internalType": "struct IWeb3Storage.PrimitiveReplicaTerms",
             "name": "replicaParams",
             "type": "tuple"
           }
         ],
-        "internalType": "struct IDriveRegistry.PrimitiveAgreementTerms",
+        "internalType": "struct IWeb3Storage.PrimitiveAgreementTerms",
         "name": "terms",
         "type": "tuple"
       },
@@ -158,30 +172,11 @@ export const PHOTOS_ABI = [
     "outputs": [
       {
         "internalType": "uint64",
-        "name": "driveId",
+        "name": "bucketId",
         "type": "uint64"
       }
     ],
     "stateMutability": "payable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "uint64",
-        "name": "",
-        "type": "uint64"
-      }
-    ],
-    "name": "driveOwner",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -196,7 +191,7 @@ export const PHOTOS_ABI = [
     "outputs": [
       {
         "internalType": "uint64",
-        "name": "driveId",
+        "name": "bucketId",
         "type": "uint64"
       },
       {
@@ -225,7 +220,7 @@ export const PHOTOS_ABI = [
     "outputs": [
       {
         "internalType": "uint64",
-        "name": "driveId",
+        "name": "bucketId",
         "type": "uint64"
       },
       {
