@@ -1104,6 +1104,7 @@ mod tests {
             },
             deposit: 1_000_000_000_000,
             authorized: false,
+            created_at: 1,
         }
     }
 

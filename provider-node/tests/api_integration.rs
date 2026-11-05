@@ -397,7 +397,7 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_node_rejects_leaf_above_max_chunk_size(backend) {
+    async fn test_upload_node_rejects_oversized_leaf_and_body(backend) {
         let server = TestServer::new(backend).await;
         let max = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
 
@@ -422,6 +422,10 @@ common::backend_tests! {
         assert_eq!(body["error"], "chunk_too_large");
         assert_eq!(body["details"]["size"], max + 1);
         assert_eq!(body["details"]["max"], max);
+
+        // Over the request body limit once base64-encoded.
+        let response = put(vec![7u8; 4 * max]).await;
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }
 
@@ -1027,8 +1031,9 @@ common::backend_tests! {
 
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["total_buckets"], 1);
-        assert!(body["total_nodes"].as_u64().unwrap() > 0);
-        assert!(body["total_bytes"].as_u64().unwrap() > 0);
+        // upload_and_commit stores one 25-byte chunk.
+        assert_eq!(body["total_nodes"], 1);
+        assert_eq!(body["total_bytes"], 25);
         assert!(body.get("buckets").is_none());
     }
 }
@@ -1594,12 +1599,10 @@ common::backend_tests! {
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
-        // No chunks found for nonexistent root → empty chunks array
         let body: Value = resp.json().await.unwrap();
-        let chunks = body["chunks"].as_array().unwrap();
-        assert!(chunks.is_empty());
+        assert_eq!(body["error"], "not_found");
     }
 }
 
