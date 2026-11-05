@@ -9,9 +9,12 @@
  * Needs two provider nodes: //Alice at `provider_url` and //Charlie at
  * `second_provider_url` (`just start-second-provider`). Primaries do not sync
  * with each other, so the client uploads to each one and collects both
- * signatures for the checkpoint. Tests cover a bucket with two primaries and
- * a provider switch, where the client moves the data from the old primary to
- * a new one, checkpoints without the old one, and ends the old agreement.
+ * signatures for the checkpoint. Tests cover:
+ * - a bucket with two primaries;
+ * - a provider switch: the client moves the data from the old primary to a
+ *   new one, checkpoints without the old one, and ends the old agreement;
+ * - an admin ending a primary agreement early on a `min_providers = 2`
+ *   bucket, and checkpoints with one remaining primary.
  *
  * Usage: node e2e/13-multi-primary-providers.js [chain_ws] [provider_url] [second_provider_url]
  */
@@ -32,6 +35,7 @@ import {
   READ_OPTS,
   respondToChallenge,
   sameAddress,
+  setMinProviders,
   submitTx,
   updateProviderMultiaddr,
   uploadChunk,
@@ -92,6 +96,7 @@ async function main() {
 
   let moved!: bigint;
   let old!: Awaited<ReturnType<typeof uploadChunk>>;
+  let afterLeave!: Awaited<ReturnType<typeof uploadChunk>>;
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
@@ -269,6 +274,67 @@ async function main() {
       const result = await respondToChallenge(api, second, challengeId, proof);
       const events = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected ChallengeDefended event");
+    },
+  });
+
+  tests.push({
+    name: "13.9 Admin ends a primary agreement before expiry",
+    fn: async () => {
+      const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
+        bucketId,
+        first.address,
+        READ_OPTS
+      ))!;
+      assert.ok(
+        (await currentRelayBlock(api)) < Number(agreement.expires_at),
+        "agreement should not have expired yet"
+      );
+      const result = await endAgreement(api, client, first, bucketId, "Pay");
+      const events = api.event.StorageProvider.PrimaryProviderRemoved.filter(
+        result.events as never
+      );
+      assert.strictEqual(events.length, 1, "Expected PrimaryProviderRemoved event");
+      assert.strictEqual(
+        events[0].payload.reason.type,
+        "AdminTerminated",
+        "removal should take the early termination path"
+      );
+      const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
+      assert.strictEqual(bucket.primary_providers.length, 1, "bucket should have one primary");
+      assert.ok(sameAddress(bucket.primary_providers[0], second.address), "second primary remains");
+      assert.strictEqual(bucket.min_providers, 2, "min_providers should not change");
+    },
+  });
+
+  tests.push({
+    name: "13.10 Checkpoint fails while fewer primaries remain than min_providers",
+    fn: async () => {
+      const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
+      assert.strictEqual(bucket.primary_providers.length, 1, "13.9 must pass first");
+      afterLeave = await uploadChunk(
+        SECOND_PROVIDER_URL,
+        bucketId,
+        `after-leave @ ${Date.now()}`,
+        client
+      );
+      const tx = checkpointTx(api, bucketId, [{ provider: second, commit: afterLeave.commit }]);
+      await submitTxExpectFailure(tx, client.signer, "InsufficientSignatures", "13.10");
+    },
+  });
+
+  tests.push({
+    name: "13.11 Checkpoint succeeds after set_min_providers(1)",
+    fn: async () => {
+      assert.ok(afterLeave, "13.10 must pass first");
+      await setMinProviders(api, client, bucketId, 1);
+      const result = await submitTx(
+        checkpointTx(api, bucketId, [{ provider: second, commit: afterLeave.commit }]),
+        client.signer,
+        { label: "checkpoint (remaining primary)" }
+      );
+      const events = api.event.StorageProvider.BucketCheckpointed.filter(result.events as never);
+      assert.strictEqual(events.length, 1, "Expected BucketCheckpointed event");
+      assert.deepStrictEqual(await snapshotSigners(api, bucketId), [0b01]);
     },
   });
 
