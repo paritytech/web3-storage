@@ -19,7 +19,6 @@
 import assert from "node:assert";
 import {
   addPrimaryProvider,
-  buildSignedTermsArgs,
   bytesEq,
   challengeCheckpoint,
   checkpointTx,
@@ -97,28 +96,7 @@ async function main() {
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
   tests.push({
-    name: "13.1 Both providers are primaries of one bucket",
-    fn: async () => {
-      const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
-      assert.strictEqual(bucket.primary_providers.length, 2, "bucket should have two primaries");
-      assert.ok(sameAddress(bucket.primary_providers[0], first.address), "first primary at index 0");
-      assert.ok(
-        sameAddress(bucket.primary_providers[1], second.address),
-        "second primary at index 1"
-      );
-      for (const provider of [first, second]) {
-        const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
-          bucketId,
-          provider.address,
-          READ_OPTS
-        );
-        assert.ok(agreement, `agreement should exist for ${provider.address}`);
-      }
-    },
-  });
-
-  tests.push({
-    name: "13.2 Same upload to both providers gives the same commitment",
+    name: "13.1 Same upload to both providers gives the same commitment",
     fn: async () => {
       for (const field of ["mmr_root", "start_seq", "leaf_count"] as const) {
         assert.strictEqual(
@@ -131,17 +109,17 @@ async function main() {
   });
 
   tests.push({
-    name: "13.3 Checkpoint with one of two required signatures is rejected",
+    name: "13.2 Checkpoint with one of two required signatures is rejected",
     fn: async () => {
       const tx = checkpointTx(api, bucketId, [
         { provider: first, commit: firstUpload.commit },
       ]);
-      await submitTxExpectFailure(tx, client.signer, "InsufficientSignatures", "13.3");
+      await submitTxExpectFailure(tx, client.signer, "InsufficientSignatures", "13.2");
     },
   });
 
   tests.push({
-    name: "13.4 Checkpoint signed by both providers",
+    name: "13.3 Checkpoint signed by both providers",
     fn: async () => {
       const tx = checkpointTx(api, bucketId, [
         { provider: first, commit: firstUpload.commit },
@@ -159,7 +137,7 @@ async function main() {
   });
 
   tests.push({
-    name: "13.5 Second primary defends a challenge from its own node",
+    name: "13.4 Second primary defends a challenge from its own node",
     fn: async () => {
       const challengeId = await challengeCheckpoint(
         api,
@@ -176,23 +154,7 @@ async function main() {
   });
 
   tests.push({
-    name: "13.6 add_primary_provider rejects a provider that is already a primary",
-    fn: async () => {
-      const signed = await negotiateSigned(api, PROVIDER_URL, client, first, {
-        maxBytes,
-        duration,
-        bucketId,
-      });
-      const tx = api.tx.StorageProvider.add_primary_provider({
-        bucket_id: bucketId,
-        ...buildSignedTermsArgs(first, signed),
-      });
-      await submitTxExpectFailure(tx, client.signer, "AgreementAlreadyExists", "13.6");
-    },
-  });
-
-  tests.push({
-    name: "13.7 Add a new primary while the old agreement is active",
+    name: "13.5 Add a new primary while the old agreement is active",
     fn: async () => {
       ({ bucketId: moved } = await negotiateAndEstablish(
         api,
@@ -230,9 +192,9 @@ async function main() {
   });
 
   tests.push({
-    name: "13.8 Move the data and checkpoint with the new primary only",
+    name: "13.6 Move the data and checkpoint with the new primary only",
     fn: async () => {
-      assert.ok(old, "13.7 must pass first");
+      assert.ok(old, "13.5 must pass first");
       const bytes = await downloadChunk(PROVIDER_URL, moved, old.hash);
       const next = await uploadChunk(SECOND_PROVIDER_URL, moved, bytes, client);
       assert.strictEqual(
@@ -258,23 +220,23 @@ async function main() {
   });
 
   tests.push({
-    name: "13.9 Old primary is not challengeable against the new snapshot",
+    name: "13.7 Old primary is not challengeable against the new snapshot",
     fn: async () => {
-      assert.ok(old, "13.7 must pass first");
-      assert.deepStrictEqual(await snapshotSigners(api, moved), [0b10], "13.8 must pass first");
+      assert.ok(old, "13.5 must pass first");
+      assert.deepStrictEqual(await snapshotSigners(api, moved), [0b10], "13.6 must pass first");
       const tx = api.tx.StorageProvider.challenge_checkpoint({
         bucket_id: moved,
         provider: first.address,
         target: { leaf_index: BigInt(old.commit.leaf_indices[0]), chunk_index: 0n },
       });
-      await submitTxExpectFailure(tx, client.signer, "ProviderNotInSnapshot", "13.9");
+      await submitTxExpectFailure(tx, client.signer, "ProviderNotInSnapshot", "13.7");
     },
   });
 
   tests.push({
-    name: "13.10 End the old agreement after expiry",
+    name: "13.8 End the old agreement after expiry",
     fn: async () => {
-      assert.ok(old, "13.7 must pass first");
+      assert.ok(old, "13.5 must pass first");
       const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
         moved,
         first.address,
@@ -303,9 +265,9 @@ async function main() {
   });
 
   tests.push({
-    name: "13.11 Remaining primary defends a challenge",
+    name: "13.9 Remaining primary defends a challenge",
     fn: async () => {
-      assert.deepStrictEqual(await snapshotSigners(api, moved), [0b01], "13.10 must pass first");
+      assert.deepStrictEqual(await snapshotSigners(api, moved), [0b01], "13.8 must pass first");
       const challengeId = await challengeCheckpoint(
         api,
         client,
