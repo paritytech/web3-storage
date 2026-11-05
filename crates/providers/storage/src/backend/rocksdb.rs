@@ -263,7 +263,7 @@ impl DiskStorage {
     /// Totals across all buckets, summed from the per-bucket counters in
     /// CF_BUCKETS. Cost is one pass over the bucket rows, independent of how
     /// many nodes are stored.
-    pub fn totals(&self) -> StorageStats {
+    pub fn stats(&self) -> StorageStats {
         self.iter_buckets(|_, state| (state.node_count, state.used_bytes))
             .into_iter()
             .fold(StorageStats::default(), |totals, (nodes, bytes)| {
@@ -584,8 +584,8 @@ impl StorageBackend for DiskStorage {
         self.bucket_ids()
     }
 
-    fn totals(&self) -> StorageStats {
-        self.totals()
+    fn stats(&self) -> StorageStats {
+        self.stats()
     }
 
     fn store_node(
@@ -972,7 +972,7 @@ mod tests {
     }
 
     #[test]
-    fn totals_sum_the_bucket_counters_and_match_the_stored_nodes() {
+    fn stats_sum_the_bucket_counters_and_match_the_stored_nodes() {
         let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         storage.init_bucket(2, COMMIT_QUOTA).unwrap();
         let [a, b] = [1, 2].map(|byte| store_chunk_of_len(&storage, byte, 10));
@@ -986,7 +986,7 @@ mod tests {
                 .unwrap();
         }
 
-        let totals = storage.totals();
+        let stats = storage.stats();
 
         let stored_keys = {
             let cf = storage.db.cf_handle(CF_NODES).unwrap();
@@ -996,14 +996,14 @@ mod tests {
                 .count() as u64
         };
         assert_eq!(
-            totals,
+            stats,
             StorageStats {
                 buckets: 2,
                 nodes: 4,
                 bytes: 10 + 10 + 64 + 20,
             }
         );
-        assert_eq!(totals.nodes, stored_keys);
+        assert_eq!(stats.nodes, stored_keys);
     }
 
     #[test]

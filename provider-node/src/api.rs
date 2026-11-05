@@ -181,12 +181,12 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
 }
 
 async fn stats(State(state): State<Arc<ProviderState>>) -> Json<StatsResponse> {
-    let totals = state.storage.totals();
+    let stats = state.storage.stats();
     Json(StatsResponse {
         provider_id: state.provider_id.clone(),
-        total_buckets: totals.buckets as usize,
-        total_nodes: totals.nodes,
-        total_bytes: totals.bytes,
+        total_buckets: stats.buckets as usize,
+        total_nodes: stats.nodes,
+        total_bytes: stats.bytes,
     })
 }
 

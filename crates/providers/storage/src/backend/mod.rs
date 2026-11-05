@@ -113,7 +113,7 @@ pub trait StorageBackend: Send + Sync {
     fn bucket_ids(&self) -> Vec<BucketId>;
 
     /// Totals across all buckets, read from the per-bucket counters.
-    fn totals(&self) -> StorageStats;
+    fn stats(&self) -> StorageStats;
 
     /// Store a node under the hash the caller claims for it.
     fn store_node(
