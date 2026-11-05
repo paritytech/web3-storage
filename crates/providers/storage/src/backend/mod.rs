@@ -89,6 +89,17 @@ pub struct BucketInfo {
     pub leaf_count: u64,
 }
 
+/// Totals across every bucket a backend holds.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StorageStats {
+    /// Number of buckets.
+    pub buckets: u64,
+    /// Nodes stored, each counted once.
+    pub nodes: u64,
+    /// Bytes of node data charged against bucket quotas.
+    pub bytes: u64,
+}
+
 /// Storage engine interface. Callers hold an `Arc<dyn StorageBackend>` rather
 /// than a concrete engine.
 pub trait StorageBackend: Send + Sync {
@@ -101,11 +112,8 @@ pub trait StorageBackend: Send + Sync {
     /// Ids of every locally-held bucket.
     fn bucket_ids(&self) -> Vec<BucketId>;
 
-    /// Get total node count across all buckets.
-    fn total_nodes(&self) -> u64;
-
-    /// Get total bytes stored across all nodes.
-    fn total_bytes(&self) -> u64;
+    /// Totals across all buckets, read from the per-bucket counters.
+    fn totals(&self) -> StorageStats;
 
     /// Store a node under the hash the caller claims for it.
     fn store_node(

@@ -180,23 +180,14 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
     })
 }
 
-async fn stats(State(state): State<Arc<ProviderState>>) -> Result<Json<StatsResponse>, Error> {
-    let (total_buckets, total_bytes, total_nodes) = state
-        .blocking_storage(|storage| {
-            (
-                storage.bucket_ids().len(),
-                storage.total_bytes(),
-                storage.total_nodes(),
-            )
-        })
-        .await?;
-
-    Ok(Json(StatsResponse {
+async fn stats(State(state): State<Arc<ProviderState>>) -> Json<StatsResponse> {
+    let totals = state.storage.totals();
+    Json(StatsResponse {
         provider_id: state.provider_id.clone(),
-        total_buckets,
-        total_nodes,
-        total_bytes,
-    }))
+        total_buckets: totals.buckets as usize,
+        total_nodes: totals.nodes,
+        total_bytes: totals.bytes,
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

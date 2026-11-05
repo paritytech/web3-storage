@@ -1031,8 +1031,9 @@ common::backend_tests! {
 
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["total_buckets"], 1);
-        assert!(body["total_nodes"].as_u64().unwrap() > 0);
-        assert!(body["total_bytes"].as_u64().unwrap() > 0);
+        // upload_and_commit stores one 25-byte chunk.
+        assert_eq!(body["total_nodes"], 1);
+        assert_eq!(body["total_bytes"], 25);
         assert!(body.get("buckets").is_none());
     }
 }

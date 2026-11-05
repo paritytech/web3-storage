@@ -8,7 +8,7 @@
 //! [`types`]: super::types
 
 use super::types::FORMAT_VERSION;
-use super::{BucketInfo, BucketState, ChunkTreeNode, CommitOutcome, StorageBackend};
+use super::{BucketInfo, BucketState, ChunkTreeNode, CommitOutcome, StorageBackend, StorageStats};
 use crate::error::Error;
 use codec::{DecodeAll, Encode};
 use rocksdb::{
@@ -260,26 +260,19 @@ impl DiskStorage {
         self.iter_buckets(|bucket_id, _| bucket_id)
     }
 
-    /// Get total node count.
-    pub fn total_nodes(&self) -> u64 {
-        let cf = match self.db.cf_handle(CF_NODES) {
-            Some(cf) => cf,
-            None => return 0,
-        };
-        self.db
-            .iterator_cf(&cf, rocksdb::IteratorMode::Start)
-            .flatten()
-            .count() as u64
-    }
-
-    /// Get total bytes stored across all buckets.
-    ///
-    /// Sums per-bucket `used_bytes` from CF_BUCKETS instead of scanning all nodes,
-    /// since each bucket already tracks its byte usage.
-    pub fn total_bytes(&self) -> u64 {
-        self.iter_buckets(|_, state| state.used_bytes)
+    /// Totals across all buckets, summed from the per-bucket counters in
+    /// CF_BUCKETS. Cost is one pass over the bucket rows, independent of how
+    /// many nodes are stored.
+    pub fn totals(&self) -> StorageStats {
+        self.iter_buckets(|_, state| (state.node_count, state.used_bytes))
             .into_iter()
-            .sum()
+            .fold(StorageStats::default(), |totals, (nodes, bytes)| {
+                StorageStats {
+                    buckets: totals.buckets + 1,
+                    nodes: totals.nodes.saturating_add(nodes),
+                    bytes: totals.bytes.saturating_add(bytes),
+                }
+            })
     }
 
     /// Store a node under the hash the caller claims for it.
@@ -347,6 +340,7 @@ impl DiskStorage {
             txn.put_cf(&cf_nodes, key, node.encode())
                 .map_err(|error| bucket_write_error(bucket_id, error))?;
             bucket.used_bytes = bucket.used_bytes.saturating_add(charge);
+            bucket.node_count = bucket.node_count.saturating_add(1);
             self.put_bucket(&txn, bucket_id, &bucket)?;
             txn.commit()?;
         }
@@ -590,12 +584,8 @@ impl StorageBackend for DiskStorage {
         self.bucket_ids()
     }
 
-    fn total_nodes(&self) -> u64 {
-        self.total_nodes()
-    }
-
-    fn total_bytes(&self) -> u64 {
-        self.total_bytes()
+    fn totals(&self) -> StorageStats {
+        self.totals()
     }
 
     fn store_node(
@@ -701,10 +691,11 @@ mod tests {
             .expect("bucket must be stored under the little-endian bucket_id key");
         assert_eq!(
             array_bytes::bytes2hex("", &raw),
-            // BucketState::new(1_000): zero root, no leaves, max_bytes = 1_000
+            // BucketState::new(1_000): zero root, no leaves, no nodes, max_bytes = 1_000
             "0000000000000000000000000000000000000000000000000000000000000000\
              0000000000000000\
              00\
+             0000000000000000\
              0000000000000000\
              e803000000000000"
         );
@@ -896,11 +887,123 @@ mod tests {
         let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
         let [left, right] = [1, 2].map(|b| store_chunk_of_len(&storage, b, 10));
         let used = storage.get_bucket(BUCKET).unwrap().used_bytes;
+        assert_eq!(storage.get_bucket(BUCKET).unwrap().node_count, 2);
 
         store_parent(&storage, left, right);
 
         let bucket = storage.get_bucket(BUCKET).unwrap();
         assert_eq!(bucket.used_bytes, used + 64);
+        assert_eq!(bucket.node_count, 3);
+    }
+
+    #[test]
+    fn node_count_counts_each_distinct_node_stored() {
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
+        assert_eq!(storage.get_bucket(BUCKET).unwrap().node_count, 0);
+
+        for byte in 0..5 {
+            store_chunk_of_len(&storage, byte, 10);
+        }
+
+        assert_eq!(storage.get_bucket(BUCKET).unwrap().node_count, 5);
+    }
+
+    #[test]
+    fn node_count_ignores_a_node_stored_again_in_the_same_bucket() {
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
+        store_chunk_of_len(&storage, 1, 10);
+        store_chunk_of_len(&storage, 1, 10);
+
+        assert_eq!(storage.get_bucket(BUCKET).unwrap().node_count, 1);
+    }
+
+    #[test]
+    fn node_count_ignores_a_node_another_bucket_stored_first() {
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
+        storage.init_bucket(2, COMMIT_QUOTA).unwrap();
+        let data = vec![7u8; 10];
+        let hash = hash_leaf(&data);
+        for bucket_id in [BUCKET, 2] {
+            storage
+                .store_node(bucket_id, hash, ChunkTreeNode::Chunk(data.clone()))
+                .unwrap();
+        }
+
+        assert_eq!(storage.get_bucket(BUCKET).unwrap().node_count, 1);
+        assert_eq!(storage.get_bucket(2).unwrap().node_count, 0);
+    }
+
+    #[test]
+    fn node_count_ignores_rejected_stores() {
+        let (storage, _dir) = storage_with_bucket(10);
+        let stored = store_chunk_of_len(&storage, 1, 10);
+        let before = storage.get_bucket(BUCKET).unwrap();
+        assert_eq!(before.node_count, 1);
+
+        let data = vec![2u8; 10];
+        let err = storage
+            .store_node(
+                BUCKET,
+                H256::repeat_byte(0xaa),
+                ChunkTreeNode::Chunk(data.clone()),
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidHash { .. }), "got {err:?}");
+
+        let missing = H256::repeat_byte(0x42);
+        let err = storage
+            .store_node(
+                BUCKET,
+                storage_primitives::hash_children(stored, missing),
+                ChunkTreeNode::Internal {
+                    left: stored,
+                    right: missing,
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::ChildrenMissing(_)), "got {err:?}");
+
+        let err = storage
+            .store_node(BUCKET, hash_leaf(&data), ChunkTreeNode::Chunk(data))
+            .unwrap_err();
+        assert!(matches!(err, Error::QuotaExceeded { .. }), "got {err:?}");
+
+        assert_eq!(storage.get_bucket(BUCKET).unwrap(), before);
+    }
+
+    #[test]
+    fn totals_sum_the_bucket_counters_and_match_the_stored_nodes() {
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
+        storage.init_bucket(2, COMMIT_QUOTA).unwrap();
+        let [a, b] = [1, 2].map(|byte| store_chunk_of_len(&storage, byte, 10));
+        store_parent(&storage, a, b);
+        // Bucket 2 repeats a node bucket 1 stored, and adds one of its own.
+        let shared = vec![1u8; 10];
+        let own = vec![9u8; 20];
+        for data in [shared, own] {
+            storage
+                .store_node(2, hash_leaf(&data), ChunkTreeNode::Chunk(data))
+                .unwrap();
+        }
+
+        let totals = storage.totals();
+
+        let stored_keys = {
+            let cf = storage.db.cf_handle(CF_NODES).unwrap();
+            storage
+                .db
+                .iterator_cf(&cf, rocksdb::IteratorMode::Start)
+                .count() as u64
+        };
+        assert_eq!(
+            totals,
+            StorageStats {
+                buckets: 2,
+                nodes: 4,
+                bytes: 10 + 10 + 64 + 20,
+            }
+        );
+        assert_eq!(totals.nodes, stored_keys);
     }
 
     #[test]
@@ -1289,6 +1392,7 @@ mod tests {
         assert_eq!(outcome.leaf_count, 1);
         assert_eq!(bucket.leaves[0].data_size, 64 * DEFAULT_CHUNK_SIZE as u64);
         assert_eq!(bucket.used_bytes, DEFAULT_CHUNK_SIZE as u64 + 6 * 64);
+        assert_eq!(bucket.node_count, 7);
         assert_eq!(storage.collect_leaves(root).unwrap().len(), 64);
     }
 
@@ -1408,6 +1512,7 @@ mod tests {
         for bucket_id in [1, 2] {
             let bucket = storage.get_bucket(bucket_id).unwrap();
             assert_eq!(bucket.used_bytes, WRITERS / 2 * NODES_PER_WRITER * NODE_LEN);
+            assert_eq!(bucket.node_count, WRITERS / 2 * NODES_PER_WRITER);
             assert_eq!(bucket.leaf_count(), WRITERS / 2 * NODES_PER_WRITER);
         }
     }
