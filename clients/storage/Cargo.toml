@@ -33,6 +33,7 @@ subxt-signer = { workspace = true }
 futures = { workspace = true }
 
 [dev-dependencies]
+axum = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 client-test-support = { workspace = true }
 provider-types = { workspace = true }

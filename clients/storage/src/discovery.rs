@@ -49,6 +49,8 @@ pub enum PartialMatchReason {
     DurationMismatch,
     /// Provider is not accepting agreements.
     NotAccepting,
+    /// Requested bytes are below the provider's `min_agreement_bytes`.
+    BelowMinAgreementBytes,
 }
 
 /// Provider matching result.
@@ -66,6 +68,13 @@ pub struct MatchedProvider {
     pub partial_reason: Option<PartialMatchReason>,
 }
 
+impl MatchedProvider {
+    /// True when the provider meets every requirement (score 100, no partial reason).
+    fn is_full_match(&self) -> bool {
+        self.match_score == 100 && self.partial_reason.is_none()
+    }
+}
+
 /// Provider information for discovery.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProviderInfo {
@@ -80,6 +89,9 @@ pub struct ProviderInfo {
     pub committed_bytes: u64,
     /// Maximum capacity (0 = unlimited).
     pub max_capacity: u64,
+    /// Smallest agreement size, in bytes, that the provider accepts
+    /// (0 = no minimum).
+    pub min_agreement_bytes: u64,
     /// Free capacity per the chain; `None` is unlimited, not `Some(0)` ("full").
     pub available_capacity: Option<u64>,
     /// Minimum agreement duration.
@@ -121,6 +133,7 @@ impl From<rt_api::ProviderInfoResponse> for ProviderInfo {
             stake: p.stake,
             committed_bytes: p.committed_bytes,
             max_capacity: p.max_capacity,
+            min_agreement_bytes: p.min_agreement_bytes,
             available_capacity: p.available_capacity,
             min_duration: p.min_duration,
             max_duration: p.max_duration,
@@ -147,6 +160,7 @@ impl From<rt_api::PartialMatchReason> for PartialMatchReason {
             rt_api::PartialMatchReason::InsufficientCapacity => Self::InsufficientCapacity,
             rt_api::PartialMatchReason::DurationMismatch => Self::DurationMismatch,
             rt_api::PartialMatchReason::NotAccepting => Self::NotAccepting,
+            rt_api::PartialMatchReason::BelowMinAgreementBytes => Self::BelowMinAgreementBytes,
         }
     }
 }
@@ -288,13 +302,16 @@ impl DiscoveryClient {
 
     /// Find the best provider for the given requirements.
     ///
-    /// Returns the highest-scoring provider, or None if no providers match.
+    /// Returns the highest-scoring provider, or None if no provider fully
+    /// matches the requirements. A partial match (price, capacity, duration,
+    /// minimum size or availability) would be rejected when negotiating, so it
+    /// is never returned.
     pub async fn find_best_provider(
         &self,
         requirements: StorageRequirements,
     ) -> ClientResult<Option<MatchedProvider>> {
         let providers = self.find_providers(requirements, 1).await?;
-        Ok(providers.into_iter().next())
+        Ok(providers.into_iter().find(MatchedProvider::is_full_match))
     }
 
     /// Get providers with sufficient capacity for the given bytes (paginated).

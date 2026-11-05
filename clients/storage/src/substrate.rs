@@ -146,6 +146,7 @@ pub mod extrinsics {
     /// - `replica_sync_price`: Price for replica sync (None = not accepting replicas)
     /// - `accepting_extensions`: Whether accepting extensions
     /// - `max_capacity`: Maximum storage capacity in bytes (0 = unlimited)
+    /// - `min_agreement_bytes`: Smallest agreement size in bytes (0 = no minimum)
     #[allow(clippy::too_many_arguments)]
     pub fn update_provider_settings(
         min_duration: u32,
@@ -155,6 +156,7 @@ pub mod extrinsics {
         replica_sync_price: Option<u128>,
         accepting_extensions: bool,
         max_capacity: u64,
+        min_agreement_bytes: u64,
     ) -> impl Payload {
         let settings = runtime_types::pallet_storage_provider::pallet::ProviderSettings {
             min_duration,
@@ -164,6 +166,7 @@ pub mod extrinsics {
             replica_sync_price,
             accepting_extensions,
             max_capacity,
+            min_agreement_bytes,
         };
         api::tx()
             .storage_provider()

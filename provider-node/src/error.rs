@@ -78,6 +78,12 @@ pub enum Error {
         max_capacity: u64,
     },
 
+    #[error("Requested {requested} bytes is below the provider's minimum of {min_agreement_bytes} bytes")]
+    MaxBytesBelowMinimum {
+        requested: u64,
+        min_agreement_bytes: u64,
+    },
+
     #[error("Provider is deregistering; not accepting new agreements")]
     ProviderDeregistering,
 
@@ -95,7 +101,7 @@ pub enum Error {
     #[error(transparent)]
     Signing(#[from] provider_types::SigningRefused),
 
-    #[error("Storage agreement requested 0 byte")]
+    #[error("Storage agreement requested 0 bytes")]
     InvalidMaxBytesRequest,
 
     #[error("Too many requests")]
@@ -429,6 +435,19 @@ impl IntoResponse for Error {
                         "requested": requested,
                         "committed": committed,
                         "max_capacity": max_capacity,
+                    })),
+                },
+            ),
+            Error::MaxBytesBelowMinimum {
+                requested,
+                min_agreement_bytes,
+            } => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "max_bytes_below_minimum".to_string(),
+                    details: Some(serde_json::json!({
+                        "requested": requested,
+                        "min_agreement_bytes": min_agreement_bytes,
                     })),
                 },
             ),

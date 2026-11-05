@@ -141,6 +141,9 @@ importers:
       '@polkadot-labs/hdkd-helpers':
         specifier: ^0.0.34
         version: 0.0.34
+      '@web3-storage/core':
+        specifier: workspace:*
+        version: link:../core
       polkadot-api:
         specifier: ^3.3.0
         version: 3.3.0(esbuild@0.28.2)(rxjs@7.8.2)
@@ -464,6 +467,9 @@ importers:
       vite:
         specifier: ^8.3.5
         version: 8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@26.6.5)(vite@8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
   user-interfaces/provider:
     dependencies:

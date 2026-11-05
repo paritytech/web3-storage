@@ -120,6 +120,7 @@ async function main() {
         replica_sync_price: undefined,
         accepting_extensions: true,
         max_capacity: 0n,
+        min_agreement_bytes: 0n,
       });
       const events = api.event.StorageProvider.ProviderSettingsUpdated.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected ProviderSettingsUpdated event");
@@ -209,6 +210,7 @@ async function main() {
           replica_sync_price: undefined,
           accepting_extensions: true,
           max_capacity: 0n,
+          min_agreement_bytes: 0n,
         },
       });
       await submitTxExpectFailure(tx, dave.signer, "ProviderNotFound", "1.8");
@@ -235,9 +237,29 @@ async function main() {
           replica_sync_price: undefined,
           accepting_extensions: true,
           max_capacity: 0n,
+          min_agreement_bytes: 0n,
         },
       });
       await submitTxExpectFailure(tx, charlie.signer, "MinDurationExceedsMaxDuration", "1.10");
+    },
+  });
+
+  tests.push({
+    name: "1.10b min_agreement_bytes > max_capacity",
+    fn: async () => {
+      const tx = api.tx.StorageProvider.update_provider_settings({
+        settings: {
+          min_duration: 10,
+          max_duration: 100_000,
+          price_per_byte: 1n,
+          accepting_primary: true,
+          replica_sync_price: undefined,
+          accepting_extensions: true,
+          max_capacity: 1_000n,
+          min_agreement_bytes: 1_001n,
+        },
+      });
+      await submitTxExpectFailure(tx, charlie.signer, "MinAgreementBytesExceedsMaxCapacity", "1.10b");
     },
   });
 
@@ -255,6 +277,7 @@ async function main() {
         replica_sync_price: undefined,
         accepting_extensions: true,
         max_capacity: 0n,
+        min_agreement_bytes: 0n,
       });
       try {
         // A non-accepting provider scores 0 with a NotAccepting reason.
@@ -280,6 +303,7 @@ async function main() {
           replica_sync_price: undefined,
           accepting_extensions: true,
           max_capacity: 0n,
+          min_agreement_bytes: 0n,
         });
       }
     },
