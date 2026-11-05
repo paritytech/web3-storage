@@ -50,7 +50,7 @@ const BUCKET_LOCK_TIMEOUT_MS: i64 = 30_000;
 /// instead of waiting out the lock timeout. Reads run outside transactions.
 pub struct DiskStorage {
     db: Arc<TransactionDB>,
-    max_tree_nodes: u64,
+    max_tree_walk_visits: u64,
 }
 
 /// The commitment the provider signs for the bucket in this state.
@@ -88,13 +88,13 @@ impl DiskStorage {
 
         Ok(Self {
             db: Arc::new(db),
-            max_tree_nodes: super::MAX_TREE_NODES,
+            max_tree_walk_visits: super::MAX_TREE_WALK_VISITS,
         })
     }
 
     #[cfg(test)]
-    fn with_max_tree_nodes(mut self, max_nodes: u64) -> Self {
-        self.max_tree_nodes = max_nodes;
+    fn with_max_tree_walk_visits(mut self, max_visits: u64) -> Self {
+        self.max_tree_walk_visits = max_visits;
         self
     }
 
@@ -563,8 +563,8 @@ impl DiskStorage {
 }
 
 impl StorageBackend for DiskStorage {
-    fn max_tree_nodes(&self) -> u64 {
-        self.max_tree_nodes
+    fn max_tree_walk_visits(&self) -> u64 {
+        self.max_tree_walk_visits
     }
 
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
@@ -1404,7 +1404,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path())
             .unwrap()
-            .with_max_tree_nodes(100);
+            .with_max_tree_walk_visits(100);
         storage.init_bucket(BUCKET, u64::MAX).unwrap();
         let root = diamond_tree(&storage, BUCKET, 6);
 

@@ -31,7 +31,7 @@ pub type ProvenChunk = (H256, Vec<u8>, Vec<H256>);
 /// logical node count of a tree is not bounded by the bytes stored under it.
 /// This bound caps the work of `commit` and of chunk reads. At the default
 /// chunk size it admits roughly 512 GiB under one data root.
-pub const MAX_TREE_NODES: u64 = 1 << 22;
+pub const MAX_TREE_WALK_VISITS: u64 = 1 << 22;
 
 /// Which backend to build, and what that backend needs.
 ///
@@ -132,21 +132,21 @@ pub trait StorageBackend: Send + Sync {
     /// Commit data roots to the bucket's MMR.
     fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
 
-    /// Node budget for one content-tree traversal; see [`MAX_TREE_NODES`].
-    fn max_tree_nodes(&self) -> u64 {
-        MAX_TREE_NODES
+    /// Node budget for one content-tree traversal; see [`MAX_TREE_WALK_VISITS`].
+    fn max_tree_walk_visits(&self) -> u64 {
+        MAX_TREE_WALK_VISITS
     }
 
     /// Visit every node under `root` in DFS order, once per path that reaches
     /// it. Fails with [`Error::NodeNotFound`] on a missing node and with
     /// [`Error::TreeTooLarge`] once the visit count passes
-    /// [`Self::max_tree_nodes`].
+    /// [`Self::max_tree_walk_visits`].
     fn walk_tree(
         &self,
         root: H256,
         visit: &mut dyn FnMut(H256, &ChunkTreeNode),
     ) -> Result<(), Error> {
-        let max_nodes = self.max_tree_nodes();
+        let max_nodes = self.max_tree_walk_visits();
         let mut visited = 0u64;
         let mut stack = vec![root];
         while let Some(hash) = stack.pop() {
