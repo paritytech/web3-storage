@@ -54,6 +54,7 @@ const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 const SECOND_PROVIDER_URL = process.argv[4] || "http://127.0.0.1:3334";
 
+/** The snapshot's signer bits, one entry per index of `primary_providers`. */
 async function snapshotSigners(api: ParachainApi, bucketId: bigint): Promise<number[]> {
   const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
   assert.ok(bucket.snapshot, "bucket should have a snapshot");
@@ -125,7 +126,7 @@ async function main() {
       assert.strictEqual(events.length, 1, "Expected BucketCheckpointed event");
       assert.deepStrictEqual(
         await snapshotSigners(api, bucketId),
-        [0b11],
+        [1, 1],
         "both primaries should be in the snapshot bitfield"
       );
     },
@@ -165,7 +166,7 @@ async function main() {
         client.signer,
         { label: "checkpoint (old primary)" }
       );
-      assert.deepStrictEqual(await snapshotSigners(api, moved), [0b01]);
+      assert.deepStrictEqual(await snapshotSigners(api, moved), [1]);
       const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
         moved,
         first.address,
@@ -204,7 +205,7 @@ async function main() {
       );
       assert.deepStrictEqual(
         await snapshotSigners(api, moved),
-        [0b10],
+        [0, 1],
         "only the new primary should be in the snapshot bitfield"
       );
       assert.ok(
@@ -218,7 +219,7 @@ async function main() {
     name: "13.6 Old primary is not challengeable against the new snapshot",
     fn: async () => {
       assert.ok(old, "13.4 must pass first");
-      assert.deepStrictEqual(await snapshotSigners(api, moved), [0b10], "13.5 must pass first");
+      assert.deepStrictEqual(await snapshotSigners(api, moved), [0, 1], "13.5 must pass first");
       const tx = api.tx.StorageProvider.challenge_checkpoint({
         bucket_id: moved,
         provider: first.address,
@@ -253,7 +254,7 @@ async function main() {
       );
       assert.deepStrictEqual(
         await snapshotSigners(api, moved),
-        [0b01],
+        [1],
         "snapshot bit should move to the new primary's index"
       );
     },
@@ -262,7 +263,7 @@ async function main() {
   tests.push({
     name: "13.8 Remaining primary defends a challenge",
     fn: async () => {
-      assert.deepStrictEqual(await snapshotSigners(api, moved), [0b01], "13.7 must pass first");
+      assert.deepStrictEqual(await snapshotSigners(api, moved), [1], "13.7 must pass first");
       const challengeId = await challengeCheckpoint(
         api,
         client,
@@ -334,7 +335,7 @@ async function main() {
       );
       const events = api.event.StorageProvider.BucketCheckpointed.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected BucketCheckpointed event");
-      assert.deepStrictEqual(await snapshotSigners(api, bucketId), [0b01]);
+      assert.deepStrictEqual(await snapshotSigners(api, bucketId), [1]);
     },
   });
 
