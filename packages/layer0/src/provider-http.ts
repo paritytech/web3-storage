@@ -337,67 +337,42 @@ export async function fetchChallengeProof(
         challengeId.index,
     );
 
-  const { commitment } = challenge;
-  const mmrRoot = asHex(commitment.mmr_root);
-  const mmr = await providerFetch(providerUrl, "/mmr_proof", {
-    params: {
-      bucket_id: challenge.bucket_id,
-      leaf_index: challenge.target.leaf_index,
-      mmr_root: mmrRoot,
-      start_seq: commitment.start_seq,
-      leaf_count: commitment.leaf_count,
-    },
-    sign: signer ? { signer: signer.signer, bucketId: challenge.bucket_id } : undefined,
-  });
-  if (!Array.isArray(mmr.items))
-    throw new Error(
-      "Provider /mmr_proof response has no `items`: the provider node is older than this client",
-    );
-  if (typeof mmr.leaf?.leaf_version !== "number")
-    throw new Error(
-      "Provider /mmr_proof leaf has no `leaf_version`: the provider node is older than this client",
-    );
-  const mmr_proof = {
-    leaf: {
-      leaf_version: mmr.leaf.leaf_version,
-      data_root: asHex(mmr.leaf.data_root),
-      data_size: BigInt(mmr.leaf.data_size),
-      total_size: BigInt(mmr.leaf.total_size),
-    },
-    items: mmr.items.map((h: string) => asHex(h)),
+  const commitment: MmrProofCommitment = {
+    mmrRoot: hexToBytes(challenge.commitment.mmr_root),
+    startSeq: challenge.commitment.start_seq,
+    leafCount: challenge.commitment.leaf_count,
   };
-  const provesCommitment = verifyMmrProof(
-    {
-      leaf: {
-        leafVersion: mmr_proof.leaf.leaf_version,
-        dataRoot: hexToBytes(mmr_proof.leaf.data_root),
-        dataSize: mmr_proof.leaf.data_size,
-        totalSize: mmr_proof.leaf.total_size,
-      },
-      items: mmr_proof.items.map(hexToBytes),
-    },
-    challenge.target.leaf_index,
-    hexToBytes(mmrRoot),
-    commitment.leaf_count,
-  );
-  if (!provesCommitment)
+  const proof = await getMmrProof(providerUrl, challenge.bucket_id, challenge.target.leaf_index, {
+    signer,
+    commitment,
+  });
+  if (!verifyMmrProof(proof, challenge.target.leaf_index, commitment.mmrRoot, commitment.leafCount))
     throw new Error(
       "Provider /mmr_proof does not prove leaf " +
         challenge.target.leaf_index +
         " of the challenged commitment (root " +
-        mmrRoot +
+        toHex(commitment.mmrRoot) +
         ", " +
-        commitment.leaf_count +
+        commitment.leafCount +
         " leaves): the provider node may be older than this client",
     );
-  if (challenge.target.chunk_index >= BigInt(leafChunkCount(mmr.leaf))) {
+
+  // `respond_to_challenge` takes the proof as hex with snake_case fields.
+  const leaf = {
+    leaf_version: proof.leaf.leafVersion,
+    data_root: asHex(proof.leaf.dataRoot),
+    data_size: proof.leaf.dataSize,
+    total_size: proof.leaf.totalSize,
+  };
+  const mmr_proof = { leaf, items: proof.items.map((h) => asHex(h)) };
+  if (challenge.target.chunk_index >= BigInt(leafChunkCount(leaf))) {
     return Enum("ChunkOutOfRange", { mmr_proof });
   }
 
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
       bucket_id: challenge.bucket_id,
-      data_root: mmr.leaf.data_root,
+      data_root: leaf.data_root,
       chunk_index: challenge.target.chunk_index,
     },
   });
@@ -596,9 +571,19 @@ export async function getCommitment(
   };
 }
 
+/** The commitment a {@link getMmrProof} proof is for. */
+export interface MmrProofCommitment {
+  mmrRoot: Uint8Array;
+  startSeq: bigint;
+  leafCount: bigint;
+}
+
 /**
- * `GET /mmr_proof`: the MMR leaf at `leafIndex` (counted from the bucket's
- * current `start_seq`) and its inclusion proof. Check it with
+ * `GET /mmr_proof`: the MMR leaf at `leafIndex` and its inclusion proof.
+ * Without `opts.commitment`, the proof is for the bucket's current MMR and
+ * `leafIndex` counts from its current `start_seq`. With it, the proof is for
+ * that commitment's MMR and `leafIndex` counts from `commitment.startSeq`;
+ * a challenge response needs this form. Check the proof with
  * `verifyMmrProof` against a trusted MMR root. Reader-gated like
  * {@link getCommitment}: pass a member as `opts.signer` on a private bucket.
  */
@@ -606,10 +591,16 @@ export async function getMmrProof(
   providerUrl: string,
   bucketId: bigint | number,
   leafIndex: bigint | number,
-  opts: ProviderHttpOpts & { signer?: ChainSigner } = {},
+  opts: ProviderHttpOpts & { signer?: ChainSigner; commitment?: MmrProofCommitment } = {},
 ): Promise<MmrProof> {
+  const params: Record<string, string | number | bigint> = { bucket_id: bucketId, leaf_index: leafIndex };
+  if (opts.commitment) {
+    params.mmr_root = toHex(opts.commitment.mmrRoot);
+    params.start_seq = opts.commitment.startSeq;
+    params.leaf_count = opts.commitment.leafCount;
+  }
   const res = await providerFetch(providerUrl, "/mmr_proof", {
-    params: { bucket_id: bucketId, leaf_index: leafIndex },
+    params,
     sign: opts.signer ? { signer: opts.signer.signer, bucketId } : undefined,
     retries: opts.retries ?? IDEMPOTENT_RETRIES,
     fetch: opts.fetch,

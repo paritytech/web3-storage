@@ -168,6 +168,31 @@ describe("commitDataRoots / getCommitment / getMmrProof", () => {
     expect((await getMmrProof(PROVIDER, BUCKET, 0, { fetch: provider.fetch, signer })).items).toEqual([]);
   });
 
+  it("sends no commitment parameters without opts.commitment", async () => {
+    const fetchMock = stubFetch(() => ({
+      leaf: { leaf_version: LEAF_VERSION, data_root: toHex(new Uint8Array(32)), data_size: 1, total_size: 1 },
+      items: [],
+    }));
+    await getMmrProof(PROVIDER, BUCKET, 3);
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.searchParams.get("bucket_id")).toBe("5");
+    expect(url.searchParams.get("leaf_index")).toBe("3");
+    for (const name of ["mmr_root", "start_seq", "leaf_count"]) expect(url.searchParams.has(name)).toBe(false);
+  });
+
+  it("sends all three commitment parameters with opts.commitment", async () => {
+    const fetchMock = stubFetch(() => ({
+      leaf: { leaf_version: LEAF_VERSION, data_root: toHex(new Uint8Array(32)), data_size: 1, total_size: 1 },
+      items: [],
+    }));
+    const mmrRoot = new Uint8Array(32).fill(7);
+    await getMmrProof(PROVIDER, BUCKET, 3, { commitment: { mmrRoot, startSeq: 2n, leafCount: 9n } });
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.searchParams.get("mmr_root")).toBe(toHex(mmrRoot));
+    expect(url.searchParams.get("start_seq")).toBe("2");
+    expect(url.searchParams.get("leaf_count")).toBe("9");
+  });
+
   it("rejects an /mmr_proof leaf without leaf_version", async () => {
     stubFetch(() => ({ leaf: { data_root: toHex(new Uint8Array(32)), data_size: 1, total_size: 1 }, items: [] }));
     await expect(getMmrProof(PROVIDER, BUCKET, 0)).rejects.toThrow(/no `leaf_version`/);
