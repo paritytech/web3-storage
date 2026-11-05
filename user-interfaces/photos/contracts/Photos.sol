@@ -7,9 +7,9 @@ import "./IWeb3Storage.sol";
 /// @title Photos
 /// @notice Per-user control plane for the Photos dApp. The contract creates one
 ///         Layer 0 bucket per user through the storage-provider precompile,
-///         grants the user a Writer role so their browser can call the
-///         provider's `/fs` API directly, and anchors the album-tree root CID
-///         on-chain.
+///         grants the user a Writer role so their browser can write to the
+///         bucket through the provider directly, and anchors the album-tree
+///         root CID on-chain.
 ///
 ///         Origin model: precompile calls dispatch as
 ///         `RawOrigin::Signed(contract_account)`, so the *contract* is the
@@ -43,7 +43,7 @@ contract Photos {
     /// agreement payment, reserved from the contract's balance when the
     /// precompile dispatches. The contract is the bucket admin and grants me
     /// (`userAccount`, my substrate AccountId32) a Writer role so my browser
-    /// can upload and list directly against the provider's `/fs` API.
+    /// can write to the bucket through the provider directly.
     ///
     /// `terms.owner` must be the contract's substrate-mapped account (the
     /// bucket admin). `terms.hasBucketId` must be false: the bucket is created

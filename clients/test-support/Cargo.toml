@@ -1,0 +1,24 @@
+[package]
+name = "client-test-support"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Shared helpers for the integration tests of the client crates"
+publish = false
+
+[dependencies]
+axum = { workspace = true }
+provider-auth = { workspace = true, features = ["test-helpers"] }
+provider-storage = { workspace = true, features = ["test-helpers"] }
+provider-types = { workspace = true }
+sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+storage-client = { workspace = true }
+storage-primitives = { workspace = true, features = ["std"] }
+storage-provider-node = { workspace = true }
+subxt-signer = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

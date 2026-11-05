@@ -397,7 +397,7 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_node_rejects_leaf_above_max_chunk_size(backend) {
+    async fn test_upload_node_rejects_oversized_leaf_and_body(backend) {
         let server = TestServer::new(backend).await;
         let max = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
 
@@ -422,6 +422,10 @@ common::backend_tests! {
         assert_eq!(body["error"], "chunk_too_large");
         assert_eq!(body["details"]["size"], max + 1);
         assert_eq!(body["details"]["max"], max);
+
+        // Over the request body limit once base64-encoded.
+        let response = put(vec![7u8; 4 * max]).await;
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }
 

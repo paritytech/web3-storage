@@ -25,10 +25,6 @@ pub enum Error {
     #[error("A node is either data (a chunk) or children (an internal node)")]
     InvalidNode,
 
-    /// No chunks to build a tree from. Send at least one byte.
-    #[error("Empty data has no chunk tree")]
-    EmptyData,
-
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
 

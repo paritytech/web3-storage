@@ -87,7 +87,6 @@ impl ProviderClient {
         stake: u128,
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Registering provider {} with stake {}",
@@ -98,22 +97,8 @@ impl ProviderClient {
         // Create the extrinsic
         let tx = extrinsics::register_provider(multiaddr.into_bytes(), public_key, stake);
 
-        // Submit and wait for inclusion
-        let tx_progress = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
-
-        // Wait for finalization
-        tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        // Submit and wait for finalization
+        chain.submit(&tx).await?;
 
         tracing::info!("Provider registered successfully");
         Ok(())
@@ -147,7 +132,6 @@ impl ProviderClient {
     /// Change pricing, availability, or other settings.
     pub async fn update_settings(&self, settings: ProviderSettings) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Updating settings for provider {}: price_per_byte={}",
@@ -165,18 +149,7 @@ impl ProviderClient {
             settings.max_capacity,
         );
 
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        chain.submit(&tx).await?;
 
         tracing::info!("Provider settings updated");
         Ok(())
@@ -185,7 +158,6 @@ impl ProviderClient {
     /// Add more stake to your provider account.
     pub async fn add_stake(&self, additional_stake: u128) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Adding stake {} for provider {}",
@@ -195,18 +167,7 @@ impl ProviderClient {
 
         let tx = extrinsics::add_stake(additional_stake);
 
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        chain.submit(&tx).await?;
 
         tracing::info!("Stake added successfully");
         Ok(())
@@ -215,24 +176,12 @@ impl ProviderClient {
     /// Deregister as a provider (requires no active agreements).
     pub async fn deregister(&self) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!("Deregistering provider {}", self.provider_account());
 
         let tx = extrinsics::deregister_provider();
 
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        chain.submit(&tx).await?;
 
         tracing::info!("Provider deregistered successfully");
         Ok(())
@@ -371,7 +320,6 @@ impl ProviderClient {
         signature: &sp_runtime::MultiSignature,
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Confirming replica sync for bucket {} with {} roots",
@@ -381,18 +329,7 @@ impl ProviderClient {
 
         let tx = extrinsics::confirm_replica_sync(bucket_id, mmr_roots, signature);
 
-        chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        chain.submit(&tx).await?;
 
         tracing::info!("Replica sync confirmed successfully");
         Ok(())
@@ -418,7 +355,6 @@ impl ProviderClient {
         chunk_proof: &[H256],
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Responding to challenge {:?} with {} bytes",
@@ -433,20 +369,7 @@ impl ProviderClient {
             chunk_proof,
         );
 
-        let tx_progress = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
-
-        tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        chain.submit(&tx).await?;
 
         tracing::info!("Challenge response submitted successfully");
         Ok(())

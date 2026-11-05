@@ -1818,6 +1818,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
+name = "client-test-support"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "provider-auth",
+ "provider-storage",
+ "provider-types",
+ "sp-core",
+ "sp-runtime",
+ "storage-client",
+ "storage-primitives",
+ "storage-provider-node",
+ "subxt-signer 0.50.2",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2707,20 +2726,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dashmap"
-version = "6.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
-dependencies = [
- "cfg-if",
- "crossbeam-utils",
- "hashbrown 0.14.5",
- "lock_api",
- "once_cell",
- "parking_lot_core",
-]
-
-[[package]]
 name = "debugid"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3308,31 +3313,20 @@ name = "file-system-client"
 version = "0.1.0"
 dependencies = [
  "array-bytes 6.2.3",
- "file-system-primitives",
+ "async-trait",
+ "axum",
+ "client-test-support",
+ "parity-scale-codec",
  "reqwest",
+ "sp-core",
  "sp-runtime",
  "storage-client",
  "storage-primitives",
- "storage-subxt",
- "subxt",
  "subxt-signer 0.50.2",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.23",
-]
-
-[[package]]
-name = "file-system-primitives"
-version = "0.1.0"
-dependencies = [
- "array-bytes 6.2.3",
- "parity-scale-codec",
- "scale-info",
- "serde",
- "sp-core",
- "sp-runtime",
- "storage-primitives",
 ]
 
 [[package]]
@@ -7122,12 +7116,8 @@ name = "provider-storage"
 version = "0.1.0"
 dependencies = [
  "array-bytes 6.2.3",
- "dashmap",
  "parity-scale-codec",
- "parking_lot",
  "rocksdb",
- "serde",
- "serde_json",
  "sp-core",
  "storage-primitives",
  "tempfile",
@@ -7982,16 +7972,17 @@ name = "s3-client"
 version = "0.1.0"
 dependencies = [
  "array-bytes 6.2.3",
+ "async-trait",
+ "base64",
+ "client-test-support",
+ "file-system-client",
  "futures",
- "reqwest",
- "serde",
  "serde_json",
  "sp-core",
  "sp-runtime",
  "storage-client",
  "storage-primitives",
  "storage-subxt",
- "subxt",
  "subxt-signer 0.50.2",
  "thiserror 2.0.18",
  "tokio",
@@ -9784,14 +9775,13 @@ version = "0.1.0"
 dependencies = [
  "array-bytes 6.2.3",
  "async-trait",
- "axum",
  "base64",
  "chacha20poly1305",
+ "client-test-support",
  "futures",
  "parity-scale-codec",
  "provider-auth",
  "provider-negotiation",
- "provider-storage",
  "provider-types",
  "rand 0.8.8",
  "reqwest",
@@ -9801,7 +9791,6 @@ dependencies = [
  "sp-runtime",
  "storage-indexers",
  "storage-primitives",
- "storage-provider-node",
  "storage-subxt",
  "subxt",
  "subxt-signer 0.50.2",

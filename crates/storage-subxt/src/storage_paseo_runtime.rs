@@ -3446,9 +3446,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                67u8, 160u8, 147u8, 132u8, 158u8, 175u8, 11u8, 240u8, 249u8, 78u8, 47u8, 162u8,
-                49u8, 157u8, 110u8, 201u8, 33u8, 20u8, 105u8, 114u8, 168u8, 145u8, 108u8, 103u8,
-                1u8, 114u8, 96u8, 80u8, 142u8, 53u8, 51u8, 32u8,
+                95u8, 124u8, 30u8, 89u8, 79u8, 94u8, 169u8, 37u8, 126u8, 248u8, 61u8, 52u8, 232u8,
+                176u8, 162u8, 198u8, 218u8, 61u8, 78u8, 98u8, 177u8, 221u8, 18u8, 169u8, 146u8,
+                218u8, 196u8, 138u8, 165u8, 195u8, 133u8, 249u8,
             ]
     }
     pub mod system {
@@ -16031,9 +16031,9 @@ pub mod api {
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Writer or admin. Make a provider-signed commitment the bucket's"]
             #[doc = "canonical state. Needs valid signatures from at least"]
-            #[doc = "`min_providers` of the bucket's primary providers, and at least"]
-            #[doc = "one; a frozen bucket"]
-            #[doc = "only accepts commitments that keep its `frozen_start_seq`."]
+            #[doc = "`min_providers` distinct primary providers, and at least one; a"]
+            #[doc = "repeated signature counts once. A frozen bucket only accepts"]
+            #[doc = "commitments that keep its `frozen_start_seq`."]
             pub struct Checkpoint {
                 pub bucket_id: checkpoint::BucketId,
                 pub commitment: checkpoint::Commitment,
@@ -17015,9 +17015,9 @@ pub mod api {
                     }
                     #[doc = "Writer or admin. Make a provider-signed commitment the bucket's"]
                     #[doc = "canonical state. Needs valid signatures from at least"]
-                    #[doc = "`min_providers` of the bucket's primary providers, and at least"]
-                    #[doc = "one; a frozen bucket"]
-                    #[doc = "only accepts commitments that keep its `frozen_start_seq`."]
+                    #[doc = "`min_providers` distinct primary providers, and at least one; a"]
+                    #[doc = "repeated signature counts once. A frozen bucket only accepts"]
+                    #[doc = "commitments that keep its `frozen_start_seq`."]
                     pub fn checkpoint(
                         &self,
                         bucket_id: super::checkpoint::BucketId,
@@ -18388,7 +18388,7 @@ pub mod api {
                 #[doc = " `(bucket, provider)` pair. Maintained in lockstep with"]
                 #[doc = " [`PendingChallenges`] and gates that bucket's agreement teardown"]
                 #[doc = " (`end_agreement`, `claim_expired_agreement`) and bucket removal"]
-                #[doc = " (`delete_bucket`, `cleanup_bucket_internal`). An entry exists only"]
+                #[doc = " (`delete_bucket`). An entry exists only"]
                 #[doc = " while the count is positive, so a bucket with no entry under its"]
                 #[doc = " prefix has no open challenge."]
                 pub fn pending_challenges_by_bucket(
@@ -20178,10 +20178,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            116u8, 252u8, 171u8, 232u8, 171u8, 25u8, 191u8, 131u8, 17u8, 30u8,
-                            43u8, 52u8, 157u8, 0u8, 13u8, 193u8, 199u8, 100u8, 25u8, 242u8, 44u8,
-                            168u8, 162u8, 132u8, 183u8, 30u8, 12u8, 154u8, 225u8, 250u8, 99u8,
-                            89u8,
+                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
+                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
+                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
                         ],
                     )
                 }
@@ -24892,9 +24891,9 @@ pub mod api {
                     #[codec(index = 30)]
                     #[doc = "Writer or admin. Make a provider-signed commitment the bucket's"]
                     #[doc = "canonical state. Needs valid signatures from at least"]
-                    #[doc = "`min_providers` of the bucket's primary providers, and at least"]
-                    #[doc = "one; a frozen bucket"]
-                    #[doc = "only accepts commitments that keep its `frozen_start_seq`."]
+                    #[doc = "`min_providers` distinct primary providers, and at least one; a"]
+                    #[doc = "repeated signature counts once. A frozen bucket only accepts"]
+                    #[doc = "commitments that keep its `frozen_start_seq`."]
                     checkpoint {
                         bucket_id: ::core::primitive::u64,
                         commitment: runtime_types::storage_primitives::Commitment,
@@ -25291,8 +25290,8 @@ pub mod api {
                     #[doc = "`frozen_start_seq`."]
                     SnapshotViolatesFrozen,
                     #[codec(index = 60)]
-                    #[doc = "Fewer valid provider signatures than the bucket's `min_providers`,"]
-                    #[doc = "or none."]
+                    #[doc = "Fewer distinct primary providers signed than the bucket's"]
+                    #[doc = "`min_providers`, or none. A repeated signature counts once."]
                     InsufficientSignatures,
                     #[codec(index = 61)]
                     #[doc = "A balance or counter computation overflowed."]
