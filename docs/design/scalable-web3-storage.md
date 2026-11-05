@@ -659,7 +659,7 @@ below):
      Proposal: implement cancel_challenge (challenger only, before a response:
      remove the challenge, release the deposit, decrement the pending
      counters, no stats change). The off-chain-resolution argument in point 3
-     depends on it.
+     depends on it. Implementation: #461 (open); tracked in #506.
 
 3. Resolution
    - Valid proof: Challenge rejected. The provider's response fee is reimbursed

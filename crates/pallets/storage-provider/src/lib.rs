@@ -232,6 +232,7 @@ pub mod pallet {
         /// unaffordable.
         // DRIFT-005: this config item is missing from the design doc's Config
         // sketch. Proposal: keep; add it to the design's sketch and values table.
+        // Fix in #553 (open draft).
         #[pallet::constant]
         type ChallengeDeposit: Get<BalanceOf<Self>>;
 
