@@ -549,8 +549,8 @@ pub mod pallet {
         /// When set, provider cannot accept agreements that would exceed this capacity.
         pub max_capacity: u64,
         /// Smallest agreement size, in bytes, that the provider accepts, for
-        /// primary and replica agreements. 0 = no minimum.
-        /// The value must <= `max_bytes`.
+        /// primary and replica agreements. 0 = no minimum. Must not exceed a
+        /// non-zero `max_capacity`.
         pub min_agreement_bytes: u64,
     }
 
