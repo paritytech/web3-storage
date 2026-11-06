@@ -21,7 +21,7 @@ use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_primitives::{AgreementTerms, BucketId};
+use storage_primitives::{AgreementTerms, BucketId, MAX_READ_CHUNKS};
 use storage_primitives::{Commitment, CommitmentPayload};
 use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
@@ -153,6 +153,47 @@ async fn check_role(
         .map_err(Into::into)
 }
 
+/// Store an uploaded `node` in `bucket_id`. On the bucket's first upload,
+/// create the local bucket with the quota of this node's agreement on it.
+/// Rejects a bucket this node has no agreement on.
+async fn store_uploaded_node(
+    state: &ProviderState,
+    bucket_id: BucketId,
+    hash: H256,
+    node: ChunkTreeNode,
+) -> Result<(), Error> {
+    // The bucket check and the store share one storage task, so an upload to
+    // an existing bucket costs one blocking-pool hop. A missing bucket hands
+    // the node back for the agreement lookup.
+    let missing = state
+        .blocking_storage(
+            move |storage| -> Result<Option<ChunkTreeNode>, provider_storage::Error> {
+                if storage.get_bucket(bucket_id)?.is_none() {
+                    return Ok(Some(node));
+                }
+                storage.store_node(bucket_id, hash, node)?;
+                Ok(None)
+            },
+        )
+        .await??;
+    let Some(node) = missing else {
+        return Ok(());
+    };
+    let max_bytes = state
+        .auth
+        .own_agreement(bucket_id)
+        .await?
+        .ok_or(Error::NoAgreement(bucket_id))?
+        .max_bytes;
+    state
+        .blocking_storage(move |storage| {
+            storage.init_bucket(bucket_id, max_bytes)?;
+            storage.store_node(bucket_id, hash, node)
+        })
+        .await??;
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Health and Info
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,13 +295,8 @@ async fn upload_node(
         })
         .transpose()?;
     let node = ChunkTreeNode::from_wire(data, children)?;
-    let bucket_id = request.bucket_id;
-    state
-        .blocking_storage(move |storage| {
-            storage.init_bucket(bucket_id, u64::MAX)?;
-            storage.store_node(bucket_id, hash, node)
-        })
-        .await??;
+
+    store_uploaded_node(&state, request.bucket_id, hash, node).await?;
 
     Ok(Json(UploadNodeResponse { stored: true }))
 }
@@ -354,6 +390,13 @@ async fn read_chunks(
         .offset
         .saturating_add(query.length)
         .div_ceil(chunk_size);
+    let requested = end_chunk - start_chunk;
+    if requested > MAX_READ_CHUNKS {
+        return Err(Error::ReadTooLarge {
+            requested,
+            max: MAX_READ_CHUNKS,
+        });
+    }
 
     let chunks = state
         .blocking_storage(move |storage| {

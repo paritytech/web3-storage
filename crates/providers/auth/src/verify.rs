@@ -5,7 +5,7 @@
 use crate::error::AuthError;
 use crate::http_auth::auth_message;
 use crate::membership::{
-    MembershipCache, MembershipInvalidations, MembershipResolver, RequiredRole,
+    MembershipCache, MembershipInvalidations, MembershipResolver, OwnAgreement, RequiredRole,
 };
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::Duration;
@@ -225,6 +225,16 @@ impl Authenticator {
 
         Ok(())
     }
+
+    /// This node's agreement on `bucket_id`, or `None` if it has none, read
+    /// from the chain without the membership cache. Fails when the chain cannot
+    /// be reached.
+    pub async fn own_agreement(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<OwnAgreement>, AuthError> {
+        Ok(self.membership.fetch_own_agreement(bucket_id).await?)
+    }
 }
 
 #[cfg(test)]
@@ -335,6 +345,23 @@ mod tests {
     /// holding `granted`, with a valid signed header from that same account.
     fn authenticator(members: Vec<Member>) -> Authenticator {
         Authenticator::new(StaticMembershipResolver::private(members))
+    }
+
+    #[tokio::test]
+    async fn own_agreement_reports_the_resolved_agreement() {
+        let with_agreement =
+            Authenticator::new(StaticMembershipResolver::private(vec![]).with_max_bytes(1_000));
+        assert_eq!(
+            with_agreement.own_agreement(1).await.unwrap(),
+            Some(OwnAgreement {
+                replica: false,
+                max_bytes: 1_000
+            })
+        );
+
+        let without =
+            Authenticator::new(StaticMembershipResolver::private(vec![]).without_agreement());
+        assert_eq!(without.own_agreement(1).await.unwrap(), None);
     }
 
     #[tokio::test]

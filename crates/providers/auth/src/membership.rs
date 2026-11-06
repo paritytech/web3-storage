@@ -73,6 +73,17 @@ impl RequiredRole {
     }
 }
 
+/// This node's own storage agreement on a bucket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnAgreement {
+    /// The agreement has the replica role. Reader checks on the bucket then
+    /// pass without auth (replicas serve reads to everyone — visibility gates
+    /// primaries only).
+    pub replica: bool,
+    /// The agreement's quota, in bytes.
+    pub max_bytes: u64,
+}
+
 /// Cached access entry for a bucket: the bucket's own state plus this node's
 /// standing on it. Kept as separate fields — [`BucketAccess`] is bucket state,
 /// `serves_as_replica` is the node's relationship to the bucket — but cached as one
@@ -126,12 +137,14 @@ pub trait MembershipResolver: Send + Sync {
     /// exist, or it holds no members.
     async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError>;
 
-    /// Whether *this node* holds `bucket_id` under a replica agreement.
-    /// Replicas serve reads to everyone — visibility gates primaries only —
-    /// so `true` passes Reader checks without auth. Defaults to `false`, the
-    /// right answer for a resolver with no node identity.
-    async fn fetch_serves_as_replica(&self, _bucket_id: BucketId) -> Result<bool, MembershipError> {
-        Ok(false)
+    /// *This node's* agreement on `bucket_id`, or `None` if it has none.
+    /// Defaults to `None`, the right answer for a resolver with no node
+    /// identity.
+    async fn fetch_own_agreement(
+        &self,
+        _bucket_id: BucketId,
+    ) -> Result<Option<OwnAgreement>, MembershipError> {
+        Ok(None)
     }
 }
 
@@ -142,27 +155,35 @@ impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
         (**self).fetch_access(bucket_id).await
     }
 
-    async fn fetch_serves_as_replica(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
-        (**self).fetch_serves_as_replica(bucket_id).await
+    async fn fetch_own_agreement(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<OwnAgreement>, MembershipError> {
+        (**self).fetch_own_agreement(bucket_id).await
     }
 }
 
 /// A [`MembershipResolver`] that returns the same fixed answers for every
 /// bucket. Used by tests across crates; [`Self::private`] is the fail-safe
 /// member-only shape.
+#[cfg(any(test, feature = "test-helpers"))]
 pub struct StaticMembershipResolver {
     /// Returned by `fetch_access` for every bucket.
     pub access: BucketAccess,
-    /// Returned by `fetch_serves_as_replica` for every bucket.
-    pub serves_as_replica: bool,
+    /// Returned by `fetch_own_agreement` for every bucket.
+    pub own_agreement: Option<OwnAgreement>,
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 impl StaticMembershipResolver {
-    /// Returns `access` for every bucket, with `serves_as_replica` false.
+    /// Returns `access` for every bucket, with an unlimited primary agreement.
     pub fn new(access: BucketAccess) -> Self {
         Self {
             access,
-            serves_as_replica: false,
+            own_agreement: Some(OwnAgreement {
+                replica: false,
+                max_bytes: u64::MAX,
+            }),
         }
     }
 
@@ -173,19 +194,41 @@ impl StaticMembershipResolver {
 
     /// Resolve every bucket as replica-held by this node.
     pub fn with_serves_as_replica(mut self) -> Self {
-        self.serves_as_replica = true;
+        self.own_agreement = Some(OwnAgreement {
+            replica: true,
+            max_bytes: u64::MAX,
+        });
+        self
+    }
+
+    /// Resolve every bucket as a primary agreement with this quota.
+    pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
+        self.own_agreement = Some(OwnAgreement {
+            replica: false,
+            max_bytes,
+        });
+        self
+    }
+
+    /// Resolve every bucket as one this node has no agreement on.
+    pub fn without_agreement(mut self) -> Self {
+        self.own_agreement = None;
         self
     }
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 #[async_trait::async_trait]
 impl MembershipResolver for StaticMembershipResolver {
     async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
         Ok(self.access.clone())
     }
 
-    async fn fetch_serves_as_replica(&self, _bucket_id: BucketId) -> Result<bool, MembershipError> {
-        Ok(self.serves_as_replica)
+    async fn fetch_own_agreement(
+        &self,
+        _bucket_id: BucketId,
+    ) -> Result<Option<OwnAgreement>, MembershipError> {
+        Ok(self.own_agreement)
     }
 }
 
@@ -397,6 +440,15 @@ impl MembershipCache {
         Ok(self.lookup(bucket_id).await?.role_of(account))
     }
 
+    /// This node's agreement on `bucket_id`, read from the resolver directly,
+    /// bypassing the cache.
+    pub(crate) async fn fetch_own_agreement(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<OwnAgreement>, MembershipError> {
+        self.resolver.fetch_own_agreement(bucket_id).await
+    }
+
     /// The bucket's cached access entry, resolved on a miss or once stale.
     pub(crate) async fn lookup(
         &self,
@@ -419,7 +471,13 @@ impl MembershipCache {
         // stale-if-error path as a failed member lookup.
         let fetched = async {
             let access = self.resolver.fetch_access(bucket_id).await?;
-            let serves_as_replica = self.resolver.fetch_serves_as_replica(bucket_id).await?;
+            // Only a replica agreement serves reads to everyone; a primary
+            // agreement or none leaves reads to the visibility check.
+            let serves_as_replica = self
+                .resolver
+                .fetch_own_agreement(bucket_id)
+                .await?
+                .is_some_and(|agreement| agreement.replica);
             Ok::<_, MembershipError>((access, serves_as_replica))
         }
         .await;
@@ -524,6 +582,19 @@ mod tests {
                 expected,
                 "{granted:?} vs required {required:?}"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn serves_as_replica_is_true_only_for_a_replica_agreement() {
+        let base = || StaticMembershipResolver::private(vec![]);
+        for (resolver, expected) in [
+            (base().with_serves_as_replica(), true),
+            (base().with_max_bytes(10), false),
+            (base().without_agreement(), false),
+        ] {
+            let entry = MembershipCache::new(resolver).lookup(1).await.unwrap();
+            assert_eq!(entry.serves_as_replica, expected);
         }
     }
 
