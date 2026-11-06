@@ -278,7 +278,7 @@ async function main() {
     console.log("    preconditions: uploadChunk + submitClientCheckpoint");
     const upload = await uploadChunk(providerUrl, bucketC, "coverage-test", client);
     const ck = await fetchCheckpointSignature(providerUrl, bucketC, client);
-    await submitClientCheckpoint(api, client, provider, bucketC, ck);
+    await submitClientCheckpoint(api, client, bucketC, [{ provider, commit: ck }]);
 
     console.log("\n[9a] IWeb3Storage.challengeCheckpoint(bucketC, provider, leafIdx, chunkIdx=0)");
     r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "challengeCheckpoint", [

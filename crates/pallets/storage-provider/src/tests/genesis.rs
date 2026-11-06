@@ -21,6 +21,7 @@ fn genesis_provider(account: u64, stake: u64) -> GenesisProvider<Test> {
             replica_sync_price: None,
             accepting_extensions: true,
             max_capacity: 100,
+            min_agreement_bytes: 10,
         },
     }
 }
@@ -44,6 +45,7 @@ fn genesis_provider_is_registered_with_settings_and_reserved_stake() {
             assert_eq!(provider.settings.replica_sync_price, None);
             assert!(provider.settings.accepting_extensions);
             assert_eq!(provider.settings.max_capacity, 100);
+            assert_eq!(provider.settings.min_agreement_bytes, 10);
 
             // Stake plus the storage deposit for the provider record.
             assert_eq!(Balances::reserved_balance(1), 210);

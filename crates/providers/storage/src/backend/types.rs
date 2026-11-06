@@ -41,6 +41,8 @@ pub struct BucketState {
     pub leaves: Vec<MmrLeaf>,
     /// Bytes of node data charged against the quota.
     pub used_bytes: u64,
+    /// Number of nodes this bucket stored.
+    pub node_count: u64,
     /// Quota agreed on-chain for this bucket.
     pub max_bytes: u64,
 }
@@ -53,6 +55,7 @@ impl BucketState {
             start_seq: 0,
             leaves: Vec::new(),
             used_bytes: 0,
+            node_count: 0,
             max_bytes,
         }
     }
@@ -170,6 +173,7 @@ mod tests {
                         total_size: 222,
                     }],
                     used_bytes: 999,
+                    node_count: 5,
                     max_bytes: 1_000_000,
                 },
                 concat!(
@@ -187,6 +191,8 @@ mod tests {
                     "de00000000000000",
                     // used_bytes: u64 = 999
                     "e703000000000000",
+                    // node_count: u64 = 5
+                    "0500000000000000",
                     // max_bytes: u64 = 1_000_000
                     "40420f0000000000",
                 ),
