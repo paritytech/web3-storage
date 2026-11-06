@@ -59,10 +59,8 @@ pub enum ChallengeError {
     /// stored record could not be decoded. The proof data may still be
     /// present. Operator action: inspect, restart, or restore the backend,
     /// then retry.
-    #[error("storage backend unavailable for {target:?}: {reason}")]
-    StorageUnavailable {
-        /// What was being looked up when the backend failed.
-        target: ProofTarget,
+    #[error("storage backend unavailable: {reason}")]
+    Storage {
         /// The backend's own error, as text.
         reason: String,
     },
@@ -667,8 +665,7 @@ mod tests {
                     items: vec![H256::repeat_byte(0x22)],
                 }),
                 Lookup::Missing => Err(ChallengeError::ProofDataMissing { target }),
-                Lookup::BackendFailed => Err(ChallengeError::StorageUnavailable {
-                    target,
+                Lookup::BackendFailed => Err(ChallengeError::Storage {
                     reason: "rocksdb read failed".to_string(),
                 }),
             }
@@ -686,8 +683,7 @@ mod tests {
             match self.chunk {
                 Lookup::Found => Ok((b"chunk bytes".to_vec(), vec![H256::repeat_byte(0x33)])),
                 Lookup::Missing => Err(ChallengeError::ProofDataMissing { target }),
-                Lookup::BackendFailed => Err(ChallengeError::StorageUnavailable {
-                    target,
+                Lookup::BackendFailed => Err(ChallengeError::Storage {
                     reason: "chunk file unreadable".to_string(),
                 }),
             }

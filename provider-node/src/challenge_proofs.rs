@@ -5,7 +5,7 @@
 //! [`ProviderState`](crate::ProviderState).
 
 use provider_challenge::{ChallengeError, ChallengeProofSource, ProofTarget};
-use provider_storage::StorageBackend;
+use provider_storage::{Error, StorageBackend};
 use std::sync::Arc;
 
 /// [`ChallengeProofSource`] backed directly by a storage backend.
@@ -30,7 +30,14 @@ impl ChallengeProofSource for StorageProofSource {
         };
         self.0
             .get_mmr_proof_for_commitment(bucket_id, commitment, leaf_index)
-            .map_err(|e| classify(e, target))
+            .map_err(|e| match e {
+                Error::BucketNotFound(_) | Error::LeafNotFound { .. } => {
+                    ChallengeError::ProofDataMissing { target }
+                }
+                e => ChallengeError::Storage {
+                    reason: e.to_string(),
+                },
+            })
     }
 
     fn get_chunk_at_index(
@@ -44,21 +51,14 @@ impl ChallengeProofSource for StorageProofSource {
         };
         self.0
             .get_chunk_at_index(data_root, chunk_index)
-            .map_err(|e| classify(e, target))
-    }
-}
-
-/// Translate a storage-layer failure into what the challenge responder needs
-/// to know: is the proof data provably gone, or did the backend itself fail?
-/// [`provider_storage::Error::is_absence`] decides which.
-fn classify(e: provider_storage::Error, target: ProofTarget) -> ChallengeError {
-    if e.is_absence() {
-        ChallengeError::ProofDataMissing { target }
-    } else {
-        ChallengeError::StorageUnavailable {
-            target,
-            reason: e.to_string(),
-        }
+            .map_err(|e| match e {
+                Error::NodeNotFound(_) | Error::ChunkIndexOutOfRange { .. } => {
+                    ChallengeError::ProofDataMissing { target }
+                }
+                e => ChallengeError::Storage {
+                    reason: e.to_string(),
+                },
+            })
     }
 }
 
@@ -189,52 +189,22 @@ mod tests {
         }
     }
 
-    /// A backend failure must not be reported the same way as absence: only
-    /// the "nothing there" errors are `ProofDataMissing`.
+    /// A failure that is not absence - here, a commitment the backend
+    /// cannot reproduce - is a storage failure, not missing proof data.
     #[test]
-    fn classify_separates_absence_from_backend_failure() {
-        use provider_storage::Error;
-        let target = ProofTarget::Chunk {
-            data_root: sp_core::H256::repeat_byte(7),
-            chunk_index: 3,
-        };
+    fn other_storage_errors_are_not_reported_as_missing_data() {
+        let (storage, _dir) = temp_rocksdb();
+        storage.init_bucket(1, 1024 * 1024).unwrap();
+        let source = StorageProofSource::new(storage);
 
-        for absent in [
-            Error::NodeNotFound(sp_core::H256::zero()),
-            Error::BucketNotFound(1),
-            Error::ChunkIndexOutOfRange {
-                chunk_index: 3,
-                chunk_count: 1,
-            },
-            Error::LeafNotFound {
-                bucket_id: 1,
-                leaf_index: 0,
-            },
-        ] {
-            assert!(
-                matches!(
-                    classify(absent, target.clone()),
-                    ChallengeError::ProofDataMissing { .. }
-                ),
-                "absence must be ProofDataMissing"
-            );
-        }
+        let err = source
+            .get_mmr_proof_for_commitment(1, &any_commitment(), 0)
+            .unwrap_err();
 
-        for failed in [
-            Error::Serialization("simulated corrupt record".to_string()),
-            Error::ColumnFamilyMissing("nodes"),
-        ] {
-            let reason = failed.to_string();
-            match classify(failed, target.clone()) {
-                ChallengeError::StorageUnavailable {
-                    target: t,
-                    reason: d,
-                } => {
-                    assert_eq!(t, target);
-                    assert_eq!(d, reason);
-                }
-                other => panic!("expected StorageUnavailable, got {other:?}"),
-            }
-        }
+        assert!(!err.risks_slashing());
+        assert!(
+            matches!(err, ChallengeError::Storage { .. }),
+            "expected Storage, got {err:?}"
+        );
     }
 }

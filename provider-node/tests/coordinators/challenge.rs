@@ -10,7 +10,7 @@ use storage_primitives::{BucketId, MmrLeaf};
 use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::{
     ChallengeChainClient, ChallengeProofSource, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponse, ChallengeResponseResult, DetectedChallenge, ProofTarget,
+    ChallengeResponse, ChallengeResponseResult, DetectedChallenge,
 };
 
 struct MockChallengeChainClient {
@@ -100,14 +100,10 @@ impl ChallengeProofSource for StepTwoBackendFailure {
 
     fn get_chunk_at_index(
         &self,
-        data_root: H256,
-        chunk_index: u64,
+        _data_root: H256,
+        _chunk_index: u64,
     ) -> Result<(Vec<u8>, Vec<H256>), ChallengeError> {
-        Err(ChallengeError::StorageUnavailable {
-            target: ProofTarget::Chunk {
-                data_root,
-                chunk_index,
-            },
+        Err(ChallengeError::Storage {
             reason: "simulated RocksDB outage".to_string(),
         })
     }
