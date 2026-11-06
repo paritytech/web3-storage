@@ -327,22 +327,6 @@ impl<S: BlobStore> Tree<S> {
             .unwrap_or_default())
     }
 
-    /// List the entries of the directory at `path`, sorted by name, without
-    /// the subdirectories that contain no file at any depth. Reads each
-    /// subdirectory only until it finds a file.
-    pub async fn list_non_empty(&self, path: &str) -> Result<Vec<DirectoryEntry>> {
-        let names = parse_path(path)?;
-        let base = join(&names);
-        let mut entries = Vec::new();
-        for entry in self.list(path).await? {
-            let child = format!("{}/{}", base.trim_end_matches('/'), entry.name_str());
-            if entry.is_file() || self.contains_file(&child, entry.cid).await? {
-                entries.push(entry);
-            }
-        }
-        Ok(entries)
-    }
-
     /// Read the entry and manifest of the file at `path`.
     pub async fn stat(&self, path: &str) -> Result<FileStat> {
         let names = parse_path(path)?;
@@ -373,16 +357,6 @@ impl<S: BlobStore> Tree<S> {
                 .await?
         };
         Ok(FileContent { stat, data })
-    }
-
-    /// Every file under the directory at `path`, at any depth, as
-    /// (path relative to `path`, entry). Order is unspecified.
-    pub async fn files_under(&self, path: &str) -> Result<Vec<(String, DirectoryEntry)>> {
-        let entries = self.entries_under(path).await?;
-        Ok(entries
-            .into_iter()
-            .filter(|(_, e)| !e.is_directory())
-            .collect())
     }
 
     /// Every entry below the directory at `path`, directories and files,
@@ -718,7 +692,7 @@ impl<S: BlobStore> Tree<S> {
         Ok(bytes)
     }
 
-    async fn read_dir(&self, path: &str, cid: Cid) -> Result<DirectoryNode> {
+    pub(crate) async fn read_dir(&self, path: &str, cid: Cid) -> Result<DirectoryNode> {
         let bytes = self
             .read_blob(
                 path,
@@ -729,24 +703,6 @@ impl<S: BlobStore> Tree<S> {
         let node = DirectoryNode::from_blob(&bytes).map_err(invalid_blob(path))?;
         node.validate().map_err(invalid_blob(path))?;
         Ok(node)
-    }
-
-    /// Whether the directory `cid` at `path` contains a file at any depth.
-    async fn contains_file(&self, path: &str, cid: Cid) -> Result<bool> {
-        let mut pending = vec![(path.to_string(), cid)];
-        while let Some((path, cid)) = pending.pop() {
-            let dir = self.read_dir(&path, cid).await?;
-            if dir.children.iter().any(DirectoryEntry::is_file) {
-                return Ok(true);
-            }
-            pending.extend(
-                dir.children
-                    .into_inner()
-                    .into_iter()
-                    .map(|entry| (format!("{path}/{}", entry.name_str()), entry.cid)),
-            );
-        }
-        Ok(false)
     }
 
     async fn read_manifest(&self, path: &str, cid: Cid) -> Result<FileManifest> {
@@ -1004,26 +960,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_non_empty_drops_directories_without_files() {
-        let store = MemoryStore::default();
-        let t = tree(&store);
-        t.put_file("/f", b"x", DEFAULT, vec![]).await.unwrap();
-        t.put_file("/deep/a/b/f", b"x", DEFAULT, vec![])
-            .await
-            .unwrap();
-        t.mkdir("/deep/empty").await.unwrap();
-        t.mkdir("/nested/empty").await.unwrap();
-
-        assert_eq!(names(&t.list_non_empty("/").await.unwrap()), ["deep", "f"]);
-        assert_eq!(names(&t.list_non_empty("/deep").await.unwrap()), ["a"]);
-        assert!(t.list_non_empty("/nested").await.unwrap().is_empty());
-        assert!(matches!(
-            t.list_non_empty("/missing").await,
-            Err(FsClientError::PathNotFound(_))
-        ));
-    }
-
-    #[tokio::test]
     async fn put_file_commits_content_manifest_directories_then_root() {
         let store = MemoryStore::default();
         let (new_root, stat) = tree(&store)
@@ -1196,33 +1132,6 @@ mod tests {
             t.delete("/empty", EmptyParents::Remove).await,
             Err(FsClientError::NotAFile(_))
         ));
-    }
-
-    #[tokio::test]
-    async fn files_under_walks_all_depths() {
-        let store = MemoryStore::default();
-        let t = tree(&store);
-        for path in ["/top", "/a/x", "/a/b/y", "/c/z"] {
-            t.put_file(path, b"1", DEFAULT, vec![]).await.unwrap();
-        }
-        let mut all: Vec<String> = t
-            .files_under("/")
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|(p, _)| p)
-            .collect();
-        all.sort();
-        assert_eq!(all, ["a/b/y", "a/x", "c/z", "top"]);
-        let mut under_a: Vec<String> = t
-            .files_under("/a")
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|(p, _)| p)
-            .collect();
-        under_a.sort();
-        assert_eq!(under_a, ["b/y", "x"]);
     }
 
     #[tokio::test]

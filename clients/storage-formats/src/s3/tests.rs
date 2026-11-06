@@ -93,7 +93,7 @@ const KEYS: &[&str] = &[
     "d/4.txt",
 ];
 
-fn keys_of(page: &Page) -> Vec<&'static str> {
+fn keys_of(page: &Page<usize>) -> Vec<&'static str> {
     page.contents.iter().map(|&i| KEYS[i]).collect()
 }
 
@@ -163,7 +163,7 @@ fn list_max_keys_truncates_and_pages() {
 }
 
 #[tokio::test]
-async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
+async fn list_matches_a_page_of_all_keys_with_fewer_reads() {
     use std::sync::atomic::Ordering;
 
     let store = MemoryStore::default();
@@ -188,15 +188,8 @@ async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
     // File-system writes can leave directories without objects.
     t.mkdir("/b/empty").await.unwrap();
     t.mkdir("/e/f").await.unwrap();
-    let mut all: Vec<String> = t
-        .files_under("/")
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect();
+    let mut all = keys.to_vec();
     all.sort();
-    let all: Vec<&str> = all.iter().map(String::as_str).collect();
 
     for prefix in [
         "",
@@ -220,18 +213,22 @@ async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
             Some("photos/2024/01/02/img.jpg"),
             Some("zzz"),
         ] {
-            for max_keys in [1, 2, 1000] {
+            for (delimiter, max_keys) in [None, Some("/"), Some("0")]
+                .into_iter()
+                .flat_map(|d| [1, 2, 1000].map(|max| (d, max)))
+            {
                 let listed = objects
                     .list_objects(ListObjectsParams {
                         prefix: Some(prefix.to_string()),
-                        delimiter: Some("/".to_string()),
+                        delimiter: delimiter.map(str::to_string),
                         start_after: start_after.map(str::to_string),
                         max_keys: Some(max_keys),
                     })
                     .await
                     .unwrap();
-                let walked = list_page(&all, prefix, Some("/"), start_after, max_keys as usize);
-                let context = format!("{prefix:?} after {start_after:?} max {max_keys}");
+                let walked = list_page(&all, prefix, delimiter, start_after, max_keys as usize);
+                let context =
+                    format!("{prefix:?} {delimiter:?} after {start_after:?} max {max_keys}");
                 let listed_keys: Vec<&str> =
                     listed.contents.iter().map(|o| o.key.as_str()).collect();
                 let walked_keys: Vec<&str> = walked.contents.iter().map(|&i| all[i]).collect();
@@ -309,4 +306,30 @@ async fn the_bucket_format_produces_the_pinned_root() {
     write_sequence(&store).await;
     let root = tree(&store).load_root().await.unwrap().cid.unwrap();
     assert_eq!(format!("{root:#x}"), ROOT_CID);
+}
+
+/// A listing stops reading once its page is full.
+#[tokio::test]
+async fn a_small_page_reads_few_directories() {
+    use std::sync::atomic::Ordering;
+
+    let store = MemoryStore::default();
+    let objects = Objects::new(tree(&store));
+    for dir in 'a'..='z' {
+        objects
+            .put_object(&format!("{dir}/1"), b"x", PutObjectOptions::default())
+            .await
+            .unwrap();
+    }
+    store.reads.store(0, Ordering::Relaxed);
+    let page = objects
+        .list_objects(ListObjectsParams {
+            max_keys: Some(1),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(page.next_start_after.as_deref(), Some("a/1"));
+    // The root, `a`, and `b`, whose first key shows the page is full.
+    assert_eq!(store.reads.load(Ordering::Relaxed), 3);
 }
