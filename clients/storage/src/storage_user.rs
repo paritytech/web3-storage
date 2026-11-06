@@ -224,24 +224,21 @@ impl StorageUserClient {
         let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
         let start_chunk = offset / chunk_size;
         let end_chunk = offset.saturating_add(length).div_ceil(chunk_size);
-        let data = self
-            .read_chunks(bucket_id, data_root, start_chunk, Some(end_chunk))
+        let mut data = self
+            .read_chunks(bucket_id, data_root, start_chunk, end_chunk)
             .await?;
 
         // Trim to requested range
         let start = ((offset % chunk_size) as usize).min(data.len());
-        let end = start.saturating_add(length as usize);
-        let trimmed = if end <= data.len() {
-            data[start..end].to_vec()
-        } else {
-            data[start..].to_vec()
-        };
+        let end = start.saturating_add(length as usize).min(data.len());
+        data.truncate(end);
+        data.drain(..start);
 
         // Decrypt after reassembly if encryption is enabled
         if let Some(cipher) = &self.cipher {
-            cipher.decrypt(&trimmed)
+            cipher.decrypt(&data)
         } else {
-            Ok(trimmed)
+            Ok(data)
         }
     }
 
@@ -252,16 +249,10 @@ impl StorageUserClient {
         bucket_id: BucketId,
         data_root: &H256,
     ) -> ClientResult<Vec<u8>> {
-        let data = self.read_chunks(bucket_id, data_root, 0, None).await?;
-        if let Some(cipher) = &self.cipher {
-            cipher.decrypt(&data)
-        } else {
-            Ok(data)
-        }
+        self.download(bucket_id, data_root, 0, u64::MAX).await
     }
 
-    /// Read chunks `start_chunk..end_chunk` of `data_root`, or up to the last
-    /// chunk when `end_chunk` is `None`, in pages of at most
+    /// Read chunks `start_chunk..end_chunk` of `data_root` in pages of at most
     /// [`MAX_READ_CHUNKS`] chunks. The provider returns fewer chunks than
     /// requested at the end of the data, which ends the read.
     async fn read_chunks(
@@ -269,29 +260,25 @@ impl StorageUserClient {
         bucket_id: BucketId,
         data_root: &H256,
         start_chunk: u64,
-        end_chunk: Option<u64>,
+        end_chunk: u64,
     ) -> ClientResult<Vec<u8>> {
         let mut data = Vec::new();
         let mut next = start_chunk;
-        loop {
-            let page_end = next.saturating_add(MAX_READ_CHUNKS);
-            let page_end = end_chunk.map_or(page_end, |end| end.min(page_end));
-            if next >= page_end {
-                return Ok(data);
-            }
-            let requested = page_end - next;
+        while next < end_chunk {
+            let count = (end_chunk - next).min(MAX_READ_CHUNKS);
             let returned = self
-                .read_page(bucket_id, data_root, next, requested, &mut data)
+                .read_page(bucket_id, data_root, next, count, &mut data)
                 .await?;
             // More chunks than requested is a provider bug, not data to trust.
-            if returned > requested {
+            if returned > count {
                 return Err(ClientError::VerificationFailed);
             }
-            if returned < requested {
-                return Ok(data);
+            if returned < count {
+                break;
             }
-            next = page_end;
+            next += count;
         }
+        Ok(data)
     }
 
     /// Send one `/read` for `count` chunks from `start_chunk`, verify each
