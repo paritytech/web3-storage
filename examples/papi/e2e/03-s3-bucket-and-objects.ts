@@ -22,7 +22,7 @@ import {
   type Objects,
 } from "@web3-storage/sdk";
 import { ensureSoleAcceptingProvider } from "../support.js";
-import { eventually, runSuite, setupChain, storageFor } from "./helpers.js";
+import { eventually, INSUFFICIENT_ROLE, runSuite, setupChain, storageFor } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
@@ -184,7 +184,7 @@ async function main() {
       const intruder = await memberStorage.objects(other);
       await assert.rejects(
         intruder.putObject("intruder.txt", enc("nope")),
-        /\/node: 403/,
+        INSUFFICIENT_ROLE,
         "a non-member put should be refused"
       );
     },

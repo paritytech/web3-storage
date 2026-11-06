@@ -291,6 +291,8 @@ export async function putInternal(
 /** Bound on how long the provider may take to apply a membership change. */
 const MEMBERSHIP_DEADLINE_MS = 60_000;
 
+export const INSUFFICIENT_ROLE = /: 403 \{"error":"insufficient_role"\}/;
+
 /**
  * `Web3Storage` for `signer` against the provider at `providerUrl`. Chain
  * writes wait for finalization: the provider reads bucket membership from its

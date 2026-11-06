@@ -26,6 +26,7 @@ import { ensureSoleAcceptingProvider } from "../support.js";
 import {
   eventually,
   eventuallyRejects,
+  INSUFFICIENT_ROLE,
   readText,
   runSuite,
   setupChain,
@@ -151,7 +152,7 @@ async function main() {
       assert.strictEqual(await readText(memberDrive, "/hello.txt"), "hello drive");
       await eventuallyRejects(
         async () => memberDrive.putFile("/reader-write.txt", enc("nope")),
-        /\/node: 403/,
+        INSUFFICIENT_ROLE,
         "Reader upload"
       );
     },
@@ -167,15 +168,14 @@ async function main() {
         !memberDrives.some((d) => d.bucketId === bucketId),
         "listBuckets for the removed member should not include the drive"
       );
-      // Check writes, not reads: the client reads over Layer 0, where reads
-      // are unauthenticated (anyone who knows a CID can read the blob,
-      // #383/#396), so a removed member can still read. This differs from
-      // "Bucket Visibility & Access" in docs/design/scalable-web3-storage.md
-      // (private buckets serve reads only to members). Confidential files
-      // need client-side encryption.
+      await eventuallyRejects(
+        async () => memberDrive.getFile("/hello.txt"),
+        INSUFFICIENT_ROLE,
+        "removed member read"
+      );
       await eventuallyRejects(
         async () => memberDrive.putFile("/removed-write.txt", enc("nope")),
-        /\/node: 403/,
+        INSUFFICIENT_ROLE,
         "removed member upload"
       );
     },
@@ -210,7 +210,7 @@ async function main() {
     fn: async () => {
       await assert.rejects(
         memberDrive.putFile("/intruder.txt", enc("nope")),
-        /\/node: 403/,
+        INSUFFICIENT_ROLE,
         "a non-member upload should be refused"
       );
     },
