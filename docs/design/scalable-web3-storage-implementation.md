@@ -440,9 +440,10 @@ pub struct ProviderSettings<T: Config> {
     /// `committed_bytes` past this value, and the provider's stake must back
     /// it: `stake >= max_capacity * MinStakePerByte`.
     pub max_capacity: u64,
-    /// Minimum `max_bytes` per agreement, primary or replica. `0` means no
-    /// minimum. Redeem calls reject `terms.max_bytes` below this value.
-    pub min_bytes: u64,
+    /// Smallest agreement size, in bytes, that the provider accepts, for
+    /// primary and replica agreements. `0` means no minimum. Redeem calls
+    /// reject `terms.max_bytes` below this value.
+    pub min_agreement_bytes: u64,
 }
 
 /// Monotonically increasing bucket ID counter. Ensures stable, unique IDs.
@@ -1275,8 +1276,8 @@ impl<T: Config> Pallet<T> {
     ///   (`CapacityBelowCommitted`) and stake must cover it,
     ///   i.e. `stake >= max_capacity * MinStakePerByte`
     ///   (`InsufficientStakeForCapacity`).
-    /// - If `max_capacity > 0`: `min_bytes` must be `<= max_capacity`
-    ///   (`MinBytesExceedsMaxCapacity`).
+    /// - If `max_capacity > 0`: `min_agreement_bytes` must be `<= max_capacity`
+    ///   (`MinAgreementBytesExceedsMaxCapacity`).
     /// - Settings are frozen while a deregister announcement is in flight —
     ///   call `cancel_deregister` first.
     /// 
@@ -1478,7 +1479,7 @@ impl<T: Config> Pallet<T> {
     //   its duration bounds, and the added `terms.max_bytes` must fit its
     //   declared capacity (`CapacityExceeded`) and stake
     //   (`InsufficientStakeForBytes`)
-    // - `terms.max_bytes` must be `>= settings.min_bytes` (`MaxBytesBelowMinimum`)
+    // - `terms.max_bytes` must be `>= settings.min_agreement_bytes` (`MaxBytesBelowMinimum`)
     //
     // Payment `terms.price_per_byte * terms.max_bytes * terms.duration` is
     // held on the owner at the price the provider signed for — the

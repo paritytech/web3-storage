@@ -120,7 +120,7 @@ export interface ProviderNodeInfo {
    * until `readiness.provider_info_loaded`.
    */
   provider_registration_info: {
-    settings: { price_per_byte: string | number | bigint };
+    settings: { price_per_byte: string | number | bigint; min_agreement_bytes: string | number | bigint };
   } | null;
 }
 
@@ -198,9 +198,25 @@ export async function putInternalNode(
 }
 
 /**
+ * A commitment and the provider's signature over it, as the provider node
+ * returns it from `/commit` and `/checkpoint-signature`.
+ */
+export type ProviderCommit = {
+  mmr_root: string;
+  start_seq: number | string;
+  leaf_count: number | string;
+  provider_signature: string;
+};
+
+/** The `POST /commit` response body. */
+export type CommitResponse = ProviderCommit & {
+  /** MMR leaf index of each committed data root, in request order. */
+  leaf_indices: number[];
+};
+
+/**
  * PUT a chunk to the provider and request an MMR commitment. Returns the
- * chunk hash, original bytes, and the /commit response (mmr_root,
- * leaf_indices, start_seq, provider_signature).
+ * chunk hash, original bytes, and the /commit response.
  *
  * `signer` authenticates the `PUT /node` and `POST /commit` requests; it must
  * hold a Writer/Admin role on `bucketId` (the provider always enforces this).
@@ -212,7 +228,7 @@ export async function uploadChunk(
   bucketId: bigint | number,
   data: Uint8Array | string,
   signer: ChainSigner,
-): Promise<{ hash: string; data: Uint8Array; commit: any }> {
+): Promise<{ hash: string; data: Uint8Array; commit: CommitResponse }> {
   const { hash, data: bytes } = await putChunk(providerUrl, bucketId, data, signer);
   const commit = await providerFetch(providerUrl, "/commit", {
     method: "POST",

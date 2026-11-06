@@ -84,6 +84,8 @@ export interface AvailableProvider {
   minDuration: number;
   maxDuration: number;
   acceptingPrimary: boolean;
+  /** Smallest agreement `max_bytes` the provider accepts; `0n` = no minimum. */
+  minAgreementBytes: bigint;
   agreementsTotal: number;
 }
 
@@ -282,6 +284,7 @@ export class DriveClient {
       minDuration: info.min_duration,
       maxDuration: info.max_duration,
       acceptingPrimary: info.accepting_primary,
+      minAgreementBytes: info.min_agreement_bytes,
       agreementsTotal: info.stats.agreements_total,
     }));
 
@@ -330,6 +333,7 @@ export class DriveClient {
           minDuration: info.min_duration ?? 0,
           maxDuration: info.max_duration ?? 0,
           acceptingPrimary: info.accepting_primary ?? false,
+          minAgreementBytes: BigInt(info.min_agreement_bytes ?? 0),
           replicaSyncPrice:
             info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
           acceptingExtensions: info.accepting_extensions ?? false,

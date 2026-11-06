@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "test:unit": "vitest run",
     "build:contract": "bash scripts/build.sh",
     "deploy-contract": "tsx --tsconfig tsconfig.scripts.json scripts/deploy-contract.ts",
     "photos-flow": "tsx --tsconfig tsconfig.scripts.json scripts/photos-flow.ts"
@@ -26,18 +27,18 @@
     "@web3-storage/sdk": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "lucide-react": "^1.61.0",
+    "lucide-react": "^1.64.0",
     "polkadot-api": "^3.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "rxjs": "^7.8.2",
     "tailwind-merge": "^3.7.0",
-    "viem": "^2.57.12",
+    "viem": "^2.57.13",
     "ws": "^8.22.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
-    "@types/node": "^26.6.5",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
@@ -46,6 +47,7 @@
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
   }
 }

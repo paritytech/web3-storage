@@ -40,7 +40,7 @@ test.beforeAll(async () => {
   const { bucketId } = await createBucketViaApi(Bob);
   const upload = await uploadChunk(PROVIDER_URL, bucketId, `challenge-ui @ ${Date.now()}`, Bob);
   const checkpoint = await fetchCheckpointSignature(PROVIDER_URL, bucketId, Bob);
-  await submitClientCheckpoint(api, Bob, Alice, bucketId, checkpoint);
+  await submitClientCheckpoint(api, Bob, bucketId, [{ provider: Alice, commit: checkpoint }]);
   challengeId = await challengeOffchain(api, Bob, Alice, bucketId, {
     leafIndex: upload.commit.leaf_indices[0],
     mmrRoot: upload.commit.mmr_root,
