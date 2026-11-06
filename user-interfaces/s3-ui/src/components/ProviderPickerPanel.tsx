@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { queryMatchingProviders } from "@/state";
 import type { MatchingProviders, AvailableProvider } from "@/lib/s3-client";
-import { formatBytes, truncateHash } from "@web3-storage/format";
+import { formatBytes, providerDisabledReason, truncateHash } from "@web3-storage/format";
 
 interface ProviderPickerPanelProps {
   onSelect: (provider: AvailableProvider) => void;
@@ -26,29 +26,38 @@ export default function ProviderPickerPanel({
   const [providers, setProviders] = useState<MatchingProviders[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const results = await queryMatchingProviders(
-        {
-          bytesNeeded: requiredCapacity,
-          minDuration: requiredDuration,
-          maxPricePerByte: requiredPricePerByte,
-          primaryOnly: true,
-        },
-        10,
-      );
-      setProviders(results);
-    } catch {
-      setProviders([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [refreshKey, setRefreshKey] = useState(0);
 
+  // Re-score when the requirements change so the Score column follows the form.
+  // `stale` drops the result of a query that a newer one has replaced.
   useEffect(() => {
-    load();
-  }, []);
+    let stale = false;
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const results = await queryMatchingProviders(
+          {
+            bytesNeeded: requiredCapacity,
+            minDuration: requiredDuration,
+            maxPricePerByte: requiredPricePerByte,
+            primaryOnly: true,
+          },
+          10,
+        );
+        if (!stale) setProviders(results);
+      } catch {
+        if (!stale) setProviders([]);
+      } finally {
+        if (!stale) setLoading(false);
+      }
+    }, 300);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [requiredCapacity, requiredDuration, requiredPricePerByte, refreshKey]);
+
+  const refresh = () => setRefreshKey((k) => k + 1);
 
   if (loading) {
     return (
@@ -65,7 +74,7 @@ export default function ProviderPickerPanel({
         <p className="text-sm font-medium">
           {providers.length} provider{providers.length !== 1 && "s"} found
         </p>
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={load}>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={refresh}>
           <RefreshCw className="h-4 w-4" />
         </Button>
       </div>
@@ -85,7 +94,7 @@ export default function ProviderPickerPanel({
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground w-24">Price/byte</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground w-24">Duration</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground w-28">Reputation</th>
-                <th className="px-3 py-2 w-20" />
+                <th className="px-3 py-2 w-44" />
               </tr>
             </thead>
             <tbody>
@@ -97,12 +106,13 @@ export default function ProviderPickerPanel({
                   free !== undefined && p.maxCapacity > 0n
                     ? Number((free * 100n) / p.maxCapacity)
                     : 0;
-                const isPartial = p.matchScore < 100;
+                const reason = providerDisabledReason(p);
+                const rowDisabled = reason !== null;
 
                 return (
                   <tr
                     key={p.account}
-                    className={`border-b last:border-b-0 ${isPartial ? "opacity-60" : ""}`}
+                    className={`border-b last:border-b-0 ${rowDisabled ? "opacity-60" : ""}`}
                   >
                     <td className="px-3 py-2 font-mono text-xs">
                       {truncateHash(p.account, 6, 4)}
@@ -145,16 +155,20 @@ export default function ProviderPickerPanel({
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      <Button
-                        data-testid={`select-provider-${p.account}`}
-                        size="sm"
-                        variant="outline"
-                        className="h-7 text-xs"
-                        onClick={() => onSelect(p)}
-                        disabled={disabled}
-                      >
-                        Select
-                      </Button>
+                      {rowDisabled ? (
+                        <span className="text-xs text-muted-foreground">{reason}</span>
+                      ) : (
+                        <Button
+                          data-testid={`select-provider-${p.account}`}
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => onSelect(p)}
+                          disabled={disabled}
+                        >
+                          Select
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 );

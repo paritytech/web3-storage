@@ -173,7 +173,10 @@ fn removing_a_bucket_refunds_the_creator_not_the_admin_who_removes_it() {
             1
         ));
 
-        assert_ok!(StorageProvider::cleanup_bucket_internal(bucket_id, &3));
+        assert_ok!(StorageProvider::delete_bucket(
+            RuntimeOrigin::signed(3),
+            bucket_id
+        ));
 
         assert_eq!(held(HoldReason::StorageDeposit, 1), 0);
         assert_eq!(held(HoldReason::StorageDeposit, 3), 0);

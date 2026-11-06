@@ -37,6 +37,11 @@ impl<T: Config> Pallet<T> {
                 Error::<T>::CapacityBelowCommitted
             );
 
+            ensure!(
+                settings.min_agreement_bytes <= settings.max_capacity,
+                Error::<T>::MinAgreementBytesExceedsMaxCapacity
+            );
+
             // Validate stake backs declared capacity
             use sp_runtime::traits::SaturatedConversion;
             let capacity_as_balance: BalanceOf<T> = settings.max_capacity.saturated_into();
