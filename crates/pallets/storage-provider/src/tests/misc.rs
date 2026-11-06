@@ -133,6 +133,7 @@ fn remove_slashed_works() {
         super::slash_provider_stake(2);
 
         let owner_balance_before = Balances::free_balance(1);
+        let owner_deposits_before = held(HoldReason::StorageDeposit, 1);
         let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
         let payment_locked = agreement.payment_locked;
 
@@ -145,10 +146,12 @@ fn remove_slashed_works() {
 
         // Agreement removed
         assert!(StorageAgreements::<Test>::get(bucket_id, 2).is_none());
-        // Payment returned to owner
+        // Payment and the agreement's storage deposit returned to owner
+        let released_deposit = owner_deposits_before - held(HoldReason::StorageDeposit, 1);
+        assert_eq!(released_deposit, 10);
         assert_eq!(
             Balances::free_balance(1),
-            owner_balance_before + payment_locked
+            owner_balance_before + payment_locked + released_deposit
         );
         // Provider removed from bucket
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
@@ -315,7 +318,7 @@ fn challenge_checkpoint_emits_event() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x01],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             }
         });
@@ -350,27 +353,25 @@ fn challenge_checkpoint_emits_event() {
 fn checkpoint_emits_event() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
-        let bucket_id = create_bucket(1, 0);
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+        let commitment = Commitment {
+            mmr_root: sp_core::H256::repeat_byte(0xAA),
+            start_seq: 0,
+            leaf_count: 10,
+        };
 
         assert_ok!(StorageProvider::checkpoint(
             RuntimeOrigin::signed(1),
             bucket_id,
-            Commitment {
-                mmr_root: sp_core::H256::repeat_byte(0xAA),
-                start_seq: 0,
-                leaf_count: 10,
-            },
-            Default::default(),
+            commitment,
+            sign_commitment(bucket_id, commitment, &[2]),
         ));
 
         let expected = RuntimeEvent::StorageProvider(crate::Event::BucketCheckpointed {
             bucket_id,
-            commitment: Commitment {
-                mmr_root: sp_core::H256::repeat_byte(0xAA),
-                start_seq: 0,
-                leaf_count: 10,
-            },
-            providers: vec![],
+            commitment,
+            providers: vec![2],
         });
         assert!(frame_system::Pallet::<Test>::events()
             .iter()
@@ -382,7 +383,10 @@ fn checkpoint_emits_event() {
 fn extend_checkpoint_emits_event() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
-        let bucket_id = create_bucket(1, 0);
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+        setup_added_primary(3, 1, bucket_id, 50, 200);
 
         let commitment = Commitment {
             mmr_root: sp_core::H256::repeat_byte(0xAA),
@@ -394,13 +398,13 @@ fn extend_checkpoint_emits_event() {
             RuntimeOrigin::signed(1),
             bucket_id,
             commitment,
-            Default::default(),
+            sign_commitment(bucket_id, commitment, &[2]),
         ));
 
         assert_ok!(StorageProvider::extend_checkpoint(
             RuntimeOrigin::signed(1),
             bucket_id,
-            Default::default(),
+            sign_commitment(bucket_id, commitment, &[3]),
         ));
 
         // `extend_checkpoint` only adds signatures — it must re-emit the same
@@ -408,7 +412,7 @@ fn extend_checkpoint_emits_event() {
         let expected = RuntimeEvent::StorageProvider(crate::Event::BucketCheckpointed {
             bucket_id,
             commitment,
-            providers: vec![],
+            providers: vec![3],
         });
         assert!(frame_system::Pallet::<Test>::events()
             .iter()

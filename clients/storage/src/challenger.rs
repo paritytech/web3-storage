@@ -10,7 +10,7 @@
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::convert;
-use crate::substrate::{extrinsics, fetch_current_anchor_block, SubstrateClient};
+use crate::substrate::{extrinsics, fetch_bucket, fetch_current_anchor_block, SubstrateClient};
 use crate::Signer;
 use sp_runtime::AccountId32;
 use storage_primitives::{BucketId, ChunkLocation, Commitment};
@@ -103,7 +103,6 @@ impl ChallengerClient {
         target: ChunkLocation,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Challenging {} on bucket {} checkpoint (leaf {}, chunk {})",
@@ -119,21 +118,8 @@ impl ChallengerClient {
         // Create and submit the extrinsic
         let tx = extrinsics::challenge_checkpoint(bucket_id, provider_account, target);
 
-        let tx_progress = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
-
         // Wait for finalization and extract challenge ID from events
-        let events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        let events = chain.submit(&tx).await?;
 
         let challenge_id = Self::extract_challenge_id(&events)?;
         tracing::info!(
@@ -166,7 +152,6 @@ impl ChallengerClient {
         provider_signature: sp_runtime::MultiSignature,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Challenging {} on bucket {} using off-chain commitment (leaf {}, chunk {})",
@@ -188,21 +173,8 @@ impl ChallengerClient {
             &provider_signature,
         );
 
-        let tx_progress = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
-
         // Wait for finalization and extract challenge ID from events
-        let events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        let events = chain.submit(&tx).await?;
 
         let challenge_id = Self::extract_challenge_id(&events)?;
         tracing::info!(
@@ -225,7 +197,6 @@ impl ChallengerClient {
         target: ChunkLocation,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
 
         tracing::info!(
             "Challenging replica {} on bucket {} (leaf {}, chunk {})",
@@ -238,20 +209,7 @@ impl ChallengerClient {
         let provider_account = SubstrateClient::parse_account(&provider)?;
         let tx = extrinsics::challenge_replica(bucket_id, provider_account, target);
 
-        let tx_progress = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
-
-        let events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        let events = chain.submit(&tx).await?;
 
         let challenge_id = Self::extract_challenge_id(&events)?;
         tracing::info!(
@@ -267,23 +225,9 @@ impl ChallengerClient {
     /// Anyone may call this; the challenger's deposit is refunded in full.
     pub async fn resolve_expired_challenge(&self, challenge_id: ChallengeId) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
         let tx = extrinsics::resolve_expired_challenge((challenge_id.deadline, challenge_id.index));
 
-        let tx_progress = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
-
-        tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        chain.submit(&tx).await?;
 
         tracing::info!(
             "Challenge resolved: deadline={}, index={}",
@@ -404,17 +348,7 @@ impl ChallengerClient {
             // height.
             let anchor_block = fetch_current_anchor_block(&at).await?;
 
-            let bucket_value = at
-                .storage()
-                .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
-                .await
-                .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?;
-
-            if let Some(value) = bucket_value {
-                let bucket = value
-                    .decode()
-                    .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
-
+            if let Some(bucket) = fetch_bucket(&at, bucket_id).await? {
                 let checkpoint_block = bucket
                     .snapshot
                     .map(|s| s.checkpoint_block)
@@ -476,7 +410,8 @@ impl ChallengerClient {
         let mut challenge_ids = Vec::new();
 
         for (bucket_id, provider_account, _rep) in scored.iter() {
-            let signer = chain.signer()?;
+            // A missing signer fails the call, not each candidate.
+            chain.signer()?;
 
             // Challenge leaf 0, chunk 0 as a basic liveness check
             let tx = extrinsics::challenge_checkpoint(
@@ -488,36 +423,20 @@ impl ChallengerClient {
                 },
             );
 
-            let at = match chain.api().at_current_block().await {
-                Ok(at) => at,
-                Err(e) => {
-                    tracing::warn!("Failed to submit challenge for bucket {bucket_id}: {e}");
-                    continue;
-                }
-            };
-
-            let result = at
-                .transactions()
-                .sign_and_submit_then_watch_default(&tx, signer)
-                .await;
-
-            match result {
-                Ok(progress) => match progress.wait_for_finalized_success().await {
-                    Ok(events) => match Self::extract_challenge_id(&events) {
-                        Ok(id) => {
-                            tracing::info!(
-                                "Auto-challenge submitted for bucket {}: deadline={}, index={}",
-                                bucket_id,
-                                id.deadline,
-                                id.index
-                            );
-                            challenge_ids.push(id);
-                        }
-                        Err(e) => tracing::warn!("Could not extract challenge ID: {e}"),
-                    },
-                    Err(e) => tracing::warn!("Challenge tx failed for bucket {bucket_id}: {e}"),
+            match chain.submit(&tx).await {
+                Ok(events) => match Self::extract_challenge_id(&events) {
+                    Ok(id) => {
+                        tracing::info!(
+                            "Auto-challenge submitted for bucket {}: deadline={}, index={}",
+                            bucket_id,
+                            id.deadline,
+                            id.index
+                        );
+                        challenge_ids.push(id);
+                    }
+                    Err(e) => tracing::warn!("Could not extract challenge ID: {e}"),
                 },
-                Err(e) => tracing::warn!("Failed to submit challenge for bucket {bucket_id}: {e}"),
+                Err(e) => tracing::warn!("Challenge failed for bucket {bucket_id}: {e}"),
             }
         }
 

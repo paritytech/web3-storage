@@ -104,7 +104,7 @@ async function main() {
         providerSignature: commit.provider_signature,
         chunkIndex: 2n,
       });
-      const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
+      const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId, provider);
       const result = await respondToChallenge(api, provider, challengeId, proof);
       const events = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected ChallengeDefended event");

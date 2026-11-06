@@ -5,6 +5,7 @@
  */
 
 import { ss58Address, ss58Decode } from '@polkadot-labs/hdkd-helpers'
+import { httpErrorFromBody } from "@web3-storage/core";
 import { multiaddrToUri } from "@multiformats/multiaddr-to-uri";
 import { parachain } from "@polkadot-api/descriptors";
 import { type TypedApi } from "polkadot-api";
@@ -163,8 +164,7 @@ export async function negotiateTerms(
     body: JSON.stringify(request, (_k, v) => (typeof v === "bigint" ? v.toString() : v)),
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`/negotiate failed: ${res.status} ${body}`);
+    throw httpErrorFromBody(res.status, await res.text().catch(() => ""), "/negotiate failed");
   }
   return res.json();
 }

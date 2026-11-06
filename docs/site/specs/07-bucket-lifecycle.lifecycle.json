@@ -220,7 +220,7 @@
       "dot": "emerald",
       "title": "Creation",
       "items": [
-        "create_bucket: anyone; caller is sole admin; bucket_id assigned and never changes",
+        "create_bucket: anyone; caller is sole admin and pays the bucket and member storage deposits; bucket_id never changes",
         "create_bucket_with_primary: bucket and first primary in one call, min_providers = 1",
         "add_primary_provider: bucket admin, below MaxPrimaryProviders"
       ]
@@ -240,7 +240,8 @@
       "items": [
         "Ending the last agreement deletes the agreement, not the bucket",
         "Members, snapshot and frozen_start_seq remain; a frozen bucket stays frozen",
-        "add_primary_provider works on a bucket with zero primaries and on a frozen bucket"
+        "add_primary_provider works on a bucket with zero primaries and on a frozen bucket",
+        "delete_bucket (admin) removes a bucket with no agreements and no open challenge and releases its storage deposits"
       ]
     },
     {

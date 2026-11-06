@@ -4,8 +4,10 @@
 
 use crate as pallet_storage_provider;
 use frame_support::{
-    derive_impl,
-    traits::{ConstU16, ConstU32, ConstU64, Hooks},
+    derive_impl, parameter_types,
+    traits::{
+        fungible::HoldConsideration, ConstU16, ConstU32, ConstU64, Hooks, LinearStoragePrice,
+    },
 };
 use sp_core::{Get, H256};
 use sp_runtime::{
@@ -76,17 +78,31 @@ impl frame_support::traits::Get<u64> for TestTreasury {
     }
 }
 
+parameter_types! {
+    pub const StorageDepositReason: RuntimeHoldReason =
+        RuntimeHoldReason::StorageProvider(pallet_storage_provider::HoldReason::StorageDeposit);
+    /// A static so a test can change it while a challenge is open.
+    pub static ChallengeTimeout: u64 = 100;
+}
+
 impl pallet_storage_provider::Config for Test {
     type Currency = Balances;
     type RuntimeHoldReason = RuntimeHoldReason;
     type Treasury = TestTreasury;
+    // Every record costs exactly 10, so hold assertions in tests are exact.
+    type StorageDeposit = HoldConsideration<
+        u64,
+        Balances,
+        StorageDepositReason,
+        LinearStoragePrice<ConstU64<10>, ConstU64<0>, u64>,
+    >;
     type MinStakePerByte = ConstU64<1>; // 1 unit per byte
     type MaxMultiaddrLength = ConstU32<128>;
     type MaxMembers = ConstU32<100>;
     type MaxPrimaryProviders = ConstU32<5>;
     type MinProviderStake = ConstU64<100>;
     type MaxChunkSize = ConstU32<{ storage_primitives::DEFAULT_CHUNK_SIZE }>;
-    type ChallengeTimeout = ConstU64<100>;
+    type ChallengeTimeout = ChallengeTimeout;
     type ChallengeDeposit = ConstU64<100>; // same value as pre-fix hardcoded constant — keeps existing tests' math intact
     type SettlementTimeout = ConstU64<50>;
     type RequestTimeout = ConstU64<50>;
@@ -134,27 +150,11 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
     ext
 }
 
-/// Build test externalities with custom balances.
-#[allow(dead_code)]
-pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExternalities {
-    let mut t = frame_system::GenesisConfig::<Test>::default()
-        .build_storage()
-        .unwrap();
-
-    pallet_balances::GenesisConfig::<Test> {
-        balances,
-        dev_accounts: None,
-    }
-    .assimilate_storage(&mut t)
-    .unwrap();
-
-    t.into()
-}
-
 /// Build test externalities with custom balances and genesis providers.
-pub fn new_test_ext_with_genesis_providers(
+pub fn new_test_ext_with_genesis(
     balances: Vec<(u64, u64)>,
     providers: Vec<crate::GenesisProvider<Test>>,
+    buckets: Vec<(u64, u32)>,
 ) -> sp_io::TestExternalities {
     let mut t = frame_system::GenesisConfig::<Test>::default()
         .build_storage()
@@ -167,12 +167,9 @@ pub fn new_test_ext_with_genesis_providers(
     .assimilate_storage(&mut t)
     .unwrap();
 
-    pallet_storage_provider::GenesisConfig::<Test> {
-        buckets: vec![],
-        providers,
-    }
-    .assimilate_storage(&mut t)
-    .unwrap();
+    pallet_storage_provider::GenesisConfig::<Test> { buckets, providers }
+        .assimilate_storage(&mut t)
+        .unwrap();
 
     t.into()
 }
@@ -233,7 +230,6 @@ pub fn provider_signer_with<P: sp_core::Pair>(provider: u64) -> P {
 
 /// Helper: deterministic sr25519 keypair for `provider`, stamped into the
 /// provider's on-chain `public_key` so terms signatures verify.
-#[allow(dead_code)]
 pub fn provider_signer(provider: u64) -> sp_core::sr25519::Pair {
     provider_signer_with(provider)
 }
@@ -253,7 +249,6 @@ where
 }
 
 /// Helper: sign SCALE-encoded terms the way a provider quotes off-chain.
-#[allow(dead_code)]
 pub fn sign_terms(
     pair: &sp_core::sr25519::Pair,
     terms: &crate::AgreementTermsOf<Test>,
@@ -274,10 +269,22 @@ pub fn sign_sync_roots(
     pair.sign(&roots.encode()).into()
 }
 
+/// Helper: `provider`'s signature over `commitment` for `bucket_id`.
+#[allow(dead_code)]
+pub fn sign_commitment_by(
+    provider: u64,
+    bucket_id: u64,
+    commitment: storage_primitives::Commitment,
+) -> sp_runtime::MultiSignature {
+    use codec::Encode;
+    use sp_core::Pair as _;
+    let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment);
+    sp_runtime::MultiSignature::Sr25519(provider_signer(provider).sign(&payload.encode()))
+}
+
 /// Helper: primary terms
 /// + at the owner's next expected nonce
 /// + valid for the current RequestTimeout window.
-#[allow(dead_code)]
 pub fn primary_terms(
     owner: u64,
     bucket: BucketTarget,
@@ -300,7 +307,6 @@ pub fn primary_terms(
 
 /// Helper: replica terms bound to `bucket_id`,
 /// + valid for the current RequestTimeout window.
-#[allow(dead_code)]
 pub fn replica_terms(
     owner: u64,
     bucket_id: u64,
@@ -323,7 +329,6 @@ pub fn replica_terms(
 }
 
 /// Helper: signed primary terms at the provider's current settings price.
-#[allow(dead_code)]
 pub fn signed_primary_terms(
     provider: u64,
     owner: u64,
@@ -341,7 +346,6 @@ pub fn signed_primary_terms(
 }
 
 /// Helper: signed replica terms at the provider's current settings price.
-#[allow(dead_code)]
 pub fn signed_replica_terms(
     provider: u64,
     owner: u64,
@@ -364,7 +368,6 @@ pub fn signed_replica_terms(
 /// Public visibility: the existing suite exercises stranger challenges and
 /// was written under pre-visibility (open) semantics. Private-bucket tests
 /// create their buckets explicitly.
-#[allow(dead_code)]
 pub fn create_bucket(admin: u64, min_providers: u32) -> u64 {
     use frame_support::assert_ok;
     assert_ok!(StorageProvider::create_bucket(
@@ -375,6 +378,22 @@ pub fn create_bucket(admin: u64, min_providers: u32) -> u64 {
     last_created_bucket_id()
 }
 
+/// Helper: signatures of `providers` over `commitment` for `bucket_id`, in
+/// the form `checkpoint` and `extend_checkpoint` take. Stamps each
+/// provider's [`provider_signer`] key on chain.
+pub fn sign_commitment(
+    bucket_id: u64,
+    commitment: storage_primitives::Commitment,
+    providers: &[u64],
+) -> frame_support::BoundedVec<(u64, sp_runtime::MultiSignature), ConstU32<5>> {
+    providers
+        .iter()
+        .map(|&p| (p, sign_commitment_by(p, bucket_id, commitment)))
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("at most MaxPrimaryProviders signers")
+}
+
 /// Id of the bucket the previous call created.
 fn last_created_bucket_id() -> u64 {
     crate::NextBucketId::<Test>::get() - 1
@@ -382,7 +401,6 @@ fn last_created_bucket_id() -> u64 {
 
 /// Helper: move an account's whole free balance to account 9 so that
 /// `frame_system` reaps it.
-#[allow(dead_code)]
 pub fn reap(who: u64) {
     use frame_support::assert_ok;
     assert_ok!(Balances::transfer_allow_death(
@@ -394,7 +412,6 @@ pub fn reap(who: u64) {
 }
 
 /// Helper: fund an account again after it was reaped.
-#[allow(dead_code)]
 pub fn refund(who: u64) {
     use frame_support::assert_ok;
     assert_ok!(Balances::transfer_allow_death(
@@ -423,7 +440,6 @@ pub fn setup_agreement(provider: u64, client: u64, max_bytes: u64, duration: u64
 }
 
 /// Helper: redeem signed replica terms against an existing bucket.
-#[allow(dead_code)]
 pub fn setup_replica_agreement(
     provider: u64,
     client: u64,
@@ -445,7 +461,6 @@ pub fn setup_replica_agreement(
 }
 
 /// Helper: redeem signed primary terms against an existing bucket.
-#[allow(dead_code)]
 pub fn setup_added_primary(
     provider: u64,
     admin: u64,
@@ -468,4 +483,28 @@ pub fn setup_added_primary(
         terms,
         sig
     ));
+}
+
+/// Helper: register providers 2 and 3, open a primary agreement for 2 with
+/// admin 1 and checkpoint the bucket with 2's signature. Provider 3 is free
+/// for `setup_added_primary`.
+#[allow(dead_code)]
+pub fn setup_signed_checkpoint() -> (u64, storage_primitives::Commitment) {
+    use frame_support::assert_ok;
+    run_to_block(1);
+    register_provider(2, 200);
+    register_provider(3, 200);
+    let bucket_id = setup_agreement(2, 1, 50, 100);
+    let commitment = storage_primitives::Commitment {
+        mmr_root: H256::repeat_byte(0xAB),
+        start_seq: 0,
+        leaf_count: 10,
+    };
+    assert_ok!(StorageProvider::checkpoint(
+        RuntimeOrigin::signed(1),
+        bucket_id,
+        commitment,
+        sign_commitment(bucket_id, commitment, &[2]),
+    ));
+    (bucket_id, commitment)
 }

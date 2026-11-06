@@ -21,10 +21,7 @@ export LC_ALL=C
 # crate, never --workspace.
 COV_PACKAGES=(
 	pallet-storage-provider
-	pallet-drive-registry
-	pallet-s3-registry
 	storage-provider-node
-	provider-chain
 	provider-coordinator
 	provider-negotiation
 	provider-auth
@@ -37,16 +34,14 @@ COV_PACKAGES=(
 # Not measured, with the reason per crate.
 COV_SKIP_PACKAGES=(
 	storage-client # chain-bound SDK; integration tests self-skip without a live chain
-	file-system-client # chain-bound layer-1 SDK
-	s3-client # chain-bound layer-1 SDK
+	file-system-client # layer-1 SDK; src is excluded by COV_IGNORE (clients/*/src)
+	s3-client # layer-1 SDK; src is excluded by COV_IGNORE (clients/*/src)
+	client-test-support # dev-only helpers for the client crates' tests; src is excluded by COV_IGNORE (clients/*/src)
 	storage-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
-	file-system-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
-	s3-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
+	provider-events # pure types; no tests of its own
 	storage-parachain-runtime # exercised out of process (zombienet e2e)
 	storage-paseo-runtime # exercised out of process (zombienet e2e)
 	pallet-storage-provider-precompile # exercised out of process (`just sc-demo`)
-	pallet-drive-registry-precompile # exercised out of process (`just sc-demo`)
-	pallet-s3-registry-precompile # exercised out of process (`just sc-demo`)
 	storage-subxt # static codegen runtime bindings
 	storage-indexers # chain-bound streams; needs a live chain to exercise
 	storage-cli # operator CLI; stress-test paths need a live chain + provider

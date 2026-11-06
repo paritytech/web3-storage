@@ -28,7 +28,7 @@ pub use chain::{
 };
 
 use parking_lot::RwLock;
-use provider_chain::{BlockEvent, BlockEventTx};
+use provider_events::{BlockEvent, BlockEventTx};
 use provider_types::{ChainClientError, ProviderInfo};
 use sp_runtime::AccountId32;
 use std::future::Future;
@@ -408,6 +408,7 @@ mod tests {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 10_000,
+                min_agreement_bytes: 0,
             },
             stats: ProviderStats {
                 agreements_total: 3,
