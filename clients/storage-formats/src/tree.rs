@@ -660,9 +660,20 @@ impl<S: BlobStore> Tree<S> {
 
     /// Data root of the bucket's last MMR leaf, or `None` if the bucket has
     /// no leaves. Fails with [`FsClientError::InvalidMmrProof`] unless the
-    /// store's proof proves that leaf against the store's commitment. The
-    /// provider signs the commitment; this does not check that signature.
+    /// store's proof proves that leaf against the store's commitment, after
+    /// one more read for a commit between the two reads. The provider signs
+    /// the commitment; this does not check that signature.
     async fn last_leaf(&self) -> Result<Option<Cid>> {
+        match self.read_last_leaf().await {
+            Err(FsClientError::InvalidMmrProof(_)) => self.read_last_leaf().await,
+            result => result,
+        }
+    }
+
+    /// One read of [`Tree::last_leaf`]. A commit between the commitment and
+    /// the proof read makes the proof one of a larger MMR, which fails with
+    /// [`FsClientError::InvalidMmrProof`].
+    async fn read_last_leaf(&self) -> Result<Option<Cid>> {
         let Some(commitment) = self.store.commitment(self.bucket_id).await? else {
             return Ok(None);
         };
@@ -774,16 +785,36 @@ mod tests {
 
     /// A commit by another writer between the commitment and the proof
     /// gives a proof of a larger MMR, which does not prove the commitment's
-    /// last leaf.
+    /// last leaf. Two such commits in a row fail the root read.
     #[tokio::test]
-    async fn root_read_rejects_a_proof_of_a_later_mmr() {
+    async fn root_read_rejects_a_proof_of_a_later_mmr_twice() {
         let store = MemoryStore::default();
         tree(&store).mkdir("/a").await.unwrap();
-        *store.commit_after_commitment.lock().unwrap() = Some(b"other writer".to_vec());
+        store
+            .commits_after_commitment
+            .lock()
+            .unwrap()
+            .extend([b"other writer".to_vec(), b"other writer again".to_vec()]);
         assert!(matches!(
             tree(&store).load_root().await,
             Err(FsClientError::InvalidMmrProof(BUCKET))
         ));
+    }
+
+    /// One commit by another writer between the commitment and the proof
+    /// read costs one more read, which sees that writer's root.
+    #[tokio::test]
+    async fn root_read_retries_after_a_commit_between_the_two_reads() {
+        let store = MemoryStore::default();
+        tree(&store).mkdir("/a").await.unwrap();
+        let other_root = DirectoryNode::new_empty(BUCKET).to_scale_bytes();
+        store
+            .commits_after_commitment
+            .lock()
+            .unwrap()
+            .push_back(other_root.clone());
+        let root = tree(&store).load_root().await.unwrap();
+        assert_eq!(root.cid, Some(compute_cid(&other_root)));
     }
 
     /// Every directory CID reachable from the root, the root included.

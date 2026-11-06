@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { createLimiter } from "@web3-storage/core";
 import { makeSigner } from "@web3-storage/layer0";
 import { FakeProvider } from "@web3-storage/layer0/testing";
 
@@ -77,6 +78,15 @@ describe("FsTree (wasm)", () => {
     expect(await tree.rootCid()).toBe(rootCid);
     expect(td.decode((await tree.getFile("/b/g.txt")).bytes)).toBe("f");
     await expect(tree.getFile("/a/f.txt")).rejects.toMatchObject({ code: "PathNotFound" });
+  });
+
+  it("two trees of one bucket that share a write queue keep both writes", async () => {
+    const provider = new FakeProvider();
+    const writes = createLimiter(1);
+    const open = () => new FsTree(providerBlobStore(PROVIDER, BUCKET, signer, { fetch: provider.fetch }), { writes });
+    const [first, second] = [open(), open()];
+    await Promise.all([first.putFile("/a", te.encode("a")), second.putFile("/b", te.encode("b"))]);
+    expect((await first.list("/")).map((e) => e.name)).toEqual(["a", "b"]);
   });
 
   it("errors carry the Rust variant name as code", async () => {
