@@ -2822,7 +2822,7 @@ mod challenge_tests {
     /// agreement. The prefix check in bucket removal guards that invariant;
     /// this test removes the agreement from storage directly to reach it.
     #[test]
-    fn bucket_removal_blocked_by_a_challenge_outliving_its_agreement() {
+    fn delete_bucket_blocked_by_open_challenge_without_agreement() {
         new_test_ext().execute_with(|| {
             let id = open_challenge();
             slash_provider_stake(2);
