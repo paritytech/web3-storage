@@ -20,24 +20,47 @@ pub enum Error {
     #[error("Invalid child count: expected 2, got {0}")]
     InvalidChildCount(usize),
 
-    /// An internal node arrived with `data` that is not the left child hash
-    /// followed by the right child hash. Send exactly those 64 bytes.
-    #[error("Internal node data is not the concatenation of its children")]
-    InvalidInternalNodeData,
+    /// A node arrived with both `data` and `children`, or with neither. Send
+    /// `data` for a chunk or `children` for an internal node.
+    #[error("A node is either data (a chunk) or children (an internal node)")]
+    InvalidNode,
 
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
+
+    #[error("Invalid start_seq: requested {requested}, valid range {current}..={end}")]
+    InvalidStartSeq {
+        requested: u64,
+        current: u64,
+        end: u64,
+    },
 
     /// A leaf chunk above `DEFAULT_CHUNK_SIZE` bytes. Split the data into chunks
     /// of at most that size.
     #[error("Chunk too large: {size} bytes, max {max}", max = storage_primitives::DEFAULT_CHUNK_SIZE)]
     ChunkTooLarge { size: u64 },
 
+    /// `chunk_index` is at or beyond the chunk count of the tree under the
+    /// data root: the leaf has no such chunk.
+    #[error("Chunk index {chunk_index} out of range: the tree has {chunk_count} chunks")]
+    ChunkIndexOutOfRange { chunk_index: u64, chunk_count: u64 },
+
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
 
     #[error("Root not found: {0}")]
     RootNotFound(String),
+
+    /// Another writer held the bucket past the lock timeout. Retry the
+    /// request.
+    #[error("Bucket {0} is busy")]
+    BucketBusy(u64),
+
+    /// The content tree under a data root has more than `max_nodes` nodes
+    /// when every shared subtree is counted once per path that reaches it.
+    /// Deduplication lets a few stored nodes span such a tree.
+    #[error("Content tree exceeds {max_nodes} nodes")]
+    TreeTooLarge { max_nodes: u64 },
 
     #[error("Invalid hash: expected {expected}, got {actual}")]
     InvalidHash { expected: String, actual: String },

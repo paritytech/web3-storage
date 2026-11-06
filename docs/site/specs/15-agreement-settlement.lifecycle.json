@@ -249,7 +249,7 @@
         "top_up_agreement (owner only) raises max_bytes for the remaining duration",
         "extend_agreement: anyone if the current price is at or below the locked price, else owner only; fails once expired",
         "set_extensions_blocked lets the provider refuse extensions for one bucket",
-        "transfer_agreement_ownership moves the escrow hold to the new owner; bucket membership stays"
+        "transfer_agreement_ownership moves the escrow hold to the new owner; the storage deposit and bucket membership stay"
       ]
     },
     {
@@ -267,7 +267,7 @@
       "items": [
         "Before expiry only a bucket admin can end an agreement, and only a primary; the full remaining payment is paid or burned",
         "Replica agreements cannot be ended early",
-        "AgreementHasPendingChallenge blocks end_agreement and claim_expired_agreement",
+        "AgreementHasPendingChallenge blocks end_agreement, claim_expired_agreement and remove_slashed",
         "Anyone can call remove_slashed; the remaining payment returns to the owner"
       ]
     }

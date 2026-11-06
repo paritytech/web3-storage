@@ -218,7 +218,9 @@
       "items": [
         "stake >= MinProviderStake",
         "add_stake only increases stake",
-        "if max_capacity > 0: stake >= max_capacity * MinStakePerByte"
+        "if max_capacity > 0: stake >= max_capacity * MinStakePerByte",
+        "if max_capacity > 0: min_agreement_bytes <= max_capacity",
+        "register_provider also holds a storage deposit; complete_deregister releases it"
       ]
     },
     {
@@ -236,7 +238,7 @@
       "items": [
         "An unanswered challenge slashes the entire stake",
         "Exit Announced is still slashable",
-        "remove_slashed returns payment to owner"
+        "remove_slashed returns payment to owner once no challenge is open"
       ]
     }
   ]

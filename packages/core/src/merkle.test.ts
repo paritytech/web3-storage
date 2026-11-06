@@ -1,21 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   bagPeaks,
-  chunkCount,
   computeDataRoot,
   DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
+  LEAF_VERSION,
+  leafChunkCount,
   merkleRoot,
   metadataMerkleRoot,
+  merkleTree,
+  splitChunks,
   u64le,
+  verifyChunkProof,
+  verifyMmrProof,
   type MerkleEntry,
 } from "./merkle.js";
 import { computeCid } from "./verify.js";
-import { concatBytes, toHex } from "./bytes.js";
+import { concatBytes, hexToBytes, toHex } from "./bytes.js";
 
 const ZERO32 = new Uint8Array(32);
 
@@ -131,20 +137,36 @@ describe("merkleRoot", () => {
   });
 });
 
-describe("chunkCount", () => {
-  it("rounds up and has a minimum of one", () => {
+describe("leafChunkCount", () => {
+  it("rounds up with the chunk size of the leaf version and is zero for empty data", () => {
     const chunk = DEFAULT_CHUNK_SIZE;
-    expect(chunkCount(0)).toBe(1);
-    expect(chunkCount(1)).toBe(1);
-    expect(chunkCount(chunk)).toBe(1);
-    expect(chunkCount(chunk + 1)).toBe(2);
-    expect(chunkCount(2 * chunk + 10)).toBe(3);
+    const count = (data_size: number | bigint) =>
+      leafChunkCount({ leaf_version: LEAF_VERSION, data_size });
+    expect(count(0)).toBe(0);
+    expect(count(1)).toBe(1);
+    expect(count(chunk)).toBe(1);
+    expect(count(BigInt(chunk + 1))).toBe(2);
+    expect(count(2 * chunk + 10)).toBe(3);
+  });
+
+  it("counts a u64::MAX data size exactly", () => {
+    const max = (1n << 64n) - 1n;
+    const chunk = BigInt(DEFAULT_CHUNK_SIZE);
+    expect(leafChunkCount({ leaf_version: LEAF_VERSION, data_size: max })).toBe(
+      Number((max + chunk - 1n) / chunk),
+    );
+  });
+
+  it("throws for an unknown leaf version", () => {
+    expect(() => leafChunkCount({ leaf_version: LEAF_VERSION + 1, data_size: 1 })).toThrow(
+      "unknown MMR leaf version",
+    );
   });
 });
 
 describe("computeDataRoot", () => {
-  it("empty file hashes a single empty chunk", () => {
-    expect(toHex(computeDataRoot(new Uint8Array(0)))).toBe(toHex(hashLeaf(new Uint8Array(0))));
+  it("empty data has no chunk tree", () => {
+    expect(() => computeDataRoot(new Uint8Array(0))).toThrow("empty data has no chunk tree");
   });
 
   it("single sub-chunk file → its own chunk hash", () => {
@@ -158,6 +180,136 @@ describe("computeDataRoot", () => {
     const h0 = hashLeaf(bytes.subarray(0, chunk));
     const h1 = hashLeaf(bytes.subarray(chunk));
     expect(toHex(computeDataRoot(bytes))).toBe(toHex(hashChildren(h0, h1)));
+  });
+});
+
+describe("merkleTree", () => {
+  const leaf = (n: number) => computeCid(new Uint8Array([n]));
+
+  it("returns no nodes for zero or one leaf", () => {
+    expect(merkleTree([]).nodes).toEqual([]);
+    expect(merkleTree([leaf(1)])).toEqual({ root: leaf(1), nodes: [] });
+  });
+
+  it("returns the internal nodes bottom-up; an odd leaf moves up without a node", () => {
+    const [a, b, c] = [leaf(1), leaf(2), leaf(3)];
+    const ab = hashChildren(a, b);
+    const { root, nodes } = merkleTree([a, b, c]);
+    expect(nodes).toEqual([
+      { hash: ab, left: a, right: b },
+      { hash: root, left: ab, right: c },
+    ]);
+    expect(toHex(root)).toBe(toHex(merkleRoot([a, b, c])));
+  });
+
+  it("n leaves have n - 1 internal nodes, the root last", () => {
+    for (let n = 2; n <= 9; n++) {
+      const leaves = Array.from({ length: n }, (_, i) => leaf(i + 1));
+      const { root, nodes } = merkleTree(leaves);
+      expect(nodes).toHaveLength(n - 1);
+      expect(toHex(nodes[nodes.length - 1].hash)).toBe(toHex(root));
+    }
+  });
+});
+
+describe("splitChunks", () => {
+  it("splits at 256 KiB; empty input has no chunks", () => {
+    expect(splitChunks(new Uint8Array(0))).toEqual([]);
+    expect(splitChunks(new Uint8Array(256 * 1024 * 2 + 1)).map((c) => c.length)).toEqual([262144, 262144, 1]);
+  });
+});
+
+describe("verifyChunkProof", () => {
+  const leaves = [1, 2, 3].map((n) => computeCid(new Uint8Array([n])));
+  const root = merkleRoot(leaves);
+  const ab = hashChildren(leaves[0], leaves[1]);
+
+  it("accepts proofs for every leaf and rejects a wrong index, count or length", () => {
+    expect(verifyChunkProof(leaves[0], 0, [leaves[1], leaves[2]], root, 3)).toBe(true);
+    expect(verifyChunkProof(leaves[1], 1, [leaves[0], leaves[2]], root, 3)).toBe(true);
+    // The odd last leaf has no sibling at the bottom level.
+    expect(verifyChunkProof(leaves[2], 2, [ab], root, 3)).toBe(true);
+    expect(verifyChunkProof(leaves[2], 3, [ab], root, 3)).toBe(false);
+    expect(verifyChunkProof(leaves[2], 2, [ab], root, 4)).toBe(false);
+    expect(verifyChunkProof(leaves[2], 2, [ab, ab], root, 3)).toBe(false);
+    expect(verifyChunkProof(leaves[0], 0, [], leaves[0], 1)).toBe(true);
+  });
+});
+
+describe("verifyMmrProof", () => {
+  const leafHash = (l: { leafVersion: number; dataRoot: Uint8Array; dataSize: bigint; totalSize: bigint }) =>
+    hashLeaf(concatBytes(new Uint8Array([l.leafVersion]), l.dataRoot, u64le(l.dataSize), u64le(l.totalSize)));
+  const leaves = [1, 2, 3].map((n) => ({
+    leafVersion: LEAF_VERSION,
+    dataRoot: computeCid(new Uint8Array([n])),
+    dataSize: 1n,
+    totalSize: BigInt(n),
+  }));
+  const hashes = leaves.map(leafHash);
+  const peak0 = hashChildren(hashes[0], hashes[1]);
+  const mmrRoot = bagPeaks([peak0, hashes[2]]);
+  // Items: left peaks, siblings up to the leaf's peak, the bagged right peaks.
+  const proof1 = { leaf: leaves[1], items: [hashes[0], hashes[2]] };
+  const proof2 = { leaf: leaves[2], items: [peak0] };
+
+  it("accepts a leaf under the first and the last peak", () => {
+    expect(verifyMmrProof(proof1, 1n, mmrRoot, 3n)).toBe(true);
+    expect(verifyMmrProof(proof2, 2n, mmrRoot, 3n)).toBe(true);
+  });
+
+  it("bags the peaks right of the leaf's peak into one item", () => {
+    // 7 leaves: peaks of 4, 2 and 1 leaves. Leaf 0 has one item for the two right peaks.
+    const more = [4, 5, 6, 7].map((n) => leafHash({ leafVersion: LEAF_VERSION, dataRoot: computeCid(new Uint8Array([n])), dataSize: 1n, totalSize: 0n }));
+    const all = [...hashes, ...more];
+    const p4 = hashChildren(hashChildren(all[0], all[1]), hashChildren(all[2], all[3]));
+    const p2 = hashChildren(all[4], all[5]);
+    const root7 = bagPeaks([p4, p2, all[6]]);
+    const items = [all[1], hashChildren(all[2], all[3]), bagPeaks([p2, all[6]])];
+    expect(verifyMmrProof({ leaf: leaves[0], items }, 0n, root7, 7n)).toBe(true);
+    // The same right peaks as two items fail.
+    expect(verifyMmrProof({ leaf: leaves[0], items: [...items.slice(0, 2), p2, all[6]] }, 0n, root7, 7n)).toBe(false);
+  });
+
+  it("rejects a proof for another leaf index", () => {
+    expect(verifyMmrProof(proof1, 0n, mmrRoot, 3n)).toBe(false);
+    expect(verifyMmrProof(proof2, 3n, mmrRoot, 3n)).toBe(false);
+    // A proof for an older leaf fails as the last leaf.
+    expect(verifyMmrProof(proof1, 2n, mmrRoot, 3n)).toBe(false);
+  });
+
+  // Written by `crates/primitives/storage/src/mmr.rs` (`proof_vectors`): run
+  // `just mmr-proof-vectors`, and again after `mmr.rs` changes. Skipped
+  // locally if missing; required in CI.
+  const vectorsUrl = new URL("../../../.test-vectors/mmr-proofs.json", import.meta.url);
+  const vectorsMissing = !process.env.CI && !existsSync(vectorsUrl);
+  it.skipIf(vectorsMissing)("accepts every proof from Rust, only at its own leaf index", () => {
+    expect(existsSync(vectorsUrl), "MMR proof vectors missing; run `just mmr-proof-vectors`").toBe(true);
+    const fixture = JSON.parse(readFileSync(vectorsUrl, "utf8")) as {
+      vectors: { leaf_count: number; leaf_index: number; root: string; items: string[] }[];
+    };
+    expect(fixture.vectors).toHaveLength(24);
+    for (const v of fixture.vectors) {
+      const index = BigInt(v.leaf_index);
+      const count = BigInt(v.leaf_count);
+      const proof = {
+        leaf: {
+          leafVersion: LEAF_VERSION,
+          dataRoot: new Uint8Array(32).fill(v.leaf_index + 1),
+          dataSize: index,
+          totalSize: 2n * index,
+        },
+        items: v.items.map(hexToBytes),
+      };
+      const root = hexToBytes(v.root);
+      expect(verifyMmrProof(proof, index, root, count), JSON.stringify(v)).toBe(true);
+      if (count > 1n) expect(verifyMmrProof(proof, (index + 1n) % count, root, count)).toBe(false);
+    }
+  });
+
+  it("rejects a changed leaf or root", () => {
+    const changed = { ...leaves[2], dataSize: 2n };
+    expect(verifyMmrProof({ ...proof2, leaf: changed }, 2n, mmrRoot, 3n)).toBe(false);
+    expect(verifyMmrProof(proof2, 2n, ZERO32, 3n)).toBe(false);
   });
 });
 

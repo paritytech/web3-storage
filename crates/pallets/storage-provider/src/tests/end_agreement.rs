@@ -193,6 +193,7 @@ fn claim_expired_agreement_works() {
         let payment = agreement.payment_locked;
 
         let provider_balance_before = Balances::free_balance(2);
+        let owner_deposits_before = held(HoldReason::StorageDeposit, 1);
 
         // Wait past settlement deadline (expires_at + SettlementTimeout(50) + 1)
         run_to_block(agreement.expires_at + 51);
@@ -204,6 +205,11 @@ fn claim_expired_agreement_works() {
 
         assert_eq!(Balances::free_balance(2), provider_balance_before + payment);
         assert!(StorageAgreements::<Test>::get(bucket_id, 2).is_none());
+        // The provider settled, but the record's deposit belongs to the owner.
+        assert_eq!(
+            held(HoldReason::StorageDeposit, 1),
+            owner_deposits_before - 10
+        );
     });
 }
 
