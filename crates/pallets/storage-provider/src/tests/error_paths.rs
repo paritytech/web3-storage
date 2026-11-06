@@ -152,6 +152,60 @@ fn set_min_providers_fails_exceeds_providers() {
 }
 
 #[test]
+fn frozen_bucket_pins_checkpoint_start_seq() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+
+        let commitment = Commitment {
+            mmr_root: sp_core::H256::repeat_byte(0xAA),
+            start_seq: 0,
+            leaf_count: 10,
+        };
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            commitment,
+            sign_commitment(bucket_id, commitment, &[2]),
+        ));
+        assert_ok!(StorageProvider::freeze_bucket(
+            RuntimeOrigin::signed(1),
+            bucket_id
+        ));
+
+        // Advancing start_seq would delete history: append-only means the
+        // frozen start_seq is pinned exactly, not merely a floor.
+        let advanced = Commitment {
+            mmr_root: sp_core::H256::repeat_byte(0xBB),
+            start_seq: 1,
+            leaf_count: 9,
+        };
+        assert_noop!(
+            StorageProvider::checkpoint(
+                RuntimeOrigin::signed(1),
+                bucket_id,
+                advanced,
+                sign_commitment(bucket_id, advanced, &[2]),
+            ),
+            Error::<Test>::SnapshotViolatesFrozen
+        );
+
+        // Appending (same start_seq, more leaves) stays allowed.
+        let appended = Commitment {
+            mmr_root: sp_core::H256::repeat_byte(0xCC),
+            start_seq: 0,
+            leaf_count: 20,
+        };
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            appended,
+            sign_commitment(bucket_id, appended, &[2]),
+        ));
+    });
+}
+
+#[test]
 fn freeze_bucket_already_frozen() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
