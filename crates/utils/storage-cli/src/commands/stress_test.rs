@@ -2,7 +2,7 @@
 
 //! `stress-test` subcommands.
 
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -19,11 +19,6 @@ use crate::cli::GlobalArgs;
 use crate::common::{account_ss58, build_config, resolve_signer, BucketId};
 use crate::metrics::{summarize, OpOutcome, OpSummary};
 use crate::prepare::{self, BucketSource, PreparationReport, PrepareParams};
-
-/// Terms of prepared agreements: 100 anchor blocks at 1 per byte-block. The
-/// provider rejects lower offers and signs at its listed price.
-const PREPARE_DURATION_BLOCKS: u32 = 100;
-const PREPARE_PRICE_PER_BYTE: u128 = 1;
 
 // === Stress test subcommands ===
 #[derive(Debug, Subcommand)]
@@ -77,6 +72,20 @@ pub struct UploadArgs {
     /// before the run. Setup only: excluded from the measured window. 0 = off.
     #[arg(long, value_name = "N", default_value_t = 0)]
     pub prepare_buckets: usize,
+
+    /// Quota negotiated per prepared bucket. Default: this run's per-bucket
+    /// load plus 10% headroom.
+    #[arg(long, value_name = "BYTES")]
+    pub prepare_max_bytes: Option<NonZeroU64>,
+
+    /// Agreement duration for prepared buckets, in anchor blocks.
+    #[arg(long, value_name = "BLOCKS", default_value = "100")]
+    pub prepare_duration: NonZeroU32,
+
+    /// Price per byte per block the run accepts for prepared buckets. The
+    /// provider rejects offers below its listed price and signs at that price.
+    #[arg(long, value_name = "P", default_value_t = 1)]
+    pub prepare_price_per_byte: u128,
 
     /// Where target buckets come from. Default: `create` when
     /// `--prepare-buckets` is set, `discover` otherwise.
@@ -294,6 +303,7 @@ pub async fn upload(
 
     let config = build_config(global);
 
+    prepare::check_prepare_flags(args.prepare_buckets, args.prepare_max_bytes)?;
     let source = BucketSource::resolve(args.bucket_source, args.prepare_buckets)?;
 
     // One chain connection serves both discovery and preparation.
@@ -323,7 +333,7 @@ pub async fn upload(
         let bucket_count = buckets.len().saturating_add(plan.to_prepare);
         let needed =
             prepare::bytes_per_bucket(total_uploads, args.payload_size.get(), bucket_count)?;
-        let max_bytes = prepare::default_max_bytes(needed)?;
+        let max_bytes = prepare::resolve_max_bytes(args.prepare_max_bytes, needed)?;
         let report = prepare::prepare_buckets(
             &admin,
             PrepareParams {
@@ -332,8 +342,8 @@ pub async fn upload(
                 provider_url: &global.provider_url,
                 count: plan.to_prepare,
                 max_bytes,
-                duration: PREPARE_DURATION_BLOCKS,
-                price_per_byte: PREPARE_PRICE_PER_BYTE,
+                duration: args.prepare_duration.get(),
+                price_per_byte: args.prepare_price_per_byte,
             },
         )
         .await?;
@@ -386,6 +396,8 @@ mod tests {
             "--users",
             "--uploads-per-user",
             "--payload-size",
+            "--prepare-max-bytes",
+            "--prepare-duration",
         ] {
             assert!(
                 Wrapper::try_parse_from(["stress-test-upload", "--provider", "//Alice", flag, "0"])
@@ -407,6 +419,9 @@ mod tests {
 
         let w = Wrapper::try_parse_from(["stress-test-upload", "--provider", "//Alice"]).unwrap();
         assert_eq!(w.args.prepare_buckets, 0);
+        assert!(w.args.prepare_max_bytes.is_none());
+        assert_eq!(w.args.prepare_duration.get(), 100);
+        assert_eq!(w.args.prepare_price_per_byte, 1);
         assert!(w.args.bucket_source.is_none());
 
         let w = Wrapper::try_parse_from([
