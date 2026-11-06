@@ -1114,36 +1114,24 @@ common::backend_tests! {
         ];
         let leaves: Vec<H256> = chunks.iter().map(|c| storage_primitives::hash_leaf(c)).collect();
 
-        for (chunk, hash) in chunks.iter().zip(&leaves) {
+        // Chunks first, then the internal nodes in the clients' canonical
+        // shape, children before parents.
+        let (root, internal) = storage_primitives::merkle_tree(&leaves);
+        let chunk_nodes = chunks.iter().zip(&leaves).map(|(chunk, hash)| {
+            (*hash, json!(BASE64.encode(chunk)), Value::Null)
+        });
+        let internal_nodes = internal.iter().map(|n| {
+            (n.hash, Value::Null, json!([format!("{:#x}", n.left), format!("{:#x}", n.right)]))
+        });
+        for (hash, data, children) in chunk_nodes.chain(internal_nodes) {
             let resp = server
                 .client
                 .request_bucket(Method::PUT, server.url("/node"), 1)
                 .json(&json!({
                     "bucket_id": 1,
                     "hash": format!("{hash:#x}"),
-                    "data": BASE64.encode(chunk),
-                    "children": null,
-                }))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(resp.status(), StatusCode::OK);
-        }
-
-        // Internal nodes, built the same way the clients build them: the
-        // left child spans the largest power of two below the chunk count.
-        let (c0, c1, c2) = (leaves[0], leaves[1], leaves[2]);
-        let left = storage_primitives::hash_children(c0, c1);
-        let root = storage_primitives::hash_children(left, c2);
-        for (hash, (a, b)) in [(left, (c0, c1)), (root, (left, c2))] {
-            let resp = server
-                .client
-                .request_bucket(Method::PUT, server.url("/node"), 1)
-                .json(&json!({
-                    "bucket_id": 1,
-                    "hash": format!("{hash:#x}"),
-                    "data": null,
-                    "children": [format!("{a:#x}"), format!("{b:#x}")],
+                    "data": data,
+                    "children": children,
                 }))
                 .send()
                 .await

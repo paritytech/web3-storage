@@ -50,22 +50,15 @@ impl ChallengeProofSource for StorageProofSource {
 
 /// Translate a storage-layer failure into what the challenge responder needs
 /// to know: is the proof data provably gone, or did the backend itself fail?
-///
-/// `NodeNotFound`, `BucketNotFound`, `ChunkIndexOutOfRange` and `LeafNotFound`
-/// mean storage looked and found nothing. Every other error means the lookup
-/// did not complete, so whether the data exists is unknown and the failure is
-/// not treated as data loss.
+/// [`provider_storage::Error::is_absence`] decides which.
 fn classify(e: provider_storage::Error, target: ProofTarget) -> ChallengeError {
-    use provider_storage::Error;
-    match e {
-        Error::NodeNotFound(_)
-        | Error::BucketNotFound(_)
-        | Error::ChunkIndexOutOfRange { .. }
-        | Error::LeafNotFound { .. } => ChallengeError::ProofDataMissing { target },
-        other => ChallengeError::StorageUnavailable {
+    if e.is_absence() {
+        ChallengeError::ProofDataMissing { target }
+    } else {
+        ChallengeError::StorageUnavailable {
             target,
-            detail: other.to_string(),
-        },
+            reason: e.to_string(),
+        }
     }
 }
 
@@ -231,14 +224,14 @@ mod tests {
             Error::Serialization("simulated corrupt record".to_string()),
             Error::ColumnFamilyMissing("nodes"),
         ] {
-            let detail = failed.to_string();
+            let reason = failed.to_string();
             match classify(failed, target.clone()) {
                 ChallengeError::StorageUnavailable {
                     target: t,
-                    detail: d,
+                    reason: d,
                 } => {
                     assert_eq!(t, target);
-                    assert_eq!(d, detail);
+                    assert_eq!(d, reason);
                 }
                 other => panic!("expected StorageUnavailable, got {other:?}"),
             }

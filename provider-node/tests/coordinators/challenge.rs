@@ -74,7 +74,7 @@ impl ChallengeChainClient for MockChallengeChainClient {
             .push((challenge_id, response));
         if let Some(err) = self.submit_error.lock().unwrap().as_ref() {
             return Err(ChallengeError::Chain {
-                detail: err.clone(),
+                reason: err.clone(),
             });
         }
         Ok(H256::zero())
@@ -108,7 +108,7 @@ impl ChallengeProofSource for StepTwoBackendFailure {
                 data_root,
                 chunk_index,
             },
-            detail: "simulated RocksDB outage".to_string(),
+            reason: "simulated RocksDB outage".to_string(),
         })
     }
 }
@@ -282,49 +282,13 @@ async fn test_data_not_found_no_bucket() {
         },
     };
 
-    let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
+    let (result, submitted) = respond_once(state.challenge_proof_source(), challenge).await;
 
-    let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
-    let result_clone = Arc::clone(&result);
-    let callback: Arc<dyn Fn(ChallengeResponseResult) + Send + Sync> = Arc::new(move |r| {
-        let mut guard = result_clone.lock().unwrap();
-        if guard.is_none() {
-            *guard = Some(r);
-        }
-    });
-
-    let config = ChallengeResponderConfig {
-        poll_interval: Duration::from_millis(50),
-        auto_respond: true,
-        ..ChallengeResponderConfig::new(alice_account())
-    };
-    let responder = ChallengeResponder::new(
-        config,
-        state.challenge_proof_source(),
-        Box::new(Arc::clone(&mock)),
-    );
-    let handle = responder
-        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
-        .await
-        .unwrap();
-
-    let result_ref = Arc::clone(&result);
     assert!(
-        wait_for(5, 10, || {
-            let r = Arc::clone(&result_ref);
-            async move { r.lock().unwrap().is_some() }
-        })
-        .await,
-        "timed out waiting for callback"
+        matches!(result, ChallengeResponseResult::DataNotFound { .. }),
+        "expected DataNotFound, got {result:?}"
     );
-    handle.stop().await.unwrap();
-
-    let r = result.lock().unwrap();
-    assert!(
-        matches!(&*r, Some(ChallengeResponseResult::DataNotFound { .. })),
-        "expected DataNotFound, got {:?}",
-        r
-    );
+    assert!(submitted.is_empty());
 }
 
 #[tokio::test(start_paused = true)]

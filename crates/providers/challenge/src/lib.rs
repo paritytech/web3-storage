@@ -59,19 +59,19 @@ pub enum ChallengeError {
     /// stored record could not be decoded. The proof data may still be
     /// present. Operator action: inspect, restart, or restore the backend,
     /// then retry.
-    #[error("storage backend unavailable for {target:?}: {detail}")]
+    #[error("storage backend unavailable for {target:?}: {reason}")]
     StorageUnavailable {
         /// What was being looked up when the backend failed.
         target: ProofTarget,
         /// The backend's own error, as text.
-        detail: String,
+        reason: String,
     },
     /// A chain call failed: the chain was unreachable, rejected the call, or
     /// returned a value that could not be decoded.
-    #[error("chain call failed: {detail}")]
+    #[error("chain call failed: {reason}")]
     Chain {
-        /// The failure, as text.
-        detail: String,
+        /// What went wrong.
+        reason: String,
     },
     /// The responder is shutting down; its control channel is closed.
     #[error("challenge responder is shutting down")]
@@ -669,7 +669,7 @@ mod tests {
                 Lookup::Missing => Err(ChallengeError::ProofDataMissing { target }),
                 Lookup::BackendFailed => Err(ChallengeError::StorageUnavailable {
                     target,
-                    detail: "rocksdb read failed".to_string(),
+                    reason: "rocksdb read failed".to_string(),
                 }),
             }
         }
@@ -688,7 +688,7 @@ mod tests {
                 Lookup::Missing => Err(ChallengeError::ProofDataMissing { target }),
                 Lookup::BackendFailed => Err(ChallengeError::StorageUnavailable {
                     target,
-                    detail: "chunk file unreadable".to_string(),
+                    reason: "chunk file unreadable".to_string(),
                 }),
             }
         }
@@ -742,21 +742,33 @@ mod tests {
         (result, submitted)
     }
 
+    /// The slashing case: `DataNotFound` for exactly `c`, and nothing sent
+    /// to the chain.
+    fn assert_data_not_found(
+        result: &ChallengeResponseResult,
+        submitted: &[(u32, u16)],
+        c: &DetectedChallenge,
+    ) {
+        assert!(
+            matches!(
+                result,
+                ChallengeResponseResult::DataNotFound { challenge_id, bucket_id, leaf_index }
+                    if *challenge_id == (c.deadline, c.index)
+                        && *bucket_id == c.bucket_id
+                        && *leaf_index == c.target.leaf_index
+            ),
+            "unexpected result: {result:?}"
+        );
+        assert!(submitted.is_empty());
+    }
+
     #[tokio::test]
     async fn missing_mmr_leaf_reports_data_not_found_and_submits_nothing() {
         let c = challenge(1);
 
         let (result, submitted) = respond(Lookup::Missing, Lookup::Found, &c).await;
 
-        assert!(
-            matches!(
-                result,
-                ChallengeResponseResult::DataNotFound { challenge_id, bucket_id, leaf_index }
-                    if challenge_id == (100, 1) && bucket_id == 5 && leaf_index == c.target.leaf_index
-            ),
-            "unexpected result: {result:?}"
-        );
-        assert!(submitted.is_empty());
+        assert_data_not_found(&result, &submitted, &c);
     }
 
     #[tokio::test]
@@ -768,15 +780,7 @@ mod tests {
 
         let (result, submitted) = respond(Lookup::Found, Lookup::Missing, &c).await;
 
-        assert!(
-            matches!(
-                result,
-                ChallengeResponseResult::DataNotFound { challenge_id, bucket_id, leaf_index }
-                    if challenge_id == (100, 2) && bucket_id == 5 && leaf_index == c.target.leaf_index
-            ),
-            "unexpected result: {result:?}"
-        );
-        assert!(submitted.is_empty());
+        assert_data_not_found(&result, &submitted, &c);
     }
 
     #[tokio::test]

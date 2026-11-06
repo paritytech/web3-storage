@@ -577,13 +577,13 @@ async fn fetch_nodes(
 
     let nodes = state
         .blocking_storage(move |storage| {
+            // A bulk fetch reports the nodes it has; a node that is absent or
+            // unreadable is left out of the response.
             hashes
                 .into_iter()
-                .filter_map(|hash| match storage.get_node(&hash) {
-                    Ok(Some(node)) => Some(DownloadNodeResponse::new(hash, &node)),
-                    // A bulk fetch reports the nodes it has; a node that is
-                    // absent or unreadable is left out of the response.
-                    Ok(None) | Err(_) => None,
+                .filter_map(|hash| {
+                    let node = storage.get_node(&hash).ok().flatten()?;
+                    Some(DownloadNodeResponse::new(hash, &node))
                 })
                 .collect::<Vec<_>>()
         })

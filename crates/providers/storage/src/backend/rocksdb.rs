@@ -232,19 +232,26 @@ impl DiskStorage {
     /// backend itself failed (a RocksDB read error, or a stored record that
     /// could not be decoded) - the bucket may still be there.
     fn get_bucket(&self, bucket_id: BucketId) -> Result<Option<BucketState>, Error> {
-        let cf = self
+        self.read_decoded(CF_BUCKETS, &bucket_id.to_le_bytes())
+    }
+
+    /// Read `key` from column family `cf` and decode it. `Ok(None)` when the
+    /// key is absent; `Err` when the read or the decode fails.
+    fn read_decoded<T: codec::Decode>(
+        &self,
+        cf: &'static str,
+        key: &[u8],
+    ) -> Result<Option<T>, Error> {
+        let handle = self
             .db
-            .cf_handle(CF_BUCKETS)
-            .ok_or(Error::ColumnFamilyMissing(CF_BUCKETS))?;
-        let key = bucket_id.to_le_bytes();
-        let value = match self.db.get_cf(&cf, key)? {
-            Some(v) => v,
-            None => return Ok(None),
-        };
-        match BucketState::decode_all(&mut &value[..]) {
-            Ok(state) => Ok(Some(state)),
-            Err(e) => Err(Error::Serialization(e.to_string())),
-        }
+            .cf_handle(cf)
+            .ok_or(Error::ColumnFamilyMissing(cf))?;
+        self.db
+            .get_cf(&handle, key)?
+            .map(|value| {
+                T::decode_all(&mut &value[..]).map_err(|e| Error::Serialization(e.to_string()))
+            })
+            .transpose()
     }
 
     /// Iterate over all buckets, applying a mapping function to each.
@@ -374,19 +381,7 @@ impl DiskStorage {
         #[cfg(test)]
         self.get_node_calls
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let cf = self
-            .db
-            .cf_handle(CF_NODES)
-            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
-        let key = hash.as_bytes();
-        let value = match self.db.get_cf(&cf, key)? {
-            Some(v) => v,
-            None => return Ok(None),
-        };
-        match ChunkTreeNode::decode_all(&mut &value[..]) {
-            Ok(node) => Ok(Some(node)),
-            Err(e) => Err(Error::Serialization(e.to_string())),
-        }
+        self.read_decoded(CF_NODES, hash.as_bytes())
     }
 
     /// Check which hashes exist.
@@ -1218,14 +1213,15 @@ mod tests {
         }
     }
 
-    /// Overwrite a node's raw record with bytes that can't be decoded,
-    /// standing in for a disk-level corruption (partial write, bit flip)
-    /// rather than the node simply never having been written.
-    fn corrupt_node(storage: &DiskStorage, hash: H256) {
-        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+    /// Overwrite the raw record at `key` in column family `cf` with bytes
+    /// that can't be decoded, standing in for a disk-level corruption
+    /// (partial write, bit flip) rather than the record simply never having
+    /// been written.
+    fn corrupt(storage: &DiskStorage, cf: &str, key: &[u8]) {
+        let cf = storage.db.cf_handle(cf).unwrap();
         storage
             .db
-            .put_cf(&cf, hash.as_bytes(), b"not a valid bincode record")
+            .put_cf(&cf, key, b"not a valid bincode record")
             .unwrap();
     }
 
@@ -1237,16 +1233,6 @@ mod tests {
     fn delete_node(storage: &DiskStorage, hash: H256) {
         let cf = storage.db.cf_handle(CF_NODES).unwrap();
         storage.db.delete_cf(&cf, hash.as_bytes()).unwrap();
-    }
-
-    /// Overwrite a bucket's raw record with bytes that can't be decoded,
-    /// same standing-in as [`corrupt_node`] but for `CF_BUCKETS`.
-    fn corrupt_bucket(storage: &DiskStorage, bucket_id: BucketId) {
-        let cf = storage.db.cf_handle(CF_BUCKETS).unwrap();
-        storage
-            .db
-            .put_cf(&cf, bucket_id.to_le_bytes(), b"not a valid bincode record")
-            .unwrap();
     }
 
     #[test]
@@ -1266,13 +1252,11 @@ mod tests {
         // write, bit flip) for a bucket that really was created. This must
         // not be reported the same way as "bucket does not exist" - that
         // would tell a challenge responder its own committed data is gone.
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
-        storage.init_bucket(7, 1024 * 1024).unwrap();
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
 
-        corrupt_bucket(&storage, 7);
+        corrupt(&storage, CF_BUCKETS, &BUCKET.to_le_bytes());
 
-        let err = storage.get_mmr_proof(7, 0).unwrap_err();
+        let err = storage.get_mmr_proof(BUCKET, 0).unwrap_err();
         assert!(
             matches!(err, Error::Serialization(_)),
             "expected Serialization, got {err:?}"
@@ -1281,47 +1265,20 @@ mod tests {
 
     /// A bucket holding a root over two stored chunks. Returns the root and
     /// the first chunk's hash.
-    fn two_chunk_tree() -> (TempDir, DiskStorage, H256, H256) {
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
-        storage.init_bucket(1, 1024 * 1024).unwrap();
-
-        let c0 = hash_leaf(b"chunk-0");
-        let c1 = hash_leaf(b"chunk-1");
-        storage
-            .store_node(1, c0, ChunkTreeNode::Chunk(b"chunk-0".to_vec()))
-            .unwrap();
-        storage
-            .store_node(1, c1, ChunkTreeNode::Chunk(b"chunk-1".to_vec()))
-            .unwrap();
-
-        let root = storage_primitives::hash_children(c0, c1);
-        storage
-            .store_node(
-                1,
-                root,
-                ChunkTreeNode::Internal {
-                    left: c0,
-                    right: c1,
-                },
-            )
-            .unwrap();
-
-        (dir, storage, root, c0)
+    fn two_chunk_tree() -> (DiskStorage, TempDir, H256, H256) {
+        let (storage, dir) = storage_with_bucket(COMMIT_QUOTA);
+        let c0 = store_chunk_of_len(&storage, 0, 7);
+        let c1 = store_chunk_of_len(&storage, 1, 7);
+        let root = store_parent(&storage, c0, c1);
+        (storage, dir, root, c0)
     }
 
     #[test]
     fn get_chunk_at_index_past_the_end_of_a_healthy_root_reports_absence() {
         // Stands for: the client asked for a chunk index that was never
         // part of this data root.
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
-        storage.init_bucket(1, 1024 * 1024).unwrap();
-
-        let chunk_hash = hash_leaf(b"only-chunk");
-        storage
-            .store_node(1, chunk_hash, ChunkTreeNode::Chunk(b"only-chunk".to_vec()))
-            .unwrap();
+        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
+        let chunk_hash = store_chunk_of_len(&storage, 1, 10);
 
         let err = storage.get_chunk_at_index(chunk_hash, 5).unwrap_err();
         assert!(matches!(err, Error::ChunkIndexOutOfRange { .. }));
@@ -1335,9 +1292,9 @@ mod tests {
         // shorten the chunk list: asking for a chunk that is still there
         // would trip the "index past the end" guard and be reported as
         // absent, a false "you will be slashed" signal.
-        let (_dir, storage, root, c0) = two_chunk_tree();
+        let (storage, _dir, root, c0) = two_chunk_tree();
 
-        corrupt_node(&storage, c0);
+        corrupt(&storage, CF_NODES, c0.as_bytes());
 
         // Chunk index 1 (chunk-1) is healthy and was never actually removed,
         // but a traversal that silently skips the unreadable c0 would only
@@ -1354,7 +1311,7 @@ mod tests {
         // Stands for: a node the tree references was never written (or was
         // pruned) rather than corrupted. Traversal must surface the gap, not
         // treat the node as an empty subtree.
-        let (_dir, storage, root, c0) = two_chunk_tree();
+        let (storage, _dir, root, c0) = two_chunk_tree();
 
         // c0 is now gone, e.g. pruned, even though the root still references it.
         delete_node(&storage, c0);

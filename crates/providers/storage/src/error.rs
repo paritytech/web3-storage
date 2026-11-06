@@ -102,3 +102,37 @@ pub enum Error {
     #[error("Incompatible on-disk format: {0}")]
     IncompatibleFormat(String),
 }
+
+impl Error {
+    /// Whether the lookup completed and found nothing, as opposed to failing
+    /// before it could tell. A caller that must distinguish lost data from a
+    /// broken backend (the challenge responder) acts on this.
+    ///
+    /// The match is exhaustive on purpose: a new variant must be classified
+    /// here rather than fall silently into either side.
+    pub fn is_absence(&self) -> bool {
+        match self {
+            Error::NodeNotFound(_)
+            | Error::BucketNotFound(_)
+            | Error::ChunkIndexOutOfRange { .. }
+            | Error::LeafNotFound { .. } => true,
+            Error::CommitmentNotReproducible(_)
+            | Error::ChildrenMissing(_)
+            | Error::InvalidChildCount(_)
+            | Error::InvalidNode
+            | Error::QuotaExceeded { .. }
+            | Error::InvalidStartSeq { .. }
+            | Error::ChunkTooLarge { .. }
+            | Error::RootNotFound(_)
+            | Error::BucketBusy(_)
+            | Error::TreeTooLarge { .. }
+            | Error::InvalidHash { .. }
+            | Error::NonCanonicalTree(_)
+            | Error::Serialization(_)
+            | Error::Mmr(_)
+            | Error::RocksDb(_)
+            | Error::ColumnFamilyMissing(_)
+            | Error::IncompatibleFormat(_) => false,
+        }
+    }
+}
