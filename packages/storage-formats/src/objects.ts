@@ -2,7 +2,7 @@
 
 /**
  * S3-style objects stored in a bucket's file tree: key `k` is the file
- * `/k`. The mapping is the Rust `bucket_tree::s3` module, compiled to wasm.
+ * `/k`. The mapping is the Rust `storage_formats::s3` module, compiled to wasm.
  */
 
 import { loadWasm } from "#load-wasm";
@@ -16,7 +16,7 @@ import {
   type ObjectSummary,
   type PutObjectInput,
   type PutObjectResult,
-} from "../pkg/bucket_tree.js";
+} from "../pkg/storage_formats.js";
 import { FileSystemError, withErrors, type FsTree } from "./tree.js";
 
 /** Rust `S3ClientError` variants; other failures are a {@link FileSystemError}. */

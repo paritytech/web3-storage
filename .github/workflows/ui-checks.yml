@@ -46,7 +46,7 @@ jobs:
               - '.github/actions/setup-pnpm/**'
               - '.github/workflows/ui-checks.yml'
             # Rust inputs of the TS packages: the test vectors that the unit
-            # tests read and the bucket-tree wasm that `pnpm install` builds
+            # tests read and the storage-formats wasm that `pnpm install` builds
             rust:
               - 'crates/primitives/storage/**'
               - 'clients/**'

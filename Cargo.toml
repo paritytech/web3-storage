@@ -2,8 +2,8 @@
 resolver = "2"
 members = [
 	# Storage client
-	"clients/bucket-tree",
 	"clients/storage",
+	"clients/storage-formats",
 	"clients/test-support",
 
 	# Storage pallet
@@ -61,7 +61,7 @@ storage-provider-node = { path = "provider-node" }
 storage-subxt = { path = "crates/storage-subxt" }
 
 # Storage Interfaces: File System Interface
-bucket-tree = { path = "clients/bucket-tree" }
+storage-formats = { path = "clients/storage-formats" }
 
 # Storage Interfaces: S3-Compatible Interface
 

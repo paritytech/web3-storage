@@ -1,8 +1,8 @@
 {
-  "name": "@web3-storage/bucket-tree",
+  "name": "@web3-storage/storage-formats",
   "version": "0.1.0",
   "private": true,
-  "description": "A file system and S3-style objects stored in a bucket: the Rust bucket-tree crate compiled to wasm, with a blob store over the provider's HTTP API. Needs a provider URL and a signer, no chain connection.",
+  "description": "A file system and S3-style objects stored in a bucket: the Rust storage-formats crate compiled to wasm, with a blob store over the provider's HTTP API. Needs a provider URL and a signer, no chain connection.",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {

@@ -2,7 +2,7 @@
 
 /**
  * The file-system tree stored inside a bucket. The format, the tree and the
- * limits are the Rust crate `clients/bucket-tree` (see its `tree` module
+ * limits are the Rust crate `clients/storage-formats` (see its `tree` module
  * docs), compiled to wasm; this class loads it and runs it over a
  * {@link BucketBlobStore}.
  */
@@ -18,7 +18,7 @@ import {
   type PutFileResult,
   type TreeEntry,
   type TreeWriteResult,
-} from "../pkg/bucket_tree.js";
+} from "../pkg/storage_formats.js";
 import type { BucketBlobStore } from "./store.js";
 
 /**

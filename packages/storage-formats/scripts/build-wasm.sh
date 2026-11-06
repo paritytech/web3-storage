@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Build the wasm module of clients/bucket-tree into pkg/. `pnpm install` runs
+# Build the wasm module of clients/storage-formats into pkg/. `pnpm install` runs
 # this (prepare script). Needs rustup and wasm-bindgen-cli at the version of
 # the wasm-bindgen crate in Cargo.lock.
 set -euo pipefail
@@ -16,7 +16,7 @@ if [ "$installed" != "$version" ]; then
 fi
 
 rustup target list --installed | grep -qx wasm32-unknown-unknown || rustup target add wasm32-unknown-unknown
-cargo build --release --locked -p bucket-tree --no-default-features --features wasm \
+cargo build --release --locked -p storage-formats --no-default-features --features wasm \
 	--target wasm32-unknown-unknown
-wasm-bindgen --target web --out-dir packages/bucket-tree/pkg \
-	"${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/release/bucket_tree.wasm"
+wasm-bindgen --target web --out-dir packages/storage-formats/pkg \
+	"${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/release/storage_formats.wasm"

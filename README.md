@@ -95,8 +95,8 @@ just file-system-demo       # Terminal 3
 ### File System Commands
 
 ```bash
-cargo test -p bucket-tree   # Unit and integration tests
-just file-system-demo       # Demo against a running chain + provider
+cargo test -p storage-formats  # Unit and integration tests
+just file-system-demo          # Demo against a running chain + provider
 ```
 
 **Complete guide**: [FILE_SYSTEM_QUICKSTART.md](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
@@ -135,7 +135,7 @@ just file-system-demo        # File system and S3 objects demo
 
 # Tests
 cargo test --workspace       # All unit + integration tests
-cargo test -p bucket-tree  # File system and S3 objects
+cargo test -p storage-formats  # File system and S3 objects
 ```
 
 ## Documentation

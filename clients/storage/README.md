@@ -514,9 +514,9 @@ let filter = EventFilter::storage_provider().with_predicate(move |ev| {
 let mut stream = EventStream::connect("ws://127.0.0.1:2222", filter).await?;
 ```
 
-## Layer 1: Bucket Tree
+## Layer 1: Storage Formats
 
-[Bucket Tree](../bucket-tree/README.md) stores files, directories and S3-style objects in a Layer 0 bucket, on top of this SDK. Use this SDK directly to store your own data structures as blobs, or to manage buckets, members and agreements.
+[Storage Formats](../storage-formats/README.md) stores files, directories and S3-style objects in a Layer 0 bucket, on top of this SDK. Use this SDK directly to store your own data structures as blobs, or to manage buckets, members and agreements.
 
 ## Status
 

@@ -2,7 +2,7 @@
 
 /** Browsers: fetch the wasm file next to the glue module (bundlers rewrite the URL). */
 
-import init from "../pkg/bucket_tree.js";
+import init from "../pkg/storage_formats.js";
 
 let ready: Promise<unknown> | undefined;
 

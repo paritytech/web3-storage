@@ -298,7 +298,7 @@ fn load(fixture: &Value) -> MemoryStore {
     store
 }
 
-const ABOUT: &str = "Written by clients/bucket-tree/src/s3/tests/fixtures.rs.";
+const ABOUT: &str = "Written by clients/storage-formats/src/s3/tests/fixtures.rs.";
 
 #[tokio::test]
 async fn writes_fs_fixture() {

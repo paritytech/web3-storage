@@ -29,7 +29,7 @@ COV_PACKAGES=(
 	provider-storage
 	provider-challenge
 	provider-types
-	bucket-tree
+	storage-formats
 )
 
 # Not measured, with the reason per crate.
@@ -75,7 +75,7 @@ verify_classification() {
 # Groups: toolchain/vendored; generated code + test scaffolding; primitives
 # crates (linked in, own tests
 # not run here); chain-access layer (needs a live chain); the skipped client
-# crates storage-client and client-test-support, which bucket-tree's
+# crates storage-client and client-test-support, which the storage-formats
 # tests link and run only in part; binary entry points.
 COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/(storage|test-support)/src/|clients/[^/]+/tests/|src/main\.rs|src/cli\.rs|src/command\.rs)'
 

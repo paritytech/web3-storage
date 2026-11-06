@@ -13,7 +13,7 @@ import {
   type ProviderHttpOpts,
 } from "@web3-storage/layer0";
 
-import type { BlobStore } from "../pkg/bucket_tree.js";
+import type { BlobStore } from "../pkg/storage_formats.js";
 
 /** A {@link BlobStore} of one bucket. */
 export interface BucketBlobStore extends BlobStore {

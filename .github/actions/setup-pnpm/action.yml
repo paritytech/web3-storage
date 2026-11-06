@@ -32,8 +32,8 @@ runs:
         cache: pnpm
         cache-dependency-path: pnpm-lock.yaml
 
-    # `pnpm install` runs the prepare script of packages/bucket-tree, which
-    # builds the wasm module of clients/bucket-tree.
+    # `pnpm install` runs the prepare script of packages/storage-formats, which
+    # builds the wasm module of clients/storage-formats.
     - name: Install Rust toolchain with the wasm32-unknown-unknown target
       id: rust
       shell: bash

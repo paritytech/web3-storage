@@ -1,4 +1,4 @@
-# Bucket Tree
+# Storage Formats
 
 Rust library for a file system and S3-style objects stored in a Scalable Web3
 Storage bucket.
@@ -21,7 +21,7 @@ and checkpoint it with `storage_client::CheckpointManager`.
 ## Usage
 
 ```rust
-use bucket_tree::{s3::Objects, EmptyParents, Tree};
+use storage_formats::{s3::Objects, EmptyParents, Tree};
 use storage_client::{Signer, StorageUserClient};
 
 let store = StorageUserClient::for_provider("http://127.0.0.1:3333", Signer::from_seed("//Alice")?)?;
@@ -45,21 +45,21 @@ with the provider (`ProviderClient::negotiate_terms`), then
 ## TypeScript
 
 The `wasm` feature exports the tree and the S3 objects through
-wasm-bindgen, over a blob store that JS implements. `@web3-storage/bucket-tree`
-(`packages/bucket-tree`) loads the build in `packages/bucket-tree/pkg`, which
+wasm-bindgen, over a blob store that JS implements. `@web3-storage/storage-formats`
+(`packages/storage-formats`) loads the build in `packages/storage-formats/pkg`, which
 `pnpm install` creates. Rebuild it after a change to this crate with
-`pnpm --filter @web3-storage/bucket-tree build:wasm`.
+`pnpm --filter @web3-storage/storage-formats build:wasm`.
 
 ## Examples and tests
 
 ```bash
-cargo test -p bucket-tree
+cargo test -p storage-formats
 just file-system-demo   # examples/demo.rs, needs a running chain and provider
 ```
 
 ## Documentation
 
-- API reference: `cargo doc -p bucket-tree --no-deps --open`
+- API reference: `cargo doc -p storage-formats --no-deps --open`
 - [Layer 0 design](../../docs/design/scalable-web3-storage.md)
 
 ## License

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! wasm-bindgen exports for TypeScript (`packages/bucket-tree`): the tree and
+//! wasm-bindgen exports for TypeScript (`packages/storage-formats`): the tree and
 //! the S3 objects over a blob store that JS implements. The provider HTTP
 //! requests and their signatures stay in JS; this module runs the format, the
 //! tree and the object mapping. The result types are generated as TypeScript

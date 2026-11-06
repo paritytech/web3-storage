@@ -1570,36 +1570,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bucket-tree"
-version = "0.1.0"
-dependencies = [
- "array-bytes 6.2.3",
- "async-trait",
- "axum",
- "base64",
- "bounded-collections",
- "client-test-support",
- "getrandom 0.2.17",
- "js-sys",
- "parity-scale-codec",
- "primitive-types 0.13.1",
- "reqwest",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "sp-runtime",
- "storage-client",
- "storage-primitives",
- "subxt-signer 0.50.2",
- "thiserror 2.0.18",
- "tokio",
- "tracing-subscriber 0.3.23",
- "tsify-next",
- "wasm-bindgen",
- "wasm-bindgen-futures",
-]
-
-[[package]]
 name = "build-helper"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9808,6 +9778,36 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.23",
+]
+
+[[package]]
+name = "storage-formats"
+version = "0.1.0"
+dependencies = [
+ "array-bytes 6.2.3",
+ "async-trait",
+ "axum",
+ "base64",
+ "bounded-collections",
+ "client-test-support",
+ "getrandom 0.2.17",
+ "js-sys",
+ "parity-scale-codec",
+ "primitive-types 0.13.1",
+ "reqwest",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "sp-runtime",
+ "storage-client",
+ "storage-primitives",
+ "subxt-signer 0.50.2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing-subscriber 0.3.23",
+ "tsify-next",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

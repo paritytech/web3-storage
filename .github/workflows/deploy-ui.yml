@@ -6,7 +6,7 @@ on:
     paths:
       - "user-interfaces/**"
       - "packages/**"
-      - "clients/bucket-tree/**"
+      - "clients/storage-formats/**"
       - "crates/primitives/storage/**"
       - "Cargo.lock"
       - "pnpm-lock.yaml"

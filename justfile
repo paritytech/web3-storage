@@ -435,7 +435,7 @@ e2e-single NUM PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL
 
 # File system and S3 objects demo (used by CI; assumes chain + provider already running)
 file-system-demo:
-    cargo run --release -p bucket-tree --example demo -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+    cargo run --release -p storage-formats --example demo -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Write the MMR proof vectors that packages/core/src/merkle.test.ts reads
 mmr-proof-vectors:

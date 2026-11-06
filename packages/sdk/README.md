@@ -12,15 +12,16 @@ packages/
   layer0/   @web3-storage/layer0   the chain binding: typed PAPI wrappers per
                                    pallet, signers, tx submission, watchValue
                                    waits, provider-node HTTP, ./revive
-  file-system/ @web3-storage/bucket-tree  a file system and S3-style
-                                   objects stored in a bucket: the on-bucket
-                                   format, FsTree and Objects; needs a
-                                   provider URL and a signer, no chain
+  storage-formats/ @web3-storage/storage-formats
+                                   a file system and S3-style objects stored
+                                   in a bucket: the on-bucket format, FsTree
+                                   and Objects; needs a provider URL and a
+                                   signer, no chain
   sdk/      @web3-storage/sdk      this package: re-exports all three and
                                    hosts the Web3Storage class
 ```
 
-Dependency direction is strictly `sdk → file-system → layer0 → core`;
+Dependency direction is strictly `sdk → storage-formats → layer0 → core`;
 nothing points back up.
 
 ## Entry points
@@ -99,15 +100,15 @@ data to it) and `endAgreement` (old provider leaves).
 their data in the Layer 0 bucket itself and use only the provider's Layer 0
 routes (`PUT /node`, `POST /commit`, `GET /node`, `GET /read`,
 `GET /commitment`, `GET /mmr_proof`). The format, the tree and the S3 view
-are the Rust crate `clients/bucket-tree`, compiled to wasm;
-`packages/bucket-tree` loads it and implements its blob store over the
+are the Rust crate `clients/storage-formats`, compiled to wasm;
+`packages/storage-formats` loads it and implements its blob store over the
 provider's HTTP API. `pnpm install` builds the wasm into
-`packages/bucket-tree/pkg` and needs rustup and `wasm-bindgen-cli` at the
+`packages/storage-formats/pkg` and needs rustup and `wasm-bindgen-cli` at the
 version in `Cargo.lock`. Rebuild it after a change to the crate with
-`pnpm --filter @web3-storage/bucket-tree build:wasm`.
+`pnpm --filter @web3-storage/storage-formats build:wasm`.
 
 - Directories and files are SCALE-encoded `DirectoryNode` and
-  `FileManifest` blobs (`clients/bucket-tree/src/format.rs`). A blob's CID is
+  `FileManifest` blobs (`clients/storage-formats/src/format.rs`). A blob's CID is
   its `data_root` (`computeDataRoot`).
 - The root directory's CID is the bucket's last MMR leaf. A bucket with no
   leaves is an empty drive.

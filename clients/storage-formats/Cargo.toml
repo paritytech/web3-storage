@@ -1,5 +1,5 @@
 [package]
-name = "bucket-tree"
+name = "storage-formats"
 version = "0.1.0"
 authors.workspace = true
 edition.workspace = true
@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 default = ["http"]
 # The provider HTTP store, with storage-client.
 http = ["dep:reqwest", "dep:storage-client"]
-# The wasm-bindgen exports for TypeScript (`packages/bucket-tree`).
+# The wasm-bindgen exports for TypeScript (`packages/storage-formats`).
 wasm = [
 	"dep:getrandom",
 	"dep:js-sys",

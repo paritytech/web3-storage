@@ -7,7 +7,7 @@
  */
 
 export * from "@web3-storage/layer0";
-export * from "@web3-storage/bucket-tree";
+export * from "@web3-storage/storage-formats";
 
 // core's chain-free primitives that layer0 doesn't already re-export.
 export {
