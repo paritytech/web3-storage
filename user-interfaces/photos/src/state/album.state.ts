@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
 // Album State — the M6 "State B" interaction layer. Once a library exists, this
-// drives the library bucket's file system through the SDK's FileSystemClient
+// drives the library bucket's file system through the SDK's file tree
 // (the browser port of the M2/M3 headless flow):
 // list/create albums (directories), upload photos with a client-generated
 // thumbnail, render a grid from those thumbnails, and open a photo full-res. Every
@@ -21,7 +21,7 @@ import type { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { fromHex, type ParachainApi } from '@web3-storage/papi'
 import { requireApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
-import { getFsClient, setFsSigner } from '@/lib/fs-client'
+import { getDrive, setFsSigner } from '@/lib/fs-client'
 import { recomputeRoot } from '@/lib/fs-root'
 import { computeDataRoot, toHex } from '@web3-storage/sdk'
 import { LocalIndex } from '@/lib/local-index'
@@ -196,7 +196,8 @@ export async function loadAlbums(): Promise<void> {
   const bucketId = bucketId$.getValue()
   if (bucketId === null) return
   try {
-    const listing = await getFsClient().listDirectory(bucketId, '/')
+    const drive = await getDrive(bucketId)
+    const listing = await drive.list('/')
     const names = listing
       .filter((e) => e.entryType === 'directory' && !e.name.startsWith('.'))
       .map((e) => e.name)
@@ -235,7 +236,8 @@ export async function loadGrid(): Promise<void> {
 
   gridLoading$.next(true)
   try {
-    const files = (await getFsClient().listDirectory(bucketId, `/${album}`)).filter((e) => e.entryType === 'file')
+    const drive = await getDrive(bucketId)
+    const files = (await drive.list(`/${album}`)).filter((e) => e.entryType === 'file')
     const items: GridItem[] = await Promise.all(
       files.map(async (f): Promise<GridItem> => {
         const thumbPath = `${THUMBS_ROOT}/${album}/${f.name}`
@@ -244,14 +246,14 @@ export async function loadGrid(): Promise<void> {
         let thumbUrl = gridThumbUrls.get(thumbPath)
         if (!thumbUrl) {
           try {
-            const bytes = await getFsClient().downloadFile(bucketId, thumbPath)
+            const { bytes } = await drive.getFile(thumbPath)
             thumbUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/jpeg' }))
             gridThumbUrls.set(thumbPath, thumbUrl)
           } catch {
             // No thumbnail (e.g. uploaded outside the app) — the grid shows a fallback.
           }
         }
-        return { name: f.name, path: `/${album}/${f.name}`, thumbPath, thumbUrl, size: f.size }
+        return { name: f.name, path: `/${album}/${f.name}`, thumbPath, thumbUrl, size: Number(f.size) }
       }),
     )
     replaceGrid(items)
@@ -365,7 +367,8 @@ export async function openPhoto(item: GridItem): Promise<void> {
   if (bucketId === null) return
   lightboxLoading$.next(true)
   try {
-    const bytes = await getFsClient().downloadFile(bucketId, item.path)
+    const drive = await getDrive(bucketId)
+    const { bytes } = await drive.getFile(item.path)
     revokeLightbox()
     const url = URL.createObjectURL(new Blob([bytes as BlobPart]))
     lightbox$.next({ name: item.name, url, item })
@@ -455,10 +458,11 @@ export async function renamePhoto(item: GridItem, rawName: string): Promise<void
   libraryError$.next(undefined)
   try {
     // Copy first; only delete the old path once the new one is safely in place.
-    const photo = await getFsClient().downloadFileWithType(bucketId, item.path)
+    const drive = await getDrive(bucketId)
+    const photo = await drive.getFile(item.path)
     await putVerified(bucketId, newPath, photo.bytes, photo.contentType)
     try {
-      const thumb = await getFsClient().downloadFileWithType(bucketId, item.thumbPath)
+      const thumb = await drive.getFile(item.thumbPath)
       await putVerified(bucketId, newThumbPath, thumb.bytes, thumb.contentType)
     } catch {
       // No thumbnail to carry over (e.g. uploaded outside the app) — skip it.
@@ -467,12 +471,12 @@ export async function renamePhoto(item: GridItem, rawName: string): Promise<void
     // Retire the old paths. Couple each index removal to its delete succeeding so
     // the index never claims a path the provider still serves; always refresh and
     // re-anchor so the new copy is reflected even when the old delete fails.
-    const photoRetired = await getFsClient().deleteFile(bucketId, item.path).then(
+    const photoRetired = await drive.delete(item.path).then(
       () => true,
       () => false,
     )
     if (photoRetired) index.remove(item.path)
-    await getFsClient().deleteFile(bucketId, item.thumbPath).then(
+    await drive.delete(item.thumbPath).then(
       () => index.remove(item.thumbPath),
       () => {},
     )
@@ -498,8 +502,9 @@ export async function deletePhoto(item: GridItem): Promise<void> {
 
   libraryError$.next(undefined)
   try {
-    await getFsClient().deleteFile(bucketId, item.path)
-    await getFsClient().deleteFile(bucketId, item.thumbPath).catch(() => {})
+    const drive = await getDrive(bucketId)
+    await drive.delete(item.path)
+    await drive.delete(item.thumbPath).catch(() => {})
     index.remove(item.path)
     index.remove(item.thumbPath)
 
@@ -582,7 +587,7 @@ async function runReanchor(): Promise<void> {
     if (sessionAuthoritative) {
       root = sessionIndex.root()
     } else {
-      root = await recomputeRoot(getFsClient(), bucketId, sessionIndex)
+      root = await recomputeRoot(await getDrive(bucketId), sessionIndex)
       if (index === sessionIndex) indexAuthoritative = true
     }
     anchorStatus$.next({ stage: 'anchoring' })
@@ -603,9 +608,10 @@ async function runReanchor(): Promise<void> {
 
 /** Store a file, assert the returned `data_root` matches our local computation, and record it in the index. */
 async function putVerified(bucketId: bigint, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
-  const res = await getFsClient().uploadFile(bucketId, path, bytes, { contentType })
+  const drive = await getDrive(bucketId)
+  const res = await drive.putFile(path, bytes, { contentType })
   const localRoot = computeDataRoot(bytes)
-  if (rootToBytes32(localRoot).toLowerCase() !== res.dataRoot.toLowerCase()) {
+  if (rootToBytes32(localRoot).toLowerCase() !== res.contentRoot.toLowerCase()) {
     throw new Error(`Stored ${path} with a different content root than computed locally.`)
   }
   index.setFile(path, localRoot, BigInt(bytes.length))
@@ -624,9 +630,9 @@ async function ensureDir(bucketId: bigint, path: string): Promise<void> {
   const slash = path.lastIndexOf('/')
   const parent = slash <= 0 ? '/' : path.slice(0, slash)
   const name = path.slice(slash + 1)
-  const client = getFsClient()
-  const siblings = await client.listDirectory(bucketId, parent)
-  if (!siblings.some((e) => e.entryType === 'directory' && e.name === name)) await client.createDirectory(bucketId, path)
+  const drive = await getDrive(bucketId)
+  const siblings = await drive.list(parent)
+  if (!siblings.some((e) => e.entryType === 'directory' && e.name === name)) await drive.mkdir(path)
   index.setDir(path)
 }
 

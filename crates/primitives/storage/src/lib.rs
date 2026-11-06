@@ -13,8 +13,8 @@ use alloc::vec::Vec;
 use bitvec::prelude::{BitVec, Lsb0};
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use core::fmt::Debug;
+use primitive_types::H256;
 use scale_info::TypeInfo;
-use sp_core::H256;
 
 pub mod agreement_term;
 pub mod merkle;
@@ -380,7 +380,10 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
 /// In the runtime this calls the host function, which is faster than hashing
 /// in wasm. Native code hashes directly and needs no externalities.
 pub fn blake2_256(data: &[u8]) -> H256 {
-    sp_io::hashing::blake2_256(data).into()
+    #[cfg(substrate_runtime)]
+    return sp_io::hashing::blake2_256(data).into();
+    #[cfg(not(substrate_runtime))]
+    sp_crypto_hashing::blake2_256(data).into()
 }
 
 /// Prefix of a Merkle leaf preimage: a chunk, an MMR leaf or a metadata entry.

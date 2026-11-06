@@ -54,8 +54,7 @@ Unratified / WIP notes. **These need triage** ([#308](https://github.com/parityt
 ## Clients
 
 - **[Storage Client SDK](../clients/storage/README.md)** — Layer-0 Rust client.
-- **[File System Client](../clients/file-system/README.md)** — Layer-1 drives, directories, and files.
-- **[S3 Interface](../clients/s3/README.md)** — Layer-1 S3-compatible Rust client.
+- **[Storage Formats](../clients/storage-formats/README.md)** — Rust library for drives, directories, files and S3-style objects stored in a bucket.
 - **TypeScript SDK** — `@web3-storage/sdk` at `packages/sdk` (`./fs`, `./s3`, `./revive` subpaths).
 
 ## External
