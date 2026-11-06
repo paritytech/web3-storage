@@ -110,7 +110,10 @@ pub trait StorageBackend: Send + Sync {
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
 
     /// Get bucket information.
-    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo>;
+    ///
+    /// `Ok(None)` means the bucket genuinely does not exist. `Err` means the
+    /// backend itself failed - the bucket may still be there.
+    fn get_bucket(&self, bucket_id: BucketId) -> Result<Option<BucketInfo>, Error>;
 
     /// Ids of every locally-held bucket.
     fn bucket_ids(&self) -> Vec<BucketId>;
@@ -127,10 +130,18 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<(), Error>;
 
     /// Get a node by hash.
-    fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode>;
+    ///
+    /// `Ok(None)` means the node genuinely does not exist. `Err` means the
+    /// backend itself failed - the node may still be there.
+    fn get_node(&self, hash: &H256) -> Result<Option<ChunkTreeNode>, Error>;
 
-    /// Check which hashes exist in storage.
-    fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>);
+    /// Split `hashes` into those stored and those missing. `Err` means a
+    /// read failed, not that a node is absent.
+    fn check_exists(
+        &self,
+        bucket_id: BucketId,
+        hashes: &[H256],
+    ) -> Result<(Vec<H256>, Vec<H256>), Error>;
 
     /// Commit data roots to the bucket's MMR.
     fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
@@ -157,9 +168,7 @@ pub trait StorageBackend: Send + Sync {
             if visited > max_nodes {
                 return Err(Error::TreeTooLarge { max_nodes });
             }
-            let node = self
-                .get_node(&hash)
-                .ok_or_else(|| Error::NodeNotFound(format!("{:#x}", hash)))?;
+            let node = self.get_node(&hash)?.ok_or(Error::NodeNotFound(hash))?;
             if let ChunkTreeNode::Internal { left, right } = node {
                 stack.push(right);
                 stack.push(left);
@@ -170,6 +179,11 @@ pub trait StorageBackend: Send + Sync {
     }
 
     /// Hash and byte size of each chunk under `root`, in leaf order.
+    ///
+    /// A missing node or a read failure must not silently shorten the result:
+    /// this backs [`Self::get_chunk_at_index`], the challenge proof path,
+    /// where a shortened list would make a transient backend failure
+    /// indistinguishable from the chunk actually being missing.
     fn collect_leaves(&self, root: H256) -> Result<Vec<(H256, usize)>, Error> {
         let mut leaves = Vec::new();
         self.walk_tree(root, &mut |hash, node| {
@@ -218,7 +232,8 @@ pub trait StorageBackend: Send + Sync {
     }
 
     /// Hash, data and Merkle proof of each chunk of `data_root` with an index
-    /// in `range`. Leaves out indices past the last chunk.
+    /// in `range`. Leaves out indices past the last chunk. An unknown
+    /// `data_root` has no chunks.
     fn get_chunks_in_range(
         &self,
         data_root: H256,
@@ -260,9 +275,7 @@ pub trait StorageBackend: Send + Sync {
 }
 
 fn node_at<B: StorageBackend + ?Sized>(backend: &B, hash: &H256) -> Result<ChunkTreeNode, Error> {
-    backend
-        .get_node(hash)
-        .ok_or_else(|| Error::NodeNotFound(format!("{:#x}", hash)))
+    backend.get_node(hash)?.ok_or(Error::NodeNotFound(*hash))
 }
 
 /// Number of chunks under `root`, from the nodes down its right edge.
