@@ -295,11 +295,11 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "message": e.to_string() })),
                     },
                 ),
-                StorageError::Serialization(msg) => (
+                StorageError::Serialization(e) => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
                         error: "serialization_error".to_string(),
-                        details: Some(serde_json::json!({ "message": msg })),
+                        details: Some(serde_json::json!({ "message": e.to_string() })),
                     },
                 ),
             },

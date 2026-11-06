@@ -206,9 +206,7 @@ impl DiskStorage {
         else {
             return Ok(None);
         };
-        BucketState::decode_all(&mut &value[..])
-            .map(Some)
-            .map_err(|error| Error::Serialization(error.to_string()))
+        Ok(Some(BucketState::decode_all(&mut &value[..])?))
     }
 
     /// Write the bucket row within `txn`.
@@ -248,9 +246,7 @@ impl DiskStorage {
             .ok_or(Error::ColumnFamilyMissing(cf))?;
         self.db
             .get_cf(&handle, key)?
-            .map(|value| {
-                T::decode_all(&mut &value[..]).map_err(|e| Error::Serialization(e.to_string()))
-            })
+            .map(|value| Ok(T::decode_all(&mut &value[..])?))
             .transpose()
     }
 

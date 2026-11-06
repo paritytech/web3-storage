@@ -89,8 +89,9 @@ pub enum Error {
     #[error("Non-canonical tree: {0}")]
     NonCanonicalTree(String),
 
+    /// A stored record could not be decoded.
     #[error("Serialization error: {0}")]
-    Serialization(String),
+    Serialization(#[from] codec::Error),
 
     /// Building the bucket MMR or a proof from it failed.
     #[error("MMR error: {0}")]
