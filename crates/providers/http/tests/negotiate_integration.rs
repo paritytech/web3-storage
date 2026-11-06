@@ -129,6 +129,7 @@ fn provider_info() -> ProviderInfo {
             replica_sync_price: None,
             accepting_extensions: true,
             max_capacity: 0,
+            min_agreement_bytes: 0,
         },
         stats: ProviderStats::default(),
         deregister_at: None,
@@ -572,6 +573,30 @@ async fn negotiate_422_capacity_exceeded() {
 }
 
 #[tokio::test]
+async fn negotiate_422_max_bytes_below_minimum() {
+    let mut info = provider_info();
+    info.settings.min_agreement_bytes = 2048;
+    let server = TestServer::ready(info).await;
+
+    let resp = server.negotiate(&primary_request()).await; // wants 1024
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "max_bytes_below_minimum");
+    assert_eq!(body["details"]["requested"], 1024);
+    assert_eq!(body["details"]["min_agreement_bytes"], 2048);
+}
+
+#[tokio::test]
+async fn negotiate_accepts_max_bytes_equal_to_minimum() {
+    let mut info = provider_info();
+    info.settings.min_agreement_bytes = 1024;
+    let server = TestServer::ready(info).await;
+
+    let resp = server.negotiate(&primary_request()).await; // wants 1024
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn negotiate_422_zero_bytes() {
     let server = TestServer::ready(provider_info()).await;
 
@@ -581,7 +606,7 @@ async fn negotiate_422_zero_bytes() {
     let resp = server.negotiate(&req).await;
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["error"], "capacity_exceeded");
+    assert_eq!(body["error"], "invalid_max_bytes_request");
 }
 
 #[tokio::test]

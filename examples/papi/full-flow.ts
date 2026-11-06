@@ -220,7 +220,7 @@ async function main() {
     const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, client);
     console.log("  Checkpoint mmr_root:", ck.mmr_root);
     console.log("  Checkpoint leaf_count:", ck.leaf_count);
-    await submitClientCheckpoint(api, client, provider, bucketId, ck);
+    await submitClientCheckpoint(api, client, bucketId, [{ provider, commit: ck }]);
     console.log("  Checkpoint submitted");
 
     console.log("\n=== Step 6: On-chain checkpoint challenge ===");

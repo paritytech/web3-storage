@@ -9805,6 +9805,7 @@ version = "0.1.0"
 dependencies = [
  "array-bytes 6.2.3",
  "async-trait",
+ "axum",
  "base64",
  "chacha20poly1305",
  "client-test-support",
