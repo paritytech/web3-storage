@@ -80,8 +80,8 @@ pub enum FsClientError {
     DirectoryNotEmpty(String),
 
     /// A rule of the format rejected the write: the directory is full, the
-    /// file is too large, or the metadata is over its bounds. `source` says
-    /// which.
+    /// file is too large, or the metadata is over its bounds or repeats a
+    /// key. `source` says which.
     #[error("{path}: {source}")]
     Format {
         /// Path of the entry being written.
@@ -99,6 +99,11 @@ pub enum FsClientError {
         /// What is wrong with the last leaf.
         reason: String,
     },
+
+    /// A directory node or file manifest has a newer format version than
+    /// this code reads. Update the client.
+    #[error("Unsupported file-system format version {0}; update the client")]
+    UnsupportedFormatVersion(u8),
 
     /// The provider's MMR proof is not a proof of the last leaf of its
     /// commitment. A commit by another writer between the two requests also

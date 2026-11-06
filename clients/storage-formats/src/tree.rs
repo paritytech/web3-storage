@@ -7,9 +7,11 @@
 //!
 //! # Format
 //!
-//! Directories are SCALE-encoded [`DirectoryNode`]s and files are a content
-//! blob plus a SCALE-encoded [`FileManifest`]. Every blob is addressed by its
-//! CID, the Layer 0 data root ([`compute_cid`]).
+//! Directories are [`DirectoryNode`] blobs and files are a content blob plus
+//! a [`FileManifest`] blob. A node blob is a 6-byte header (magic `W3FS`,
+//! format version, kind of node) and the SCALE encoding
+//! ([`DirectoryNode::to_blob`]). Every blob is addressed by its CID, the
+//! Layer 0 data root ([`compute_cid`]).
 //!
 //! # Root discovery
 //!
@@ -54,7 +56,6 @@ use crate::format::{
     MetadataEntry,
 };
 use crate::{FsClientError, Result};
-use codec::MaxEncodedLen;
 use std::collections::HashSet;
 use storage_primitives::{verify_mmr_proof, BucketId, Commitment, MmrProof};
 
@@ -136,11 +137,17 @@ fn format_error(path: &str) -> impl Fn(FileSystemError) -> FsClientError + '_ {
     }
 }
 
-/// The error for a blob at `path` that breaks a format rule.
+/// The error for a blob at `path` that breaks a format rule. A newer format
+/// version is [`FsClientError::UnsupportedFormatVersion`].
 fn invalid_blob(path: &str) -> impl Fn(FileSystemError) -> FsClientError + '_ {
-    move |source| FsClientError::InvalidBlob {
-        path: path.to_string(),
-        reason: source.to_string(),
+    move |source| match source {
+        FileSystemError::UnsupportedVersion(version) => {
+            FsClientError::UnsupportedFormatVersion(version)
+        }
+        source => FsClientError::InvalidBlob {
+            path: path.to_string(),
+            reason: source.to_string(),
+        },
     }
 }
 
@@ -277,7 +284,7 @@ impl<S: BlobStore> Tree<S> {
             bucket_id: self.bucket_id,
             reason,
         };
-        let max = max_len::<DirectoryNode>();
+        let max = DirectoryNode::max_blob_len() as u64;
         let bytes = self
             .store
             .get_blob(self.bucket_id, cid, BlobLength::AtMost(max))
@@ -288,8 +295,12 @@ impl<S: BlobStore> Tree<S> {
             )));
         }
         check_cid(cid, &bytes)?;
-        let node = DirectoryNode::from_scale_bytes(&bytes)
-            .map_err(|e| not_fs(format!("last leaf is not a directory node: {e}")))?;
+        let node = DirectoryNode::from_blob(&bytes).map_err(|e| match e {
+            FileSystemError::UnsupportedVersion(version) => {
+                FsClientError::UnsupportedFormatVersion(version)
+            }
+            other => not_fs(format!("last leaf is not a directory node: {other}")),
+        })?;
         node.validate()
             .map_err(|e| not_fs(format!("last leaf is not a valid directory node: {e}")))?;
         if node.bucket_id != self.bucket_id {
@@ -426,7 +437,7 @@ impl<S: BlobStore> Tree<S> {
             return Err(FsClientError::NotAFile(path.to_string()));
         }
 
-        let manifest_bytes = manifest.to_scale_bytes();
+        let manifest_bytes = manifest.to_blob();
         let entry = DirectoryEntry::try_new(
             name,
             EntryType::File,
@@ -602,7 +613,7 @@ impl<S: BlobStore> Tree<S> {
         path: &str,
     ) -> Result<(Vec<Vec<u8>>, Vec<u8>)> {
         let below_root = self.rewrite_below(&mut chain, names, 0, path)?;
-        Ok((below_root, chain[0].to_scale_bytes()))
+        Ok((below_root, chain[0].to_blob()))
     }
 
     /// Encode the directories of `chain` (the directories along `names`,
@@ -620,7 +631,7 @@ impl<S: BlobStore> Tree<S> {
         let mtime = (self.now)();
         let mut encoded = Vec::with_capacity(names.len() - depth);
         for (index, name) in names.iter().enumerate().skip(depth).rev() {
-            let bytes = chain[index + 1].to_scale_bytes();
+            let bytes = chain[index + 1].to_blob();
             let entry =
                 DirectoryEntry::try_new(name, EntryType::Directory, compute_cid(&bytes), 0, mtime)
                     .map_err(format_error(path))?;
@@ -709,13 +720,13 @@ impl<S: BlobStore> Tree<S> {
 
     async fn read_dir(&self, path: &str, cid: Cid) -> Result<DirectoryNode> {
         let bytes = self
-            .read_blob(path, cid, BlobLength::AtMost(max_len::<DirectoryNode>()))
+            .read_blob(
+                path,
+                cid,
+                BlobLength::AtMost(DirectoryNode::max_blob_len() as u64),
+            )
             .await?;
-        let node =
-            DirectoryNode::from_scale_bytes(&bytes).map_err(|e| FsClientError::InvalidBlob {
-                path: path.to_string(),
-                reason: format!("not a directory node: {e}"),
-            })?;
+        let node = DirectoryNode::from_blob(&bytes).map_err(invalid_blob(path))?;
         node.validate().map_err(invalid_blob(path))?;
         Ok(node)
     }
@@ -740,13 +751,13 @@ impl<S: BlobStore> Tree<S> {
 
     async fn read_manifest(&self, path: &str, cid: Cid) -> Result<FileManifest> {
         let bytes = self
-            .read_blob(path, cid, BlobLength::AtMost(max_len::<FileManifest>()))
+            .read_blob(
+                path,
+                cid,
+                BlobLength::AtMost(FileManifest::max_blob_len() as u64),
+            )
             .await?;
-        let manifest =
-            FileManifest::from_scale_bytes(&bytes).map_err(|e| FsClientError::InvalidBlob {
-                path: path.to_string(),
-                reason: format!("not a file manifest: {e}"),
-            })?;
+        let manifest = FileManifest::from_blob(&bytes).map_err(invalid_blob(path))?;
         manifest.validate().map_err(invalid_blob(path))?;
         Ok(manifest)
     }
@@ -759,11 +770,6 @@ fn check_cid(cid: Cid, bytes: &[u8]) -> Result<()> {
         return Err(FsClientError::CidMismatch { expected: cid, got });
     }
     Ok(())
-}
-
-/// Maximum SCALE encoded size of `T`, in bytes.
-fn max_len<T: MaxEncodedLen>() -> u64 {
-    T::max_encoded_len() as u64
 }
 
 /// `cids` in commit order: first occurrence order, each once, and the last
@@ -801,13 +807,42 @@ mod tests {
         ));
     }
 
+    /// A root of a newer format version is reported as such, not as data
+    /// that is not a file system.
+    #[tokio::test]
+    async fn a_newer_format_version_is_reported() {
+        let store = MemoryStore::default();
+        let mut newer = DirectoryNode::new_empty(BUCKET).to_blob();
+        newer[4] = crate::format::FORMAT_VERSION + 1;
+        store.raw_commit(&newer);
+        assert!(matches!(
+            tree(&store).load_root().await,
+            Err(FsClientError::UnsupportedFormatVersion(v)) if v == crate::format::FORMAT_VERSION + 1
+        ));
+    }
+
+    #[tokio::test]
+    async fn put_rejects_duplicate_metadata_keys() {
+        let store = MemoryStore::default();
+        let entry = MetadataEntry::try_new(b"k", b"v").unwrap();
+        assert!(matches!(
+            tree(&store)
+                .put_file("/f", b"x", "", vec![entry.clone(), entry])
+                .await,
+            Err(FsClientError::Format {
+                source: FileSystemError::DuplicateMetadataKey,
+                ..
+            })
+        ));
+    }
+
     /// One commit by another writer between the commitment and the proof
     /// read costs one more read, which sees that writer's root.
     #[tokio::test]
     async fn root_read_retries_after_a_commit_between_the_two_reads() {
         let store = MemoryStore::default();
         tree(&store).mkdir("/a").await.unwrap();
-        let other_root = DirectoryNode::new_empty(BUCKET).to_scale_bytes();
+        let other_root = DirectoryNode::new_empty(BUCKET).to_blob();
         store
             .commits_after_commitment
             .lock()
@@ -1005,11 +1040,11 @@ mod tests {
 
         // Directories bottom-up: b, a, root.
         let blobs = store.blobs.lock().unwrap().clone();
-        let b = DirectoryNode::from_scale_bytes(&blobs[&order[2]]).unwrap();
+        let b = DirectoryNode::from_blob(&blobs[&order[2]]).unwrap();
         assert_eq!(names(&b.children), ["f.txt"]);
-        let a = DirectoryNode::from_scale_bytes(&blobs[&order[3]]).unwrap();
+        let a = DirectoryNode::from_blob(&blobs[&order[3]]).unwrap();
         assert_eq!(a.find_child("b").unwrap().cid, order[2]);
-        let root = DirectoryNode::from_scale_bytes(&blobs[&order[4]]).unwrap();
+        let root = DirectoryNode::from_blob(&blobs[&order[4]]).unwrap();
         assert_eq!(root.find_child("a").unwrap().cid, order[3]);
 
         assert_eq!(new_root, order[4]);
@@ -1203,7 +1238,7 @@ mod tests {
             )
             .unwrap();
         }
-        let bytes = root.to_scale_bytes();
+        let bytes = root.to_blob();
         assert!(bytes.len() > crate::format::CHUNK_SIZE);
         store.raw_commit(&bytes);
         let loaded = t.load_root().await.unwrap();
@@ -1224,7 +1259,7 @@ mod tests {
         ));
 
         let store = MemoryStore::default();
-        store.raw_commit(&DirectoryNode::new_empty(BUCKET + 1).to_scale_bytes());
+        store.raw_commit(&DirectoryNode::new_empty(BUCKET + 1).to_blob());
         assert!(matches!(
             tree(&store).load_root().await,
             Err(FsClientError::NotAFileSystemBucket { .. })
@@ -1292,13 +1327,13 @@ mod tests {
         let mut root = DirectoryNode::new_empty(BUCKET);
         root.upsert_child(DirectoryEntry::try_new("f", EntryType::File, cid, 1, 0).unwrap())
             .unwrap();
-        store.raw_commit(&root.to_scale_bytes());
+        store.raw_commit(&root.to_blob());
     }
 
     #[tokio::test]
     async fn metadata_reads_reject_blobs_over_the_max_encoded_size() {
         let store = MemoryStore::default();
-        store.raw_commit(&vec![0u8; DirectoryNode::max_encoded_len() + 1]);
+        store.raw_commit(&vec![0u8; DirectoryNode::max_blob_len() + 1]);
         assert!(matches!(
             tree(&store).load_root().await,
             Err(FsClientError::NotAFileSystemBucket {
@@ -1308,7 +1343,7 @@ mod tests {
         ));
 
         let store = MemoryStore::default();
-        commit_file_with_manifest(&store, &vec![0u8; FileManifest::max_encoded_len() + 1]);
+        commit_file_with_manifest(&store, &vec![0u8; FileManifest::max_blob_len() + 1]);
         assert!(matches!(
             tree(&store).stat("/f").await,
             Err(FsClientError::InvalidBlob { path, .. }) if path == "/f"
@@ -1320,7 +1355,7 @@ mod tests {
         let store = MemoryStore::default();
         let mut manifest = FileManifest::for_content(BUCKET, b"x", DEFAULT, vec![]).unwrap();
         manifest.total_size = 1 << 20;
-        commit_file_with_manifest(&store, &manifest.to_scale_bytes());
+        commit_file_with_manifest(&store, &manifest.to_blob());
         assert!(matches!(
             tree(&store).stat("/f").await,
             Err(FsClientError::InvalidBlob { path, .. }) if path == "/f"

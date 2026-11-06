@@ -16,7 +16,8 @@
 //! The limits of the [`crate::tree`] module apply.
 
 use crate::format::{
-    validate_entry_name, DirectoryEntry, MaxMetadataEntries, MetadataEntry, DEFAULT_MIME_TYPE,
+    validate_entry_name, DirectoryEntry, FileSystemError, MaxMetadataEntries, MetadataEntry,
+    DEFAULT_MIME_TYPE,
 };
 use crate::tree::{BlobStore, EmptyParents, FileStat, Tree};
 use crate::FsClientError;
@@ -197,6 +198,10 @@ impl<S: BlobStore> Objects<S> {
                 FsClientError::NotAFile(_) | FsClientError::NotADirectory(_) => {
                     S3ClientError::KeyConflict(key.to_string())
                 }
+                FsClientError::Format {
+                    source: FileSystemError::DuplicateMetadataKey,
+                    ..
+                } => S3ClientError::InvalidMetadata("two keys are equal after lowercasing".into()),
                 other => other.into(),
             })?;
         let cid = stat.content_root();
@@ -410,25 +415,18 @@ fn to_head(stat: &FileStat) -> HeadObjectResponse {
     }
 }
 
-/// Lowercase the keys and sort by key. Fails if two keys are equal after
-/// lowercasing or an entry is over the bounds.
+/// Lowercase the keys. Fails if there are too many entries or one is over
+/// the bounds.
 fn to_metadata_entries(metadata: HashMap<String, String>) -> Result<Vec<MetadataEntry>> {
-    let mut lowered: Vec<(String, String)> = metadata
+    let lowered: Vec<(String, String)> = metadata
         .into_iter()
         .map(|(k, v)| (k.to_lowercase(), v))
         .collect();
-    lowered.sort();
     let max_entries = MaxMetadataEntries::get() as usize;
     if lowered.len() > max_entries {
         return Err(S3ClientError::InvalidMetadata(format!(
             "{} entries, at most {max_entries}",
             lowered.len()
-        )));
-    }
-    if let Some(pair) = lowered.windows(2).find(|pair| pair[0].0 == pair[1].0) {
-        return Err(S3ClientError::InvalidMetadata(format!(
-            "duplicate key {:?}",
-            pair[0].0
         )));
     }
     lowered

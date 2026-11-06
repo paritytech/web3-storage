@@ -34,22 +34,40 @@ fn key_rules() {
     }
 }
 
-#[test]
-fn metadata_keys_are_lowercased_sorted_and_unique() {
-    let metadata = HashMap::from([
+#[tokio::test]
+async fn metadata_keys_are_lowercased_and_unique() {
+    let store = MemoryStore::default();
+    let objects = Objects::new(tree(&store));
+    let put = |metadata: HashMap<String, String>| {
+        objects.put_object(
+            "k",
+            b"x",
+            PutObjectOptions {
+                content_type: None,
+                metadata,
+            },
+        )
+    };
+    put(HashMap::from([
         ("Color".to_string(), "blue".to_string()),
         ("ALPHA".to_string(), "1".to_string()),
-    ]);
-    let entries = to_metadata_entries(metadata).unwrap();
-    let keys: Vec<&[u8]> = entries.iter().map(|e| e.key.as_slice()).collect();
-    assert_eq!(keys, [&b"alpha"[..], b"color"]);
+    ]))
+    .await
+    .unwrap();
+    assert_eq!(
+        objects.head_object("k").await.unwrap().metadata,
+        HashMap::from([
+            ("alpha".to_string(), "1".to_string()),
+            ("color".to_string(), "blue".to_string()),
+        ])
+    );
 
     let clash = HashMap::from([
         ("Color".to_string(), "blue".to_string()),
         ("color".to_string(), "red".to_string()),
     ]);
     assert!(matches!(
-        to_metadata_entries(clash),
+        put(clash).await,
         Err(S3ClientError::InvalidMetadata(_))
     ));
     let long_value = HashMap::from([("k".to_string(), "v".repeat(257))]);
@@ -248,7 +266,7 @@ const BIG_SIZE: usize = 3 * CHUNK_SIZE + 100;
 /// directory node, manifest and content root, so a change to the bucket
 /// format changes it. Clients cannot read buckets written in an older
 /// format, so update it only with a reviewed format change.
-const ROOT_CID: &str = "0x7aa7bcb3d443e0b47cabae360f168099695e46c84433e79dce13852d9647ffe5";
+const ROOT_CID: &str = "0x73c28efba4f06b593cc13f1f6aa59f1bf9c6fd0a4a1d5908e5b2213989f130c7";
 
 /// A fixed sequence of file and object writes, with a fixed clock.
 async fn write_sequence(store: &MemoryStore) {
