@@ -1017,3 +1017,43 @@ fn replica_cannot_answer_with_deleted() {
         assert!(Challenges::<Test>::get(101, 0).is_some());
     });
 }
+
+#[test]
+fn add_replica_provider_fails_when_below_min_agreement_bytes() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                accepting_primary: true,
+                replica_sync_price: Some(10),
+                min_agreement_bytes: 51,
+                ..Default::default()
+            },
+        );
+        let bucket_id = create_bucket(1, 1);
+
+        let (terms, sig) = signed_replica_terms(
+            2,
+            1,
+            bucket_id,
+            50,
+            100,
+            ReplicaTerms {
+                sync_balance: 100,
+                min_sync_interval: 10,
+                sync_price: 10,
+            },
+        );
+        assert_err!(
+            StorageProvider::add_replica_provider(
+                RuntimeOrigin::signed(1),
+                bucket_id,
+                2,
+                terms,
+                sig
+            ),
+            Error::<Test>::MaxBytesBelowMinimum
+        );
+    });
+}

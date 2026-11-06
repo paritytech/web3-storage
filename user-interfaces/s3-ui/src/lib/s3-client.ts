@@ -80,6 +80,8 @@ export interface AvailableProvider {
   minDuration: number;
   maxDuration: number;
   acceptingPrimary: boolean;
+  /** Smallest agreement `max_bytes` the provider accepts; `0n` = no minimum. */
+  minAgreementBytes: bigint;
   agreementsTotal: number;
 }
 
@@ -280,7 +282,7 @@ export class S3Client {
     return this.requireS3().listBuckets();
   }
 
-  // ── S3 Object operations (HTTP, via the SDK's S3Client) ─────────────────────
+  // ── S3 Object operations (the bucket's own tree, via the SDK's S3Client) ───
 
   async putObject(
     bucketId: bigint,
@@ -291,21 +293,23 @@ export class S3Client {
     const result = await this.requireS3().putObject(bucketId, key, data, {
       signal: options?.signal,
     });
-    return { cid: result.cid ?? "", size: result.size };
+    return { cid: result.cid, size: result.size };
   }
 
-  /**
-   * Download an object by key. Unverified: the provider's index maps the key
-   * to content and nothing on chain commits to that mapping (#410).
-   */
+  /** Download an object by key. The SDK checks the content against the bucket's tree. */
   async getObject(bucketId: bigint, key: string): Promise<Uint8Array> {
     const { data } = await this.requireS3().getObject(bucketId, key);
     return data;
   }
 
+  /**
+   * Every object whose key starts with `prefix`, in key order, from one
+   * read of the bucket's tree (paging would read the tree once per page
+   * and could mix two bucket roots).
+   */
   async listObjects(bucketId: bigint, prefix?: string): Promise<S3ObjectInfo[]> {
-    const summaries = await this.requireS3().listObjects(bucketId, prefix);
-    return summaries.map((o) => ({
+    const { objects } = await this.requireS3().listAllObjects(bucketId, { prefix });
+    return objects.map((o) => ({
       key: o.key,
       size: o.size,
       lastModified: o.lastModified ?? 0,
@@ -372,6 +376,7 @@ export class S3Client {
       minDuration: info.min_duration,
       maxDuration: info.max_duration,
       acceptingPrimary: info.accepting_primary,
+      minAgreementBytes: info.min_agreement_bytes,
       agreementsTotal: info.stats.agreements_total,
     }));
 
@@ -415,6 +420,7 @@ export class S3Client {
           minDuration: info.min_duration ?? 0,
           maxDuration: info.max_duration ?? 0,
           acceptingPrimary: info.accepting_primary ?? false,
+          minAgreementBytes: BigInt(info.min_agreement_bytes ?? 0),
           replicaSyncPrice:
             info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
           acceptingExtensions: info.accepting_extensions ?? false,

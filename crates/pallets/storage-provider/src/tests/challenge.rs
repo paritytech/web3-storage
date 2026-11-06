@@ -2403,6 +2403,7 @@ mod challenge_tests {
                 replica_sync_price: Some(1u64),
                 accepting_extensions: true,
                 max_capacity: 0,
+                min_agreement_bytes: 0,
             };
             assert_ok!(StorageProvider::update_provider_settings(
                 RuntimeOrigin::signed(4),
@@ -2831,10 +2832,6 @@ mod challenge_tests {
             );
             StorageAgreements::<Test>::remove(0, 2);
 
-            assert_noop!(
-                StorageProvider::cleanup_bucket_internal(0, &1),
-                Error::<Test>::BucketHasPendingChallenge
-            );
             assert_noop!(
                 StorageProvider::delete_bucket(RuntimeOrigin::signed(1), 0),
                 Error::<Test>::BucketHasPendingChallenge
