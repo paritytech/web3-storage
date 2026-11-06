@@ -103,6 +103,9 @@ pub enum SyncResult {
     },
     /// Local state doesn't match expected root after sync.
     VerificationFailed { bucket_id: BucketId, reason: String },
+    /// Reading the local bucket failed: the storage backend, not the sync,
+    /// is the problem.
+    StorageFailed { bucket_id: BucketId, reason: String },
     /// Failed to submit confirm_replica_sync transaction.
     SubmissionFailed { bucket_id: BucketId, error: String },
     /// Already synced to this root.
@@ -380,7 +383,7 @@ impl ReplicaSyncCoordinator {
                 our_account.as_ref().is_none_or(|me| me == provider)
             }
             BlockEvent::BucketCheckpointed { bucket_id } => {
-                self.storage.get_bucket(*bucket_id).is_some()
+                self.storage.get_bucket(*bucket_id).ok().flatten().is_some()
             }
             _ => false,
         }
@@ -584,7 +587,7 @@ impl ReplicaSyncCoordinator {
                 continue;
             }
 
-            if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id) {
+            if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id)? {
                 if bucket.mmr_root == snapshot.mmr_root {
                     continue;
                 }
@@ -647,8 +650,17 @@ impl ReplicaSyncCoordinator {
 
     /// Perform sync and submit confirmation.
     pub async fn sync_and_confirm(&self, duty: &SyncDuty) -> SyncResult {
+        let storage_failed = |e: provider_storage::Error| SyncResult::StorageFailed {
+            bucket_id: duty.bucket_id,
+            reason: e.to_string(),
+        };
+
         // Check if we already have this root
-        if let Some(bucket) = self.storage.get_bucket(duty.bucket_id) {
+        let local_bucket = match self.storage.get_bucket(duty.bucket_id) {
+            Ok(bucket) => bucket,
+            Err(e) => return storage_failed(e),
+        };
+        if let Some(bucket) = local_bucket {
             if bucket.mmr_root == duty.target_mmr_root {
                 return SyncResult::AlreadySynced {
                     bucket_id: duty.bucket_id,
@@ -721,8 +733,9 @@ impl ReplicaSyncCoordinator {
 
         // Verify final state
         let local_bucket = match self.storage.get_bucket(duty.bucket_id) {
-            Some(b) => b,
-            None => {
+            Ok(Some(b)) => b,
+            Err(e) => return storage_failed(e),
+            Ok(None) => {
                 return SyncResult::VerificationFailed {
                     bucket_id: duty.bucket_id,
                     reason: "Bucket not found after sync".to_string(),
