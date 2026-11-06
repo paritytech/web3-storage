@@ -77,6 +77,11 @@ pub struct UploadArgs {
     /// before the run. Setup only: excluded from the measured window. 0 = off.
     #[arg(long, value_name = "N", default_value_t = 0)]
     pub prepare_buckets: usize,
+
+    /// Where target buckets come from. Default: `create` when
+    /// `--prepare-buckets` is set, `discover` otherwise.
+    #[arg(long, value_enum, value_name = "MODE")]
+    pub bucket_source: Option<BucketSource>,
 }
 
 /// Pick the target bucket for the `global_idx`-th upload of the whole run,
@@ -272,8 +277,8 @@ async fn run_load(
 
 /// Drive configurable upload load against `--provider`.
 ///
-/// Target buckets are discovered on chain or, with `--prepare-buckets`,
-/// prepared by this run. Per-upload failures are folded into the metrics, so
+/// Target buckets are discovered on chain, prepared by this run, or both, per
+/// `--bucket-source`. Per-upload failures are folded into the metrics, so
 /// `Err` means a setup failure: bad provider, chain connection, no target
 /// buckets, or preparation.
 pub async fn upload(
@@ -289,7 +294,7 @@ pub async fn upload(
 
     let config = build_config(global);
 
-    let source = BucketSource::resolve(args.prepare_buckets);
+    let source = BucketSource::resolve(args.bucket_source, args.prepare_buckets)?;
 
     // One chain connection serves both discovery and preparation.
     let mut admin = AdminClient::new(config.clone(), signer.clone())
@@ -402,6 +407,7 @@ mod tests {
 
         let w = Wrapper::try_parse_from(["stress-test-upload", "--provider", "//Alice"]).unwrap();
         assert_eq!(w.args.prepare_buckets, 0);
+        assert!(w.args.bucket_source.is_none());
 
         let w = Wrapper::try_parse_from([
             "stress-test-upload",
@@ -409,9 +415,12 @@ mod tests {
             "//Alice",
             "--prepare-buckets",
             "2",
+            "--bucket-source",
+            "auto",
         ])
         .unwrap();
         assert_eq!(w.args.prepare_buckets, 2);
+        assert_eq!(w.args.bucket_source, Some(BucketSource::Auto));
     }
 
     #[test]
