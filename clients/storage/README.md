@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("MMR root: {}", commitment.mmr_root);
 
     // Download and verify
-    let retrieved = client.download(&data_root, 0, data.len() as u64).await?;
+    let retrieved = client.download(1, &data_root, 0, data.len() as u64).await?;
     assert_eq!(retrieved, data);
 
     Ok(())
@@ -272,7 +272,7 @@ match client.upload(1, data, Default::default()).await {
 ### ProviderClient
 
 - ✅ Register as storage provider with stake
-- ✅ Update provider settings (pricing, capacity)
+- ✅ Update provider settings (pricing, capacity, minimum agreement size)
 - ✅ Accept storage agreements
 - ✅ Respond to challenges with proofs
 - ✅ Confirm replica syncs for payment
@@ -484,9 +484,9 @@ use storage_client::{EventFilter, EventStream};
 use storage_subxt::api;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Event as SpEvent;
 
-// Stream events from the three storage pallets
+// Stream StorageProvider pallet events
 let mut stream =
-    EventStream::connect("ws://127.0.0.1:2222", EventFilter::storage_pallets()).await?;
+    EventStream::connect("ws://127.0.0.1:2222", EventFilter::storage_provider()).await?;
 
 while let Some(ev) = stream.next().await {
     match ev.event {

@@ -95,7 +95,7 @@ just fs-demo-ci             # Terminal 3
 ### File System Commands
 
 ```bash
-just fs-test-all            # Run all unit tests across primitives, pallet, client
+just fs-test-all            # Run all unit tests across primitives, client
 just fs-demo-ci             # Integration example against a running chain + provider
 ```
 
@@ -190,9 +190,9 @@ Two types of nodes work together:
 ```
 web3-storage/
 ├── crates/
-│   ├── pallets/            # FRAME pallets: storage-provider, drive-registry, s3-registry
-│   │                       #   each with a precompiles/ subfolder (pallet_revive precompiles)
-│   ├── primitives/         # Shared types: storage, file-system, s3
+│   ├── pallets/            # FRAME pallet: storage-provider
+│   │                       #   with a precompiles/ subfolder (pallet_revive precompile)
+│   ├── primitives/         # Shared types: storage, file-system
 │   ├── providers/          # Provider-node library crates
 │   ├── storage-subxt/      # Static subxt runtime bindings
 │   └── utils/              # Ultility crates
@@ -257,17 +257,17 @@ The provider node uses environment variables for configuration:
 ## Example: Basic Upload Flow
 
 ```rust
-use storage_client::{Signer, StorageUserClient};
+use storage_client::{ChunkingStrategy, Signer, StorageUserClient};
 
 // Connect to provider
 let client = StorageUserClient::new(config, Signer::from_seed("//Alice")?)?;
 
 // Upload data (off-chain)
 let data = b"Hello, decentralized storage!";
-let result = client.upload(bucket_id, data).await?;
+let data_root = client.upload(bucket_id, data, ChunkingStrategy::default()).await?;
 
 // Verify upload
-let downloaded = client.download(bucket_id, result.seq).await?;
+let downloaded = client.download(bucket_id, &data_root, 0, data.len() as u64).await?;
 assert_eq!(data, downloaded);
 ```
 

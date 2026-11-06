@@ -49,6 +49,7 @@ export interface ProviderSettings {
   replicaSyncPrice: bigint | null
   acceptingExtensions: boolean
   maxCapacity: bigint
+  minAgreementBytes: bigint
 }
 
 export interface Agreement {
@@ -536,7 +537,11 @@ export async function respondToChallenge(
 
   // Step 1: Fetch proofs from provider node
   onProgress?.({ type: 'signing', message: 'Fetching proof from provider node...' })
-  const proof = await fetchChallengeProof(requireApi(), getProviderHttp(), challengeId)
+  const proof = await fetchChallengeProof(requireApi(), getProviderHttp(), challengeId, {
+    signer: signer.txCreator,
+    address: signer.address,
+    publicKey: signer.txCreator.publicKey,
+  })
 
   // Step 2: Submit on-chain
   await submitRespondToChallenge(challengeId, proof, signer, onProgress)
@@ -629,6 +634,7 @@ function convertProviderSettings(chain: OnChainProviderSettings): ProviderSettin
     replicaSyncPrice: chain.replicaSyncPrice,
     acceptingExtensions: chain.acceptingExtensions,
     maxCapacity: chain.maxCapacity,
+    minAgreementBytes: chain.minAgreementBytes,
   }
 }
 

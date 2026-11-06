@@ -15,8 +15,12 @@ import { signedTermsBucketId } from "@web3-storage/papi";
 
 export { signedTermsBucketId };
 
-import { asHex, hexToBytes, type ParachainApi } from "../address.js";
-import { getProviderNodeInfo } from "../provider-http.js";
+import { asHex, hexToBytes, sameAddress, type ParachainApi } from "../address.js";
+import {
+  getProviderNodeInfo,
+  type ChallengeResponse,
+  type ProviderCommit,
+} from "../provider-http.js";
 import type { ChainSigner } from "../signers.js";
 import { READ_OPTS, requireOneEvent, submitTx, submitTxFinalized, type SubmitOpts } from "../tx.js";
 
@@ -93,6 +97,7 @@ export async function ensureProviderRegistered(
       replica_sync_price: undefined,
       accepting_extensions: true,
       max_capacity: 0n,
+      min_agreement_bytes: 0n,
     },
     opts,
   );
@@ -107,7 +112,8 @@ export async function ensureProviderRegistered(
     const priceSynced =
       readiness.provider_info_loaded &&
       provider_registration_info != null &&
-      BigInt(provider_registration_info.settings.price_per_byte) === pricePerByte;
+      BigInt(provider_registration_info.settings.price_per_byte) === pricePerByte &&
+      BigInt(provider_registration_info.settings.min_agreement_bytes) === 0n;
     if (readiness.signing_configured && priceSynced) return;
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }
@@ -165,7 +171,7 @@ export async function getAgreementNonce(api: ParachainApi, owner: string): Promi
 
 /**
  * Shape a provider's SignedTerms into the `{ provider, terms, sig }` argument
- * the quote-redeeming extrinsics (and create_drive / create_s3_bucket) expect.
+ * the quote-redeeming extrinsics expect.
  */
 export function buildSignedTermsArgs(
   provider: ChainSigner | { address: string },
@@ -375,32 +381,64 @@ export async function removeMember(
   );
 }
 
+/** A provider and the commit it signed. */
+export type CheckpointSigner = {
+  provider: ChainSigner | { address: string };
+  commit: ProviderCommit;
+};
+
+/**
+ * Builds a `checkpoint` tx. Throws before building it when a signer signed a
+ * different commitment (`mmr_root`, `start_seq`, `leaf_count`) than the first
+ * signer: the chain would reject the tx with `InvalidSignature` without naming
+ * the provider. Also throws when a provider is listed twice: the chain counts a
+ * repeated signer once, so the duplicate adds fee and no signature.
+ */
+export function checkpointTx(api: ParachainApi, bucketId: bigint, signers: CheckpointSigner[]) {
+  if (signers.length === 0) throw new Error("checkpointTx: at least one signer is required");
+  const commitment = commitmentOf(signers[0].commit);
+  signers.forEach(({ provider, commit }, i) => {
+    const other = commitmentOf(commit);
+    if (
+      other.mmr_root.toLowerCase() !== commitment.mmr_root.toLowerCase() ||
+      other.start_seq !== commitment.start_seq ||
+      other.leaf_count !== commitment.leaf_count
+    ) {
+      throw new Error(
+        `checkpointTx: ${provider.address} signed a different commitment than ` +
+          signers[0].provider.address,
+      );
+    }
+    if (signers.slice(0, i).some((s) => sameAddress(s.provider.address, provider.address))) {
+      throw new Error(`checkpointTx: ${provider.address} is listed more than once`);
+    }
+  });
+  return api.tx.StorageProvider.checkpoint({
+    bucket_id: bucketId,
+    commitment,
+    signatures: signers.map(({ provider, commit }) => [
+      provider.address,
+      decodeMultiSignature(commit.provider_signature),
+    ]),
+  });
+}
+
+function commitmentOf({ mmr_root, start_seq, leaf_count }: ProviderCommit) {
+  return { mmr_root: asHex(mmr_root), start_seq: BigInt(start_seq), leaf_count: BigInt(leaf_count) };
+}
+
+/** Submits a `checkpoint` signed by `client`; see {@link checkpointTx}. */
 export async function submitClientCheckpoint(
   api: ParachainApi,
   client: ChainSigner,
-  provider: ChainSigner | { address: string },
   bucketId: bigint,
-  ck: {
-    mmr_root: string;
-    start_seq: number | string;
-    leaf_count: number | string;
-    provider_signature: string;
-  },
+  signers: CheckpointSigner[],
   opts: SubmitOpts = {},
 ) {
-  return submitTx(
-    api.tx.StorageProvider.checkpoint({
-      bucket_id: bucketId,
-      commitment: {
-        mmr_root: asHex(ck.mmr_root),
-        start_seq: BigInt(ck.start_seq),
-        leaf_count: BigInt(ck.leaf_count),
-      },
-      signatures: [[provider.address, decodeMultiSignature(ck.provider_signature)]],
-    }),
-    client.signer,
-    { label: "checkpoint", ...opts },
-  );
+  return submitTx(checkpointTx(api, bucketId, signers), client.signer, {
+    label: "checkpoint",
+    ...opts,
+  });
 }
 
 export async function challengeOffchain(
@@ -477,17 +515,18 @@ export async function challengeCheckpoint(
   ).challenge_id;
 }
 
+/** Submit `response`, as built by `fetchChallengeProof`, for `challengeId`. */
 export async function respondToChallenge(
   api: ParachainApi,
   provider: ChainSigner,
   challengeId: any,
-  proof: any,
+  response: ChallengeResponse,
   opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.respond_to_challenge({
       challenge_id: challengeId,
-      response: Enum("Proof", proof),
+      response,
     }),
     provider.signer,
     { label: "respond_to_challenge", ...opts },
@@ -719,6 +758,28 @@ export async function freezeBucket(
     result.events,
     api.event.StorageProvider.BucketFrozen,
     "BucketFrozen",
+  );
+}
+
+/**
+ * Delete a bucket that has no agreements and no open challenges (admin only).
+ * Releases the bucket's and every member's storage deposit to whoever paid it.
+ */
+export async function deleteBucket(
+  api: ParachainApi,
+  admin: ChainSigner,
+  bucketId: bigint,
+  opts: SubmitOpts = {},
+) {
+  const result = await submitTx(
+    api.tx.StorageProvider.delete_bucket({ bucket_id: bucketId }),
+    admin.signer,
+    { label: "delete_bucket", ...opts },
+  );
+  return requireOneEvent(
+    result.events,
+    api.event.StorageProvider.BucketDeleted,
+    "BucketDeleted",
   );
 }
 

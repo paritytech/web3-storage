@@ -11,6 +11,8 @@
       "node"
     ],
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noEmit": true,
     "skipLibCheck": true,
     "esModuleInterop": true,

@@ -3,27 +3,25 @@
 //! HTTP API handlers for the provider node.
 
 use crate::error::Error;
-use crate::fs_api;
 use crate::negotiate::{self, AgreementTermsOf, NegotiateRequest, SignedTerms};
-use crate::s3_api;
 use crate::types::*;
 use crate::ProviderState;
 use axum::{
     extract::{ConnectInfo, DefaultBodyLimit, Query, Request, State},
     middleware::{from_fn_with_state, Next},
     response::Response,
-    routing::{get, post, put},
+    routing::{get, post},
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use provider_auth::RequiredRole;
-use provider_storage::ChunkTreeNode;
+use provider_storage::{BucketInfo, ChunkTreeNode};
 use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_primitives::AgreementTerms;
+use storage_primitives::{AgreementTerms, BucketId};
 use storage_primitives::{Commitment, CommitmentPayload};
 use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
@@ -34,6 +32,12 @@ const NEGOTIATE_RATE_LIMIT_PER_SEC: u64 = 5;
 /// Per-IP token-bucket capacity: a single client may burst up to this many
 /// `/negotiate` requests before being throttled to the refill rate.
 const NEGOTIATE_RATE_LIMIT_BURST: u64 = 16;
+
+/// Largest request body the node reads. The largest valid body is one
+/// `PUT /node` with a `DEFAULT_CHUNK_SIZE` chunk in base64 (4/3 of the chunk
+/// size); the rest is headroom for the hash lists of `/commit`, `/exists` and
+/// `/fetch_nodes`.
+const MAX_REQUEST_BODY: usize = 4 * storage_primitives::DEFAULT_CHUNK_SIZE as usize;
 
 /// Create the API router with all endpoints.
 pub fn create_router(state: Arc<ProviderState>) -> Router {
@@ -58,8 +62,6 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
                     axum::http::Method::GET,
                     axum::http::Method::PUT,
                     axum::http::Method::POST,
-                    axum::http::Method::DELETE,
-                    axum::http::Method::HEAD,
                 ])
                 .allow_headers([
                     axum::http::header::AUTHORIZATION,
@@ -86,11 +88,9 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/mmr_proof", get(get_mmr_proof))
         .route("/chunk_proof", get(get_chunk_proof))
         // Bucket operations
-        .route("/buckets", get(list_buckets))
         .route("/delete", post(delete_data))
         // Replica sync
         .route("/mmr_peaks", get(get_mmr_peaks))
-        .route("/mmr_subtree", get(get_mmr_subtree))
         .route("/fetch_nodes", post(fetch_nodes))
         // Off-chain term negotiation: signed AgreementTerms the caller redeems
         // on-chain (create_bucket_with_primary / add_primary_provider /
@@ -105,27 +105,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         // Replica sync status
         .route("/replica/historical_roots", get(get_historical_roots))
         .route("/replica/sync_status", get(get_replica_sync_status))
-        // S3-compatible object storage (key passed as ?key= query param)
-        .route(
-            "/s3/:bucket_id/object",
-            put(s3_api::s3_put_object)
-                .get(s3_api::s3_get_object)
-                .head(s3_api::s3_head_object)
-                .delete(s3_api::s3_delete_object),
-        )
-        .route("/s3/:bucket_id/objects", get(s3_api::s3_list_objects))
-        .route("/s3/:bucket_id/index_root", get(s3_api::s3_index_root))
-        // File system endpoints (path passed as ?path= query param)
-        .route(
-            "/fs/:bucket_id/file",
-            put(fs_api::fs_put_file)
-                .get(fs_api::fs_get_file)
-                .delete(fs_api::fs_delete_file),
-        )
-        .route("/fs/:bucket_id/mkdir", post(fs_api::fs_mkdir))
-        .route("/fs/:bucket_id/ls", get(fs_api::fs_list_dir))
-        .route("/fs/:bucket_id/index_root", get(fs_api::fs_index_root))
-        .layer(DefaultBodyLimit::max(256 * 1024 * 1024)) // 256 MB
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state)
@@ -152,14 +132,14 @@ async fn rate_limit_by_ip_middleware(
 }
 
 /// Extract the Authorization header value from a header map.
-pub(crate) fn auth_header(headers: &axum::http::HeaderMap) -> Option<&str> {
+fn auth_header(headers: &axum::http::HeaderMap) -> Option<&str> {
     headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
 }
 
 /// Convenience wrapper around `provider_auth::require_role` using request headers.
-pub(crate) async fn check_role(
+async fn check_role(
     state: &ProviderState,
     headers: &axum::http::HeaderMap,
     method: &str,
@@ -201,16 +181,12 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
 }
 
 async fn stats(State(state): State<Arc<ProviderState>>) -> Json<StatsResponse> {
-    let bucket_stats = state.storage.get_bucket_stats();
-    let total_bytes = state.storage.total_bytes();
-    let total_nodes = state.storage.total_nodes();
-
+    let stats = state.storage.stats();
     Json(StatsResponse {
         provider_id: state.provider_id.clone(),
-        total_buckets: bucket_stats.len(),
-        total_nodes,
-        total_bytes,
-        buckets: bucket_stats,
+        total_buckets: stats.buckets as usize,
+        total_nodes: stats.nodes,
+        total_bytes: stats.bytes,
     })
 }
 
@@ -220,7 +196,15 @@ async fn stats(State(state): State<Arc<ProviderState>>) -> Json<StatsResponse> {
 
 #[derive(serde::Deserialize)]
 struct GetNodeQuery {
+    bucket_id: BucketId,
     hash: String,
+}
+
+async fn require_bucket(state: &ProviderState, bucket_id: BucketId) -> Result<BucketInfo, Error> {
+    Ok(state
+        .blocking_storage(move |storage| storage.get_bucket(bucket_id))
+        .await?
+        .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?)
 }
 
 async fn get_node(
@@ -228,10 +212,11 @@ async fn get_node(
     Query(query): Query<GetNodeQuery>,
 ) -> Result<Json<DownloadNodeResponse>, Error> {
     let hash = decode_hash(&query.hash)?;
+    require_bucket(&state, query.bucket_id).await?;
 
     let node = state
-        .storage
-        .get_node(&hash)
+        .blocking_storage(move |storage| storage.get_node(&hash))
+        .await?
         .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
 
     Ok(Json(DownloadNodeResponse::new(hash, &node)))
@@ -252,13 +237,14 @@ async fn upload_node(
     .await?;
 
     let hash = decode_hash(&request.hash)?;
-
-    // Decode data
-    let data = BASE64
-        .decode(&request.data)
-        .map_err(|e| Error::decode("node data", e))?;
-
-    // Decode children
+    let data = request
+        .data
+        .map(|data| {
+            BASE64
+                .decode(data)
+                .map_err(|e| Error::decode("node data", e))
+        })
+        .transpose()?;
     let children = request
         .children
         .map(|c| {
@@ -267,29 +253,42 @@ async fn upload_node(
                 .collect::<Result<Vec<_>, Error>>()
         })
         .transpose()?;
-
     let node = ChunkTreeNode::from_wire(data, children)?;
-
-    // Initialize bucket if needed
-    state.storage.init_bucket(request.bucket_id, u64::MAX)?;
-
-    // Store node
-    state.storage.store_node(request.bucket_id, hash, node)?;
+    let bucket_id = request.bucket_id;
+    state
+        .blocking_storage(move |storage| {
+            storage.init_bucket(bucket_id, u64::MAX)?;
+            storage.store_node(bucket_id, hash, node)
+        })
+        .await??;
 
     Ok(Json(UploadNodeResponse { stored: true }))
 }
 
 async fn check_exists(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<ExistsRequest>,
 ) -> Result<Json<ExistsResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
     let hashes: Vec<H256> = request
         .hashes
         .iter()
         .map(|h| decode_hash(h))
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let (exists, missing) = state.storage.check_exists(request.bucket_id, &hashes);
+    let bucket_id = request.bucket_id;
+    let (exists, missing) = state
+        .blocking_storage(move |storage| storage.check_exists(bucket_id, &hashes))
+        .await?;
 
     Ok(Json(ExistsResponse { exists, missing }))
 }
@@ -318,7 +317,10 @@ async fn commit(
         .map(|h| decode_hash(h))
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let outcome = state.storage.commit(request.bucket_id, data_roots)?;
+    let bucket_id = request.bucket_id;
+    let outcome = state
+        .blocking_storage(move |storage| storage.commit(bucket_id, data_roots))
+        .await??;
 
     let payload = CommitmentPayload::new(
         request.bucket_id,
@@ -344,15 +346,20 @@ async fn read_chunks(
     Query(query): Query<ReadQuery>,
 ) -> Result<Json<ReadResponse>, Error> {
     let data_root = decode_hash(&query.data_root)?;
+    require_bucket(&state, query.bucket_id).await?;
 
-    // Calculate chunk indices
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
     let start_chunk = query.offset / chunk_size;
-    let end_chunk = (query.offset + query.length).div_ceil(chunk_size);
+    let end_chunk = query
+        .offset
+        .saturating_add(query.length)
+        .div_ceil(chunk_size);
 
     let chunks = state
-        .storage
-        .get_chunks_in_range(data_root, start_chunk..end_chunk)?
+        .blocking_storage(move |storage| {
+            storage.get_chunks_in_range(data_root, start_chunk..end_chunk)
+        })
+        .await??
         .into_iter()
         .map(|(hash, data, proof)| ChunkWithProof {
             hash,
@@ -370,12 +377,19 @@ async fn read_chunks(
 
 async fn get_commitment(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Query(query): Query<CommitmentQuery>,
 ) -> Result<Json<CommitmentResponse>, Error> {
-    let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let bucket = require_bucket(&state, query.bucket_id).await?;
 
     let payload = CommitmentPayload::new(
         query.bucket_id,
@@ -400,12 +414,19 @@ async fn get_commitment(
 /// `checkpoint` extrinsic.
 async fn get_checkpoint_signature(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Query(query): Query<CommitmentQuery>,
 ) -> Result<Json<CheckpointSignatureResponse>, Error> {
-    let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let bucket = require_bucket(&state, query.bucket_id).await?;
 
     let leaf_count = bucket.leaf_count;
 
@@ -431,13 +452,24 @@ async fn get_checkpoint_signature(
 
 async fn get_mmr_proof(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Query(query): Query<MmrProofQuery>,
 ) -> Result<Json<storage_primitives::MmrProof>, Error> {
-    Ok(Json(
-        state
-            .storage
-            .get_mmr_proof(query.bucket_id, query.leaf_index)?,
-    ))
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let (bucket_id, leaf_index) = (query.bucket_id, query.leaf_index);
+    let mmr_proof = state
+        .blocking_storage(move |storage| storage.get_mmr_proof(bucket_id, leaf_index))
+        .await??;
+
+    Ok(Json(mmr_proof))
 }
 
 async fn get_chunk_proof(
@@ -445,10 +477,12 @@ async fn get_chunk_proof(
     Query(query): Query<ChunkProofQuery>,
 ) -> Result<Json<ChunkProofResponse>, Error> {
     let data_root = decode_hash(&query.data_root)?;
+    require_bucket(&state, query.bucket_id).await?;
 
+    let chunk_index = query.chunk_index;
     let (chunk_data, proof) = state
-        .storage
-        .get_chunk_at_index(data_root, query.chunk_index)?;
+        .blocking_storage(move |storage| storage.get_chunk_at_index(data_root, chunk_index))
+        .await??;
     let chunk_hash = storage_primitives::hash_leaf(&chunk_data);
 
     Ok(Json(ChunkProofResponse {
@@ -462,22 +496,14 @@ async fn get_chunk_proof(
 // Bucket Operations
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn list_buckets(State(state): State<Arc<ProviderState>>) -> Json<ListBucketsResponse> {
-    Json(ListBucketsResponse {
-        buckets: state.storage.list_buckets(),
-    })
-}
-
 async fn delete_data(
     State(state): State<Arc<ProviderState>>,
     headers: axum::http::HeaderMap,
     Json(request): Json<DeleteRequest>,
 ) -> Result<Json<DeleteResponse>, Error> {
-    // Admin-only, unlike the Writer-level deletes in the S3/FS layers: this L0
-    // prune rewrites the underlying MMR (dropping every leaf below
-    // `new_start_seq`), whereas the L1 deletes only drop an index entry and
-    // leave the tree intact. Rewriting the commitment is strictly more
-    // destructive, so it warrants the highest role.
+    // Admin-only: this prune rewrites the MMR (drops every leaf below
+    // `new_start_seq`) and so changes the commitment, unlike the Writer-level
+    // node uploads and commits.
     check_role(
         &state,
         &headers,
@@ -487,18 +513,17 @@ async fn delete_data(
     )
     .await?;
 
-    let (mmr_root, start_seq, leaf_count) = state
-        .storage
-        .delete_before(request.bucket_id, request.new_start_seq)?;
+    let (bucket_id, new_start_seq) = (request.bucket_id, request.new_start_seq);
+    let commitment = state
+        .blocking_storage(move |storage| storage.delete_before(bucket_id, new_start_seq))
+        .await??;
+    let Commitment {
+        mmr_root,
+        start_seq,
+        leaf_count,
+    } = commitment;
 
-    let payload = CommitmentPayload::new(
-        request.bucket_id,
-        Commitment {
-            mmr_root,
-            start_seq,
-            leaf_count,
-        },
-    );
+    let payload = CommitmentPayload::new(request.bucket_id, commitment);
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(DeleteResponse {
@@ -515,9 +540,22 @@ async fn delete_data(
 
 async fn get_mmr_peaks(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Query(query): Query<MmrPeaksQuery>,
 ) -> Result<Json<MmrPeaksResponse>, Error> {
-    let (mmr_root, peaks) = state.storage.get_mmr_peaks(query.bucket_id)?;
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let bucket_id = query.bucket_id;
+    let (mmr_root, peaks) = state
+        .blocking_storage(move |storage| storage.get_mmr_peaks(bucket_id))
+        .await??;
 
     Ok(Json(MmrPeaksResponse {
         bucket_id: query.bucket_id,
@@ -526,38 +564,29 @@ async fn get_mmr_peaks(
     }))
 }
 
-async fn get_mmr_subtree(
-    State(state): State<Arc<ProviderState>>,
-    Query(query): Query<MmrSubtreeQuery>,
-) -> Result<Json<MmrSubtreeResponse>, Error> {
-    // Simplified implementation
-    let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
-
-    Ok(Json(MmrSubtreeResponse {
-        nodes: vec![MmrNode {
-            position: 0,
-            hash: bucket.mmr_root,
-            children: None,
-        }],
-    }))
-}
-
 async fn fetch_nodes(
     State(state): State<Arc<ProviderState>>,
     Json(request): Json<FetchNodesRequest>,
 ) -> Result<Json<FetchNodesResponse>, Error> {
-    let mut nodes = Vec::new();
+    require_bucket(&state, request.bucket_id).await?;
+    let hashes = request
+        .hashes
+        .iter()
+        .map(|hash_str| decode_hash(hash_str))
+        .collect::<Result<Vec<_>, Error>>()?;
 
-    for hash_str in &request.hashes {
-        let hash = decode_hash(hash_str)?;
-
-        if let Some(node) = state.storage.get_node(&hash) {
-            nodes.push(DownloadNodeResponse::new(hash, &node));
-        }
-    }
+    let nodes = state
+        .blocking_storage(move |storage| {
+            hashes
+                .into_iter()
+                .filter_map(|hash| {
+                    storage
+                        .get_node(&hash)
+                        .map(|node| DownloadNodeResponse::new(hash, &node))
+                })
+                .collect::<Vec<_>>()
+        })
+        .await?;
 
     Ok(Json(FetchNodesResponse { nodes }))
 }
@@ -572,12 +601,19 @@ async fn fetch_nodes(
 /// Note: Provider nodes don't track historical roots; only the chain does.
 async fn get_historical_roots(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Query(query): Query<HistoricalRootsQuery>,
 ) -> Result<Json<HistoricalRootsResponse>, Error> {
-    let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let bucket = require_bucket(&state, query.bucket_id).await?;
 
     Ok(Json(HistoricalRootsResponse {
         bucket_id: query.bucket_id,
@@ -679,12 +715,19 @@ async fn negotiate_terms(
 /// Returns the local MMR state and sync status.
 async fn get_replica_sync_status(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Query(query): Query<BucketSyncStatusQuery>,
 ) -> Result<Json<BucketSyncStatusResponse>, Error> {
-    let bucket = state
-        .storage
-        .get_bucket(query.bucket_id)
-        .ok_or(provider_storage::Error::BucketNotFound(query.bucket_id))?;
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let bucket = require_bucket(&state, query.bucket_id).await?;
 
     Ok(Json(BucketSyncStatusResponse {
         bucket_id: query.bucket_id,

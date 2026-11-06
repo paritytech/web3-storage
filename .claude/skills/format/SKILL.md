@@ -35,6 +35,11 @@ Run all formatting, linting, and cleaning tasks that should be done before commi
    - `licenserc.apache.toml` covers library/SDK crates (pallets, primitives, client SDKs, precompiles, examples, `packages/*`) — Apache-2.0
    - `licenserc.gpl.toml` covers runtime/node crates (parachain runtimes, provider node, UI apps) — GPL-3.0-only
 
+6. **TypeScript typecheck** (`packages/*` and `examples/papi`; their tsconfigs set `noUnusedLocals` and `noUnusedParameters`, so unused imports, variables and parameters fail):
+   ```bash
+   pnpm run typecheck:packages
+   ```
+
 ## Notes
 
 - Run formatting commands (steps 1-4) first as they may auto-fix issues

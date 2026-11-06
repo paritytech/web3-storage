@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use storage_primitives::BucketId;
 
-pub use provider_storage::{BucketStats, BucketSummary};
 pub use provider_types::ProviderInfo;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,7 +24,8 @@ pub(crate) fn decode_hash(hash: &str) -> Result<H256, Error> {
     })
 }
 
-/// Request to upload a node (chunk or internal node).
+/// Request to upload a node: a chunk (`data`) or an internal node
+/// (`children`). A request with both or neither is rejected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadNodeRequest {
     /// Bucket this node belongs to
@@ -33,11 +33,11 @@ pub struct UploadNodeRequest {
     /// Expected hash of the node: the chunk hash for a chunk, the hash of
     /// the two children for an internal node
     pub hash: String,
-    /// Base64-encoded node data: the chunk bytes for a chunk, the left child
-    /// hash followed by the right child hash for an internal node. The
-    /// provider rejects an internal node whose data differs.
-    pub data: String,
-    /// Left and right child hashes for an internal node, null for a chunk
+    /// Base64-encoded chunk bytes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    /// Left and right child hashes of an internal node
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<String>>,
 }
 
@@ -47,25 +47,27 @@ pub struct UploadNodeResponse {
     pub stored: bool,
 }
 
-/// Response from downloading a node.
+/// Response from downloading a node: a chunk has `data`, an internal node has
+/// `children`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadNodeResponse {
     pub hash: H256,
-    pub data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<H256>>,
 }
 
 impl DownloadNodeResponse {
     /// The wire form of `node`, which is stored under `hash`.
     pub fn new(hash: H256, node: &ChunkTreeNode) -> Self {
-        let children = match node {
-            ChunkTreeNode::Chunk(_) => None,
-            ChunkTreeNode::Internal { left, right } => Some(vec![*left, *right]),
+        let (data, children) = match node {
+            ChunkTreeNode::Chunk(data) => (Some(BASE64.encode(data)), None),
+            ChunkTreeNode::Internal { left, right } => (None, Some(vec![*left, *right])),
         };
-
         Self {
             hash,
-            data: BASE64.encode(node.preimage()),
+            data,
             children,
         }
     }
@@ -121,6 +123,7 @@ pub struct CommitResponse {
 /// Query parameters for reading chunks.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReadQuery {
+    pub bucket_id: BucketId,
     pub data_root: String,
     pub offset: u64,
     pub length: u64,
@@ -184,6 +187,7 @@ pub struct MmrProofQuery {
 /// Query for chunk proof.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChunkProofQuery {
+    pub bucket_id: BucketId,
     pub data_root: String,
     pub chunk_index: u64,
 }
@@ -223,16 +227,6 @@ pub struct DeleteResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bucket Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Response with bucket list.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ListBucketsResponse {
-    pub buckets: Vec<BucketSummary>,
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Health/Info Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -267,14 +261,15 @@ pub struct HealthResponse {
     pub version: String,
 }
 
-/// Provider statistics response.
+/// Provider statistics: node-wide totals only. `GET /stats` is
+/// unauthenticated, so a per-bucket breakdown would list the bucket ids that
+/// the per-bucket read gates hide.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsResponse {
     pub provider_id: String,
     pub total_buckets: usize,
     pub total_nodes: u64,
     pub total_bytes: u64,
-    pub buckets: Vec<BucketStats>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -295,29 +290,9 @@ pub struct MmrPeaksResponse {
     pub peaks: Vec<H256>,
 }
 
-/// Query for MMR subtree.
-#[derive(Debug, Clone, Deserialize)]
-pub struct MmrSubtreeQuery {
-    pub bucket_id: BucketId,
-    pub peak_index: u32,
-    pub depth: u32,
-}
-
-/// MMR node info.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MmrNode {
-    pub position: u64,
-    pub hash: H256,
-    pub children: Option<Vec<u64>>,
-}
-
-/// Response with MMR subtree.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MmrSubtreeResponse {
-    pub nodes: Vec<MmrNode>,
-}
-
-/// Request to fetch multiple nodes.
+/// Request to fetch multiple nodes of a bucket. Like `GET /node`, the hash is
+/// the read capability (see the L0 read-access rules in the design doc's
+/// "Bucket Visibility & Access").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchNodesRequest {
     pub bucket_id: BucketId,

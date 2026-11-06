@@ -138,8 +138,8 @@ async function main() {
       );
       // freeze_bucket requires a snapshot (checkpoint) to exist.
       await uploadChunk(PROVIDER_URL, bucketId, "data for snapshot", bob);
-      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
-      await submitClientCheckpoint(api, bob, provider, bucketId, ck);
+      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, bob);
+      await submitClientCheckpoint(api, bob, bucketId, [{ provider, commit: ck }]);
       await freezeBucket(api, bob, bucketId);
       const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
       assert.ok(bucket.frozen_start_seq !== undefined, "Bucket should be frozen");
@@ -164,15 +164,15 @@ async function main() {
       // Upload some data.
       await uploadChunk(PROVIDER_URL, bucketId, "pre-freeze data", bob);
       // Checkpoint before freeze.
-      const ck1 = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
-      await submitClientCheckpoint(api, bob, provider, bucketId, ck1);
+      const ck1 = await fetchCheckpointSignature(PROVIDER_URL, bucketId, bob);
+      await submitClientCheckpoint(api, bob, bucketId, [{ provider, commit: ck1 }]);
       // Freeze.
       await freezeBucket(api, bob, bucketId);
       // Upload more data.
       await uploadChunk(PROVIDER_URL, bucketId, "post-freeze data", bob);
       // Checkpoint after freeze — should still work (captures frozen_start_seq).
-      const ck2 = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
-      const result = await submitClientCheckpoint(api, bob, provider, bucketId, ck2);
+      const ck2 = await fetchCheckpointSignature(PROVIDER_URL, bucketId, bob);
+      const result = await submitClientCheckpoint(api, bob, bucketId, [{ provider, commit: ck2 }]);
       const events = api.event.StorageProvider.BucketCheckpointed.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Checkpoint after freeze should emit event");
     },

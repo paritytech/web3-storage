@@ -133,6 +133,7 @@ fn remove_slashed_works() {
         super::slash_provider_stake(2);
 
         let owner_balance_before = Balances::free_balance(1);
+        let owner_deposits_before = held(HoldReason::StorageDeposit, 1);
         let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
         let payment_locked = agreement.payment_locked;
 
@@ -145,10 +146,12 @@ fn remove_slashed_works() {
 
         // Agreement removed
         assert!(StorageAgreements::<Test>::get(bucket_id, 2).is_none());
-        // Payment returned to owner
+        // Payment and the agreement's storage deposit returned to owner
+        let released_deposit = owner_deposits_before - held(HoldReason::StorageDeposit, 1);
+        assert_eq!(released_deposit, 10);
         assert_eq!(
             Balances::free_balance(1),
-            owner_balance_before + payment_locked
+            owner_balance_before + payment_locked + released_deposit
         );
         // Provider removed from bucket
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
@@ -315,7 +318,7 @@ fn challenge_checkpoint_emits_event() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x01],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             }
         });
@@ -350,27 +353,25 @@ fn challenge_checkpoint_emits_event() {
 fn checkpoint_emits_event() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
-        let bucket_id = create_bucket(1, 0);
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+        let commitment = Commitment {
+            mmr_root: sp_core::H256::repeat_byte(0xAA),
+            start_seq: 0,
+            leaf_count: 10,
+        };
 
         assert_ok!(StorageProvider::checkpoint(
             RuntimeOrigin::signed(1),
             bucket_id,
-            Commitment {
-                mmr_root: sp_core::H256::repeat_byte(0xAA),
-                start_seq: 0,
-                leaf_count: 10,
-            },
-            Default::default(),
+            commitment,
+            sign_commitment(bucket_id, commitment, &[2]),
         ));
 
         let expected = RuntimeEvent::StorageProvider(crate::Event::BucketCheckpointed {
             bucket_id,
-            commitment: Commitment {
-                mmr_root: sp_core::H256::repeat_byte(0xAA),
-                start_seq: 0,
-                leaf_count: 10,
-            },
-            providers: vec![],
+            commitment,
+            providers: vec![2],
         });
         assert!(frame_system::Pallet::<Test>::events()
             .iter()
@@ -382,7 +383,10 @@ fn checkpoint_emits_event() {
 fn extend_checkpoint_emits_event() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
-        let bucket_id = create_bucket(1, 0);
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+        setup_added_primary(3, 1, bucket_id, 50, 200);
 
         let commitment = Commitment {
             mmr_root: sp_core::H256::repeat_byte(0xAA),
@@ -394,13 +398,13 @@ fn extend_checkpoint_emits_event() {
             RuntimeOrigin::signed(1),
             bucket_id,
             commitment,
-            Default::default(),
+            sign_commitment(bucket_id, commitment, &[2]),
         ));
 
         assert_ok!(StorageProvider::extend_checkpoint(
             RuntimeOrigin::signed(1),
             bucket_id,
-            Default::default(),
+            sign_commitment(bucket_id, commitment, &[3]),
         ));
 
         // `extend_checkpoint` only adds signatures — it must re-emit the same
@@ -408,7 +412,7 @@ fn extend_checkpoint_emits_event() {
         let expected = RuntimeEvent::StorageProvider(crate::Event::BucketCheckpointed {
             bucket_id,
             commitment,
-            providers: vec![],
+            providers: vec![3],
         });
         assert!(frame_system::Pallet::<Test>::events()
             .iter()
@@ -447,5 +451,51 @@ fn end_agreement_emits_event() {
             )
         });
         assert!(found);
+    });
+}
+
+#[test]
+fn plain_account_signature_verifies_against_the_account_key_bytes() {
+    use sp_core::Pair as _;
+
+    // The `Deleted` defense's signer is the bucket admin — a plain,
+    // unregistered account. On AccountId32 runtimes the account's SCALE
+    // encoding IS its public key, so a signature by the account's own
+    // key must verify against exactly those bytes.
+    let pair = sp_core::sr25519::Pair::from_seed(&[42u8; 32]);
+    let message = b"deletion payload";
+    let sig = sp_runtime::MultiSignature::Sr25519(pair.sign(message));
+    let key_bytes = pair.public().0; // == AccountId32::from(pair.public()).encode()
+
+    use crate::impls::signatures::plain_account_verifies;
+    assert_eq!(
+        plain_account_verifies(&sig, message, &key_bytes),
+        Some(true)
+    );
+    assert_eq!(
+        plain_account_verifies(&sig, b"tampered", &key_bytes),
+        Some(false)
+    );
+    // An account whose encoding is not 32 bytes has no plain-account
+    // identity to verify against (e.g. this mock's u64 AccountId, whose
+    // SCALE encoding is its 8 LE bytes).
+    assert_eq!(
+        plain_account_verifies(&sig, message, &999u64.to_le_bytes()),
+        None
+    );
+}
+
+#[test]
+fn verify_signature_unregistered_signer_maps_plain_account_errors() {
+    new_test_ext().execute_with(|| {
+        let sig = sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([0u8; 64]));
+        // An unregistered signer must fall through to the plain-account
+        // path (not error with ProviderNotFound). The mock's u64
+        // AccountId has no 32-byte identity, so the fallback reports
+        // InvalidPublicKey.
+        assert_noop!(
+            StorageProvider::verify_signature(&sig, b"msg", &999),
+            Error::<Test>::InvalidPublicKey
+        );
     });
 }

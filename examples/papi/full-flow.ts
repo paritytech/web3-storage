@@ -100,12 +100,12 @@ async function setupAgreement(
   return bucketId;
 }
 
-async function uploadAndVerify(api: ParachainApi, bucketId: bigint, signer: ChainSigner) {
+async function uploadAndVerify(bucketId: bigint, signer: ChainSigner) {
   const payload = `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`;
   const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, signer);
   console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
-  const downloaded = await downloadChunk(PROVIDER_URL, hash);
+  const downloaded = await downloadChunk(PROVIDER_URL, bucketId, hash);
   assert.deepStrictEqual(
     downloaded,
     data,
@@ -187,7 +187,7 @@ async function main() {
     const bucketId = await setupAgreement(api, PROVIDER_URL, client, provider);
 
     console.log("\n=== Step 2: Upload data ===");
-    const upload = await uploadAndVerify(api, bucketId, client);
+    const upload = await uploadAndVerify(bucketId, client);
 
     console.log("\n=== Step 3: Off-chain challenge ===");
     const offchainId = await challengeOffchain(
@@ -204,7 +204,7 @@ async function main() {
     );
 
     console.log("\n=== Step 4: Respond to off-chain challenge ===");
-    const offchainProof = await fetchChallengeProof(api, PROVIDER_URL, offchainId);
+    const offchainProof = await fetchChallengeProof(api, PROVIDER_URL, offchainId, provider);
     const offchainResp = await respondToChallenge(
       api,
       provider,
@@ -217,10 +217,10 @@ async function main() {
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
-    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, client);
     console.log("  Checkpoint mmr_root:", ck.mmr_root);
     console.log("  Checkpoint leaf_count:", ck.leaf_count);
-    await submitClientCheckpoint(api, client, provider, bucketId, ck);
+    await submitClientCheckpoint(api, client, bucketId, [{ provider, commit: ck }]);
     console.log("  Checkpoint submitted");
 
     console.log("\n=== Step 6: On-chain checkpoint challenge ===");
@@ -241,7 +241,8 @@ async function main() {
     const checkpointProof = await fetchChallengeProof(
       api,
       PROVIDER_URL,
-      checkpointId
+      checkpointId,
+      provider
     );
     const checkpointResp = await respondToChallenge(
       api,
