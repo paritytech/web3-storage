@@ -4,10 +4,9 @@
 //!
 //! Off-chain provider node for scalable Web3 storage.
 //!
-//! This node provides HTTP APIs for:
-//! - Uploading and downloading content-addressed chunks
-//! - Committing data to the bucket's MMR
-//! - Syncing data between providers (for replicas)
+//! The HTTP API (uploads, downloads, MMR commits, replica sync) lives in the
+//! `provider-http` crate. This crate runs it together with the chain-facing
+//! coordinators.
 
 pub(crate) mod chain_connection;
 pub(crate) mod chain_follower;

@@ -22,12 +22,12 @@ use provider_storage::StorageBackendSpec;
 
 impl TestServer {
     /// Signing provider (`//Alice`): endpoints that sign commitments work.
-    async fn new(backend: StorageBackendSpec) -> Self {
+    async fn new(backend: common::BackendSpec) -> Self {
         Self::new_with_scheme(backend, KeyScheme::Sr25519).await
     }
 
     /// Signing provider (`//Alice`) under the given scheme.
-    async fn new_with_scheme(backend: StorageBackendSpec, scheme: KeyScheme) -> Self {
+    async fn new_with_scheme(backend: common::BackendSpec, scheme: KeyScheme) -> Self {
         Self::start(backend, move |deps| {
             ProviderState::with_seed_scheme(deps, common::PROVIDER_SEED, scheme)
                 .expect("//Alice is a valid SURI")
@@ -37,7 +37,7 @@ impl TestServer {
 
     /// No signing key, so signing-bound endpoints must answer 503 rather than
     /// emit zero-byte placeholder signatures.
-    async fn new_unsigned(backend: StorageBackendSpec) -> Self {
+    async fn new_unsigned(backend: common::BackendSpec) -> Self {
         Self::start(backend, |deps| {
             ProviderState::with_provider_id(deps, "0xtest_provider".to_string())
         })
@@ -47,7 +47,7 @@ impl TestServer {
     /// Signing provider (`//Alice`) with no on-chain registration published,
     /// so signing-bound endpoints must answer 503 rather than sign with a key
     /// the chain does not (yet) know about.
-    async fn new_unregistered(backend: StorageBackendSpec) -> Self {
+    async fn new_unregistered(backend: common::BackendSpec) -> Self {
         Self::start_unregistered(backend, |deps| {
             ProviderState::with_seed(deps, common::PROVIDER_SEED).expect("//Alice is a valid SURI")
         })
@@ -789,9 +789,7 @@ async fn commit_signs_with_configured_ed25519_scheme() {
     use sp_core::ed25519;
 
     let server = TestServer::new_with_scheme(
-        StorageBackendSpec::RocksDb {
-            path: std::path::PathBuf::new(),
-        },
+        |path| StorageBackendSpec::RocksDb { path },
         KeyScheme::Ed25519,
     )
     .await;
