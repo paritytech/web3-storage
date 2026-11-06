@@ -199,7 +199,7 @@ impl<S: BlobStore> Objects<S> {
                     S3ClientError::KeyConflict(key.to_string())
                 }
                 FsClientError::Format {
-                    source: FileSystemError::DuplicateMetadataKey,
+                    rule: FileSystemError::DuplicateMetadataKey,
                     ..
                 } => S3ClientError::InvalidMetadata("two keys are equal after lowercasing".into()),
                 other => other.into(),

@@ -3446,9 +3446,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                74u8, 131u8, 150u8, 38u8, 187u8, 245u8, 177u8, 167u8, 58u8, 10u8, 109u8, 57u8,
-                138u8, 138u8, 188u8, 68u8, 167u8, 74u8, 176u8, 177u8, 26u8, 148u8, 207u8, 85u8,
-                16u8, 35u8, 128u8, 69u8, 82u8, 225u8, 73u8, 147u8,
+                235u8, 90u8, 8u8, 165u8, 153u8, 145u8, 61u8, 254u8, 38u8, 9u8, 127u8, 3u8, 185u8,
+                41u8, 90u8, 235u8, 74u8, 157u8, 124u8, 235u8, 18u8, 22u8, 201u8, 72u8, 47u8, 146u8,
+                124u8, 138u8, 117u8, 150u8, 43u8, 156u8,
             ]
     }
     pub mod system {
@@ -15768,6 +15768,9 @@ pub mod api {
             #[doc = "to its depositor, and removes the provider from the bucket. The"]
             #[doc = "provider's own deposit is on its provider record and is released"]
             #[doc = "by `complete_deregister`; slashing takes the stake only."]
+            #[doc = "Fails with `AgreementHasPendingChallenge` while a challenge against"]
+            #[doc = "this provider on this bucket is open: the agreement remains until"]
+            #[doc = "every challenge on it resolves."]
             pub struct RemoveSlashed {
                 pub bucket_id: remove_slashed::BucketId,
                 pub provider: remove_slashed::Provider,
@@ -16230,7 +16233,9 @@ pub mod api {
             #[doc = "Challenged provider only. Answer before the deadline with a chunk"]
             #[doc = "proof, a proof that the leaf has no chunk at the challenged index, a"]
             #[doc = "proof that the data was legitimately deleted, or a note that the"]
-            #[doc = "challenged state has been superseded."]
+            #[doc = "challenged state has been superseded (`Deleted` and `Superseded`:"]
+            #[doc = "primary providers only; a replica is liable for exactly the root"]
+            #[doc = "it confirmed)."]
             #[doc = ""]
             #[doc = "A valid response settles the deposit between challenger and"]
             #[doc = "provider. An invalid one is rejected (`InvalidProof`,"]
@@ -16818,6 +16823,9 @@ pub mod api {
                     #[doc = "to its depositor, and removes the provider from the bucket. The"]
                     #[doc = "provider's own deposit is on its provider record and is released"]
                     #[doc = "by `complete_deregister`; slashing takes the stake only."]
+                    #[doc = "Fails with `AgreementHasPendingChallenge` while a challenge against"]
+                    #[doc = "this provider on this bucket is open: the agreement remains until"]
+                    #[doc = "every challenge on it resolves."]
                     pub fn remove_slashed(
                         &self,
                         bucket_id: super::remove_slashed::BucketId,
@@ -17182,7 +17190,9 @@ pub mod api {
                     #[doc = "Challenged provider only. Answer before the deadline with a chunk"]
                     #[doc = "proof, a proof that the leaf has no chunk at the challenged index, a"]
                     #[doc = "proof that the data was legitimately deleted, or a note that the"]
-                    #[doc = "challenged state has been superseded."]
+                    #[doc = "challenged state has been superseded (`Deleted` and `Superseded`:"]
+                    #[doc = "primary providers only; a replica is liable for exactly the root"]
+                    #[doc = "it confirmed)."]
                     #[doc = ""]
                     #[doc = "A valid response settles the deposit between challenger and"]
                     #[doc = "provider. An invalid one is rejected (`InvalidProof`,"]
@@ -18409,10 +18419,10 @@ pub mod api {
                 #[doc = " Number of unresolved challenges outstanding against a specific"]
                 #[doc = " `(bucket, provider)` pair. Maintained in lockstep with"]
                 #[doc = " [`PendingChallenges`] and gates that bucket's agreement teardown"]
-                #[doc = " (`end_agreement`, `claim_expired_agreement`) and bucket removal"]
-                #[doc = " (`delete_bucket`). An entry exists only"]
-                #[doc = " while the count is positive, so a bucket with no entry under its"]
-                #[doc = " prefix has no open challenge."]
+                #[doc = " (`end_agreement`, `claim_expired_agreement`, `remove_slashed`) and"]
+                #[doc = " bucket removal (`delete_bucket`). An entry exists only while the count"]
+                #[doc = " is positive, so a bucket with no entry under its prefix has no open"]
+                #[doc = " challenge."]
                 pub fn pending_challenges_by_bucket(
                     &self,
                 ) -> ::subxt::storage::StaticAddress<
@@ -20200,9 +20210,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            191u8, 4u8, 102u8, 110u8, 200u8, 40u8, 49u8, 157u8, 116u8, 225u8, 59u8,
-                            64u8, 19u8, 106u8, 76u8, 129u8, 155u8, 76u8, 133u8, 26u8, 241u8, 3u8,
-                            116u8, 81u8, 152u8, 121u8, 215u8, 246u8, 170u8, 43u8, 165u8, 5u8,
+                            173u8, 154u8, 41u8, 124u8, 73u8, 225u8, 191u8, 98u8, 141u8, 133u8,
+                            22u8, 189u8, 135u8, 118u8, 105u8, 95u8, 64u8, 185u8, 176u8, 192u8,
+                            107u8, 19u8, 184u8, 107u8, 19u8, 210u8, 238u8, 23u8, 205u8, 186u8,
+                            111u8, 53u8,
                         ],
                     )
                 }
@@ -24820,6 +24831,9 @@ pub mod api {
                     #[doc = "to its depositor, and removes the provider from the bucket. The"]
                     #[doc = "provider's own deposit is on its provider record and is released"]
                     #[doc = "by `complete_deregister`; slashing takes the stake only."]
+                    #[doc = "Fails with `AgreementHasPendingChallenge` while a challenge against"]
+                    #[doc = "this provider on this bucket is open: the agreement remains until"]
+                    #[doc = "every challenge on it resolves."]
                     remove_slashed {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
@@ -24990,7 +25004,9 @@ pub mod api {
                     #[doc = "Challenged provider only. Answer before the deadline with a chunk"]
                     #[doc = "proof, a proof that the leaf has no chunk at the challenged index, a"]
                     #[doc = "proof that the data was legitimately deleted, or a note that the"]
-                    #[doc = "challenged state has been superseded."]
+                    #[doc = "challenged state has been superseded (`Deleted` and `Superseded`:"]
+                    #[doc = "primary providers only; a replica is liable for exactly the root"]
+                    #[doc = "it confirmed)."]
                     #[doc = ""]
                     #[doc = "A valid response settles the deposit between challenger and"]
                     #[doc = "provider. An invalid one is rejected (`InvalidProof`,"]
@@ -25285,12 +25301,14 @@ pub mod api {
                     #[doc = "The challenge stays open; respond again before the deadline."]
                     InvalidProof,
                     #[codec(index = 51)]
-                    #[doc = "`new_start_seq` does not cover the challenged leaf, or the admin"]
-                    #[doc = "signature does not verify. The challenge stays open."]
+                    #[doc = "`new_start_seq` does not cover the challenged leaf, the admin"]
+                    #[doc = "signature does not verify, or the responder is a replica"]
+                    #[doc = "(`Deleted` is a primary-only defense). The challenge stays open."]
                     InvalidDeletionClaim,
                     #[codec(index = 52)]
                     #[doc = "No canonical snapshot replaces the challenged root and covers the"]
-                    #[doc = "challenged leaf. The challenge stays open."]
+                    #[doc = "challenged leaf, or the responder is a replica (`Superseded` is a"]
+                    #[doc = "primary-only defense). The challenge stays open."]
                     InvalidSupersededClaim,
                     #[codec(index = 53)]
                     #[doc = "The provider did not sign the bucket's current snapshot, so there"]
