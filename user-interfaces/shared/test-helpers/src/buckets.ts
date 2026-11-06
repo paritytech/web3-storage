@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-import { waitForPrimaryProvider } from "@web3-storage/sdk";
-import { S3Client } from "@web3-storage/sdk/s3";
+import { waitForPrimaryProvider, Web3Storage } from "@web3-storage/sdk";
 import { getApi } from "./chain-api";
 import type { DevSigner } from "./signers";
 
@@ -48,8 +47,8 @@ export async function createBucketViaApi(
   opts: CreateBucketOptions = {},
 ): Promise<BucketHandle> {
   const api = getApi();
-  const client = new S3Client({ api, signer, providerUrl: DEV_PROVIDER_URL });
-  const { bucketId } = await client.createBucket({
+  const storage = new Web3Storage({ api, signer, providerUrl: DEV_PROVIDER_URL });
+  const { bucketId } = await storage.createBucket({
     maxCapacity: opts.maxCapacity ?? opts.maxBytes ?? DEFAULT_MAX_BYTES,
     duration: opts.storagePeriod ?? opts.duration ?? DEFAULT_DURATION,
     visibility: opts.visibility,

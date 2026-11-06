@@ -33,6 +33,14 @@ impl<T: Config> Pallet<T> {
         Ok((data_root, chunk_count))
     }
 
+    /// Whether the challenged provider has a primary agreement on the
+    /// bucket. `Deleted` and `Superseded` defend only primaries: a replica is
+    /// liable for exactly the root it confirmed.
+    pub(crate) fn responder_is_primary(challenge: &Challenge<T>) -> bool {
+        StorageAgreements::<T>::get(challenge.bucket_id, &challenge.provider)
+            .is_some_and(|agreement| matches!(agreement.role, ProviderRole::Primary))
+    }
+
     /// Open a challenge against `provider`'s signature on the bucket's current
     /// snapshot and return the new challenge's id. Shared by the
     /// `challenge_checkpoint` call and the precompile, which hands the id back

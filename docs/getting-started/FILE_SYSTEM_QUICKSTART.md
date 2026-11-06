@@ -21,15 +21,15 @@ just start-chain
 # Terminal 2 — provider node (HTTP on http://127.0.0.1:3333, signing as //Alice)
 just start-provider
 
-# Terminal 3 — file-system integration example (chain + provider must be up)
-just fs-demo-ci
+# Terminal 3 — file system and S3 objects demo (chain + provider must be up)
+just file-system-demo
 ```
 
-`fs-demo-ci` runs `clients/file-system/examples/ci_integration_test.rs`
+`file-system-demo` runs `clients/storage-formats/examples/demo.rs`
 against the running infrastructure: it creates a drive (a plain Layer 0 bucket
-with one primary agreement, via `create_bucket_with_primary`), runs directory
-and file operations that the client stores in the bucket through the
-provider's Layer 0 endpoints, and asserts the
+with one primary agreement, via `create_bucket_with_primary`), runs directory,
+file and S3 object operations that the client stores in the bucket through
+the provider's Layer 0 endpoints, and asserts the
 round-trip. It assumes the chain and provider are already up.
 
 This is the same flow exercised by CI in `.github/workflows/integration-tests.yml`,
@@ -38,8 +38,8 @@ which spins up zombienet + providers before invoking the recipe.
 ## Tests
 
 ```bash
-just fs-test-all              # primitives + client (unit tests)
-cargo test --workspace        # everything
+cargo test -p storage-formats  # unit and integration tests
+cargo test --workspace         # everything
 ```
 
 ## Health Checks
@@ -92,6 +92,6 @@ just build
 
 ## Further reading
 
-- [Client README](../../clients/file-system/README.md) — SDK docs
+- [Client README](../../clients/storage-formats/README.md) — SDK docs
 - [Design](../design/scalable-web3-storage.md) — how the storage layer works and why
 - API reference — `cargo doc --workspace --no-deps --open`; the same text shows on IDE hover for the PAPI and subxt bindings

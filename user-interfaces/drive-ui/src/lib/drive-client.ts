@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 /**
- * Drive Client — drive-ui's thin adapter over the sdk's FileSystemClient.
+ * Drive Client — drive-ui's thin adapter over the sdk's Web3Storage.
  * What stays here is app-shaped: stateless signer swapping driven by the
  * state layer, Blob conversion for the browser download path, and the
  * progress-status strings. Everything chain/HTTP-mechanical (tx submission,
@@ -23,8 +23,11 @@ import {
   type NegotiateRequest,
   type SignedTerms,
   type Visibility,
+  Web3Storage,
+  type BucketInfo,
+  type BucketMember,
+  type MemberRole,
 } from "@web3-storage/sdk";
-import { FileSystemClient } from "@web3-storage/sdk/fs";
 import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = ChainSigner["signer"];
@@ -37,20 +40,27 @@ export type { NegotiateRequest, SignedTerms, Visibility };
 /** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
 export const parseMultiaddrToHttp = parseMultiaddrToUrl;
 
-export type {
-  BucketMember,
-  DriveInfo,
-  FsEntry,
-  MemberRole,
-  UploadOptions,
-} from "@web3-storage/sdk/fs";
-import type {
-  BucketMember,
-  DriveInfo,
-  FsEntry,
-  MemberRole,
-  UploadOptions,
-} from "@web3-storage/sdk/fs";
+export type { BucketMember, MemberRole };
+
+/** A drive is a bucket; the chain stores nothing else about it. */
+export type DriveInfo = BucketInfo;
+
+/** A directory entry as the file browser shows it. */
+export interface FsEntry {
+  name: string;
+  path: string;
+  entryType: "file" | "directory";
+  size: number;
+  /** Milliseconds since the epoch (stored with second precision). */
+  mtime: number;
+  /** File: CID of its manifest. Directory: CID of its directory node. 0x-hex. */
+  cid: string;
+}
+
+export interface UploadOptions {
+  contentType?: string;
+  signal?: AbortSignal;
+}
 
 export interface CheckpointInfo {
   mmrRoot: string;
@@ -133,11 +143,11 @@ export class DriveClient {
   private signer: Signer | null = null;
   private signerAddress: string | null = null;
   private keypair: Keypair | null = null;
-  private fsc: FileSystemClient | null = null;
+  private w3s: Web3Storage | null = null;
 
   private rebuild(): void {
     if (!this.api) {
-      this.fsc = null;
+      this.w3s = null;
       return;
     }
     let chainSigner: ChainSigner | null = null;
@@ -149,7 +159,7 @@ export class DriveClient {
         keypair: this.keypair ?? undefined,
       };
     }
-    this.fsc = new FileSystemClient({ api: this.api, signer: chainSigner });
+    this.w3s = new Web3Storage({ api: this.api, signer: chainSigner });
   }
 
   setApi(api: ParachainApi | null): void {
@@ -187,9 +197,9 @@ export class DriveClient {
     return this.api;
   }
 
-  private requireFs(): FileSystemClient {
-    if (!this.fsc) throw new Error("Not connected to chain");
-    return this.fsc;
+  private requireW3s(): Web3Storage {
+    if (!this.w3s) throw new Error("Not connected to chain");
+    return this.w3s;
   }
 
   private requireOwner(): ChainSigner {
@@ -205,11 +215,11 @@ export class DriveClient {
   // ── Provider resolution ───────────────────────────────────────────────────
 
   getProviderUrl(bucketId: bigint): Promise<string> {
-    return this.requireFs().getProviderUrl(bucketId);
+    return this.requireW3s().getProviderUrl(bucketId);
   }
 
   invalidateProviderUrl(bucketId: bigint): void {
-    this.fsc?.invalidateProviderUrl(bucketId);
+    this.w3s?.invalidateProviderUrl(bucketId);
   }
 
   async waitForProvider(
@@ -226,7 +236,7 @@ export class DriveClient {
     onProgress?.(statusFor(0), 0);
     const startTime = Date.now();
     try {
-      const url = await this.requireFs().waitForProvider(bucketId, {
+      const url = await this.requireW3s().waitForProvider(bucketId, {
         timeoutMs: 150_000,
         tickMs: 3_000,
         onTick: (elapsedMs) => onProgress?.(statusFor(Math.round(elapsedMs / 1000)), elapsedMs),
@@ -377,17 +387,26 @@ export class DriveClient {
   }
 
   listDrives(): Promise<DriveInfo[]> {
-    return this.requireFs().listDrives(this.signerAddress ?? undefined);
+    return this.requireW3s().listBuckets(this.signerAddress ?? undefined);
   }
 
   getDrive(bucketId: bigint): Promise<DriveInfo | null> {
-    return this.requireFs().getDrive(bucketId);
+    return this.requireW3s().getBucket(bucketId);
   }
 
   // ── FS HTTP operations ────────────────────────────────────────────────────
 
-  listDirectory(bucketId: bigint, path: string): Promise<FsEntry[]> {
-    return this.requireFs().listDirectory(bucketId, path);
+  async listDirectory(bucketId: bigint, path: string): Promise<FsEntry[]> {
+    const drive = await this.requireW3s().drive(bucketId);
+    const entries = await drive.list(path);
+    return entries.map((e) => ({
+      name: e.name,
+      path: e.path,
+      entryType: e.entryType,
+      size: Number(e.size),
+      mtime: Number(e.mtime) * 1000,
+      cid: e.cid,
+    }));
   }
 
   async uploadFile(
@@ -396,34 +415,40 @@ export class DriveClient {
     data: Uint8Array,
     options: UploadOptions = {},
   ): Promise<void> {
-    await this.requireFs().uploadFile(bucketId, path, data, options);
+    const drive = await this.requireW3s().drive(bucketId, { signal: options.signal });
+    await drive.putFile(path, data, { contentType: options.contentType });
   }
 
   async downloadFile(bucketId: bigint, path: string): Promise<Blob> {
-    const bytes = await this.requireFs().downloadFile(bucketId, path);
-    return new Blob([bytes as BlobPart]);
+    const drive = await this.requireW3s().drive(bucketId);
+    const file = await drive.getFile(path);
+    return new Blob([file.bytes as BlobPart]);
   }
 
-  deleteFile(bucketId: bigint, path: string): Promise<void> {
-    return this.requireFs().deleteFile(bucketId, path);
+  async deleteFile(bucketId: bigint, path: string): Promise<void> {
+    const drive = await this.requireW3s().drive(bucketId);
+    await drive.delete(path);
   }
 
-  createDirectory(bucketId: bigint, path: string): Promise<void> {
-    return this.requireFs().createDirectory(bucketId, path);
+  async createDirectory(bucketId: bigint, path: string): Promise<void> {
+    const drive = await this.requireW3s().drive(bucketId);
+    await drive.mkdir(path);
   }
 
   // ── Members ───────────────────────────────────────────────────────────────
 
-  getBucketMembers(bucketId: bigint): Promise<BucketMember[]> {
-    return this.requireFs().getBucketMembers(bucketId);
+  async getBucketMembers(bucketId: bigint): Promise<BucketMember[]> {
+    const info = await this.requireW3s().getBucket(bucketId);
+    if (!info) throw new Error(`Bucket ${bucketId} not found`);
+    return info.members;
   }
 
   addMember(bucketId: bigint, account: string, role: MemberRole): Promise<void> {
-    return this.requireFs().addMember(bucketId, account, role);
+    return this.requireW3s().setMember(bucketId, account, role);
   }
 
   removeMember(bucketId: bigint, account: string): Promise<void> {
-    return this.requireFs().removeMember(bucketId, account);
+    return this.requireW3s().removeMember(bucketId, account);
   }
 
   async getBucketVisibility(bucketId: bigint): Promise<Visibility> {

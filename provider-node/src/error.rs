@@ -149,6 +149,18 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "hash": hash })),
                     },
                 ),
+                StorageError::LeafNotFound {
+                    bucket_id,
+                    leaf_index,
+                } => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "not_found".to_string(),
+                        details: Some(
+                            serde_json::json!({ "bucket_id": bucket_id, "leaf_index": leaf_index }),
+                        ),
+                    },
+                ),
                 StorageError::ChildrenMissing(children) => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
@@ -248,6 +260,23 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "reason": reason })),
                     },
                 ),
+                StorageError::LeavesNotHeld {
+                    start_seq,
+                    leaf_count,
+                    local_start_seq,
+                    local_end,
+                } => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "leaves_not_held".to_string(),
+                        details: Some(serde_json::json!({
+                            "start_seq": start_seq,
+                            "leaf_count": leaf_count,
+                            "local_start_seq": local_start_seq,
+                            "local_end": local_end,
+                        })),
+                    },
+                ),
                 StorageError::InvalidHash { expected, actual } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
@@ -265,21 +294,17 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "data_root": root })),
                     },
                 ),
+                // Backend faults, including a stored record that no longer
+                // decodes: the request was fine, the provider's store is not.
                 e @ (StorageError::RocksDb(_)
                 | StorageError::ColumnFamilyMissing(_)
                 | StorageError::IncompatibleFormat(_)
-                | StorageError::Mmr(_)) => (
+                | StorageError::Mmr(_)
+                | StorageError::Serialization(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ErrorResponse {
                         error: "internal_error".to_string(),
                         details: Some(serde_json::json!({ "message": e.to_string() })),
-                    },
-                ),
-                StorageError::Serialization(msg) => (
-                    StatusCode::BAD_REQUEST,
-                    ErrorResponse {
-                        error: "serialization_error".to_string(),
-                        details: Some(serde_json::json!({ "message": msg })),
                     },
                 ),
             },
@@ -528,6 +553,7 @@ mod tests {
     use super::*;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+    use sp_core::H256;
 
     fn status_of(err: Error) -> StatusCode {
         err.into_response().status()
@@ -537,7 +563,7 @@ mod tests {
     fn test_all_error_variants_status_codes() {
         assert_eq!(
             status_of(Error::from(provider_storage::Error::NodeNotFound(
-                "x".into()
+                H256::zero()
             ))),
             StatusCode::NOT_FOUND
         );
@@ -593,8 +619,17 @@ mod tests {
             StatusCode::NOT_FOUND
         );
         assert_eq!(
+            status_of(Error::from(provider_storage::Error::LeavesNotHeld {
+                start_seq: 0,
+                leaf_count: 2,
+                local_start_seq: 1,
+                local_end: 2,
+            })),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
             status_of(Error::from(provider_storage::Error::RootNotFound(
-                "x".into()
+                H256::zero()
             ))),
             StatusCode::NOT_FOUND
         );
@@ -607,6 +642,13 @@ mod tests {
         assert_eq!(
             status_of(Error::from(provider_storage::Error::BucketBusy(1))),
             StatusCode::SERVICE_UNAVAILABLE
+        );
+        // A stored record that no longer decodes is the provider's fault.
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::Serialization(
+                codec::Error::from("corrupt record")
+            ))),
+            StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::ColumnFamilyMissing(
@@ -695,8 +737,8 @@ mod tests {
 
     #[test]
     fn test_error_response_json_structure() {
-        let resp =
-            Error::from(provider_storage::Error::NodeNotFound("0xabc".into())).into_response();
+        let hash = H256::repeat_byte(0xab);
+        let resp = Error::from(provider_storage::Error::NodeNotFound(hash)).into_response();
         let (parts, body) = resp.into_parts();
         assert_eq!(parts.status, StatusCode::NOT_FOUND);
 
@@ -706,7 +748,11 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(json["error"], "not_found");
         assert!(json.get("details").is_some());
-        assert_eq!(json["details"]["hash"], "0xabc");
+        // The storage engine holds an H256; the response renders it as hex.
+        assert_eq!(
+            json["details"]["hash"],
+            "0xabababababababababababababababababababababababababababababababab"
+        );
     }
 
     #[test]
