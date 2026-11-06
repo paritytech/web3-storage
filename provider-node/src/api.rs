@@ -288,7 +288,7 @@ async fn check_exists(
     let bucket_id = request.bucket_id;
     let (exists, missing) = state
         .blocking_storage(move |storage| storage.check_exists(bucket_id, &hashes))
-        .await?;
+        .await??;
 
     Ok(Json(ExistsResponse { exists, missing }))
 }

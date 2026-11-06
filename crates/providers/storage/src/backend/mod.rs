@@ -135,8 +135,13 @@ pub trait StorageBackend: Send + Sync {
     /// backend itself failed - the node may still be there.
     fn get_node(&self, hash: &H256) -> Result<Option<ChunkTreeNode>, Error>;
 
-    /// Check which hashes exist in storage.
-    fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>);
+    /// Split `hashes` into those stored and those missing. `Err` means a
+    /// read failed, not that a node is absent.
+    fn check_exists(
+        &self,
+        bucket_id: BucketId,
+        hashes: &[H256],
+    ) -> Result<(Vec<H256>, Vec<H256>), Error>;
 
     /// Commit data roots to the bucket's MMR.
     fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;

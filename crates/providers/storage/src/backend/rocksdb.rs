@@ -325,18 +325,12 @@ impl DiskStorage {
 
         // If internal node, verify children exist
         if let ChunkTreeNode::Internal { left, right } = &node {
-            let missing: Vec<H256> = [left, right]
-                .into_iter()
-                .filter(|h| {
-                    self.db
-                        .get_cf(&cf_nodes, h.as_bytes())
-                        .ok()
-                        .flatten()
-                        .is_none()
-                })
-                .copied()
-                .collect();
-
+            let mut missing = Vec::new();
+            for child in [*left, *right] {
+                if !self.has_node(&child)? {
+                    missing.push(child);
+                }
+            }
             if !missing.is_empty() {
                 return Err(Error::ChildrenMissing(missing));
             }
@@ -384,26 +378,32 @@ impl DiskStorage {
         self.read_decoded(CF_NODES, hash.as_bytes())
     }
 
-    /// Check which hashes exist.
-    pub fn check_exists(&self, _bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>) {
-        let cf = match self.db.cf_handle(CF_NODES) {
-            Some(cf) => cf,
-            None => return (vec![], hashes.to_vec()),
-        };
+    /// Whether a node is stored under `hash`, without decoding it. `Err`
+    /// means the read failed, not that the node is absent.
+    fn has_node(&self, hash: &H256) -> Result<bool, Error> {
+        let cf = self
+            .db
+            .cf_handle(CF_NODES)
+            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
+        Ok(self.db.get_pinned_cf(&cf, hash.as_bytes())?.is_some())
+    }
 
+    /// Split `hashes` into those stored and those missing.
+    pub fn check_exists(
+        &self,
+        _bucket_id: BucketId,
+        hashes: &[H256],
+    ) -> Result<(Vec<H256>, Vec<H256>), Error> {
         let mut exists = Vec::new();
         let mut missing = Vec::new();
-
-        for hash in hashes {
-            let key = hash.as_bytes();
-            if self.db.get_cf(&cf, key).ok().flatten().is_some() {
-                exists.push(*hash);
+        for &hash in hashes {
+            if self.has_node(&hash)? {
+                exists.push(hash);
             } else {
-                missing.push(*hash);
+                missing.push(hash);
             }
         }
-
-        (exists, missing)
+        Ok((exists, missing))
     }
 
     /// Commit data roots to the bucket's MMR.
@@ -413,14 +413,8 @@ impl DiskStorage {
         data_roots: Vec<H256>,
     ) -> Result<CommitOutcome, Error> {
         // Verify all roots exist
-        let cf_nodes = self
-            .db
-            .cf_handle(CF_NODES)
-            .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
-
         for root in &data_roots {
-            let key = root.as_bytes();
-            if self.db.get_cf(&cf_nodes, key)?.is_none() {
+            if !self.has_node(root)? {
                 return Err(Error::RootNotFound(*root));
             }
         }
@@ -622,7 +616,11 @@ impl StorageBackend for DiskStorage {
         self.get_node(hash)
     }
 
-    fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>) {
+    fn check_exists(
+        &self,
+        bucket_id: BucketId,
+        hashes: &[H256],
+    ) -> Result<(Vec<H256>, Vec<H256>), Error> {
         self.check_exists(bucket_id, hashes)
     }
 
