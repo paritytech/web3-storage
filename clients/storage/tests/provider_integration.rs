@@ -11,9 +11,7 @@
 //!
 //! Tests are skipped (not failed) when the chain is unreachable.
 
-mod common;
-
-use common::{alice_provider, bob_provider, chain_guard, chain_setup, dev_account};
+use client_test_support::{alice_provider, bob_provider, chain_guard, chain_setup, dev_account};
 use storage_client::ProviderSettings;
 
 /// After `chain_setup`, Alice is a registered provider, so `get_provider_info`
@@ -413,6 +411,7 @@ async fn test_update_settings_round_trip() {
         replica_sync_price: before.replica_sync_price,
         accepting_extensions: before.accepting_extensions,
         max_capacity: before.max_capacity,
+        min_agreement_bytes: before.min_agreement_bytes,
     };
 
     provider
@@ -440,6 +439,7 @@ async fn test_update_settings_round_trip() {
         replica_sync_price: before.replica_sync_price,
         accepting_extensions: before.accepting_extensions,
         max_capacity: before.max_capacity,
+        min_agreement_bytes: before.min_agreement_bytes,
     };
     provider
         .update_settings(restored)
