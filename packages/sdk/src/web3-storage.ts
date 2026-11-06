@@ -9,7 +9,7 @@
  */
 
 import type { PolkadotClient } from "polkadot-api";
-import type { SignedTerms } from "@web3-storage/core";
+import { createLimiter, type SignedTerms } from "@web3-storage/core";
 import {
   connect,
   createBucketWithPrimary,
@@ -30,7 +30,7 @@ import {
   type Visibility,
   type WaitOpts,
 } from "@web3-storage/layer0";
-import { FsTree, Objects, providerBlobStore } from "@web3-storage/storage-formats";
+import { FsTree, Objects, providerBlobStore, type WriteQueue } from "@web3-storage/storage-formats";
 
 export interface Web3StorageOptions {
   api: ParachainApi;
@@ -71,6 +71,8 @@ export class Web3Storage {
   private readonly readOpts: { at: "best" | "finalized" };
   private readonly submitMode: "best" | "finalized";
   private papi?: PolkadotClient;
+  /** One write queue per bucket, shared by every tree this instance opens. */
+  private readonly writeQueues = new Map<bigint, WriteQueue>();
 
   constructor(opts: Web3StorageOptions) {
     this.api = opts.api;
@@ -179,13 +181,15 @@ export class Web3Storage {
   /**
    * The bucket's file-system tree on its primary provider. The tree uses the
    * signer set when it was opened: writes need one with Writer or Admin, and
-   * reads of a private bucket need Reader. Rejects if the bucket is not on
-   * chain or has no primary provider.
+   * reads of a private bucket need Reader. Writes through every tree and
+   * object view of one bucket from this instance run one at a time. Rejects
+   * if the bucket is not on chain or has no primary provider.
    */
   async drive(bucketId: bigint, opts: { signal?: AbortSignal } = {}): Promise<FsTree> {
     const providerUrl = await this.providers.get(bucketId);
     return new FsTree(
       providerBlobStore(providerUrl, bucketId, this.currentSigner, { fetch: this.fetchImpl, signal: opts.signal }),
+      { writes: this.writeQueue(bucketId) },
     );
   }
 
@@ -197,6 +201,15 @@ export class Web3Storage {
   /** Close the chain connection opened by {@link connect}. */
   disconnect(): void {
     this.papi?.destroy();
+  }
+
+  private writeQueue(bucketId: bigint): WriteQueue {
+    let queue = this.writeQueues.get(bucketId);
+    if (!queue) {
+      queue = createLimiter(1);
+      this.writeQueues.set(bucketId, queue);
+    }
+    return queue;
   }
 
   private requireSigner(): ChainSigner {

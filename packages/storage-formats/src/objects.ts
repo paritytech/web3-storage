@@ -35,7 +35,7 @@ export class ObjectError extends Error {
 const objectError = (code: string, message: string, cause: unknown) =>
   OBJECT_ERROR_CODES.has(code) ? new ObjectError(code, message, { cause }) : new FileSystemError(code, message, { cause });
 
-/** The objects of one bucket, stored in its file tree. */
+/** The objects of one bucket, stored in its file tree. Writes run through the tree's write queue. */
 export class Objects {
   private objects?: WasmObjects;
 
@@ -49,7 +49,7 @@ export class Objects {
 
   /** Store `data` under `key`, replacing an object with the same key. */
   putObject(key: string, data: Uint8Array, options?: PutObjectInput): Promise<PutObjectResult> {
-    return withErrors(async () => (await this.wasm()).putObject(key, data, options), objectError);
+    return this.tree.writes(() => withErrors(async () => (await this.wasm()).putObject(key, data, options), objectError));
   }
 
   /** The object `key`: its metadata and content. */
@@ -64,7 +64,7 @@ export class Objects {
 
   /** Delete the object `key`, and the directories it leaves empty. */
   deleteObject(key: string): Promise<void> {
-    return withErrors(async () => (await this.wasm()).deleteObject(key), objectError);
+    return this.tree.writes(() => withErrors(async () => (await this.wasm()).deleteObject(key), objectError));
   }
 
   /** One page of objects, sorted by key bytes. Each page reads the tree again. */

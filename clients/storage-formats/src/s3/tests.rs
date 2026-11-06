@@ -34,22 +34,40 @@ fn key_rules() {
     }
 }
 
-#[test]
-fn metadata_keys_are_lowercased_sorted_and_unique() {
-    let metadata = HashMap::from([
+#[tokio::test]
+async fn metadata_keys_are_lowercased_and_unique() {
+    let store = MemoryStore::default();
+    let objects = Objects::new(tree(&store));
+    let put = |metadata: HashMap<String, String>| {
+        objects.put_object(
+            "k",
+            b"x",
+            PutObjectOptions {
+                content_type: None,
+                metadata,
+            },
+        )
+    };
+    put(HashMap::from([
         ("Color".to_string(), "blue".to_string()),
         ("ALPHA".to_string(), "1".to_string()),
-    ]);
-    let entries = to_metadata_entries(metadata).unwrap();
-    let keys: Vec<&[u8]> = entries.iter().map(|e| e.key.as_slice()).collect();
-    assert_eq!(keys, [&b"alpha"[..], b"color"]);
+    ]))
+    .await
+    .unwrap();
+    assert_eq!(
+        objects.head_object("k").await.unwrap().metadata,
+        HashMap::from([
+            ("alpha".to_string(), "1".to_string()),
+            ("color".to_string(), "blue".to_string()),
+        ])
+    );
 
     let clash = HashMap::from([
         ("Color".to_string(), "blue".to_string()),
         ("color".to_string(), "red".to_string()),
     ]);
     assert!(matches!(
-        to_metadata_entries(clash),
+        put(clash).await,
         Err(S3ClientError::InvalidMetadata(_))
     ));
     let long_value = HashMap::from([("k".to_string(), "v".repeat(257))]);
@@ -75,7 +93,7 @@ const KEYS: &[&str] = &[
     "d/4.txt",
 ];
 
-fn keys_of(page: &Page) -> Vec<&'static str> {
+fn keys_of(page: &Page<usize>) -> Vec<&'static str> {
     page.contents.iter().map(|&i| KEYS[i]).collect()
 }
 
@@ -145,7 +163,7 @@ fn list_max_keys_truncates_and_pages() {
 }
 
 #[tokio::test]
-async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
+async fn list_matches_a_page_of_all_keys_with_fewer_reads() {
     use std::sync::atomic::Ordering;
 
     let store = MemoryStore::default();
@@ -170,15 +188,8 @@ async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
     // File-system writes can leave directories without objects.
     t.mkdir("/b/empty").await.unwrap();
     t.mkdir("/e/f").await.unwrap();
-    let mut all: Vec<String> = t
-        .files_under("/")
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect();
+    let mut all = keys.to_vec();
     all.sort();
-    let all: Vec<&str> = all.iter().map(String::as_str).collect();
 
     for prefix in [
         "",
@@ -202,18 +213,22 @@ async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
             Some("photos/2024/01/02/img.jpg"),
             Some("zzz"),
         ] {
-            for max_keys in [1, 2, 1000] {
+            for (delimiter, max_keys) in [None, Some("/"), Some("0")]
+                .into_iter()
+                .flat_map(|d| [1, 2, 1000].map(|max| (d, max)))
+            {
                 let listed = objects
-                    .list_objects_v2(ListObjectsParams {
+                    .list_objects(ListObjectsParams {
                         prefix: Some(prefix.to_string()),
-                        delimiter: Some("/".to_string()),
+                        delimiter: delimiter.map(str::to_string),
                         start_after: start_after.map(str::to_string),
                         max_keys: Some(max_keys),
                     })
                     .await
                     .unwrap();
-                let walked = list_page(&all, prefix, Some("/"), start_after, max_keys as usize);
-                let context = format!("{prefix:?} after {start_after:?} max {max_keys}");
+                let walked = list_page(&all, prefix, delimiter, start_after, max_keys as usize);
+                let context =
+                    format!("{prefix:?} {delimiter:?} after {start_after:?} max {max_keys}");
                 let listed_keys: Vec<&str> =
                     listed.contents.iter().map(|o| o.key.as_str()).collect();
                 let walked_keys: Vec<&str> = walked.contents.iter().map(|&i| all[i]).collect();
@@ -232,7 +247,7 @@ async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
     // file: 8 of the 15 directories.
     store.reads.store(0, Ordering::Relaxed);
     let listed = objects
-        .list_objects_v2(ListObjectsParams {
+        .list_objects(ListObjectsParams {
             delimiter: Some("/".to_string()),
             ..Default::default()
         })
@@ -248,7 +263,7 @@ const BIG_SIZE: usize = 3 * CHUNK_SIZE + 100;
 /// directory node, manifest and content root, so a change to the bucket
 /// format changes it. Clients cannot read buckets written in an older
 /// format, so update it only with a reviewed format change.
-const ROOT_CID: &str = "0x7aa7bcb3d443e0b47cabae360f168099695e46c84433e79dce13852d9647ffe5";
+const ROOT_CID: &str = "0x73c28efba4f06b593cc13f1f6aa59f1bf9c6fd0a4a1d5908e5b2213989f130c7";
 
 /// A fixed sequence of file and object writes, with a fixed clock.
 async fn write_sequence(store: &MemoryStore) {
@@ -291,4 +306,30 @@ async fn the_bucket_format_produces_the_pinned_root() {
     write_sequence(&store).await;
     let root = tree(&store).load_root().await.unwrap().cid.unwrap();
     assert_eq!(format!("{root:#x}"), ROOT_CID);
+}
+
+/// A listing stops reading once its page is full.
+#[tokio::test]
+async fn a_small_page_reads_few_directories() {
+    use std::sync::atomic::Ordering;
+
+    let store = MemoryStore::default();
+    let objects = Objects::new(tree(&store));
+    for dir in 'a'..='z' {
+        objects
+            .put_object(&format!("{dir}/1"), b"x", PutObjectOptions::default())
+            .await
+            .unwrap();
+    }
+    store.reads.store(0, Ordering::Relaxed);
+    let page = objects
+        .list_objects(ListObjectsParams {
+            max_keys: Some(1),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(page.next_start_after.as_deref(), Some("a/1"));
+    // The root, `a`, and `b`, whose first key shows the page is full.
+    assert_eq!(store.reads.load(Ordering::Relaxed), 3);
 }

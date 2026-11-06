@@ -241,7 +241,7 @@ pub struct FileInfo {
     pub user_metadata: BTreeMap<String, String>,
 }
 
-/// Result of `mkdir` and `delete`.
+/// Result of `mkdir`, `rename` and `delete`.
 #[derive(Serialize, Tsify)]
 #[serde(rename_all = "camelCase")]
 pub struct TreeWriteResult {
@@ -332,10 +332,6 @@ pub struct ObjectSummary {
     pub size: f64,
     /// Milliseconds since the epoch (stored with second precision).
     pub last_modified: f64,
-    /// Not set by `listObjects`; use `headObject` for the content CID.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[tsify(optional)]
-    pub etag: Option<String>,
 }
 
 /// Options of `listObjects`.
@@ -554,6 +550,16 @@ impl WasmTree {
         .map_err(JsValue::from)
     }
 
+    /// Move the file or directory at `from` to `to` without copying content.
+    #[wasm_bindgen(unchecked_return_type = "TreeWriteResult")]
+    pub async fn rename(&self, from: String, to: String) -> std::result::Result<JsValue, JsValue> {
+        let root = self.tree.rename(&from, &to).await.map_err(js_error)?;
+        to_js(&TreeWriteResult {
+            root_cid: hex(&root),
+        })
+        .map_err(JsValue::from)
+    }
+
     /// Delete the file or empty directory at `path`.
     #[wasm_bindgen(unchecked_return_type = "TreeWriteResult")]
     pub async fn delete(
@@ -674,7 +680,7 @@ impl WasmObjects {
         let options: ListObjectsOptions = from_js(options)?;
         let page = self
             .objects
-            .list_objects_v2(ListObjectsParams {
+            .list_objects(ListObjectsParams {
                 prefix: options.prefix,
                 delimiter: options.delimiter,
                 start_after: options.start_after,
@@ -690,7 +696,6 @@ impl WasmObjects {
                     key: o.key,
                     size: o.size as f64,
                     last_modified: o.last_modified as f64 * 1000.0,
-                    etag: o.etag,
                 })
                 .collect(),
             common_prefixes: page.common_prefixes,

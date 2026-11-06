@@ -122,7 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         prefix: Some("objects/".to_string()),
         ..Default::default()
     };
-    let listing = objects.list_objects_v2(objects_prefix.clone()).await?;
+    let listing = objects.list_objects(objects_prefix.clone()).await?;
     let keys: Vec<&str> = listing.contents.iter().map(|o| o.key.as_str()).collect();
     assert_eq!(keys, ["objects/data/payload.bin", "objects/hello.txt"]);
 
@@ -134,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     objects.delete_object("objects/hello.txt").await?;
     objects.delete_object("objects/data/payload.bin").await?;
     assert!(objects
-        .list_objects_v2(objects_prefix)
+        .list_objects(objects_prefix)
         .await?
         .contents
         .is_empty());

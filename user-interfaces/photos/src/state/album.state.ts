@@ -23,7 +23,7 @@ import { requireApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
 import { getDrive, setFsSigner } from '@/lib/fs-client'
 import { recomputeRoot } from '@/lib/fs-root'
-import { hexToBytes, toHex } from '@web3-storage/sdk'
+import { FileSystemError, hexToBytes, toHex } from '@web3-storage/sdk'
 import { LocalIndex } from '@/lib/local-index'
 import { loadIndex, saveIndex } from '@/lib/index-store'
 import { getParachainWs } from '@/state/network.state'
@@ -431,11 +431,10 @@ export async function saveEdit(editedBytes: Uint8Array, contentType: string): Pr
 }
 
 /**
- * Rename a photo within its album, keeping it content-addressed. The provider has
- * no move op, so this copies the bytes to the new path (photo + thumbnail) and
- * deletes the old one — re-PUTting identical bytes yields the same `data_root`, so
- * no content is duplicated. Refreshes the grid and schedules a background re-anchor.
- * `rawName` is the full new filename (the caller preserves the extension).
+ * Rename a photo and its thumbnail within the album with tree renames, which
+ * move the directory entries without copying bytes. Refreshes the grid and
+ * schedules a background re-anchor. `rawName` is the full new filename (the
+ * caller preserves the extension).
  */
 export async function renamePhoto(item: GridItem, rawName: string): Promise<void> {
   const bucketId = bucketId$.getValue()
@@ -457,35 +456,19 @@ export async function renamePhoto(item: GridItem, rawName: string): Promise<void
   const newThumbPath = `${THUMBS_ROOT}/${album}/${name}`
   libraryError$.next(undefined)
   try {
-    // Copy first; only delete the old path once the new one is safely in place.
+    // A rename moves the directory entry; the photo's bytes are not copied.
     const drive = await getDrive(bucketId)
-    const photo = await drive.getFile(item.path)
-    await storeFile(bucketId, newPath, photo.bytes, photo.contentType)
+    await drive.rename(item.path, newPath)
+    moveIndexed(item.path, newPath)
     try {
-      const thumb = await drive.getFile(item.thumbPath)
-      await storeFile(bucketId, newThumbPath, thumb.bytes, thumb.contentType)
-    } catch {
+      await drive.rename(item.thumbPath, newThumbPath)
+      moveIndexed(item.thumbPath, newThumbPath)
+    } catch (err) {
       // No thumbnail to carry over (e.g. uploaded outside the app) — skip it.
+      if (!(err instanceof FileSystemError && err.code === 'PathNotFound')) throw err
     }
-
-    // Retire the old paths. Couple each index removal to its delete succeeding so
-    // the index never claims a path the provider still serves; always refresh and
-    // re-anchor so the new copy is reflected even when the old delete fails.
-    const photoRetired = await drive.delete(item.path).then(
-      () => true,
-      () => false,
-    )
-    if (photoRetired) index.remove(item.path)
-    await drive.delete(item.thumbPath).then(
-      () => index.remove(item.thumbPath),
-      () => {},
-    )
-
     await loadGrid()
     scheduleReanchor()
-    if (!photoRetired) {
-      libraryError$.next('Renamed, but the original copy could not be removed — you may see a duplicate.')
-    }
   } catch (err) {
     libraryError$.next(err instanceof Error ? err.message : 'Could not rename the photo.')
   }
@@ -604,6 +587,13 @@ async function runReanchor(): Promise<void> {
     })
     throw err
   }
+}
+
+/** Move the index entry of a renamed file. */
+function moveIndexed(from: string, to: string): void {
+  const cached = index.getFile(from)
+  index.remove(from)
+  if (cached) index.setFile(to, cached.dataRoot, cached.size)
 }
 
 /** Store a file and record its content root in the index. */
