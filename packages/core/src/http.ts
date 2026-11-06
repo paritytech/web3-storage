@@ -163,7 +163,7 @@ export async function signProviderRequest(
 // signs AgreementTerms and returns them as SignedTerms, which the owner then
 // redeems on-chain via create_bucket_with_primary, add_primary_provider or
 // add_replica_provider. Pure HTTP here —
-// the SCALE/Enum shaping of the response is in layer0
+// the SCALE/Enum shaping of the response is in @web3-storage/storage
 // (buildSignedTermsArgs), so core stays chain-free.
 
 /** Replica-sync parameters carried by replica agreement terms. */

@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The file tree of a drive, stored in its Layer 0 bucket.
+//! The file tree of a drive, stored in its bucket.
 //!
-//! This module is the only code that knows the on-bucket format; the file
-//! system client and the S3 client both use it.
+//! [`crate::s3::S3Bucket`] stores S3-style objects in the same tree.
 //!
 //! # Format
 //!
 //! Directories are [`DirectoryNode`] blobs and files are a content blob plus
-//! a [`FileManifest`] blob. A node blob is a 6-byte header (magic `W3FS`,
-//! format version, kind of node) and the SCALE encoding
-//! ([`DirectoryNode::to_blob`]). Every blob is addressed by its CID, the
-//! Layer 0 data root ([`compute_cid`]).
+//! a [`FileManifest`] blob. A node blob is a 5-byte header (magic `W3FS` and
+//! the format version) and the SCALE encoding ([`DirectoryNode::to_blob`]).
+//! Every blob is addressed by its CID, its data root ([`compute_cid`]).
 //!
 //! # Root discovery
 //!
@@ -47,9 +45,16 @@
 //!   child hashes of an internal Merkle node as a 64-byte blob, and denies
 //!   the node's children on `GET /node`, is not detected.
 //! - **Blob reads by CID are unauthenticated.** Anyone who knows a CID and a
-//!   bucket id can read the blob (#383, #396). Root discovery
+//!   bucket id can read the blob ("Read access at Layer 0" in
+//!   `docs/design/scalable-web3-storage.md`). Root discovery
 //!   (`GET /commitment`, `GET /mmr_proof`) needs Reader on a private bucket.
-//!   Confidential data needs client-side encryption.
+//!   A directory blob contains the names, sizes, times and CIDs of its
+//!   entries, so a directory's CID gives read access to everything below it.
+//!   Confidential data, file names included, needs client-side encryption.
+//! - **The bucket only grows.** Every write, including a delete or a rename,
+//!   commits new blobs for each rewritten directory up to the root, and the
+//!   blobs they replace remain leaves of the bucket. The committed size
+//!   grows with every write until an Admin prefix delete.
 
 use crate::format::{
     compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest, FileSystemError,
@@ -71,7 +76,7 @@ pub enum BlobLength {
     AtMost(u64),
 }
 
-/// The Layer 0 operations the tree uses. On wasm32 the store is a JS object,
+/// The provider operations the tree uses. On wasm32 the store is a JS object,
 /// so the trait has no `Send` bound there.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
@@ -1158,7 +1163,7 @@ mod tests {
     #[tokio::test]
     async fn last_leaf_that_is_not_a_directory_is_rejected() {
         let store = MemoryStore::default();
-        store.raw_commit(b"raw layer 0 data");
+        store.raw_commit(b"raw bucket data");
         assert!(matches!(
             tree(&store).load_root().await,
             Err(FsClientError::NotAFileSystemBucket {

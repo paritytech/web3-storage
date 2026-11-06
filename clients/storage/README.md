@@ -390,57 +390,46 @@ if let Some(available) = capacity.available_bytes {
 Coordinate checkpoints across multiple providers with consensus verification:
 
 ```rust
+use std::sync::Arc;
 use storage_client::{
-    CheckpointManager, CheckpointConfig, BatchedCheckpointConfig,
-    BatchedInterval, CheckpointResult,
+    BatchedCheckpointConfig, BatchedInterval, CheckpointConfig, CheckpointManager,
+    CheckpointResult,
 };
 
-// Create checkpoint manager
-let manager = CheckpointManager::new(
-    "ws://127.0.0.1:2222",
-    CheckpointConfig::default()
-).await?;
+let manager = CheckpointManager::new("ws://127.0.0.1:2222", CheckpointConfig::default())
+    .await?
+    .with_providers(vec![
+        "http://provider1:3000".to_string(),
+        "http://provider2:3000".to_string(),
+    ]);
 
-// Add provider endpoints
-let manager = manager.with_providers(vec![
-    "http://provider1:3000".to_string(),
-    "http://provider2:3000".to_string(),
-]);
-
-// Manual checkpoint submission
-let result = manager.submit_checkpoint(bucket_id).await;
-match result {
-    CheckpointResult::Success { mmr_root, providers_agreed } => {
-        println!("Checkpoint submitted: {} ({} providers agreed)",
-            mmr_root, providers_agreed);
+// One checkpoint now.
+match manager.submit_checkpoint(bucket_id).await {
+    CheckpointResult::Submitted { block_hash, signers } => {
+        println!("Checkpoint in block {block_hash:?}, {} signers", signers.len());
     }
-    CheckpointResult::InsufficientConsensus { agreed, total } => {
-        println!("Failed: only {}/{} providers agreed", agreed, total);
+    CheckpointResult::InsufficientConsensus { agreeing, required, disagreements } => {
+        println!("{agreeing}/{required} providers agree, {} disagree", disagreements.len());
     }
-    CheckpointResult::Conflict { conflicts } => {
-        println!("Conflict detected! {} providers disagree", conflicts.len());
-    }
-    _ => {}
+    other => println!("Checkpoint failed: {other:?}"),
 }
 
-// Enable automatic checkpoints
+// A checkpoint every 100 blocks, in a background task.
 let config = BatchedCheckpointConfig {
-    interval: BatchedInterval::Blocks(100), // Every 100 blocks
-    retry_on_failure: true,
-    max_retries: 3,
+    interval: BatchedInterval::Blocks(100),
     ..Default::default()
 };
+let mut handle = Arc::new(manager)
+    .start_checkpoint_loop(
+        bucket_id,
+        config,
+        Some(Arc::new(|bucket_id, result| println!("{bucket_id}: {result:?}"))),
+    )
+    .await?;
 
-let handle = manager.start_checkpoint_loop(
-    bucket_id,
-    config,
-    |result| println!("Checkpoint result: {:?}", result),
-).await?;
-
-// Control the background loop
-handle.mark_dirty(bucket_id);     // Signal data changed
-handle.submit_now().await?;       // Force immediate checkpoint
-handle.stop().await?;             // Stop the loop
+handle.mark_dirty(bucket_id).await?; // data changed
+handle.submit_now().await?;           // checkpoint now
+handle.stop().await?;
 ```
 
 ### Checkpoint State Persistence
@@ -448,29 +437,20 @@ handle.stop().await?;             // Stop the loop
 Persist checkpoint state across restarts:
 
 ```rust
+use std::time::Duration;
 use storage_client::{CheckpointPersistence, PersistenceConfig, StateBuilder};
 
-// Configure persistence
-let config = PersistenceConfig {
-    state_file: PathBuf::from("/var/lib/storage/checkpoint_state.json"),
-    backup_count: 3,
-    auto_save: true,
-    auto_save_interval: Duration::from_secs(60),
-};
+let persistence = CheckpointPersistence::new(
+    PersistenceConfig::new("/var/lib/storage/checkpoint_state.json")
+        .with_auto_save_interval(Duration::from_secs(60))
+        .with_max_backups(3),
+);
 
-let persistence = CheckpointPersistence::new(config)?;
+// The saved state, or an empty state if the file does not exist.
+let state = persistence.load().await?;
 
-// Load existing state or create new
-let state = persistence.load_or_create()?;
-
-// Build state programmatically
-let state = StateBuilder::new()
-    .with_bucket(1, BucketStatus::default())
-    .with_metrics(CheckpointMetrics::default())
-    .build();
-
-// Save state (creates backup of previous)
-persistence.save(&state)?;
+let state = StateBuilder::new().with_metrics(&metrics).build();
+persistence.save(&state).await?; // keeps the previous file as a backup
 ```
 
 ### Real-Time Event Subscription
@@ -514,9 +494,9 @@ let filter = EventFilter::storage_provider().with_predicate(move |ev| {
 let mut stream = EventStream::connect("ws://127.0.0.1:2222", filter).await?;
 ```
 
-## Layer 1: Storage Formats
+## Storage Formats
 
-[Storage Formats](../storage-formats/README.md) stores files, directories and S3-style objects in a Layer 0 bucket, on top of this SDK. Use this SDK directly to store your own data structures as blobs, or to manage buckets, members and agreements.
+[Storage Formats](../storage-formats/README.md) stores files, directories and S3-style objects in a bucket, on top of this SDK. Use this SDK directly to store your own data structures as blobs, or to manage buckets, members and agreements.
 
 ## Status
 

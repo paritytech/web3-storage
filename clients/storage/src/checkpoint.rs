@@ -3,7 +3,7 @@
 //! Checkpoint Manager for automated multi-provider checkpoint coordination.
 //!
 //! This module provides a reusable checkpoint management system that can be
-//! used by any Layer 1 interface (File System, Database, etc.) to handle
+//! used by any client that keeps data in a bucket (file system, database) to handle
 //! the complexity of multi-provider signature collection and checkpoint submission.
 //!
 //! # Example

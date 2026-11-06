@@ -2,7 +2,7 @@
 //
 // Photos' browser handle on the library bucket's file tree: a Web3Storage
 // memoized on the chain api. The tree is stored in the bucket and read and
-// written through the provider's Layer 0 routes only. The user's account
+// written through the provider's blob routes only. The user's account
 // (`setFsSigner`) signs the provider requests: writes need its Writer role,
 // and finding the root of the private library bucket needs Reader. The
 // client-side root recompute lives in `fs-root.ts` (shared with the headless

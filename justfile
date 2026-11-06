@@ -338,7 +338,7 @@ sc-coverage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob
 sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/sc-team-drive.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
-# Photos dApp (Layer 1) — namespaced module. Run `just photos` to list its recipes;
+# Photos dApp — namespaced module. Run `just photos` to list its recipes;
 # e.g. `just photos build`, `just photos deploy`, `just photos flow`.
 mod photos 'user-interfaces/photos/photos.just'
 
