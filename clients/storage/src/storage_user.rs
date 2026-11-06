@@ -283,10 +283,9 @@ impl StorageUserClient {
             let returned = self
                 .read_page(bucket_id, data_root, next, requested, &mut data)
                 .await?;
+            // More chunks than requested is a provider bug, not data to trust.
             if returned > requested {
-                return Err(ClientError::Api(format!(
-                    "Provider returned {returned} chunks for a read of {requested} chunks"
-                )));
+                return Err(ClientError::VerificationFailed);
             }
             if returned < requested {
                 return Ok(data);
@@ -322,12 +321,11 @@ impl StorageUserClient {
             .send()
             .await?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(ClientError::Api(format!(
-                "Provider returned error: {status}: {body}"
-            )));
+        if !response.status().is_success() {
+            return Err(ClientError::HttpStatus {
+                request: "GET /read",
+                status: response.status().as_u16(),
+            });
         }
 
         let read_response: ReadResponse = response.json().await?;
@@ -378,10 +376,10 @@ impl StorageUserClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Node not found or error: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /node",
+                status: response.status().as_u16(),
+            });
         }
 
         let node_response: NodeResponse = response
@@ -458,10 +456,10 @@ impl StorageUserClient {
         let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Commit failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "POST /commit",
+                status: response.status().as_u16(),
+            });
         }
 
         response
@@ -488,10 +486,10 @@ impl StorageUserClient {
         let response = self.sign(req, "GET", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Checkpoint signature request failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /checkpoint-signature",
+                status: response.status().as_u16(),
+            });
         }
 
         response
@@ -621,10 +619,10 @@ impl StorageUserClient {
         let response = self.sign(req, "PUT", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Upload failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "PUT /node",
+                status: response.status().as_u16(),
+            });
         }
 
         Ok(hash)
@@ -675,7 +673,10 @@ impl StorageUserClient {
     pub async fn get_commitment(&self, bucket_id: BucketId) -> ClientResult<CommitmentResponse> {
         self.get_commitment_if_exists(bucket_id)
             .await?
-            .ok_or_else(|| ClientError::Api("Commitment request failed: 404 Not Found".into()))
+            .ok_or(ClientError::HttpStatus {
+                request: "GET /commitment",
+                status: 404,
+            })
     }
 
     /// Like [`Self::get_commitment`], but returns `None` when the provider
@@ -698,9 +699,10 @@ impl StorageUserClient {
             return Ok(None);
         }
         if !status.is_success() {
-            return Err(ClientError::Api(format!(
-                "Commitment request failed: {status}"
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /commitment",
+                status: status.as_u16(),
+            });
         }
         response
             .json()
@@ -729,10 +731,10 @@ impl StorageUserClient {
         let response = self.sign(req, "GET", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "MMR proof request failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /mmr_proof",
+                status: response.status().as_u16(),
+            });
         }
         response
             .json()
@@ -759,10 +761,10 @@ impl StorageUserClient {
         let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Exists check failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "POST /exists",
+                status: response.status().as_u16(),
+            });
         }
         response
             .json()

@@ -12,7 +12,6 @@ import {
   bytesToBase64,
   chunkCount,
   CidMismatchError,
-  computeCid,
   concatBytes,
   createLimiter,
   DEFAULT_CHUNK_SIZE,
@@ -329,38 +328,26 @@ export async function fetchChallengeProof(
         challengeId.index,
     );
 
-  const mmr = await providerFetch(providerUrl, "/mmr_proof", {
-    params: {
-      bucket_id: challenge.bucket_id,
-      leaf_index: challenge.target.leaf_index,
-    },
-    sign: signer ? { signer: signer.signer, bucketId: challenge.bucket_id } : undefined,
+  const { leaf, items } = await getMmrProof(providerUrl, challenge.bucket_id, challenge.target.leaf_index, {
+    signer,
   });
-  if (!Array.isArray(mmr.items))
-    throw new Error(
-      "Provider /mmr_proof response has no `items`: the provider node is older than this client",
-    );
-  if (typeof mmr.leaf?.leaf_version !== "number")
-    throw new Error(
-      "Provider /mmr_proof leaf has no `leaf_version`: the provider node is older than this client",
-    );
   const mmr_proof = {
     leaf: {
-      leaf_version: mmr.leaf.leaf_version,
-      data_root: asHex(mmr.leaf.data_root),
-      data_size: BigInt(mmr.leaf.data_size),
-      total_size: BigInt(mmr.leaf.total_size),
+      leaf_version: leaf.leafVersion,
+      data_root: toHex(leaf.dataRoot),
+      data_size: leaf.dataSize,
+      total_size: leaf.totalSize,
     },
-    items: mmr.items.map((h: string) => asHex(h)),
+    items: items.map((h) => toHex(h)),
   };
-  if (challenge.target.chunk_index >= BigInt(leafChunkCount(mmr.leaf))) {
+  if (challenge.target.chunk_index >= BigInt(leafChunkCount(mmr_proof.leaf))) {
     return Enum("ChunkOutOfRange", { mmr_proof });
   }
 
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
       bucket_id: challenge.bucket_id,
-      data_root: mmr.leaf.data_root,
+      data_root: mmr_proof.leaf.data_root,
       chunk_index: challenge.target.chunk_index,
     },
   });
@@ -388,14 +375,6 @@ const BLOB_CONCURRENCY = 4;
 const READ_WINDOW_CHUNKS = 16;
 /** Attempts for idempotent requests (`PUT /node` and reads). */
 const IDEMPOTENT_RETRIES = 3;
-
-async function runLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) await fn(items[next++]);
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-}
 
 async function putNode(
   providerUrl: string,
@@ -446,7 +425,7 @@ export async function uploadBlob(
 ): Promise<UploadBlobResult> {
   if (bytes.length === 0) throw new Error("empty data has no chunk tree");
   const chunks = splitChunks(bytes);
-  const hashes = chunks.map((c) => computeCid(c));
+  const hashes = chunks.map(hashLeaf);
   const { root, nodes } = merkleTree(hashes);
   const sent = new Set<string>();
   const once = <T>(items: T[], hashOf: (item: T) => Uint8Array): T[] =>
@@ -461,8 +440,9 @@ export async function uploadBlob(
     chunks.map((data, i) => ({ data, hash: hashes[i] })),
     (c) => c.hash,
   );
-  await runLimited(leaves, BLOB_CONCURRENCY, (c) =>
-    putNode(providerUrl, bucketId, c.hash, { data: c.data }, signer, opts),
+  const limit = createLimiter(BLOB_CONCURRENCY);
+  await Promise.all(
+    leaves.map((c) => limit(() => putNode(providerUrl, bucketId, c.hash, { data: c.data }, signer, opts))),
   );
   // `nodes` is level by level; a level can go up once the one below is stored.
   // A level of `width` hashes has `floor(width / 2)` nodes; an odd last hash
@@ -472,8 +452,10 @@ export async function uploadBlob(
     const count = Math.floor(width / 2);
     const level = once(nodes.slice(offset, offset + count), (n) => n.hash);
     offset += count;
-    await runLimited(level, BLOB_CONCURRENCY, (n) =>
-      putNode(providerUrl, bucketId, n.hash, { children: [n.left, n.right] }, signer, opts),
+    await Promise.all(
+      level.map((n) =>
+        limit(() => putNode(providerUrl, bucketId, n.hash, { children: [n.left, n.right] }, signer, opts)),
+      ),
     );
   }
   return { dataRoot: toHex(root), size: bytes.length, chunkHashes: hashes };
@@ -685,7 +667,7 @@ async function readBlobWithProofs(
     got.forEach((c, k) => {
       const data = base64ToBytes(c.data);
       const siblings = c.proof.map(hexToBytes);
-      if (!verifyChunkProof(computeCid(data), start + k, siblings, root, total)) {
+      if (!verifyChunkProof(hashLeaf(data), start + k, siblings, root, total)) {
         throw new BlobVerificationError(rootHex, `chunk ${start + k} does not match its proof`);
       }
       out.push(data);
@@ -744,7 +726,7 @@ async function walkBlob(providerUrl: string, bucketId: bigint, root: Uint8Array,
     return parts.flat();
   };
   const chunks = await walk(root, 0);
-  if (!bytesEq(merkleRoot(chunks.map((c) => computeCid(c))), root)) {
+  if (!bytesEq(merkleRoot(chunks.map(hashLeaf)), root)) {
     throw new BlobVerificationError(rootHex, "chunks do not rebuild the root");
   }
   return chunks;

@@ -123,7 +123,7 @@ Rules for callers:
   concurrently can lose one change: the last commit wins.
 - **Only `FsTree` writes the bucket.** A raw Layer 0 commit becomes the
   last leaf, and the tree no longer loads (`FileSystemError` with code
-  `NotAFileSystem`).
+  `NotAFileSystemBucket`).
 - **An Admin prefix delete** (`/delete` with a new `start_seq`) can remove
   blobs that the current tree still references.
 - **Reads are unauthenticated.** Anyone who knows a CID can read the blob

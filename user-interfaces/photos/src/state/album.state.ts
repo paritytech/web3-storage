@@ -23,7 +23,7 @@ import { requireApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
 import { getDrive, setFsSigner } from '@/lib/fs-client'
 import { recomputeRoot } from '@/lib/fs-root'
-import { computeDataRoot, toHex } from '@web3-storage/sdk'
+import { hexToBytes, toHex } from '@web3-storage/sdk'
 import { LocalIndex } from '@/lib/local-index'
 import { loadIndex, saveIndex } from '@/lib/index-store'
 import { getParachainWs } from '@/state/network.state'
@@ -122,7 +122,7 @@ let indexKey: string | null = null
  * Live grid thumbnail object URLs keyed by thumb path. Reused across grid reloads
  * so a single-photo mutation doesn't re-download the whole album; an entry is
  * revoked when its path leaves the grid (`replaceGrid`), when its content is
- * rewritten (`putVerified`), or when the library resets.
+ * rewritten (`storeFile`), or when the library resets.
  */
 const gridThumbUrls = new Map<string, string>()
 /** Called after a successful `setRoot` so the page can re-read the on-chain anchor. */
@@ -242,7 +242,7 @@ export async function loadGrid(): Promise<void> {
       files.map(async (f): Promise<GridItem> => {
         const thumbPath = `${THUMBS_ROOT}/${album}/${f.name}`
         // Reuse an already-loaded thumbnail; only download ones we haven't cached
-        // (new/changed paths — `putVerified` evicts a thumb path when rewritten).
+        // (new/changed paths — `storeFile` evicts a thumb path when rewritten).
         let thumbUrl = gridThumbUrls.get(thumbPath)
         if (!thumbUrl) {
           try {
@@ -318,11 +318,11 @@ export async function uploadPhotos(files: File[]): Promise<void> {
 
     const uploadOne = async (file: File): Promise<void> => {
       const bytes = new Uint8Array(await file.arrayBuffer())
-      await putVerified(bucketId, `/${album}/${file.name}`, bytes, file.type || 'application/octet-stream')
+      await storeFile(bucketId, `/${album}/${file.name}`, bytes, file.type || 'application/octet-stream')
       uploaded++
       try {
         const thumb = await makeThumbnail(file)
-        await putVerified(bucketId, `${THUMBS_ROOT}/${album}/${file.name}`, thumb.bytes, thumb.contentType)
+        await storeFile(bucketId, `${THUMBS_ROOT}/${album}/${file.name}`, thumb.bytes, thumb.contentType)
       } catch {
         // Thumbnail generation failed (unsupported/corrupt image) — keep the full
         // photo; the grid will fall back for this one.
@@ -411,11 +411,11 @@ export async function saveEdit(editedBytes: Uint8Array, contentType: string): Pr
   const { path, thumbPath } = photo.item
   libraryError$.next(undefined)
   try {
-    await putVerified(bucketId, path, editedBytes, contentType)
+    await storeFile(bucketId, path, editedBytes, contentType)
 
     try {
       const thumb = await makeThumbnail(new Blob([editedBytes as BlobPart], { type: contentType }))
-      await putVerified(bucketId, thumbPath, thumb.bytes, thumb.contentType)
+      await storeFile(bucketId, thumbPath, thumb.bytes, thumb.contentType)
     } catch {
       // Thumbnail regeneration failed — keep the edited full photo; the grid falls back.
     }
@@ -460,10 +460,10 @@ export async function renamePhoto(item: GridItem, rawName: string): Promise<void
     // Copy first; only delete the old path once the new one is safely in place.
     const drive = await getDrive(bucketId)
     const photo = await drive.getFile(item.path)
-    await putVerified(bucketId, newPath, photo.bytes, photo.contentType)
+    await storeFile(bucketId, newPath, photo.bytes, photo.contentType)
     try {
       const thumb = await drive.getFile(item.thumbPath)
-      await putVerified(bucketId, newThumbPath, thumb.bytes, thumb.contentType)
+      await storeFile(bucketId, newThumbPath, thumb.bytes, thumb.contentType)
     } catch {
       // No thumbnail to carry over (e.g. uploaded outside the app) — skip it.
     }
@@ -606,15 +606,11 @@ async function runReanchor(): Promise<void> {
   }
 }
 
-/** Store a file, assert the returned `data_root` matches our local computation, and record it in the index. */
-async function putVerified(bucketId: bigint, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
+/** Store a file and record its content root in the index. */
+async function storeFile(bucketId: bigint, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
   const drive = await getDrive(bucketId)
   const res = await drive.putFile(path, bytes, { contentType })
-  const localRoot = computeDataRoot(bytes)
-  if (rootToBytes32(localRoot).toLowerCase() !== res.contentRoot.toLowerCase()) {
-    throw new Error(`Stored ${path} with a different content root than computed locally.`)
-  }
-  index.setFile(path, localRoot, BigInt(bytes.length))
+  index.setFile(path, hexToBytes(res.contentRoot), BigInt(bytes.length))
   // A rewritten thumbnail must not keep being served from its stale cached URL.
   if (path.startsWith(`${THUMBS_ROOT}/`)) {
     const stale = gridThumbUrls.get(path)

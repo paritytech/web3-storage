@@ -22,3 +22,4 @@ export * from "./provider-http.js";
 export * from "./pallets/storage-provider.js";
 export * from "./buckets.js";
 export * from "./provider-url.js";
+export * from "./providers.js";
