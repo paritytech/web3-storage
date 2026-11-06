@@ -57,6 +57,9 @@ cargo run -p storage-cli -- \
 | `--parallel-uploads`         | off (sequential)   | Run each user's uploads in parallel.                       |
 | `--max-concurrency <N>`      | `0` (unbounded)    | Cap total in-flight uploads across all users.              |
 | `--prepare-buckets <N>`      | `0` (off)          | Open `N` fresh buckets with a primary agreement to `--provider` before the run. |
+| `--prepare-max-bytes <BYTES>`| per-bucket load + 10% | Quota negotiated per prepared bucket. Rejected if below what the run writes to one bucket. |
+| `--prepare-duration <BLOCKS>`| `100`              | Agreement duration for prepared buckets, in anchor blocks. |
+| `--prepare-price-per-byte <P>`| `1`               | Price per byte per block the run accepts. The provider rejects lower offers and signs at its listed price. |
 | `--bucket-source <MODE>`     | `create` if preparing, else `discover` | `discover`: existing buckets only. `create`: prepared buckets only. `auto`: existing first, prepare the shortfall up to `--prepare-buckets`. |
 
 Total uploads is `users × uploads-per-user`. The two `--parallel-*` flags are
@@ -71,9 +74,7 @@ together maximise concurrency (bounded by `--max-concurrency` if set).
    `StorageAgreements[bucket][provider]` entry for the given `--provider`.
 2. With `--prepare-buckets N`, negotiates terms with the provider node
    (`POST /negotiate`) and redeems them on-chain (`create_bucket_with_primary`)
-   once per bucket, 100 anchor blocks at 1 per byte-block with a quota of the
-   per-bucket load plus 10%, the same path as the SDK's `complete_workflow`
-   example.
+   once per bucket, the same path as the SDK's `complete_workflow` example.
    Preparation runs before the measurement clock starts and never appears in the
    throughput or latency numbers. A preparation failure exits non-zero with no
    metrics summary.

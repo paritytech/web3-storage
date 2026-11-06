@@ -623,7 +623,7 @@
         <ul>
           <li>&bull; Before expiry only a bucket admin can end an agreement, and only a primary; the full remaining payment is paid or burned</li>
           <li>&bull; Replica agreements cannot be ended early</li>
-          <li>&bull; AgreementHasPendingChallenge blocks end_agreement and claim_expired_agreement</li>
+          <li>&bull; AgreementHasPendingChallenge blocks end_agreement, claim_expired_agreement and remove_slashed</li>
           <li>&bull; Anyone can call remove_slashed; the remaining payment returns to the owner</li>
         </ul>
       </div>

@@ -203,7 +203,7 @@ struct GetNodeQuery {
 async fn require_bucket(state: &ProviderState, bucket_id: BucketId) -> Result<BucketInfo, Error> {
     Ok(state
         .blocking_storage(move |storage| storage.get_bucket(bucket_id))
-        .await?
+        .await??
         .ok_or(provider_storage::Error::BucketNotFound(bucket_id))?)
 }
 
@@ -216,8 +216,8 @@ async fn get_node(
 
     let node = state
         .blocking_storage(move |storage| storage.get_node(&hash))
-        .await?
-        .ok_or_else(|| provider_storage::Error::NodeNotFound(query.hash.clone()))?;
+        .await??
+        .ok_or(provider_storage::Error::NodeNotFound(hash))?;
 
     Ok(Json(DownloadNodeResponse::new(hash, &node)))
 }
@@ -288,7 +288,7 @@ async fn check_exists(
     let bucket_id = request.bucket_id;
     let (exists, missing) = state
         .blocking_storage(move |storage| storage.check_exists(bucket_id, &hashes))
-        .await?;
+        .await??;
 
     Ok(Json(ExistsResponse { exists, missing }))
 }
@@ -577,12 +577,13 @@ async fn fetch_nodes(
 
     let nodes = state
         .blocking_storage(move |storage| {
+            // A bulk fetch reports the nodes it has; a node that is absent or
+            // unreadable is left out of the response.
             hashes
                 .into_iter()
                 .filter_map(|hash| {
-                    storage
-                        .get_node(&hash)
-                        .map(|node| DownloadNodeResponse::new(hash, &node))
+                    let node = storage.get_node(&hash).ok().flatten()?;
+                    Some(DownloadNodeResponse::new(hash, &node))
                 })
                 .collect::<Vec<_>>()
         })
