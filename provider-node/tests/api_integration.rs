@@ -1702,37 +1702,34 @@ common::backend_tests! {
     async fn test_read_chunks_beyond_the_limit_is_rejected(backend) {
         let server = TestServer::new(backend).await;
         let (data_root, _) = upload_and_commit(&server, 1).await;
+        let unknown_root = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        let limit = storage_primitives::MAX_READ_CHUNKS
+            * u64::from(storage_primitives::DEFAULT_CHUNK_SIZE);
 
-        let valid_hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
-        // 64 chunks of 256 KiB is the most one request may read; one byte more
-        // needs a 65th chunk. `u64::MAX` must not overflow `offset + length`.
-        for (offset, length) in [(0, 64 * 262_144 + 1), (1, u64::MAX)] {
+        // One byte past the limit needs one chunk more than allowed, and
+        // `u64::MAX` must not overflow `offset + length`. The limit check runs
+        // before the root lookup, so these use an unknown root. Within the
+        // limit, including an offset at the top of the range, the read
+        // reaches the root lookup and needs a committed root.
+        for (root, offset, length, status) in [
+            (unknown_root, 0, limit + 1, StatusCode::BAD_REQUEST),
+            (unknown_root, 1, u64::MAX, StatusCode::BAD_REQUEST),
+            (data_root.as_str(), 0, limit, StatusCode::OK),
+            (data_root.as_str(), u64::MAX, u64::MAX, StatusCode::OK),
+        ] {
             let resp = server
                 .client
                 .get(server.url(&format!(
-                    "/read?bucket_id=1&data_root={valid_hex}&offset={offset}&length={length}"
+                    "/read?bucket_id=1&data_root={root}&offset={offset}&length={length}"
                 )))
                 .send()
                 .await
                 .unwrap();
-            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{offset} {length}");
-            let body: Value = resp.json().await.unwrap();
-            assert_eq!(body["error"], "read_too_large");
-        }
-
-        // Exactly 64 chunks is within the limit, and an offset at the top of
-        // the range reads one chunk position without overflowing. These reads
-        // pass the limit check, so they need a committed root to return 200.
-        for (offset, length) in [(0, 64 * 262_144), (u64::MAX, u64::MAX)] {
-            let resp = server
-                .client
-                .get(server.url(&format!(
-                    "/read?bucket_id=1&data_root={data_root}&offset={offset}&length={length}"
-                )))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(resp.status(), StatusCode::OK, "{offset} {length}");
+            assert_eq!(resp.status(), status, "{offset} {length}");
+            if status == StatusCode::BAD_REQUEST {
+                let body: Value = resp.json().await.unwrap();
+                assert_eq!(body["error"], "read_too_large");
+            }
         }
     }
 }

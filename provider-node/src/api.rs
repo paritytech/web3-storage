@@ -153,17 +153,32 @@ async fn check_role(
         .map_err(Into::into)
 }
 
-/// Create the local bucket on its first upload, with the quota of this node's
-/// agreement on it. A bucket that already exists locally is left as it is.
+/// Store an uploaded `node` in `bucket_id`. On the bucket's first upload,
+/// create the local bucket with the quota of this node's agreement on it.
 /// Rejects a bucket this node has no agreement on.
-pub(crate) async fn ensure_bucket(state: &ProviderState, bucket_id: BucketId) -> Result<(), Error> {
-    let exists = state
-        .blocking_storage(move |storage| storage.get_bucket(bucket_id))
-        .await??
-        .is_some();
-    if exists {
+async fn store_uploaded_node(
+    state: &ProviderState,
+    bucket_id: BucketId,
+    hash: H256,
+    node: ChunkTreeNode,
+) -> Result<(), Error> {
+    // The bucket check and the store share one storage task, so an upload to
+    // an existing bucket costs one blocking-pool hop. A missing bucket hands
+    // the node back for the agreement lookup.
+    let missing = state
+        .blocking_storage(
+            move |storage| -> Result<Option<ChunkTreeNode>, provider_storage::Error> {
+                if storage.get_bucket(bucket_id)?.is_none() {
+                    return Ok(Some(node));
+                }
+                storage.store_node(bucket_id, hash, node)?;
+                Ok(None)
+            },
+        )
+        .await??;
+    let Some(node) = missing else {
         return Ok(());
-    }
+    };
     let max_bytes = state
         .auth
         .own_agreement(bucket_id)
@@ -171,7 +186,10 @@ pub(crate) async fn ensure_bucket(state: &ProviderState, bucket_id: BucketId) ->
         .ok_or(Error::NoAgreement(bucket_id))?
         .max_bytes;
     state
-        .blocking_storage(move |storage| storage.init_bucket(bucket_id, max_bytes))
+        .blocking_storage(move |storage| {
+            storage.init_bucket(bucket_id, max_bytes)?;
+            storage.store_node(bucket_id, hash, node)
+        })
         .await??;
     Ok(())
 }
@@ -278,11 +296,7 @@ async fn upload_node(
         .transpose()?;
     let node = ChunkTreeNode::from_wire(data, children)?;
 
-    let bucket_id = request.bucket_id;
-    ensure_bucket(&state, bucket_id).await?;
-    state
-        .blocking_storage(move |storage| storage.store_node(bucket_id, hash, node))
-        .await??;
+    store_uploaded_node(&state, request.bucket_id, hash, node).await?;
 
     Ok(Json(UploadNodeResponse { stored: true }))
 }

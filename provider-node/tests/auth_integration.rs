@@ -258,18 +258,15 @@ async fn upload_beyond_agreement_quota_is_rejected() {
     )
     .await;
     let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
-    let upload = |data: &[u8]| {
-        server
-            .client
-            .put(server.url("/node"))
-            .header("Authorization", &header)
-            .json(&node_body(1, data))
-            .send()
-    };
 
-    assert_eq!(upload(&[1u8; 10]).await.unwrap().status(), StatusCode::OK);
+    assert_eq!(
+        put_node(&server, Some(header.clone()), &[1u8; 10])
+            .await
+            .status(),
+        StatusCode::OK
+    );
 
-    let resp = upload(&[2u8; 10]).await.unwrap();
+    let resp = put_node(&server, Some(header), &[2u8; 10]).await;
     assert_eq!(resp.status(), StatusCode::INSUFFICIENT_STORAGE);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "quota_exceeded");
