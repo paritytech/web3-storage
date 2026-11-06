@@ -1701,7 +1701,7 @@ common::backend_tests! {
 common::backend_tests! {
     async fn test_read_chunks_beyond_the_limit_is_rejected(backend) {
         let server = TestServer::new(backend).await;
-        upload_and_commit(&server, 1).await;
+        let (data_root, _) = upload_and_commit(&server, 1).await;
 
         let valid_hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
         // 64 chunks of 256 KiB is the most one request may read; one byte more
@@ -1721,12 +1721,13 @@ common::backend_tests! {
         }
 
         // Exactly 64 chunks is within the limit, and an offset at the top of
-        // the range reads one chunk position without overflowing.
+        // the range reads one chunk position without overflowing. These reads
+        // pass the limit check, so they need a committed root to return 200.
         for (offset, length) in [(0, 64 * 262_144), (u64::MAX, u64::MAX)] {
             let resp = server
                 .client
                 .get(server.url(&format!(
-                    "/read?bucket_id=1&data_root={valid_hex}&offset={offset}&length={length}"
+                    "/read?bucket_id=1&data_root={data_root}&offset={offset}&length={length}"
                 )))
                 .send()
                 .await
