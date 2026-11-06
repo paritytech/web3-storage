@@ -1,4 +1,4 @@
-# File System Client
+# Bucket Tree
 
 Rust library for a file system and S3-style objects stored in a Scalable Web3
 Storage bucket.
