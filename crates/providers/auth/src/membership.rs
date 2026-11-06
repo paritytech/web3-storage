@@ -146,17 +146,6 @@ pub trait MembershipResolver: Send + Sync {
     ) -> Result<Option<OwnAgreement>, MembershipError> {
         Ok(None)
     }
-
-    /// Whether *this node's* agreement on `bucket_id` has the replica role.
-    /// Replicas serve reads to everyone — visibility gates primaries only —
-    /// so `true` passes Reader checks without auth. A primary agreement or no
-    /// agreement is `false`.
-    async fn fetch_serves_as_replica(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
-        Ok(self
-            .fetch_own_agreement(bucket_id)
-            .await?
-            .is_some_and(|agreement| agreement.replica))
-    }
 }
 
 /// So a boxed resolver still satisfies the `impl MembershipResolver` bound.
@@ -171,10 +160,6 @@ impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
         bucket_id: BucketId,
     ) -> Result<Option<OwnAgreement>, MembershipError> {
         (**self).fetch_own_agreement(bucket_id).await
-    }
-
-    async fn fetch_serves_as_replica(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
-        (**self).fetch_serves_as_replica(bucket_id).await
     }
 }
 
@@ -486,7 +471,13 @@ impl MembershipCache {
         // stale-if-error path as a failed member lookup.
         let fetched = async {
             let access = self.resolver.fetch_access(bucket_id).await?;
-            let serves_as_replica = self.resolver.fetch_serves_as_replica(bucket_id).await?;
+            // Only a replica agreement serves reads to everyone; a primary
+            // agreement or none leaves reads to the visibility check.
+            let serves_as_replica = self
+                .resolver
+                .fetch_own_agreement(bucket_id)
+                .await?
+                .is_some_and(|agreement| agreement.replica);
             Ok::<_, MembershipError>((access, serves_as_replica))
         }
         .await;
@@ -597,21 +588,14 @@ mod tests {
     #[tokio::test]
     async fn serves_as_replica_is_true_only_for_a_replica_agreement() {
         let base = || StaticMembershipResolver::private(vec![]);
-        assert!(base()
-            .with_serves_as_replica()
-            .fetch_serves_as_replica(1)
-            .await
-            .unwrap());
-        assert!(!base()
-            .with_max_bytes(10)
-            .fetch_serves_as_replica(1)
-            .await
-            .unwrap());
-        assert!(!base()
-            .without_agreement()
-            .fetch_serves_as_replica(1)
-            .await
-            .unwrap());
+        for (resolver, expected) in [
+            (base().with_serves_as_replica(), true),
+            (base().with_max_bytes(10), false),
+            (base().without_agreement(), false),
+        ] {
+            let entry = MembershipCache::new(resolver).lookup(1).await.unwrap();
+            assert_eq!(entry.serves_as_replica, expected);
+        }
     }
 
     #[test]
