@@ -9,7 +9,7 @@ packages/
   core/     @web3-storage/core     backend-free, browser-safe primitives:
                                    byte/hex utils, retrying httpFetch,
                                    provider request signing, CID verification
-  layer0/   @web3-storage/layer0   the chain binding: typed PAPI wrappers per
+  storage/  @web3-storage/storage  the chain binding: typed PAPI wrappers per
                                    pallet, signers, tx submission, watchValue
                                    waits, provider-node HTTP, ./revive
   storage-formats/ @web3-storage/storage-formats
@@ -21,12 +21,12 @@ packages/
                                    hosts the Web3Storage class
 ```
 
-Dependency direction is strictly `sdk → storage-formats → layer0 → core`;
+Dependency direction is strictly `sdk → storage-formats → storage → core`;
 nothing points back up.
 
 ## Entry points
 
-- `@web3-storage/sdk` — everything: flat layer-0 functions, the file
+- `@web3-storage/sdk` — everything: flat `@web3-storage/storage` functions, the file
   system, core primitives, and the `Web3Storage` class:
 
   ```ts

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 /**
- * S3 Client — s3-ui's thin adapter over the SDK's Web3Storage + layer0 pallet
+ * S3 Client — s3-ui's thin adapter over the SDK's Web3Storage + storage pallet
  * wrappers, mirroring drive-ui's DriveClient. Everything chain/HTTP-mechanical
  * (bucket/object ops, tx submission, provider resolution + caching, retry,
  * request signing, the negotiate→establish flow, MultiSignature encoding)
@@ -324,7 +324,7 @@ export class S3Client {
   /**
    * Open a checkpoint challenge against a provider. The chain submission
    * (finalized — the challenge id must survive to the response) goes through
-   * the SDK's `submitTx`; we extract `respond_by` ourselves because layer0's
+   * the SDK's `submitTx`; we extract `respond_by` ourselves because the storage package's
    * `challengeCheckpoint` wrapper returns only the id and forces chunk 0.
    */
   async challengeCheckpoint(

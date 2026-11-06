@@ -3,8 +3,8 @@
 /** The wasm object mapping end to end, over a fake provider (see tree.test.ts). */
 
 import { describe, expect, it } from "vitest";
-import { makeSigner } from "@web3-storage/layer0";
-import { FakeProvider } from "@web3-storage/layer0/testing";
+import { makeSigner } from "@web3-storage/storage";
+import { FakeProvider } from "@web3-storage/storage/testing";
 
 import { ObjectError, S3Bucket } from "./objects.js";
 import { providerBlobStore } from "./store.js";
