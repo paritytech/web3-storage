@@ -70,6 +70,15 @@ describe("FsTree (wasm)", () => {
     expect(await tree.list("/")).toEqual([]);
   });
 
+  it("rename moves a file and returns the new root", async () => {
+    const { tree } = setup();
+    await tree.putFile("/a/f.txt", te.encode("f"));
+    const { rootCid } = await tree.rename("/a/f.txt", "/b/g.txt");
+    expect(await tree.rootCid()).toBe(rootCid);
+    expect(td.decode((await tree.getFile("/b/g.txt")).bytes)).toBe("f");
+    await expect(tree.getFile("/a/f.txt")).rejects.toMatchObject({ code: "PathNotFound" });
+  });
+
   it("errors carry the Rust variant name as code", async () => {
     const { tree } = setup();
     await tree.mkdir("/d");

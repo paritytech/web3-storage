@@ -508,6 +508,55 @@ impl<S: BlobStore> Tree<S> {
             .await
     }
 
+    /// Move the file or directory at `from` to `to` in one commit, without
+    /// copying content. Creates missing parents of `to` and keeps the entry's
+    /// `mtime`. Fails with [`FsClientError::PathNotFound`] if `from` does not
+    /// exist, [`FsClientError::EntryExists`] if `to` exists, and
+    /// [`FsClientError::InvalidPath`] for `/` or a `to` inside `from`.
+    /// Returns the CID of the new root directory.
+    pub async fn rename(&self, from: &str, to: &str) -> Result<Cid> {
+        let from_names = parse_path(from)?;
+        let to_names = parse_path(to)?;
+        let (Some((from_name, from_parents)), Some((to_name, to_parents))) =
+            (from_names.split_last(), to_names.split_last())
+        else {
+            return Err(FsClientError::InvalidPath("/".to_string()));
+        };
+        if to_names.starts_with(&from_names) {
+            return Err(FsClientError::InvalidPath(to.to_string()));
+        }
+        let common = from_parents
+            .iter()
+            .zip(to_parents)
+            .take_while(|(from_parent, to_parent)| from_parent == to_parent)
+            .count();
+
+        let root = self.load_root().await?;
+        let mut chain = self.dir_chain(root.node, from_parents, false).await?;
+        let entry = chain[from_parents.len()]
+            .remove_child(from_name)
+            .ok_or_else(|| FsClientError::PathNotFound(from.to_string()))?;
+        let mut dirs = self.rewrite_below(&mut chain, from_parents, common, from)?;
+        let mut chain = self.extend_chain(chain, to_parents, true).await?;
+        let parent = &mut chain[to_parents.len()];
+        if parent.find_child(to_name).is_some() {
+            return Err(FsClientError::EntryExists(to.to_string()));
+        }
+        let moved = DirectoryEntry::try_new(
+            to_name,
+            entry.entry_type,
+            entry.cid,
+            entry.size,
+            entry.mtime,
+        )
+        .map_err(format_error(to))?;
+        parent.upsert_child(moved).map_err(format_error(to))?;
+        let (to_dirs, root) = self.rewrite(chain, to_parents, to)?;
+        dirs.extend(to_dirs);
+        self.write(&dirs.iter().map(Vec::as_slice).collect::<Vec<_>>(), &root)
+            .await
+    }
+
     /// The directories along `names`, starting with `root`. With
     /// `create_missing`, a missing directory is a new empty one; otherwise it
     /// fails with [`FsClientError::PathNotFound`].
@@ -517,8 +566,19 @@ impl<S: BlobStore> Tree<S> {
         names: &[&str],
         create_missing: bool,
     ) -> Result<Vec<DirectoryNode>> {
-        let mut chain = vec![root];
-        for depth in 0..names.len() {
+        self.extend_chain(vec![root], names, create_missing).await
+    }
+
+    /// Extend `chain`, the directories along the first `chain.len() - 1`
+    /// names, to the directories along all of `names` (see
+    /// [`Tree::dir_chain`]).
+    async fn extend_chain(
+        &self,
+        mut chain: Vec<DirectoryNode>,
+        names: &[&str],
+        create_missing: bool,
+    ) -> Result<Vec<DirectoryNode>> {
+        for depth in chain.len() - 1..names.len() {
             let path = join(&names[..=depth]);
             let next = match chain[depth].find_child(names[depth]) {
                 Some(entry) if entry.is_directory() => self.read_dir(&path, entry.cid).await?,
@@ -541,20 +601,36 @@ impl<S: BlobStore> Tree<S> {
         names: &[&str],
         path: &str,
     ) -> Result<(Vec<Vec<u8>>, Vec<u8>)> {
+        let below_root = self.rewrite_below(&mut chain, names, 0, path)?;
+        Ok((below_root, chain[0].to_scale_bytes()))
+    }
+
+    /// Encode the directories of `chain` (the directories along `names`,
+    /// starting with the root) deeper than `depth`, bottom-up, put each new
+    /// CID into the parent's entry, and remove them from `chain`. Returns
+    /// their encodings, bottom-up.
+    fn rewrite_below(
+        &self,
+        chain: &mut Vec<DirectoryNode>,
+        names: &[&str],
+        depth: usize,
+        path: &str,
+    ) -> Result<Vec<Vec<u8>>> {
         debug_assert_eq!(chain.len(), names.len() + 1);
         let mtime = (self.now)();
-        let mut below_root = Vec::with_capacity(names.len());
-        for (depth, name) in names.iter().enumerate().rev() {
-            let bytes = chain[depth + 1].to_scale_bytes();
+        let mut encoded = Vec::with_capacity(names.len() - depth);
+        for (index, name) in names.iter().enumerate().skip(depth).rev() {
+            let bytes = chain[index + 1].to_scale_bytes();
             let entry =
                 DirectoryEntry::try_new(name, EntryType::Directory, compute_cid(&bytes), 0, mtime)
                     .map_err(format_error(path))?;
-            chain[depth]
+            chain[index]
                 .upsert_child(entry)
                 .map_err(format_error(path))?;
-            below_root.push(bytes);
+            encoded.push(bytes);
         }
-        Ok((below_root, chain[0].to_scale_bytes()))
+        chain.truncate(depth + 1);
+        Ok(encoded)
     }
 
     /// Upload `blobs`, then `root`, and commit their CIDs in one request, in
@@ -708,6 +784,108 @@ mod tests {
             tree(&store).load_root().await,
             Err(FsClientError::InvalidMmrProof(BUCKET))
         ));
+    }
+
+    /// Every directory CID reachable from the root, the root included.
+    async fn directory_cids(t: &Tree<&MemoryStore>) -> HashSet<Cid> {
+        let root = t.load_root().await.unwrap();
+        let mut found = HashSet::from([root.cid.unwrap()]);
+        let mut pending = vec![root.node];
+        while let Some(dir) = pending.pop() {
+            for entry in dir.children.into_inner() {
+                if entry.is_directory() {
+                    found.insert(entry.cid);
+                    pending.push(t.read_dir("/", entry.cid).await.unwrap());
+                }
+            }
+        }
+        found
+    }
+
+    /// A rename moves the entry in one commit without uploading the content
+    /// again, and commits only directories the new tree references.
+    #[tokio::test]
+    async fn rename_moves_an_entry_in_one_commit() {
+        let store = MemoryStore::default();
+        let t = tree(&store);
+        let (_, put) = t
+            .put_file("/a/x/f.txt", b"hello", "text/plain", vec![])
+            .await
+            .unwrap();
+        t.mkdir("/a/y").await.unwrap();
+        let commits_before = store.commits().len();
+
+        let root = t.rename("/a/x/f.txt", "/a/y/z/g.txt").await.unwrap();
+
+        let commits = store.commits();
+        assert_eq!(commits.len(), commits_before + 1);
+        let rename_commit = commits.last().unwrap();
+        assert_eq!(rename_commit.last(), Some(&root));
+        assert!(!rename_commit.contains(&compute_cid(b"hello")));
+        let reachable = directory_cids(&t).await;
+        assert!(rename_commit.iter().all(|cid| reachable.contains(cid)));
+
+        let moved = t.stat("/a/y/z/g.txt").await.unwrap();
+        assert_eq!(moved.entry.cid, put.entry.cid);
+        assert_eq!(moved.mtime(), put.mtime());
+        assert_eq!(t.get_file("/a/y/z/g.txt").await.unwrap().data, b"hello");
+        assert!(matches!(
+            t.stat("/a/x/f.txt").await,
+            Err(FsClientError::PathNotFound(_))
+        ));
+        assert!(t.list("/a/x").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn rename_moves_a_directory_with_its_subtree() {
+        let store = MemoryStore::default();
+        let t = tree(&store);
+        t.put_file("/d/e/f", b"deep", "", vec![]).await.unwrap();
+        t.rename("/d", "/top/d2").await.unwrap();
+        assert_eq!(t.get_file("/top/d2/e/f").await.unwrap().data, b"deep");
+        assert_eq!(names(&t.list("/").await.unwrap()), ["top"]);
+
+        t.rename("/top/d2/e/f", "/top/d2/e/f2").await.unwrap();
+        assert_eq!(names(&t.list("/top/d2/e").await.unwrap()), ["f2"]);
+    }
+
+    #[tokio::test]
+    async fn rename_rejects_missing_existing_and_nested_paths() {
+        let store = MemoryStore::default();
+        let t = tree(&store);
+        t.put_file("/a/f", b"x", "", vec![]).await.unwrap();
+        t.put_file("/b", b"y", "", vec![]).await.unwrap();
+        assert!(matches!(
+            t.rename("/missing", "/c").await,
+            Err(FsClientError::PathNotFound(_))
+        ));
+        assert!(matches!(
+            t.rename("/a/f", "/b").await,
+            Err(FsClientError::EntryExists(_))
+        ));
+        assert!(matches!(
+            t.rename("/a", "/a/inner").await,
+            Err(FsClientError::InvalidPath(_))
+        ));
+        assert!(matches!(
+            t.rename("/", "/c").await,
+            Err(FsClientError::InvalidPath(_))
+        ));
+    }
+
+    /// The root CID a write returns is the bucket's new last leaf.
+    #[tokio::test]
+    async fn writes_return_the_new_root() {
+        let store = MemoryStore::default();
+        let t = tree(&store);
+        let (put, _) = t.put_file("/f", b"x", "", vec![]).await.unwrap();
+        assert_eq!(t.load_root().await.unwrap().cid, Some(put));
+        let mkdir = t.mkdir("/d").await.unwrap();
+        assert_eq!(t.load_root().await.unwrap().cid, Some(mkdir));
+        let rename = t.rename("/d", "/e").await.unwrap();
+        assert_eq!(t.load_root().await.unwrap().cid, Some(rename));
+        let delete = t.delete("/e", EmptyParents::Keep).await.unwrap();
+        assert_eq!(t.load_root().await.unwrap().cid, Some(delete));
     }
 
     fn names(entries: &[DirectoryEntry]) -> Vec<String> {

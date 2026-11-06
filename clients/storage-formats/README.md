@@ -35,7 +35,7 @@ tree.delete("/documents/hello.txt", EmptyParents::Keep).await?;
 
 let objects = Objects::new(Tree::new(&store, bucket_id));
 objects.put_object("photos/cat.jpg", &jpeg, Default::default()).await?;
-let listing = objects.list_objects_v2(Default::default()).await?;
+let listing = objects.list_objects(Default::default()).await?;
 ```
 
 `create_bucket` in `examples/demo.rs` shows how to create the bucket: negotiate signed terms

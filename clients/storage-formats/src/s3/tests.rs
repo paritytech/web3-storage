@@ -204,7 +204,7 @@ async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
         ] {
             for max_keys in [1, 2, 1000] {
                 let listed = objects
-                    .list_objects_v2(ListObjectsParams {
+                    .list_objects(ListObjectsParams {
                         prefix: Some(prefix.to_string()),
                         delimiter: Some("/".to_string()),
                         start_after: start_after.map(str::to_string),
@@ -232,7 +232,7 @@ async fn slash_delimited_list_matches_a_full_walk_with_fewer_reads() {
     // file: 8 of the 15 directories.
     store.reads.store(0, Ordering::Relaxed);
     let listed = objects
-        .list_objects_v2(ListObjectsParams {
+        .list_objects(ListObjectsParams {
             delimiter: Some("/".to_string()),
             ..Default::default()
         })

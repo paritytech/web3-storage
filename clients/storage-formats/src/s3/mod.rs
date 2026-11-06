@@ -29,7 +29,7 @@ use thiserror::Error;
 /// Maximum object key length in bytes.
 const MAX_OBJECT_KEY_LEN: usize = 1024;
 
-/// Default and maximum page size of [`Objects::list_objects_v2`].
+/// Default and maximum page size of [`Objects::list_objects`].
 const DEFAULT_MAX_KEYS: u32 = 1000;
 
 /// Errors of the object operations.
@@ -124,7 +124,7 @@ pub struct HeadObjectResponse {
     pub metadata: HashMap<String, String>,
 }
 
-/// Parameters for [`Objects::list_objects_v2`].
+/// Parameters for [`Objects::list_objects`].
 #[derive(Clone, Debug, Default)]
 pub struct ListObjectsParams {
     /// Return only keys that start with this prefix.
@@ -150,12 +150,9 @@ pub struct ObjectSummary {
     pub size: u64,
     /// Last modified time, in seconds since the Unix epoch.
     pub last_modified: u64,
-    /// Not set: listing reads no manifests. [`Objects::head_object`]
-    /// returns the ETag.
-    pub etag: Option<String>,
 }
 
-/// Response from [`Objects::list_objects_v2`].
+/// Response from [`Objects::list_objects`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListObjectsResponse {
     /// Matching objects, sorted by key bytes.
@@ -167,8 +164,6 @@ pub struct ListObjectsResponse {
     /// The last key or common prefix of this page when `is_truncated`; pass
     /// it as `start_after` for the next page.
     pub next_start_after: Option<String>,
-    /// Number of keys and common prefixes returned.
-    pub key_count: u32,
 }
 
 /// The objects of one bucket, stored in its file tree.
@@ -267,8 +262,8 @@ impl<S: BlobStore> Objects<S> {
     /// delimiter `/`, reads each of its subdirectories only until it finds an
     /// object, unless `start_after` is a key inside one of them. With any
     /// other delimiter or none, reads every directory under it. Reads no
-    /// manifests, so `etag` is not set.
-    pub async fn list_objects_v2(&self, params: ListObjectsParams) -> Result<ListObjectsResponse> {
+    /// manifests: [`Objects::head_object`] returns an object's ETag.
+    pub async fn list_objects(&self, params: ListObjectsParams) -> Result<ListObjectsResponse> {
         let prefix = params.prefix.unwrap_or_default();
         let delimiter = params.delimiter.as_deref().filter(|d| !d.is_empty());
         let start_after = params.start_after.as_deref();
@@ -349,13 +344,11 @@ impl<S: BlobStore> Objects<S> {
                     key: key.clone(),
                     size: entry.size,
                     last_modified: entry.mtime,
-                    etag: None,
                 }
             })
             .collect();
 
         Ok(ListObjectsResponse {
-            key_count: (contents.len() + page.common_prefixes.len()) as u32,
             contents,
             common_prefixes: page.common_prefixes,
             is_truncated: page.is_truncated,

@@ -94,6 +94,11 @@ export class FsTree {
     return withErrors(async () => (await this.wasm()).mkdir(path), fsError);
   }
 
+  /** Move the file or directory at `from` to `to` without copying content. */
+  rename(from: string, to: string): Promise<TreeWriteResult> {
+    return withErrors(async () => (await this.wasm()).rename(from, to), fsError);
+  }
+
   /** Delete the file or empty directory at `path`. */
   delete(path: string, options?: DeleteOptions): Promise<TreeWriteResult> {
     return withErrors(async () => (await this.wasm()).delete(path, options), fsError);

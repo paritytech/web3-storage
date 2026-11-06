@@ -69,7 +69,6 @@ export interface S3ObjectInfo {
   key: string;
   size: number;
   lastModified: number;
-  etag: string;
 }
 
 export interface UploadResult {
@@ -254,8 +253,7 @@ export class S3Client {
     return objects.map((o) => ({
       key: o.key,
       size: o.size,
-      lastModified: o.lastModified ?? 0,
-      etag: o.etag ?? "",
+      lastModified: o.lastModified,
     }));
   }
 
