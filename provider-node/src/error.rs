@@ -251,6 +251,23 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "reason": reason })),
                     },
                 ),
+                StorageError::LeavesNotHeld {
+                    start_seq,
+                    leaf_count,
+                    local_start_seq,
+                    local_end,
+                } => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "leaves_not_held".to_string(),
+                        details: Some(serde_json::json!({
+                            "start_seq": start_seq,
+                            "leaf_count": leaf_count,
+                            "local_start_seq": local_start_seq,
+                            "local_end": local_end,
+                        })),
+                    },
+                ),
                 StorageError::InvalidHash { expected, actual } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
@@ -580,6 +597,15 @@ mod tests {
             status_of(Error::from(
                 provider_storage::Error::CommitmentNotReproducible("x".into())
             )),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::LeavesNotHeld {
+                start_seq: 0,
+                leaf_count: 2,
+                local_start_seq: 1,
+                local_end: 2,
+            })),
             StatusCode::NOT_FOUND
         );
         assert_eq!(

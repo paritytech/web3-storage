@@ -543,22 +543,21 @@ impl DiskStorage {
         }
 
         // Rebase the commitment window onto the local leaf vector, which
-        // covers [bucket.start_seq, bucket.start_seq + leaves.len()).
+        // covers [bucket.start_seq, bucket.start_seq + leaves.len()). Leaves
+        // pruned below it or past its end are not held here.
+        let not_held = || Error::LeavesNotHeld {
+            start_seq: commitment.start_seq,
+            leaf_count: commitment.leaf_count,
+            local_start_seq: bucket.start_seq,
+            local_end: bucket.start_seq.saturating_add(bucket.leaf_count()),
+        };
         if commitment.start_seq < bucket.start_seq {
-            return Err(Error::CommitmentNotReproducible(format!(
-                "leaves from seq {} pruned (local start_seq {})",
-                commitment.start_seq, bucket.start_seq
-            )));
+            return Err(not_held());
         }
         let offset = (commitment.start_seq - bucket.start_seq) as usize;
         let end = offset.saturating_add(commitment.leaf_count as usize);
         if end > bucket.leaves.len() {
-            return Err(Error::CommitmentNotReproducible(format!(
-                "commitment range {}+{} exceeds local leaves (local end {})",
-                commitment.start_seq,
-                commitment.leaf_count,
-                bucket.start_seq.saturating_add(bucket.leaf_count())
-            )));
+            return Err(not_held());
         }
 
         let (root, proof) = leaf_proof(bucket_id, &bucket.leaves[offset..end], leaf_index)?;
@@ -1458,8 +1457,8 @@ mod tests {
         storage.delete_before(1, 2).unwrap();
 
         // The cited commitment starts below the local start_seq: its leaves
-        // are gone (until a retention stash exists), so this must error.
-        assert!(storage
+        // are gone (until a retention stash exists).
+        let err = storage
             .get_mmr_proof_for_commitment(
                 1,
                 &storage_primitives::Commitment {
@@ -1469,7 +1468,44 @@ mod tests {
                 },
                 0,
             )
-            .is_err());
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::LeavesNotHeld {
+                    start_seq: 0,
+                    leaf_count: 2,
+                    local_start_seq: 2,
+                    local_end: 2,
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn proof_for_commitment_past_the_local_end_is_leaves_not_held() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 1);
+
+        // Cites two leaves; this store only holds one (e.g. a replica that
+        // has not synced the second commit yet).
+        let err = storage
+            .get_mmr_proof_for_commitment(
+                1,
+                &storage_primitives::Commitment {
+                    mmr_root: H256::zero(),
+                    start_seq: 0,
+                    leaf_count: 2,
+                },
+                0,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::LeavesNotHeld { local_end: 1, .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]

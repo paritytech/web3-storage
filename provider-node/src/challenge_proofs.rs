@@ -31,9 +31,9 @@ impl ChallengeProofSource for StorageProofSource {
         self.0
             .get_mmr_proof_for_commitment(bucket_id, commitment, leaf_index)
             .map_err(|e| match e {
-                Error::BucketNotFound(_) | Error::LeafNotFound { .. } => {
-                    ChallengeError::ProofDataMissing { target }
-                }
+                Error::BucketNotFound(_)
+                | Error::LeafNotFound { .. }
+                | Error::LeavesNotHeld { .. } => ChallengeError::ProofDataMissing { target },
                 e => ChallengeError::Storage {
                     reason: e.to_string(),
                 },
@@ -68,7 +68,7 @@ mod tests {
     use provider_storage::{temp_rocksdb, ChunkTreeNode};
     use storage_primitives::hash_leaf;
 
-    /// A commitment for tests that fail before the commitment is read.
+    /// A one-leaf commitment, for tests that never reach a real proof.
     fn any_commitment() -> storage_primitives::Commitment {
         storage_primitives::Commitment {
             mmr_root: sp_core::H256::zero(),
@@ -189,8 +189,26 @@ mod tests {
         }
     }
 
-    /// A failure that is not absence - here, a commitment the backend
-    /// cannot reproduce - is a storage failure, not missing proof data.
+    /// A commitment citing leaves this store does not hold (pruned, or not
+    /// yet synced) can never be answered: provably missing, not retryable.
+    #[test]
+    fn leaves_not_held_are_reported_as_provably_missing() {
+        let (storage, _dir) = temp_rocksdb();
+        storage.init_bucket(1, 1024 * 1024).unwrap();
+        let source = StorageProofSource::new(storage);
+
+        let err = source
+            .get_mmr_proof_for_commitment(1, &any_commitment(), 0)
+            .unwrap_err();
+
+        assert!(
+            matches!(err, ChallengeError::ProofDataMissing { .. }),
+            "expected ProofDataMissing, got {err:?}"
+        );
+    }
+
+    /// A failure that is not absence - here, a leaf index outside the cited
+    /// commitment - is a storage failure, not missing proof data.
     #[test]
     fn other_storage_errors_are_not_reported_as_missing_data() {
         let (storage, _dir) = temp_rocksdb();
@@ -198,7 +216,7 @@ mod tests {
         let source = StorageProofSource::new(storage);
 
         let err = source
-            .get_mmr_proof_for_commitment(1, &any_commitment(), 0)
+            .get_mmr_proof_for_commitment(1, &any_commitment(), 5)
             .unwrap_err();
 
         assert!(!err.risks_slashing());

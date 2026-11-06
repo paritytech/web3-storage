@@ -17,6 +17,18 @@ pub enum Error {
     #[error("Commitment not reproducible from local leaves: {0}")]
     CommitmentNotReproducible(String),
 
+    /// A commitment cites leaves this store does not hold: they were pruned
+    /// below the local `start_seq`, or lie past the local end.
+    #[error(
+        "Leaves {start_seq}+{leaf_count} not held locally (local {local_start_seq}..{local_end})"
+    )]
+    LeavesNotHeld {
+        start_seq: u64,
+        leaf_count: u64,
+        local_start_seq: u64,
+        local_end: u64,
+    },
+
     #[error("Children missing: {0:?}")]
     ChildrenMissing(Vec<H256>),
 
