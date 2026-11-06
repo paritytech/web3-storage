@@ -285,20 +285,16 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "data_root": root })),
                     },
                 ),
+                // Backend faults, including a stored record that no longer
+                // decodes: the request was fine, the provider's store is not.
                 e @ (StorageError::RocksDb(_)
                 | StorageError::ColumnFamilyMissing(_)
                 | StorageError::IncompatibleFormat(_)
-                | StorageError::Mmr(_)) => (
+                | StorageError::Mmr(_)
+                | StorageError::Serialization(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ErrorResponse {
                         error: "internal_error".to_string(),
-                        details: Some(serde_json::json!({ "message": e.to_string() })),
-                    },
-                ),
-                StorageError::Serialization(e) => (
-                    StatusCode::BAD_REQUEST,
-                    ErrorResponse {
-                        error: "serialization_error".to_string(),
                         details: Some(serde_json::json!({ "message": e.to_string() })),
                     },
                 ),
@@ -623,6 +619,13 @@ mod tests {
         assert_eq!(
             status_of(Error::from(provider_storage::Error::BucketBusy(1))),
             StatusCode::SERVICE_UNAVAILABLE
+        );
+        // A stored record that no longer decodes is the provider's fault.
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::Serialization(
+                codec::Error::from("corrupt record")
+            ))),
+            StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::ColumnFamilyMissing(
