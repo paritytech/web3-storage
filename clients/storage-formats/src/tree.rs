@@ -130,9 +130,9 @@ impl<T: BlobStore + ?Sized> BlobStore for &T {
 
 /// The error for a write at `path` that a format rule rejects.
 fn format_error(path: &str) -> impl Fn(FileSystemError) -> FsClientError + '_ {
-    move |source| FsClientError::Format {
+    move |rule| FsClientError::Format {
         path: path.to_string(),
-        source,
+        rule,
     }
 }
 
@@ -1034,7 +1034,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             err,
-            FsClientError::Format { ref path, source: FileSystemError::MetadataTooLarge }
+            FsClientError::Format { ref path, rule: FileSystemError::MetadataTooLarge }
                 if path == "/a.txt"
         ));
         assert!(store.commits().is_empty());

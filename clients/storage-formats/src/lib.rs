@@ -80,14 +80,14 @@ pub enum FsClientError {
     DirectoryNotEmpty(String),
 
     /// A rule of the format rejected the write: the directory is full, the
-    /// file is too large, or the metadata is over its bounds. `source` says
+    /// file is too large, or the metadata is over its bounds. `rule` says
     /// which.
-    #[error("{path}: {source}")]
+    #[error("{path}: {rule}")]
     Format {
         /// Path of the entry being written.
         path: String,
         /// The rule that failed.
-        source: FileSystemError,
+        rule: FileSystemError,
     },
 
     /// The bucket's last MMR leaf is not a root directory of this drive.
