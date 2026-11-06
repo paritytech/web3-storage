@@ -57,6 +57,7 @@ cargo run -p storage-cli -- \
 | `--parallel-uploads`         | off (sequential)   | Run each user's uploads in parallel.                       |
 | `--max-concurrency <N>`      | `0` (unbounded)    | Cap total in-flight uploads across all users.              |
 | `--prepare-buckets <N>`      | `0` (off)          | Open `N` fresh buckets with a primary agreement to `--provider` before the run. |
+| `--bucket-source <MODE>`     | `create` if preparing, else `discover` | `discover`: existing buckets only. `create`: prepared buckets only. `auto`: existing first, prepare the shortfall up to `--prepare-buckets`. |
 
 Total uploads is `users × uploads-per-user`. The two `--parallel-*` flags are
 independent axes: `--parallel-users` alone runs each user's uploads in sequence
@@ -65,14 +66,14 @@ together maximise concurrency (bounded by `--max-concurrency` if set).
 
 **Behavior**
 
-1. Derives the account from `--suri`/`--keyfile`. Without `--prepare-buckets`,
+1. Derives the account from `--suri`/`--keyfile`. Unless `--bucket-source create`,
    reads its buckets from chain (`MemberBuckets[account]`) and keeps those with a
    `StorageAgreements[bucket][provider]` entry for the given `--provider`.
 2. With `--prepare-buckets N`, negotiates terms with the provider node
    (`POST /negotiate`) and redeems them on-chain (`create_bucket_with_primary`)
    once per bucket, 100 anchor blocks at 1 per byte-block with a quota of the
    per-bucket load plus 10%, the same path as the SDK's `complete_workflow`
-   example, and targets only those buckets.
+   example.
    Preparation runs before the measurement clock starts and never appears in the
    throughput or latency numbers. A preparation failure exits non-zero with no
    metrics summary.
@@ -80,8 +81,8 @@ together maximise concurrency (bounded by `--max-concurrency` if set).
 4. Runs the configured load over the provider's HTTP API, assigning each upload a
    target bucket round-robin so writes spread evenly across the selected buckets.
 
-`--max-buckets-to-write` is applied before preparation: with `--prepare-buckets`
-it must be at least that count, so no bucket is opened and then never written.
+`--max-buckets-to-write` is applied before preparation: in `create` mode it must
+be at least `--prepare-buckets`, so no bucket is opened and then never written.
 
 ### Output
 
@@ -117,8 +118,8 @@ summary.
 
 The provider must be registered on-chain and its node running (`just start-chain`,
 `just start-provider`, `cargo run -p storage-client --example register_provider`).
-Buckets and agreements either exist already or the run opens them with
-`--prepare-buckets N`. The signing account pays for the prepared
+Buckets and agreements either exist already (default `discover` mode) or the run
+opens them with `--prepare-buckets N`. The signing account pays for the prepared
 agreements at the provider's listed price.
 
 ## Limitations
