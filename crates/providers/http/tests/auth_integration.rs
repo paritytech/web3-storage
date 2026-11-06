@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Integration tests for auth-enabled HTTP endpoints.
 //!
@@ -14,13 +14,13 @@ use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use common::{current_timestamp, make_auth_header, test_member_pair};
 use provider_auth::{Authenticator, BucketAccess, MembershipResolver, StaticMembershipResolver};
+use provider_http::{ProviderDeps, ProviderState};
 use provider_storage::temp_rocksdb;
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
 use storage_primitives::{Role, Visibility};
-use storage_provider_node::{ProviderDeps, ProviderState};
 
 type AccountId32 = sp_core::crypto::AccountId32;
 

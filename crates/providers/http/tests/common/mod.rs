@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
-//! Shared test helpers for the provider-node integration suites.
+//! Shared test helpers for the provider-http integration suites.
 //!
 //! Tests use [`SignedClient`] to sign every request as `//Alice`.
 
@@ -9,17 +9,20 @@
 #![allow(dead_code)]
 
 use provider_auth::{build_auth_header, Authenticator, StaticMembershipResolver};
+use provider_http::{create_router, ProviderDeps, ProviderState};
+pub use provider_storage::StorageBackendSpec;
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use storage_primitives::Role;
-pub use storage_provider_node::cli::StorageBackendKind;
-use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tempfile::TempDir;
 
 type AccountId32 = sp_core::crypto::AccountId32;
+
+/// Builds the storage backend spec for a given data directory.
+pub type BackendSpec = fn(std::path::PathBuf) -> StorageBackendSpec;
 
 /// Seed the provider signs with when a suite wants a signing identity. Same
 /// key as the client's: the suites only need the signatures to verify, not the
@@ -36,7 +39,7 @@ pub struct TestServer {
 impl TestServer {
     /// `state` picks the identity: seeded (signing) or provider-id only.
     pub async fn start(
-        backend: StorageBackendKind,
+        backend: BackendSpec,
         state: impl FnOnce(ProviderDeps) -> ProviderState,
     ) -> Self {
         let (dir, deps) = Self::deps(backend);
@@ -49,20 +52,21 @@ impl TestServer {
     /// registration unpublished — covers the window before its first refresh,
     /// or a provider the chain does not know about.
     pub async fn start_unregistered(
-        backend: StorageBackendKind,
+        backend: BackendSpec,
         state: impl FnOnce(ProviderDeps) -> ProviderState,
     ) -> Self {
         let (dir, deps) = Self::deps(backend);
         Self::from_state(state(deps), dir).await
     }
 
-    fn deps(backend: StorageBackendKind) -> (TempDir, ProviderDeps) {
+    /// `backend` builds the spec over a fresh temp dir, since every test
+    /// server needs its own throwaway location.
+    fn deps(backend: BackendSpec) -> (TempDir, ProviderDeps) {
         let dir = tempfile::Builder::new()
             .prefix(provider_storage::TEMP_DIR_PREFIX)
             .tempdir()
             .expect("temp dir");
-        let storage = backend
-            .spec(dir.path().to_path_buf())
+        let storage = backend(dir.path().to_path_buf())
             .build()
             .expect("backend opens");
         let deps = ProviderDeps {
@@ -142,12 +146,15 @@ pub fn publish_matching_registration(state: &ProviderState) {
 macro_rules! backend_tests {
     ($(async fn $name:ident($backend:ident) $body:block)*) => {
         $(
-            async fn $name($backend: common::StorageBackendKind) $body
+            async fn $name($backend: common::BackendSpec) $body
 
             mod $name {
                 #[tokio::test]
                 async fn rocksdb() {
-                    super::$name(super::common::StorageBackendKind::RocksDb).await
+                    super::$name(|path| {
+                        super::common::StorageBackendSpec::RocksDb { path }
+                    })
+                    .await
                 }
             }
         )*

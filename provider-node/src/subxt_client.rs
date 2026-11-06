@@ -14,7 +14,6 @@ use crate::chain_connection::{self, ChainWatch};
 use crate::challenge_responder::{
     ChallengeChainClient, ChallengeError, ChallengeResponse, DetectedChallenge,
 };
-use crate::Error;
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
 use sp_core::crypto::Ss58Codec;
@@ -101,7 +100,7 @@ pub struct SubxtChainClient {
 /// Turning the configured seed into a keypair is all [`SubxtChainClient::new`]
 /// can fail at, and it happens once at startup: `command.rs` logs it and runs
 /// without a chain client. It never reaches a request, so it is deliberately
-/// not one of the HTTP [`Error`] variants.
+/// not an HTTP error.
 #[derive(Debug, thiserror::Error)]
 pub enum SignerSetupError {
     /// The `--keyfile` contents are not a valid seed URI.
@@ -135,8 +134,10 @@ impl SubxtChainClient {
 
     /// The current live connection, or an error while the chain has never
     /// been reached yet.
-    fn api(&self) -> Result<subxt::OnlineClient<subxt::PolkadotConfig>, Error> {
-        chain_connection::current_api(&self.chain_rx).map_err(Into::into)
+    fn api(
+        &self,
+    ) -> Result<subxt::OnlineClient<subxt::PolkadotConfig>, chain_connection::NotConnected> {
+        chain_connection::current_api(&self.chain_rx)
     }
 
     /// The block handle every chain read starts from: the live connection,
