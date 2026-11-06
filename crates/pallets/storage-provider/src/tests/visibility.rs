@@ -7,10 +7,9 @@
 use super::challenge::{advance_snapshot_root, setup_with_snapshot};
 use super::*;
 use crate::ChallengeResponse;
-use codec::Encode;
-use sp_core::{Pair, H256};
+use sp_core::H256;
 use storage_primitives::{
-    ChallengeId, ChunkLocation, Commitment, CommitmentPayload, ReplicaSyncRecord, Role, Visibility,
+    ChallengeId, ChunkLocation, Commitment, ReplicaSyncRecord, Role, Visibility,
 };
 
 const CHUNK: ChunkLocation = ChunkLocation {
@@ -147,14 +146,12 @@ fn private_bucket_gates_offchain_challenges() {
 
         // A genuine provider-signed off-chain commitment: the gate must fire
         // even when everything else about the challenge is valid.
-        let pair = provider_signer(2);
         let commitment = Commitment {
             mmr_root: H256::repeat_byte(0xAB),
             start_seq: 0,
             leaf_count: 10,
         };
-        let payload = CommitmentPayload::new(bucket_id, commitment);
-        let sig = sp_runtime::MultiSignature::Sr25519(pair.sign(&payload.encode()));
+        let sig = sign_commitment_by(2, bucket_id, commitment);
 
         assert_noop!(
             StorageProvider::challenge_offchain(
@@ -194,6 +191,8 @@ fn add_synced_replica(bucket_id: u64, provider: u64, owner: u64) {
             price_per_byte: 0,
             expires_at: System::block_number() + 200,
             extensions_blocked: false,
+            depositor: owner,
+            deposit: agreement_deposit(owner),
             role: storage_primitives::ProviderRole::Replica {
                 sync_balance: 0,
                 sync_price: 0,

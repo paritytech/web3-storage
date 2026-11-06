@@ -20,10 +20,10 @@ pub enum Error {
     #[error("Invalid child count: expected 2, got {0}")]
     InvalidChildCount(usize),
 
-    /// An internal node arrived with `data` that is not the left child hash
-    /// followed by the right child hash. Send exactly those 64 bytes.
-    #[error("Internal node data is not the concatenation of its children")]
-    InvalidInternalNodeData,
+    /// A node arrived with both `data` and `children`, or with neither. Send
+    /// `data` for a chunk or `children` for an internal node.
+    #[error("A node is either data (a chunk) or children (an internal node)")]
+    InvalidNode,
 
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
@@ -39,6 +39,11 @@ pub enum Error {
     /// of at most that size.
     #[error("Chunk too large: {size} bytes, max {max}", max = storage_primitives::DEFAULT_CHUNK_SIZE)]
     ChunkTooLarge { size: u64 },
+
+    /// `chunk_index` is at or beyond the chunk count of the tree under the
+    /// data root: the leaf has no such chunk.
+    #[error("Chunk index {chunk_index} out of range: the tree has {chunk_count} chunks")]
+    ChunkIndexOutOfRange { chunk_index: u64, chunk_count: u64 },
 
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
@@ -69,6 +74,10 @@ pub enum Error {
 
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    /// Building the bucket MMR or a proof from it failed.
+    #[error("MMR error: {0}")]
+    Mmr(#[from] storage_primitives::mmr::Error),
 
     /// The RocksDB engine itself failed. Carries the engine's error as
     /// `source()` so the cause survives instead of being flattened into a

@@ -5,7 +5,7 @@
 //! Every internal node is `hash_children(left, right)`. An odd last node of a
 //! level moves up to the next level unchanged.
 
-use crate::{hash_children, MerkleProof, DEFAULT_CHUNK_SIZE};
+use crate::hash_children;
 use alloc::vec::Vec;
 use core::ops::Range;
 use sp_core::H256;
@@ -19,14 +19,6 @@ pub struct MerkleNode {
     pub left: H256,
     /// Right child hash.
     pub right: H256,
-}
-
-/// Number of chunks (tree leaves) of data with `data_size` bytes.
-///
-/// Every chunk is `DEFAULT_CHUNK_SIZE` bytes except the last, and empty data is
-/// one empty chunk.
-pub fn chunk_count(data_size: u64) -> u64 {
-    data_size.div_ceil(DEFAULT_CHUNK_SIZE as u64).max(1)
 }
 
 /// Every level of the tree, from the leaves (first) to the root (last, one
@@ -87,7 +79,10 @@ pub fn merkle_tree(leaf_hashes: &[H256]) -> (H256, Vec<MerkleNode>) {
 
 /// Merkle proofs for the leaves at `indices` in the tree over `leaf_hashes`,
 /// in index order. Leaves out indices past the last leaf.
-pub fn build_merkle_proofs(leaf_hashes: &[H256], indices: Range<usize>) -> Vec<MerkleProof> {
+///
+/// A proof is the sibling hashes from the leaf up to the root. A verifier
+/// takes the side of each sibling from the leaf index and the leaf count.
+pub fn build_merkle_proofs(leaf_hashes: &[H256], indices: Range<usize>) -> Vec<Vec<H256>> {
     let end = indices.end.min(leaf_hashes.len());
     let start = indices.start.min(end);
     if start == end {
@@ -101,27 +96,25 @@ pub fn build_merkle_proofs(leaf_hashes: &[H256], indices: Range<usize>) -> Vec<M
 }
 
 /// Proof for the leaf at `index`, from the `levels` of a tree with that leaf.
-fn proof_from_levels(levels: &[Vec<H256>], index: usize) -> MerkleProof {
+fn proof_from_levels(levels: &[Vec<H256>], index: usize) -> Vec<H256> {
     let mut siblings = Vec::new();
-    let mut path = Vec::new();
     let mut idx = index;
 
     // The last level is the root, which has no sibling.
     for level in &levels[..levels.len() - 1] {
         // An odd last node moves up without a sibling.
         if idx != level.len() - 1 || level.len().is_multiple_of(2) {
-            let is_right = idx % 2 == 1;
             siblings.push(level[idx ^ 1]);
-            path.push(is_right);
         }
         idx /= 2;
     }
 
-    MerkleProof { siblings, path }
+    siblings
 }
 
-/// `true` if `proof` links `leaf_hash` at leaf `index` of a tree with
-/// `leaf_count` leaves to `root`.
+/// `true` if the sibling hashes in `proof` link `leaf_hash` at leaf `index`
+/// of a tree with `leaf_count` leaves to `root`. `index` and `leaf_count`
+/// decide whether each sibling is the left or the right child.
 ///
 /// `leaf_count` must come from authenticated data, such as a proven
 /// `data_size`. With a count chosen by the prover, a proof for another index
@@ -130,28 +123,25 @@ pub fn verify_merkle_proof(
     leaf_hash: H256,
     index: u64,
     leaf_count: u64,
-    proof: &MerkleProof,
+    proof: &[H256],
     root: &H256,
 ) -> bool {
-    if proof.siblings.len() != proof.path.len() || index >= leaf_count {
+    if index >= leaf_count {
         return false;
     }
 
     let mut current = leaf_hash;
     let mut current_index = index;
     let mut width = leaf_count;
-    let mut steps = proof.siblings.iter().zip(proof.path.iter());
+    let mut steps = proof.iter();
 
     while width > 1 {
         // An odd last node moves up without a sibling.
         if current_index != width - 1 || width.is_multiple_of(2) {
-            let Some((sibling, is_right)) = steps.next() else {
+            let Some(sibling) = steps.next() else {
                 return false;
             };
-            if *is_right != (current_index % 2 == 1) {
-                return false;
-            }
-            current = if *is_right {
+            current = if current_index % 2 == 1 {
                 hash_children(*sibling, current)
             } else {
                 hash_children(current, *sibling)
@@ -173,7 +163,7 @@ mod tests {
         (1..=n).map(|i| H256::from_low_u64_be(i as u64)).collect()
     }
 
-    fn proof_for(l: &[H256], index: usize) -> MerkleProof {
+    fn proof_for(l: &[H256], index: usize) -> Vec<H256> {
         let mut proofs = build_merkle_proofs(l, index..index + 1);
         assert_eq!(proofs.len(), 1, "index {index}");
         proofs.remove(0)
@@ -287,7 +277,7 @@ mod tests {
     #[test]
     fn proof_of_a_single_leaf_is_empty() {
         let proof = proof_for(&leaves(1), 0);
-        assert!(proof.siblings.is_empty() && proof.path.is_empty());
+        assert!(proof.is_empty());
     }
 
     #[test]
@@ -295,8 +285,7 @@ mod tests {
         // Leaf 2 of 3 moves up one level, so its only sibling is H(l0, l1).
         let l = leaves(3);
         let proof = proof_for(&l, 2);
-        assert_eq!(proof.siblings, [hash_children(l[0], l[1])]);
-        assert_eq!(proof.path, [true]);
+        assert_eq!(proof, [hash_children(l[0], l[1])]);
     }
 
     #[test]
@@ -322,16 +311,12 @@ mod tests {
     #[test]
     fn verify_accepts_an_empty_proof_only_for_leaf_equal_root() {
         let leaf = leaves(1)[0];
-        let empty = MerkleProof {
-            siblings: Vec::new(),
-            path: Vec::new(),
-        };
-        assert!(verify_merkle_proof(leaf, 0, 1, &empty, &leaf));
+        assert!(verify_merkle_proof(leaf, 0, 1, &[], &leaf));
         assert!(!verify_merkle_proof(
             leaf,
             0,
             1,
-            &empty,
+            &[],
             &H256::from_low_u64_be(9)
         ));
     }
@@ -351,7 +336,7 @@ mod tests {
             &proof,
             &H256::from_low_u64_be(9)
         ));
-        // Index 3 has a different parity at the first level than the proof's path.
+        // Index 3 puts the first sibling on the other side.
         assert!(!verify_merkle_proof(l[2], 3, 5, &proof, &root));
     }
 
@@ -362,17 +347,7 @@ mod tests {
         let proof = proof_for(&l, 2);
         assert!(!verify_merkle_proof(l[2], 3, 3, &proof, &root));
         assert!(!verify_merkle_proof(l[2], 0, 0, &proof, &root));
-        let empty = MerkleProof {
-            siblings: Vec::new(),
-            path: Vec::new(),
-        };
-        assert!(!verify_merkle_proof(
-            H256::zero(),
-            0,
-            0,
-            &empty,
-            &H256::zero()
-        ));
+        assert!(!verify_merkle_proof(H256::zero(), 0, 0, &[], &H256::zero()));
     }
 
     #[test]
@@ -381,7 +356,7 @@ mod tests {
         let root = merkle_root(&l);
         let proof = proof_for(&l, 2);
         assert!(verify_merkle_proof(l[2], 2, 3, &proof, &root));
-        // As index 1 the path bit is wrong.
+        // As index 1 the proof is one sibling short.
         assert!(!verify_merkle_proof(l[2], 1, 3, &proof, &root));
         // With a count of 2, index 2 is outside the tree.
         assert!(!verify_merkle_proof(l[2], 2, 2, &proof, &root));
@@ -390,43 +365,16 @@ mod tests {
     }
 
     #[test]
-    fn verify_rejects_siblings_and_path_of_different_length() {
-        let l = leaves(5);
-        let root = merkle_root(&l);
-
-        let mut short_path = proof_for(&l, 2);
-        short_path.path.pop();
-        assert!(!verify_merkle_proof(l[2], 2, 5, &short_path, &root));
-
-        let mut short_siblings = proof_for(&l, 2);
-        short_siblings.siblings.pop();
-        assert!(!verify_merkle_proof(l[2], 2, 5, &short_siblings, &root));
-    }
-
-    #[test]
     fn verify_rejects_missing_and_extra_siblings() {
         let l = leaves(5);
         let root = merkle_root(&l);
 
         let mut missing = proof_for(&l, 2);
-        missing.siblings.pop();
-        missing.path.pop();
+        missing.pop();
         assert!(!verify_merkle_proof(l[2], 2, 5, &missing, &root));
 
         let mut extra = proof_for(&l, 2);
-        extra.siblings.push(H256::from_low_u64_be(9));
-        extra.path.push(false);
+        extra.push(H256::from_low_u64_be(9));
         assert!(!verify_merkle_proof(l[2], 2, 5, &extra, &root));
-    }
-
-    #[test]
-    fn chunk_count_rounds_up_and_has_a_minimum_of_one() {
-        let chunk = DEFAULT_CHUNK_SIZE as u64;
-        assert_eq!(chunk_count(0), 1);
-        assert_eq!(chunk_count(1), 1);
-        assert_eq!(chunk_count(chunk), 1);
-        assert_eq!(chunk_count(chunk + 1), 2);
-        assert_eq!(chunk_count(2 * chunk), 2);
-        assert_eq!(chunk_count(2 * chunk + 10), 3);
     }
 }

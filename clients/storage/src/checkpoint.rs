@@ -33,7 +33,7 @@ use crate::checkpoint_persistence::{
     CheckpointPersistence, PersistedCheckpointState, PersistenceConfig, StateBuilder,
 };
 use crate::convert;
-use crate::substrate::{extrinsics, SubstrateClient};
+use crate::substrate::{extrinsics, fetch_bucket, SubstrateClient};
 use crate::{ClientError, CommitmentResponse};
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -860,14 +860,9 @@ impl CheckpointManager {
     ) -> Result<Vec<ProviderInfo>, ClientError> {
         let at = self.chain_client.at_current_block().await?;
 
-        let bucket = at
-            .storage()
-            .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
-            .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
+        let bucket = fetch_bucket(&at, bucket_id)
+            .await?
+            .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?;
 
         let provider_accounts: Vec<AccountId32> = convert::unbounded(bucket.primary_providers)
             .iter()
@@ -1140,18 +1135,9 @@ impl CheckpointManager {
     where
         C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
     {
-        let bucket = at
-            .storage()
-            .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?;
-
-        let Some(bucket) = bucket else {
+        let Some(bucket) = fetch_bucket(at, bucket_id).await? else {
             return Ok(None);
         };
-        let bucket = bucket
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
 
         Ok(bucket
             .snapshot
@@ -1207,10 +1193,16 @@ impl CheckpointManager {
         loop {
             let url = format!("{}/commitment?bucket_id={}", provider.endpoint, bucket_id);
 
-            let result = tokio::time::timeout(self.config.provider_timeout, async {
-                self.http_client.get(&url).send().await
-            })
-            .await;
+            // `GET /commitment` is Reader-gated on private buckets; sign when
+            // a signer is configured (public buckets serve it anonymously, so
+            // a signer-less manager still works there). Rebuilt per attempt so
+            // the timestamp stays inside the provider's skew window.
+            let mut req = self.http_client.get(&url);
+            if let Ok(signer) = self.chain_client.signer() {
+                req = req.header("Authorization", signer.auth_header("GET", bucket_id));
+            }
+
+            let result = tokio::time::timeout(self.config.provider_timeout, req.send()).await;
 
             match result {
                 Ok(Ok(response)) => {
@@ -1344,9 +1336,6 @@ impl CheckpointManager {
         &self,
         collection: &CommitmentCollection,
     ) -> Result<H256, ClientError> {
-        let api = self.chain_client.api();
-        let signer = self.chain_client.signer()?;
-
         let tx = extrinsics::checkpoint(
             collection.bucket_id,
             Commitment {
@@ -1358,19 +1347,7 @@ impl CheckpointManager {
         );
 
         // Submit and wait for finalization
-        let tx_progress = api
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit: {e}")))?;
-
-        let _events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        self.chain_client.submit(&tx).await?;
 
         // Return a success hash (we can't easily get block hash from events in this subxt version)
         Ok(collection.mmr_root)

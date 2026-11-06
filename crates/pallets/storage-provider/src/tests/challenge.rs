@@ -19,7 +19,7 @@ pub(super) fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x01], // bit 0 set = provider at index 0 signed
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1], // bit 0 set = provider at index 0 signed
             });
         }
     });
@@ -42,7 +42,7 @@ pub(super) fn advance_snapshot_root(bucket_id: u64) {
                 leaf_count: 10,
             },
             checkpoint_block: 1,
-            primary_signers: vec![0x01],
+            primary_signers: bitvec::bitvec![u8, Lsb0; 1],
         });
     });
 }
@@ -168,7 +168,7 @@ fn challenge_checkpoint_fails_provider_not_signed() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x01], // only bit 0 set
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1, 0], // only bit 0 set
                 });
             }
         });
@@ -306,7 +306,7 @@ fn respond_to_challenge_superseded_works() {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x01],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1],
             });
         });
 
@@ -357,6 +357,62 @@ fn challenge_slashes_provider_on_timeout() {
         let provider = Providers::<Test>::get(2).unwrap();
         assert!(provider.stake < provider_stake_before);
         assert_eq!(provider.stats.challenges_failed, 1);
+    });
+}
+
+/// The fee split measures the response time from the stored creation block,
+/// so changing `ChallengeTimeout` while a challenge is open does not change
+/// its split.
+#[test]
+fn cost_split_ignores_challenge_timeout_change() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        assert_ok!(StorageProvider::set_member(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            Role::Reader,
+        ));
+        let challenger_balance_before = Balances::free_balance(3);
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        ));
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+        assert_eq!(Challenges::<Test>::get(101, 0).unwrap().created_at, 1);
+
+        // Respond five blocks later: response time 5, challenger pays 80%.
+        // Deriving the creation block as `deadline - ChallengeTimeout` would
+        // give 101 - 50 = 51, a response time of 0 and a 90% split.
+        crate::mock::ChallengeTimeout::set(50);
+        run_to_block(6);
+        advance_snapshot_root(bucket_id);
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            challenge_id,
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        assert_eq!(Balances::free_balance(3), challenger_balance_before - 80);
+        assert!(frame_system::Pallet::<Test>::events()
+            .iter()
+            .any(|r| matches!(
+                r.event,
+                RuntimeEvent::StorageProvider(crate::Event::ChallengeDefended {
+                    response_time_blocks: 5,
+                    ..
+                })
+            )));
     });
 }
 
@@ -697,7 +753,7 @@ fn two_challenges_same_deadline_resolve_independently() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x03], // bits 0 and 1 set
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1, 1], // bits 0 and 1 set
                 });
             }
         });
@@ -782,7 +838,7 @@ fn responding_to_sibling_preserves_other_challenge_index() {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x03],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1, 1],
                 });
             }
         });
@@ -822,7 +878,7 @@ fn responding_to_sibling_preserves_other_challenge_index() {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x03],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1, 1],
             });
         });
 
@@ -966,7 +1022,7 @@ fn respond_to_challenge_superseded_emits_defended_event() {
                     leaf_count: 10,
                 },
                 checkpoint_block: 1,
-                primary_signers: vec![0x01],
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1],
             });
         });
 
@@ -997,7 +1053,7 @@ fn respond_to_challenge_superseded_emits_defended_event() {
 //
 // `primary_signers` is positional: bit `i` belongs to `primary_providers[i]`.
 // Removing a primary shifts every later provider down one index, so the
-// bitfield must be re-indexed to match — otherwise `has_provider_signed` reads
+// bitfield must be re-indexed to match — otherwise `primary_signers[i]` is
 // the wrong bit for every surviving provider after the removed one.
 //
 // Both removal paths (`finalize_agreement` via admin early-termination, and
@@ -1029,7 +1085,7 @@ fn setup_three_primaries_snapshot() -> u64 {
             },
             checkpoint_block: 1,
             // bits {0, 2} set: provider 2 (idx 0) and 4 (idx 2) signed.
-            primary_signers: vec![0b0000_0101],
+            primary_signers: bitvec::bitvec![u8, Lsb0; 1, 0, 1],
         });
     });
 
@@ -1045,11 +1101,11 @@ fn assert_reindexed_after_removing_lead(bucket_id: u64) {
     // New layout: idx 0 -> old bit 1 (provider 3, unsigned) = clear;
     // idx 1 -> old bit 2 (provider 4, signed) = set => 0b0000_0010.
     assert!(
-        !snapshot.has_provider_signed(0),
+        !snapshot.primary_signers[0],
         "provider 3 (new index 0) must read as not-signed"
     );
     assert!(
-        snapshot.has_provider_signed(1),
+        snapshot.primary_signers[1],
         "provider 4 (new index 1) must read as signed"
     );
 
@@ -1174,12 +1230,11 @@ fn challenge_count_per_deadline_is_capped() {
 // ─────────────────────────────────────────────────────────────────────────────
 mod challenge_tests {
     use super::*;
-    use codec::Encode;
     use frame_support::{dispatch::Pays, pallet_prelude::DispatchResult, BoundedVec};
-    use sp_core::{Pair, H256};
+    use sp_core::H256;
     use storage_primitives::{
-        hash_children, hash_leaf, BucketSnapshot, ChallengeId, ChunkLocation, Commitment,
-        EndAction, MerkleProof, MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
+        hash_children, hash_leaf, mmr, BucketSnapshot, ChallengeId, ChunkLocation, Commitment,
+        EndAction, MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
     };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1189,13 +1244,10 @@ mod challenge_tests {
     /// Build a valid (MMR root, MMR proof, chunk merkle proof) for a single-leaf
     /// MMR containing a single chunk. With one chunk, the data_root collapses to
     /// the chunk hash and the MMR root collapses to the leaf hash.
-    fn single_chunk_proof(chunk_data: &[u8]) -> (H256, MmrProof, MerkleProof) {
+    fn single_chunk_proof(chunk_data: &[u8]) -> (H256, MmrProof, Vec<H256>) {
         // Single chunk → data_root is the chunk hash (no intermediate nodes).
         let (mmr_root, mmr_proof) = single_leaf_mmr(hash_leaf(chunk_data), chunk_data.len() as u64);
-        let chunk_proof = MerkleProof {
-            siblings: vec![],
-            path: vec![],
-        };
+        let chunk_proof = vec![];
         (mmr_root, mmr_proof, chunk_proof)
     }
 
@@ -1214,21 +1266,22 @@ mod challenge_tests {
 
     /// Root and proof of a single-leaf MMR over `data_root` and `data_size`.
     fn single_leaf_mmr(data_root: H256, data_size: u64) -> (H256, MmrProof) {
+        single_leaf_mmr_of_version(storage_primitives::LEAF_VERSION, data_root, data_size)
+    }
+
+    /// [`single_leaf_mmr`] with a leaf of `leaf_version`.
+    fn single_leaf_mmr_of_version(
+        leaf_version: u8,
+        data_root: H256,
+        data_size: u64,
+    ) -> (H256, MmrProof) {
         let leaf = MmrLeaf {
+            leaf_version,
             data_root,
             data_size,
             total_size: data_size,
         };
-        let leaf_hash = hash_leaf(&leaf.encode());
-        let mmr_proof = MmrProof {
-            peaks: vec![leaf_hash],
-            leaf,
-            leaf_proof: MerkleProof {
-                siblings: vec![],
-                path: vec![],
-            },
-        };
-        (leaf_hash, mmr_proof)
+        mmr::proof(&[leaf], 0).unwrap().unwrap()
     }
 
     fn make_chunk_bv(data: &[u8]) -> BoundedVec<u8, <Test as Config>::MaxChunkSize> {
@@ -1258,7 +1311,7 @@ mod challenge_tests {
                 leaf_count,
             },
             checkpoint_block: System::block_number(),
-            primary_signers: vec![0b0000_0001],
+            primary_signers: bitvec::bitvec![u8, Lsb0; 1],
         };
         Buckets::<Test>::mutate(0u64, |bucket| {
             let bucket = bucket.as_mut().expect("bucket exists");
@@ -1409,6 +1462,85 @@ mod challenge_tests {
         });
     }
 
+    /// A leaf whose `leaf_version` the pallet does not know has an undefined
+    /// chunk size and tree shape, so no proof for it verifies.
+    #[test]
+    fn unknown_leaf_version_is_an_invalid_proof() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof) = single_leaf_mmr_of_version(
+                storage_primitives::LEAF_VERSION + 1,
+                hash_leaf(&chunk_data),
+                chunk_data.len() as u64,
+            );
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&chunk_data),
+                        mmr_proof,
+                        chunk_proof: vec![],
+                    },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_challenge_still_open();
+        });
+    }
+
+    /// A `ChunkOutOfRange` response for a leaf with an unknown `leaf_version`
+    /// is rejected: the pallet cannot count that leaf's chunks.
+    #[test]
+    fn unknown_leaf_version_rejects_chunk_out_of_range() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof) = single_leaf_mmr_of_version(
+                storage_primitives::LEAF_VERSION + 1,
+                hash_leaf(b"chunk-0"),
+                7,
+            );
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 1,
+                },
+            ));
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::ChunkOutOfRange { mmr_proof },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_challenge_still_open();
+        });
+    }
+
     #[test]
     fn respond_to_nonexistent_challenge_fails() {
         new_test_ext().execute_with(|| {
@@ -1493,10 +1625,7 @@ mod challenge_tests {
                 ChallengeResponse::Proof {
                     chunk_data: make_chunk_bv(&[0u8]),
                     mmr_proof,
-                    chunk_proof: MerkleProof {
-                        siblings: vec![leaves[1], right],
-                        path: vec![false, false],
-                    },
+                    chunk_proof: vec![leaves[1], right],
                 },
             ));
 
@@ -1536,10 +1665,7 @@ mod challenge_tests {
                     ChallengeResponse::Proof {
                         chunk_data: make_chunk_bv(&node_bytes),
                         mmr_proof,
-                        chunk_proof: MerkleProof {
-                            siblings: vec![right],
-                            path: vec![false],
-                        },
+                        chunk_proof: vec![right],
                     },
                 ),
                 Error::<Test>::InvalidProof
@@ -1569,10 +1695,7 @@ mod challenge_tests {
             ));
 
             // Bogus chunk proof — extra sibling won't recombine to the data root.
-            let bad_chunk_proof = MerkleProof {
-                siblings: vec![H256::repeat_byte(0xab)],
-                path: vec![true],
-            };
+            let bad_chunk_proof = vec![H256::repeat_byte(0xab)];
             assert_noop!(
                 StorageProvider::respond_to_challenge(
                     RuntimeOrigin::signed(2),
@@ -1595,7 +1718,7 @@ mod challenge_tests {
     /// Proof data for a 3-chunk leaf (`data_size = 2 * DEFAULT_CHUNK_SIZE + 10`)
     /// with chunk tree `H(H(c0, c1), c2)`. Returns the MMR root, the MMR proof,
     /// the last chunk and its Merkle proof.
-    fn three_chunk_proof() -> (H256, MmrProof, Vec<u8>, MerkleProof) {
+    fn three_chunk_proof() -> (H256, MmrProof, Vec<u8>, Vec<H256>) {
         let size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
         let c0 = storage_primitives::hash_leaf(b"chunk-0");
         let c1 = storage_primitives::hash_leaf(b"chunk-1");
@@ -1604,10 +1727,7 @@ mod challenge_tests {
         let left = storage_primitives::hash_children(c0, c1);
         let data_root = storage_primitives::hash_children(left, c2);
         let (mmr_root, mmr_proof) = single_leaf_mmr(data_root, 2 * size + 10);
-        let chunk_proof = MerkleProof {
-            siblings: vec![left],
-            path: vec![true],
-        };
+        let chunk_proof = vec![left];
         (mmr_root, mmr_proof, last_chunk, chunk_proof)
     }
 
@@ -1690,18 +1810,14 @@ mod challenge_tests {
             // An MMR proof for a different leaf — its bagged root won't match
             // the challenged root.
             let bad_leaf = MmrLeaf {
+                leaf_version: storage_primitives::LEAF_VERSION,
                 data_root: H256::repeat_byte(0xff),
                 data_size: 1,
                 total_size: 1,
             };
-            let bad_peak = hash_leaf(&bad_leaf.encode());
             let bad_mmr_proof = MmrProof {
-                peaks: vec![bad_peak],
                 leaf: bad_leaf,
-                leaf_proof: MerkleProof {
-                    siblings: vec![],
-                    path: vec![],
-                },
+                items: vec![],
             };
             assert_noop!(
                 StorageProvider::respond_to_challenge(
@@ -1745,7 +1861,7 @@ mod challenge_tests {
                         leaf_count: 1,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0b0000_0001],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             });
 
@@ -1934,7 +2050,7 @@ mod challenge_tests {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0b0000_0001],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             });
 
@@ -2023,7 +2139,7 @@ mod challenge_tests {
                         leaf_count: 10,
                     },
                     checkpoint_block: 1,
-                    primary_signers: vec![0b0000_0001],
+                    primary_signers: bitvec::bitvec![u8, Lsb0; 1],
                 });
             });
 
@@ -2127,8 +2243,8 @@ mod challenge_tests {
             assert_eq!(Balances::free_balance(999), treasury_before + stake);
             assert_eq!(Balances::total_issuance(), issuance_before);
             assert_eq!(held(HoldReason::ChallengeDeposit, 3), 0);
-            assert_eq!(PendingChallenges::<Test>::get(2), 0);
-            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+            assert!(!PendingChallenges::<Test>::contains_key(2));
+            assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
             assert!(Challenges::<Test>::get(101, 0).is_none());
             assert_eq!(NextChallengeIndex::<Test>::get(101), 0);
             let expected = RuntimeEvent::StorageProvider(crate::Event::ChallengeSlashed {
@@ -2287,6 +2403,7 @@ mod challenge_tests {
                 replica_sync_price: Some(1u64),
                 accepting_extensions: true,
                 max_capacity: 0,
+                min_agreement_bytes: 0,
             };
             assert_ok!(StorageProvider::update_provider_settings(
                 RuntimeOrigin::signed(4),
@@ -2324,6 +2441,8 @@ mod challenge_tests {
                     }),
                 },
                 started_at: 1,
+                depositor: 1,
+                deposit: agreement_deposit(1),
             };
             StorageAgreements::<Test>::insert(0u64, 4u64, replica_agreement);
             // Provider 4 stats need challenges_received bump infra — bump
@@ -2402,6 +2521,8 @@ mod challenge_tests {
                     last_sync: None::<ReplicaSyncRecord<u64>>,
                 },
                 started_at: 1,
+                depositor: 1,
+                deposit: agreement_deposit(1),
             };
             StorageAgreements::<Test>::insert(bucket_id, 4u64, replica_agreement);
 
@@ -2433,18 +2554,15 @@ mod challenge_tests {
         start_seq: u64,
         leaf_count: u64,
     ) -> sp_runtime::MultiSignature {
-        let pair = provider_signer(provider);
-        let payload = storage_primitives::CommitmentPayload::new(
+        sign_commitment_by(
+            provider,
             bucket_id,
             Commitment {
                 mmr_root,
                 start_seq,
                 leaf_count,
             },
-        );
-        // `verify_signature` checks the raw encoded payload (sr25519 hashes
-        // internally), so sign the encoding directly — no extra blake2 round.
-        sp_runtime::MultiSignature::Sr25519(pair.sign(&payload.encode()))
+        )
     }
 
     // Counter lifecycle ───────────────────────────────────────────────────────
@@ -2483,8 +2601,8 @@ mod challenge_tests {
                     chunk_proof,
                 },
             ));
-            assert_eq!(PendingChallenges::<Test>::get(2), 0);
-            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+            assert!(!PendingChallenges::<Test>::contains_key(2));
+            assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
         });
     }
 
@@ -2510,10 +2628,7 @@ mod challenge_tests {
             assert_eq!(PendingChallenges::<Test>::get(2), 1);
             assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
 
-            let bad_proof = MerkleProof {
-                siblings: vec![H256::repeat_byte(0xab)],
-                path: vec![true],
-            };
+            let bad_proof = vec![H256::repeat_byte(0xab)];
             assert_noop!(
                 StorageProvider::respond_to_challenge(
                     RuntimeOrigin::signed(2),
@@ -2568,8 +2683,8 @@ mod challenge_tests {
                 Providers::<Test>::get(2).unwrap().stats.challenges_failed,
                 1
             );
-            assert_eq!(PendingChallenges::<Test>::get(2), 0);
-            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+            assert!(!PendingChallenges::<Test>::contains_key(2));
+            assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
         });
     }
 
@@ -2668,6 +2783,8 @@ mod challenge_tests {
                     }),
                 },
                 started_at: 1,
+                depositor: 1,
+                deposit: agreement_deposit(1),
             };
             StorageAgreements::<Test>::insert(bucket_id, 4u64, replica_agreement);
 
@@ -2697,6 +2814,35 @@ mod challenge_tests {
                 ),
                 Error::<Test>::AgreementExpired
             );
+        });
+    }
+
+    /// After `remove_slashed` the agreement is gone but the challenge is still
+    /// open; bucket removal must stay blocked until it is resolved.
+    #[test]
+    fn bucket_removal_blocked_by_a_challenge_outliving_its_agreement() {
+        new_test_ext().execute_with(|| {
+            let id = open_challenge();
+            slash_provider_stake(2);
+            assert_ok!(StorageProvider::remove_slashed(
+                RuntimeOrigin::signed(5),
+                0,
+                2
+            ));
+            assert!(StorageAgreements::<Test>::iter_prefix(0).next().is_none());
+
+            assert_noop!(
+                StorageProvider::delete_bucket(RuntimeOrigin::signed(1), 0),
+                Error::<Test>::BucketHasPendingChallenge
+            );
+
+            System::set_block_number(102);
+            assert_ok!(StorageProvider::resolve_expired_challenge(
+                RuntimeOrigin::signed(5),
+                id
+            ));
+            assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
+            assert_ok!(StorageProvider::delete_bucket(RuntimeOrigin::signed(1), 0));
         });
     }
 
@@ -2742,7 +2888,7 @@ mod challenge_tests {
                     chunk_proof,
                 },
             ));
-            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+            assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
 
             // Now early termination succeeds.
             assert_ok!(StorageProvider::end_agreement(
@@ -2791,7 +2937,7 @@ mod challenge_tests {
                     index: 0,
                 }
             ));
-            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+            assert!(!PendingChallengesByBucket::<Test>::contains_key(0, 2));
 
             // Provider 2 was slashed but the agreement row remains; the claim
             // path is unblocked by the (now-zero) pending counter.
@@ -2889,7 +3035,7 @@ mod challenge_tests {
                     index: 0,
                 }
             ));
-            assert_eq!(PendingChallenges::<Test>::get(2), 0);
+            assert!(!PendingChallenges::<Test>::contains_key(2));
 
             // With the challenge resolved and committed_bytes zero, completion
             // succeeds.
@@ -2982,49 +3128,199 @@ mod challenge_tests {
     }
 
     /// A two-leaf MMR of single-chunk leaves: the root and, per leaf, its
-    /// chunk, `MmrLeaf` and leaf hash.
-    fn two_leaf_mmr() -> (H256, [(Vec<u8>, MmrLeaf, H256); 2]) {
+    /// chunk and `MmrLeaf`.
+    fn two_leaf_mmr() -> (H256, [(Vec<u8>, MmrLeaf); 2]) {
         let chunk0 = b"file0".to_vec();
         let chunk1 = b"file1".to_vec();
         let leaf0 = MmrLeaf {
+            leaf_version: storage_primitives::LEAF_VERSION,
             data_root: storage_primitives::hash_leaf(&chunk0),
             data_size: 5,
             total_size: 5,
         };
         let leaf1 = MmrLeaf {
+            leaf_version: storage_primitives::LEAF_VERSION,
             data_root: storage_primitives::hash_leaf(&chunk1),
             data_size: 5,
             total_size: 10,
         };
-        let hash0 = storage_primitives::hash_leaf(&leaf0.encode());
-        let hash1 = storage_primitives::hash_leaf(&leaf1.encode());
-        let root = storage_primitives::hash_children(hash0, hash1);
-        (root, [(chunk0, leaf0, hash0), (chunk1, leaf1, hash1)])
+        let root = mmr::root(&[leaf0.clone(), leaf1.clone()]).unwrap();
+        (root, [(chunk0, leaf0), (chunk1, leaf1)])
+    }
+
+    /// MMR proof of leaf `index` of `two_leaf_mmr`.
+    fn two_leaf_mmr_proof(leaves: &[(Vec<u8>, MmrLeaf); 2], index: usize) -> MmrProof {
+        let mmr_leaves: Vec<MmrLeaf> = leaves.iter().map(|(_, leaf)| leaf.clone()).collect();
+        mmr::proof(&mmr_leaves, index as u64).unwrap().unwrap().1
     }
 
     /// `Proof` response for leaf `index` of `two_leaf_mmr`.
-    fn two_leaf_proof(
-        root: H256,
-        leaves: &[(Vec<u8>, MmrLeaf, H256); 2],
-        index: usize,
-    ) -> ChallengeResponse<Test> {
-        let (chunk, leaf, _) = &leaves[index];
-        let (_, _, sibling) = &leaves[1 - index];
+    fn two_leaf_proof(leaves: &[(Vec<u8>, MmrLeaf); 2], index: usize) -> ChallengeResponse<Test> {
         ChallengeResponse::Proof {
-            chunk_data: make_chunk_bv(chunk),
-            mmr_proof: MmrProof {
-                peaks: vec![root],
-                leaf: leaf.clone(),
-                leaf_proof: MerkleProof {
-                    siblings: vec![*sibling],
-                    path: vec![index == 1],
-                },
-            },
-            chunk_proof: MerkleProof {
-                siblings: vec![],
-                path: vec![],
-            },
+            chunk_data: make_chunk_bv(&leaves[index].0),
+            mmr_proof: two_leaf_mmr_proof(leaves, index),
+            chunk_proof: vec![],
         }
+    }
+
+    /// A `ChunkOutOfRange` response defends a challenge whose `chunk_index` is
+    /// at or past the leaf's chunk count: the leaf has no such chunk, so no
+    /// `Proof` exists, and without this response the provider would be
+    /// slashed on timeout.
+    #[test]
+    fn chunk_out_of_range_defends_a_challenge_past_the_last_chunk() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 1,
+                },
+            ));
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::ChunkOutOfRange { mmr_proof },
+            ));
+
+            assert!(Challenges::<Test>::get(101, 0).is_none());
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stake, 200);
+            assert_eq!(provider.stats.challenges_failed, 0);
+        });
+    }
+
+    /// `ChunkOutOfRange` is rejected when the leaf has the challenged chunk:
+    /// the provider has to send that chunk.
+    #[test]
+    fn chunk_out_of_range_rejects_an_index_the_leaf_has() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::ChunkOutOfRange { mmr_proof },
+                ),
+                Error::<Test>::InvalidProof
+            );
+        });
+    }
+
+    /// A leaf with `data_size == 0` has no chunks: no `Proof` verifies for
+    /// chunk index 0, and `ChunkOutOfRange` defends the challenge.
+    #[test]
+    fn empty_leaf_is_defended_by_chunk_out_of_range() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, mmr_proof) = single_leaf_mmr(hash_leaf(&[]), 0);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+            let challenge_id = ChallengeId {
+                deadline: 101u64,
+                index: 0u16,
+            };
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    challenge_id,
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&[]),
+                        mmr_proof: mmr_proof.clone(),
+                        chunk_proof: vec![],
+                    },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                challenge_id,
+                ChallengeResponse::ChunkOutOfRange { mmr_proof },
+            ));
+
+            assert!(Challenges::<Test>::get(101, 0).is_none());
+            assert_eq!(
+                Providers::<Test>::get(2).unwrap().stats.challenges_failed,
+                0
+            );
+        });
+    }
+
+    /// `ChunkOutOfRange` is bound to the challenged `leaf_index`: the proof of
+    /// another leaf is rejected even when that leaf has no such chunk either,
+    /// so a provider cannot pick a shorter leaf to claim the index is out of
+    /// range.
+    #[test]
+    fn chunk_out_of_range_binds_leaf_index() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (root, leaves) = two_leaf_mmr();
+            setup_primary_with_snapshot(root, 0, 2);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 1,
+                },
+            ));
+            let challenge_id = ChallengeId {
+                deadline: 101u64,
+                index: 0u16,
+            };
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    challenge_id,
+                    ChallengeResponse::ChunkOutOfRange {
+                        mmr_proof: two_leaf_mmr_proof(&leaves, 1),
+                    },
+                ),
+                Error::<Test>::InvalidProof
+            );
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                challenge_id,
+                ChallengeResponse::ChunkOutOfRange {
+                    mmr_proof: two_leaf_mmr_proof(&leaves, 0),
+                },
+            ));
+        });
     }
 
     /// A `Proof` is bound to the challenged `leaf_index`: a proof that is
@@ -3062,7 +3358,7 @@ mod challenge_tests {
                 StorageProvider::respond_to_challenge(
                     RuntimeOrigin::signed(2),
                     id,
-                    two_leaf_proof(root, &leaves, 0),
+                    two_leaf_proof(&leaves, 0),
                 ),
                 Error::<Test>::InvalidProof
             );
@@ -3071,7 +3367,7 @@ mod challenge_tests {
             assert_ok!(StorageProvider::respond_to_challenge(
                 RuntimeOrigin::signed(2),
                 id,
-                two_leaf_proof(root, &leaves, 1),
+                two_leaf_proof(&leaves, 1),
             ));
             assert!(Challenges::<Test>::get(101, 0).is_none());
         });
@@ -3118,7 +3414,7 @@ mod challenge_tests {
                         deadline: 101u64,
                         index: 0u16,
                     },
-                    two_leaf_proof(root, &leaves, 0),
+                    two_leaf_proof(&leaves, 0),
                 ),
                 Error::<Test>::InvalidProof
             );

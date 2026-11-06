@@ -11,6 +11,7 @@ mod cli;
 mod commands;
 mod common;
 mod metrics;
+mod prepare;
 
 use anyhow::bail;
 use clap::Parser;
@@ -25,19 +26,23 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    // Scenarios compute and return their metrics; `main` collects every run's
-    // results and views them here. Adding a `read`/`delete` subcommand means
-    // pushing another `OpSummary` onto this vec — the viewing below is shared.
-    let mut all_results: Vec<OpSummary> = Vec::new();
-    match &cli.command {
+    // Scenarios return their metrics and what their setup phase created;
+    // `main` only renders them, so every subcommand shares one output path.
+    let (summary, preparation) = match &cli.command {
         Command::StressTest(StressTest::ProviderUpload(args)) => {
-            all_results.push(commands::stress_test::upload(&cli.global, args).await?);
+            commands::stress_test::upload(&cli.global, args).await?
         }
-    }
+    };
+    let all_results: Vec<OpSummary> = vec![summary];
 
     match cli.global.output {
-        OutputFormat::Text => print_text(&all_results),
-        OutputFormat::Json => println!("{}", to_json(&all_results)?),
+        OutputFormat::Text => {
+            if let Some(report) = &preparation {
+                print!("{report}");
+            }
+            print_text(&all_results)
+        }
+        OutputFormat::Json => println!("{}", to_json(&all_results, preparation.as_ref())?),
     }
 
     // Non-zero exit if any scenario completed with no successful operations.

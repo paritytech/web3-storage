@@ -10,9 +10,11 @@
 //! `OnlineClient`/`Keypair` clone that shares the underlying WebSocket
 //! connection).
 
-use crate::challenge_responder::{ChallengeChainClient, ChallengeError, DetectedChallenge};
+use crate::chain_connection::{self, ChainWatch};
+use crate::challenge_responder::{
+    ChallengeChainClient, ChallengeError, ChallengeResponse, DetectedChallenge,
+};
 use crate::Error;
-use provider_chain::chain_connection::{self, ChainWatch};
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
 use sp_core::crypto::Ss58Codec;
@@ -25,9 +27,9 @@ use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ChallengeResponse as RuntimeChallengeResponse;
 use storage_subxt::api::runtime_types::storage_primitives::{
+    mmr::{MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof},
     ChallengeId as RuntimeChallengeId, ChunkLocation as RuntimeChunkLocation,
-    Commitment as RuntimeCommitment, MerkleProof as RuntimeMerkleProof, MmrLeaf as RuntimeMmrLeaf,
-    MmrProof as RuntimeMmrProof,
+    Commitment as RuntimeCommitment,
 };
 use subxt::dynamic::Value;
 use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};
@@ -524,6 +526,46 @@ impl SubxtChainClient {
         }
     }
 
+    /// Resolve each provider account (raw 32-byte keys) to its HTTP endpoint
+    /// via the on-chain `Providers` multiaddr. Accounts without a resolvable
+    /// registration are skipped.
+    async fn endpoints_for_accounts(
+        &self,
+        provider_bytes_list: Vec<Vec<u8>>,
+    ) -> Result<Vec<String>, ChainClientError> {
+        use subxt::ext::scale_value::At;
+
+        if provider_bytes_list.is_empty() {
+            return Ok(Vec::new());
+        }
+        let at = self.at_current_block().await?;
+        let mut endpoints = Vec::new();
+        for provider_bytes in provider_bytes_list {
+            let provider_addr =
+                subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
+            let Ok(Some(value)) = at
+                .storage()
+                .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
+                .await
+            else {
+                continue;
+            };
+            let Ok(decoded) = value.decode() else {
+                continue;
+            };
+            let Some(field0) = decoded.at(0) else {
+                continue;
+            };
+            let bytes = Self::extract_byte_vec(field0);
+            if !bytes.is_empty() {
+                let multiaddr_str = String::from_utf8_lossy(&bytes);
+                endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
+            }
+        }
+
+        Ok(endpoints)
+    }
+
     /// Parse a BucketSnapshot value from scale_value.
     fn parse_bucket_snapshot_value<T>(value: &subxt::ext::scale_value::Value<T>) -> BucketSnapshot {
         use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
@@ -709,30 +751,38 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             }
         }
 
-        // Look up each provider's multiaddr
-        let mut endpoints = Vec::new();
-        for provider_bytes in provider_bytes_list {
-            let provider_addr =
-                subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
+        self.endpoints_for_accounts(provider_bytes_list).await
+    }
 
-            if let Ok(Some(value)) = at
-                .storage()
-                .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
-                .await
-            {
-                if let Ok(decoded) = value.decode() {
-                    if let Some(field0) = decoded.at(0) {
-                        let bytes = Self::extract_byte_vec(field0);
-                        if !bytes.is_empty() {
-                            let multiaddr_str = String::from_utf8_lossy(&bytes);
-                            endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
-                        }
-                    }
-                }
-            }
-        }
+    async fn fetch_replica_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError> {
+        use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
 
-        Ok(endpoints)
+        let provider_account = self.signer.public_key().0.to_vec();
+
+        let payload = storage_subxt::api::runtime_apis()
+            .storage_provider_api()
+            .bucket_agreements(bucket_id)
+            .unvalidated();
+
+        let agreements = self
+            .at_current_block()
+            .await?
+            .runtime_apis()
+            .call(payload)
+            .await
+            .map_err(|e| ChainClientError::query("bucket agreements", e))?;
+
+        let accounts: Vec<Vec<u8>> = agreements
+            .into_iter()
+            .filter(|agreement| matches!(agreement.role, ProviderRole::Replica { .. }))
+            .map(|agreement| agreement.provider)
+            .filter(|provider| provider != &provider_account)
+            .collect();
+
+        self.endpoints_for_accounts(accounts).await
     }
 
     async fn submit_sync_confirmation(
@@ -815,10 +865,15 @@ fn to_runtime_hash(hash: H256) -> subxt::utils::H256 {
     subxt::utils::H256(hash.0)
 }
 
-fn to_runtime_merkle_proof(proof: storage_primitives::MerkleProof) -> RuntimeMerkleProof {
-    RuntimeMerkleProof {
-        siblings: proof.siblings.into_iter().map(to_runtime_hash).collect(),
-        path: proof.path,
+fn to_runtime_mmr_proof(mmr_proof: storage_primitives::MmrProof) -> RuntimeMmrProof {
+    RuntimeMmrProof {
+        leaf: RuntimeMmrLeaf {
+            leaf_version: mmr_proof.leaf.leaf_version,
+            data_root: to_runtime_hash(mmr_proof.leaf.data_root),
+            data_size: mmr_proof.leaf.data_size,
+            total_size: mmr_proof.leaf.total_size,
+        },
+        items: mmr_proof.items.into_iter().map(to_runtime_hash).collect(),
     }
 }
 
@@ -984,24 +1039,24 @@ impl ChallengeChainClient for SubxtChainClient {
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
-        chunk_data: Vec<u8>,
-        mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: storage_primitives::MerkleProof,
+        response: ChallengeResponse,
     ) -> Result<H256, ChallengeError> {
         let (deadline, index) = challenge_id;
-
-        let response = RuntimeChallengeResponse::Proof {
-            chunk_data: BoundedVec(chunk_data),
-            mmr_proof: RuntimeMmrProof {
-                peaks: mmr_proof.peaks.into_iter().map(to_runtime_hash).collect(),
-                leaf: RuntimeMmrLeaf {
-                    data_root: to_runtime_hash(mmr_proof.leaf.data_root),
-                    data_size: mmr_proof.leaf.data_size,
-                    total_size: mmr_proof.leaf.total_size,
-                },
-                leaf_proof: to_runtime_merkle_proof(mmr_proof.leaf_proof),
+        let response = match response {
+            ChallengeResponse::Proof {
+                chunk_data,
+                mmr_proof,
+                chunk_proof,
+            } => RuntimeChallengeResponse::Proof {
+                chunk_data: BoundedVec(chunk_data),
+                mmr_proof: to_runtime_mmr_proof(mmr_proof),
+                chunk_proof: chunk_proof.into_iter().map(to_runtime_hash).collect(),
             },
-            chunk_proof: to_runtime_merkle_proof(chunk_proof),
+            ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
+                RuntimeChallengeResponse::ChunkOutOfRange {
+                    mmr_proof: to_runtime_mmr_proof(mmr_proof),
+                }
+            }
         };
 
         let tx = storage_subxt::api::tx()
@@ -1049,6 +1104,7 @@ mod tests {
             },
             deposit: 1_000_000_000_000,
             authorized: false,
+            created_at: 1,
         }
     }
 
