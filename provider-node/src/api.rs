@@ -157,7 +157,7 @@ async fn check_role(
 /// agreement on it. A bucket that already exists locally is left as it is.
 /// Rejects a bucket this node has no agreement on.
 pub(crate) async fn ensure_bucket(state: &ProviderState, bucket_id: BucketId) -> Result<(), Error> {
-    if state.storage.get_bucket(bucket_id).is_some() {
+    if state.storage.get_bucket(bucket_id)?.is_some() {
         return Ok(());
     }
     let agreement = state
