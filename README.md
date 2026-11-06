@@ -73,8 +73,20 @@ just demo
 > pending a decision on the layered architecture (what belongs on-chain vs.
 > provider-only). See [#51](https://github.com/paritytech/web3-storage/issues/51).
 
-The Layer 1 File System Interface provides a familiar file/folder abstraction
-over Layer 0's raw blob storage.
+The file system stores a directory tree in one Layer 0 bucket. Directories
+and file manifests are blobs, each addressed by its CID (the blob's
+`data_root`), and the bucket's last MMR leaf is the CID of the root
+directory. The client verifies every blob against its CID and the root
+against the provider's MMR commitment. The provider only serves Layer 0
+routes and does not parse the tree. The same tree also serves S3-style
+objects: the key `a/b.txt` is the file `/a/b.txt`.
+
+- Rust: [`clients/storage-formats`](./clients/storage-formats/README.md)
+  (tree and S3 view), blob format in its `format` module.
+- TypeScript: `@web3-storage/storage-formats` (`packages/storage-formats`),
+  the Rust crate compiled to wasm, opened per bucket with
+  `Web3Storage.drive` and `Web3Storage.objects` from
+  [`@web3-storage/sdk`](./packages/sdk/README.md).
 
 ### Quick Start with File System
 
@@ -86,11 +98,6 @@ just start-provider         # Terminal 2: provider node
 # Then run the file system and S3 objects demo:
 just file-system-demo       # Terminal 3
 ```
-
-**What you get:**
-- ✅ Familiar file/folder interface
-- ✅ Automatic provider selection
-- ✅ Built-in blockchain integration
 
 ### File System Commands
 
@@ -104,10 +111,8 @@ just file-system-demo          # Demo against a running chain + provider
 ### When to Use Layer 0 vs Layer 1
 
 **Use Layer 1 (File System)** if you:
-- Want a familiar file/folder interface
-- Need automatic setup and provider selection
+- Want files and directories, or S3-style objects, in a bucket
 - Are building a general-purpose file storage app
-- Prefer simplicity over low-level control
 
 **Use Layer 0 (Direct Storage)** if you:
 - Need full control over storage operations
@@ -196,8 +201,8 @@ web3-storage/
 │   └── utils/              # Ultility crates
 ├── runtimes/               # Parachain runtimes: web3-storage-local, web3-storage-paseo
 ├── provider-node/          # Off-chain provider binary
-├── clients/                # Rust client SDKs: storage (Layer 0), file-system, s3 (Layer 1)
-├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,file-system,papi,sdk}
+├── clients/                # Rust client SDKs: storage (Layer 0), storage-formats with S3 view (Layer 1)
+├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,storage-formats,papi,sdk}
 ├── user-interfaces/        # Web apps: landing, explorer, drive-ui, provider, s3-ui, photos, shared
 ├── examples/               # contracts/ (Solidity dApps), papi/ (end-to-end PAPI demos)
 ├── scripts/                # Helper scripts (chain spec, health checks, smoke test)

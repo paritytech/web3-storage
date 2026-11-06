@@ -98,43 +98,30 @@ data to it) and `endAgreement` (old provider leaves).
 
 `FsTree` (`Web3Storage.drive`) and `Objects` (`Web3Storage.objects`) keep
 their data in the Layer 0 bucket itself and use only the provider's Layer 0
-routes (`PUT /node`, `POST /commit`, `GET /node`, `GET /read`,
-`GET /commitment`, `GET /mmr_proof`). The format, the tree and the S3 view
-are the Rust crate `clients/storage-formats`, compiled to wasm;
+routes. The format, the tree and the S3 view are the Rust crate
+`clients/storage-formats`, compiled to wasm;
 `packages/storage-formats` loads it and implements its blob store over the
 provider's HTTP API. `pnpm install` builds the wasm into
 `packages/storage-formats/pkg` and needs rustup and `wasm-bindgen-cli` at the
 version in `Cargo.lock`. Rebuild it after a change to the crate with
 `pnpm --filter @web3-storage/storage-formats build:wasm`.
 
-- Directories and files are `DirectoryNode` and `FileManifest` blobs
-  (`clients/storage-formats/src/format.rs`): a 5-byte header (magic `W3FS`
-  and format version) and the SCALE encoding. A blob's CID is its
-  `data_root` (`computeDataRoot`).
-- The root directory's CID is the bucket's last MMR leaf. A bucket with no
-  leaves is an empty drive.
-- A write uploads the new content, its manifest and each rewritten
-  directory up to the root, then commits them in one `/commit`, root last.
-- An S3 key `k` is the file at path `/k`. Directories between are created
-  on put and removed on delete when empty.
+The module docs of the crate's `tree` module
+(`cargo doc -p storage-formats --no-deps --open`) describe the format, the
+root, the write order and the limits: one writer, no other writes to the
+bucket, prefix deletes, blob reads by CID, bucket growth. Read them before
+writing to a bucket.
 
-Rules for callers:
+Notes for callers:
 
-- **One writer at a time.** Two clients that write the same bucket
-  concurrently can lose one change: the last commit wins.
-- **Only `FsTree` writes the bucket.** A raw Layer 0 commit becomes the
-  last leaf, and the tree no longer loads (`FileSystemError` with code
-  `NotAFileSystemBucket`).
-- **An Admin prefix delete** (`/delete` with a new `start_seq`) can remove
-  blobs that the current tree still references.
-- **Reads are unauthenticated.** Anyone who knows a CID can read the blob
-  (#383/#396). Encrypt confidential data on the client.
+- **Writes from one `Web3Storage`** to one bucket run one at a time. Other
+  `Web3Storage` instances and other processes are not coordinated.
 - **Times.** `FsTree` returns `mtime` in seconds, as stored
   (`DirectoryEntry.mtime`). `Objects` returns `lastModified` in milliseconds
   since the epoch, as S3 does, so the values are multiples of 1000.
 - **`Objects.listObjects` pages** contain at most 1000 entries (`maxKeys`
-  is clamped to 1-1000), and each page reads the tree again. Use
-  `listAllObjects` to get every key from one read.
+  is clamped to 1-1000), and each page reads the tree again.
+  `listAllObjects` returns every key.
 
 ## Download verification
 

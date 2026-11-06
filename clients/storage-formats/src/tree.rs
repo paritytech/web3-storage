@@ -2,16 +2,15 @@
 
 //! The file tree of a drive, stored in its Layer 0 bucket.
 //!
-//! This module is the only code that knows the on-bucket format; the file
-//! system client and the S3 client both use it.
+//! [`crate::s3::Objects`] stores S3-style objects in the same tree.
 //!
 //! # Format
 //!
 //! Directories are [`DirectoryNode`] blobs and files are a content blob plus
-//! a [`FileManifest`] blob. A node blob is a 6-byte header (magic `W3FS`,
-//! format version, kind of node) and the SCALE encoding
-//! ([`DirectoryNode::to_blob`]). Every blob is addressed by its CID, the
-//! Layer 0 data root ([`compute_cid`]).
+//! a [`FileManifest`] blob. A node blob is a 5-byte header (magic `W3FS` and
+//! the format version) and the SCALE encoding ([`DirectoryNode::to_blob`]).
+//! Every blob is addressed by its CID, the Layer 0 data root
+//! ([`compute_cid`]).
 //!
 //! # Root discovery
 //!
@@ -47,9 +46,16 @@
 //!   child hashes of an internal Merkle node as a 64-byte blob, and denies
 //!   the node's children on `GET /node`, is not detected.
 //! - **Blob reads by CID are unauthenticated.** Anyone who knows a CID and a
-//!   bucket id can read the blob (#383, #396). Root discovery
+//!   bucket id can read the blob ("Read access at Layer 0" in
+//!   `docs/design/scalable-web3-storage.md`). Root discovery
 //!   (`GET /commitment`, `GET /mmr_proof`) needs Reader on a private bucket.
-//!   Confidential data needs client-side encryption.
+//!   A directory blob contains the names, sizes, times and CIDs of its
+//!   entries, so a directory's CID gives read access to everything below it.
+//!   Confidential data, file names included, needs client-side encryption.
+//! - **The bucket only grows.** Every write, including a delete or a rename,
+//!   commits new blobs for each rewritten directory up to the root, and the
+//!   blobs they replace remain leaves of the bucket. The committed size
+//!   grows with every write until an Admin prefix delete.
 
 use crate::format::{
     compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest, FileSystemError,

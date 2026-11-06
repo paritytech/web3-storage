@@ -506,9 +506,9 @@ pub enum FileSystemError {
     /// Two user metadata entries have the same key.
     #[error("Duplicate metadata key")]
     DuplicateMetadataKey,
-    /// The bytes do not start with the header of the expected kind of node,
-    /// or are not exactly the encoding of one.
-    #[error("Not a file-system blob of the expected kind")]
+    /// The bytes do not start with the format header, or are not exactly the
+    /// encoding of the node.
+    #[error("Not a file-system blob")]
     NotAFormatBlob,
     /// The blob has a format version this code does not read.
     #[error("Unsupported format version {0}")]
