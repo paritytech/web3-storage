@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { makeSigner } from "@web3-storage/layer0";
 import { FakeProvider } from "@web3-storage/layer0/testing";
 
-import { ObjectError, Objects } from "./objects.js";
+import { ObjectError, S3Bucket } from "./objects.js";
 import { providerBlobStore } from "./store.js";
 import { FsTree } from "./tree.js";
 
@@ -17,10 +17,10 @@ const td = new TextDecoder();
 function setup() {
   const provider = new FakeProvider();
   const tree = new FsTree(providerBlobStore("http://provider.test", 5n, signer, { fetch: provider.fetch }));
-  return { tree, objects: new Objects(tree) };
+  return { tree, objects: new S3Bucket(tree) };
 }
 
-describe("Objects (wasm)", () => {
+describe("S3Bucket (wasm)", () => {
   it("put, get, head and delete an object; the key is a file in the tree", async () => {
     const { tree, objects } = setup();
     const put = await objects.putObject("photos/cat.jpg", te.encode("meow"), {

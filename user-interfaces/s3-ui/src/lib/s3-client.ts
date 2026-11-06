@@ -199,7 +199,7 @@ export class S3Client {
   /**
    * Redeem provider-signed terms in `create_bucket_with_primary`
    * (negotiate→establish). The terms are pre-negotiated by the create-bucket
-   * UI. Returns the new Layer 0 bucket id.
+   * UI. Returns the new bucket id.
    */
   async createBucket(
     providerAccount: string,
@@ -222,7 +222,7 @@ export class S3Client {
     return this.requireW3s().listBuckets();
   }
 
-  // ── S3 Object operations (the bucket's own tree, via the SDK's Objects) ────
+  // ── S3 Object operations (the bucket's own tree, via the SDK's S3Bucket) ────
 
   async putObject(
     bucketId: bigint,

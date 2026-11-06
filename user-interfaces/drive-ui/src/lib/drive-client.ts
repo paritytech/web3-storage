@@ -209,7 +209,7 @@ export class DriveClient {
 
   /**
    * Redeem provider-signed agreement terms on chain in
-   * `create_bucket_with_primary`: opens a Layer 0 bucket with one primary
+   * `create_bucket_with_primary`: opens a bucket with one primary
    * agreement. The bucket is the drive.
    *
    * **Step 2 of drive creation.** Step 1 is the HTTP `negotiateTerms` call

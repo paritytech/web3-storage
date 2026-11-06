@@ -15,7 +15,7 @@ packages/
   storage-formats/ @web3-storage/storage-formats
                                    a file system and S3-style objects stored
                                    in a bucket: the on-bucket format, FsTree
-                                   and Objects; needs a provider URL and a
+                                   and S3Bucket; needs a provider URL and a
                                    signer, no chain
   sdk/      @web3-storage/sdk      this package: re-exports all three and
                                    hosts the Web3Storage class
@@ -51,8 +51,8 @@ Canonical rules, established by the E2E suite's finalization fixes
   target the best block.
 - **All reads after an in-block submit use `READ_OPTS` (`{at: "best"}`)** —
   in TESTS AND EXAMPLES. Real UIs keep the reorg-safe finalized view
-  (PAPI's default, or `FINALIZED_READ_OPTS` explicitly), and the layer-1
-  clients default to finalized reads + finalized submission; suites opt into
+  (PAPI's default, or `FINALIZED_READ_OPTS` explicitly), and `Web3Storage`
+  defaults to finalized reads + finalized submission; suites opt into
   test semantics via `readOpts: READ_OPTS, submitMode: "best"`.
 - **`mode: "finalized"` is opt-in, for reorg-sensitive effects only.** A
   challenge id embeds its creation block, so the challenge-creating wrappers
@@ -96,9 +96,9 @@ data to it) and `endAgreement` (old provider leaves).
 
 ## File systems and S3 buckets
 
-`FsTree` (`Web3Storage.drive`) and `Objects` (`Web3Storage.objects`) keep
-their data in the Layer 0 bucket itself and use only the provider's Layer 0
-routes. The format, the tree and the S3 view are the Rust crate
+`FsTree` (`Web3Storage.drive`) and `S3Bucket` (`Web3Storage.objects`) keep
+their data in the bucket itself and use only the provider's blob routes.
+The format, the tree and the S3 view are the Rust crate
 `clients/storage-formats`, compiled to wasm;
 `packages/storage-formats` loads it and implements its blob store over the
 provider's HTTP API. `pnpm install` builds the wasm into
@@ -117,9 +117,9 @@ Notes for callers:
 - **Writes from one `Web3Storage`** to one bucket run one at a time. Other
   `Web3Storage` instances and other processes are not coordinated.
 - **Times.** `FsTree` returns `mtime` in seconds, as stored
-  (`DirectoryEntry.mtime`). `Objects` returns `lastModified` in milliseconds
+  (`DirectoryEntry.mtime`). `S3Bucket` returns `lastModified` in milliseconds
   since the epoch, as S3 does, so the values are multiples of 1000.
-- **`Objects.listObjects` pages** contain at most 1000 entries (`maxKeys`
+- **`S3Bucket.listObjects` pages** contain at most 1000 entries (`maxKeys`
   is clamped to 1-1000), and each page reads the tree again.
   `listAllObjects` returns every key.
 
@@ -130,7 +130,7 @@ Notes for callers:
 | `downloadChunk` | **Yes, throws `CidMismatchError`** | the requested hash is the node's hash |
 | `readBlob` with a size | **Yes, throws `BlobVerificationError`** | every chunk is checked against the blob's Merkle tree |
 | `readBlob` without a size | **Yes, throws `BlobVerificationError`** | every node is checked against its hash (a chunk as a leaf, an internal node over its children), and the chunks must rebuild the root |
-| `FsTree.getFile`, `Objects.getObject` | **Yes** | the path resolves through CID-checked directory and manifest blobs from the root CID |
+| `FsTree.getFile`, `S3Bucket.getObject` | **Yes** | the path resolves through CID-checked directory and manifest blobs from the root CID |
 
 The root CID comes from the provider's last MMR leaf, checked against the
 provider's MMR root with `verifyMmrProof`. That MMR root is the provider's

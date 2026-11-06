@@ -30,7 +30,7 @@ import {
   type Visibility,
   type WaitOpts,
 } from "@web3-storage/layer0";
-import { FsTree, Objects, providerBlobStore, type WriteQueue } from "@web3-storage/storage-formats";
+import { FsTree, S3Bucket, providerBlobStore, type WriteQueue } from "@web3-storage/storage-formats";
 
 export interface Web3StorageOptions {
   api: ParachainApi;
@@ -194,8 +194,8 @@ export class Web3Storage {
   }
 
   /** The bucket's S3-style objects, stored in its file-system tree. */
-  async objects(bucketId: bigint, opts: { signal?: AbortSignal } = {}): Promise<Objects> {
-    return new Objects(await this.drive(bucketId, opts));
+  async objects(bucketId: bigint, opts: { signal?: AbortSignal } = {}): Promise<S3Bucket> {
+    return new S3Bucket(await this.drive(bucketId, opts));
   }
 
   /** Close the chain connection opened by {@link connect}. */

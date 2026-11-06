@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The file tree of a drive, stored in its Layer 0 bucket.
+//! The file tree of a drive, stored in its bucket.
 //!
-//! [`crate::s3::Objects`] stores S3-style objects in the same tree.
+//! [`crate::s3::S3Bucket`] stores S3-style objects in the same tree.
 //!
 //! # Format
 //!
 //! Directories are [`DirectoryNode`] blobs and files are a content blob plus
 //! a [`FileManifest`] blob. A node blob is a 5-byte header (magic `W3FS` and
 //! the format version) and the SCALE encoding ([`DirectoryNode::to_blob`]).
-//! Every blob is addressed by its CID, the Layer 0 data root
-//! ([`compute_cid`]).
+//! Every blob is addressed by its CID, its data root ([`compute_cid`]).
 //!
 //! # Root discovery
 //!
@@ -77,7 +76,7 @@ pub enum BlobLength {
     AtMost(u64),
 }
 
-/// The Layer 0 operations the tree uses. On wasm32 the store is a JS object,
+/// The provider operations the tree uses. On wasm32 the store is a JS object,
 /// so the trait has no `Send` bound there.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
@@ -1164,7 +1163,7 @@ mod tests {
     #[tokio::test]
     async fn last_leaf_that_is_not_a_directory_is_rejected() {
         let store = MemoryStore::default();
-        store.raw_commit(b"raw layer 0 data");
+        store.raw_commit(b"raw bucket data");
         assert!(matches!(
             tree(&store).load_root().await,
             Err(FsClientError::NotAFileSystemBucket {

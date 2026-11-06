@@ -1,6 +1,6 @@
 # Photos — decentralized photo storage dApp
 
-A custom `Photos.sol` contract creates one Layer 0 **bucket** per user through the storage-provider
+A custom `Photos.sol` contract creates one **bucket** per user through the storage-provider
 precompile `IWeb3Storage` (`0x…09010000`), is that bucket's admin, grants the user a Writer role, and
 anchors the album-tree root CID on-chain. Design: [`DESIGN.md`](./DESIGN.md).
 
@@ -67,7 +67,7 @@ photo (canvas, longest edge ~320px) and PUTs the full photo plus the thumbnail, 
 from thumbnails (kilobytes per cell), and clicking a photo opens it full-resolution in a lightbox.
 Every mutation recomputes the bucket's metadata Merkle root client-side (`@web3-storage/core`'s `merkle.ts`) and
 anchors it on-chain via `setRoot`, so the on-chain anchor shown in the header updates live. The
-SDK's file tree (`FsTree`, from `Web3Storage.drive`) keeps the directory tree in the bucket and uses the provider's Layer 0
+SDK's file tree (`FsTree`, from `Web3Storage.drive`) keeps the directory tree in the bucket and uses the provider's blob
 routes only. Writes are signed with the user's account (a Writer on the bucket). Finding the
 tree's root (`GET /commitment`, `GET /mmr_proof`) needs Reader on a private bucket, but blob reads
 by CID are unauthenticated: anyone who knows a CID can read the blob, including directory blobs

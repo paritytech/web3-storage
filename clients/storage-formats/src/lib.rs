@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! A file system and S3-style objects stored in a Layer 0 bucket.
+//! A file system and S3-style objects stored in a bucket.
 //!
-//! A drive is a Layer 0 bucket of `pallet-storage-provider`, identified by
+//! A drive is a bucket of `pallet-storage-provider`, identified by
 //! its bucket id. Directories, file manifests and file contents are blobs in
 //! the bucket, and the root directory is the bucket's last MMR leaf. The
 //! [`format`](mod@format) module defines these blobs and their limits,
@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use storage_formats::{s3::Objects, Tree};
+//! use storage_formats::{s3::S3Bucket, Tree};
 //! use storage_client::{Signer, StorageUserClient};
 //!
 //! let store = StorageUserClient::for_provider("http://127.0.0.1:3333", Signer::from_seed("//Alice")?)?;
@@ -26,7 +26,7 @@
 //! let entries = tree.list("/documents").await?;
 //! let file = tree.get_file("/documents/report.pdf").await?;
 //!
-//! let objects = Objects::new(Tree::new(&store, bucket_id));
+//! let objects = S3Bucket::new(Tree::new(&store, bucket_id));
 //! objects.put_object("photos/cat.jpg", &jpeg, Default::default()).await?;
 //! ```
 

@@ -186,7 +186,7 @@ pub mod extrinsics {
     /// Build a `create_bucket_with_primary` extrinsic payload.
     ///
     /// Bundles the SCALE-encoded provider-signed terms and signature into
-    /// the call shape Layer 0 expects. The chain hashes
+    /// the call shape the pallet expects. The chain hashes
     /// `blake2_256(TERM_CONTEXT | SCALE(terms))` and verifies the
     /// signature against the provider's registered public key.
     pub fn create_bucket_with_primary(

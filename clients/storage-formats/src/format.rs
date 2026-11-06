@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Blob format of the Layer 1 file system.
+//! Blob format of the file system.
 //!
 //! The file system and S3 clients store every directory and file manifest as
 //! a blob in the drive's bucket: a header ([`FORMAT_MAGIC`] and
@@ -8,7 +8,7 @@
 //!
 //! - **DirectoryNode**: a directory and the references to its children
 //! - **FileManifest**: a file's size, content type and chunks
-//! - **CID**: Content Identifier of a blob: its Layer 0 `data_root`
+//! - **CID**: Content Identifier of a blob: its `data_root`
 //!   (see [`compute_cid`])
 //!
 //! The root directory is the data root of the bucket's last MMR leaf.
@@ -22,7 +22,7 @@ use storage_primitives::BucketId;
 // SCALE-encoded types
 // ============================================================================
 
-/// Content Identifier: the Layer 0 `data_root` of a blob (see [`compute_cid`]).
+/// Content Identifier: the `data_root` of a blob (see [`compute_cid`]).
 pub type Cid = H256;
 
 /// Content type stored when the uploader gives none.
@@ -229,7 +229,7 @@ fn from_blob<T: Decode>(bytes: &[u8]) -> Result<T, FileSystemError> {
 /// `metadata` is reserved and empty. [`DirectoryNode::validate`] checks both.
 #[derive(Clone, Encode, Decode, Eq, PartialEq, Debug, MaxEncodedLen)]
 pub struct DirectoryNode {
-    /// Layer 0 bucket id
+    /// Bucket id
     pub bucket_id: BucketId,
     /// Child entries, sorted by name bytes
     pub children: BoundedVec<DirectoryEntry, MaxDirectoryChildren>,
@@ -341,11 +341,11 @@ pub struct FileChunk {
 ///
 /// `chunks` lists the hashes of the content's 256 KiB chunks in order, with
 /// `sequence` equal to the index. Empty content has no chunks and no stored
-/// blob, because Layer 0 has no chunk tree for empty data. The content's data
+/// blob, because the provider stores no chunk tree for empty data. The content's data
 /// root is [`FileManifest::content_root`].
 #[derive(Clone, Encode, Decode, Eq, PartialEq, Debug, MaxEncodedLen)]
 pub struct FileManifest {
-    /// Layer 0 bucket id
+    /// Bucket id
     pub bucket_id: BucketId,
     /// MIME type (e.g., "image/png"); [`DEFAULT_MIME_TYPE`] if none was given
     pub mime_type: BoundedVec<u8, MaxMimeTypeLength>,
@@ -519,7 +519,7 @@ pub enum FileSystemError {
 // Utility functions
 // ============================================================================
 
-/// CID of a blob: its Layer 0 `data_root`.
+/// CID of a blob: its `data_root`.
 ///
 /// Splits `data` into 256 KiB chunks, hashes each chunk as a Merkle leaf, and
 /// returns `storage_primitives::merkle_root` over the chunk hashes. For a blob
@@ -806,7 +806,7 @@ mod tests {
             Err(FileSystemError::UnsupportedVersion(FORMAT_VERSION + 1))
         );
         assert_eq!(
-            DirectoryNode::from_blob(b"raw layer 0 data"),
+            DirectoryNode::from_blob(b"raw bucket data"),
             Err(FileSystemError::NotAFormatBlob)
         );
     }
