@@ -157,15 +157,22 @@ async fn check_role(
 /// agreement on it. A bucket that already exists locally is left as it is.
 /// Rejects a bucket this node has no agreement on.
 pub(crate) async fn ensure_bucket(state: &ProviderState, bucket_id: BucketId) -> Result<(), Error> {
-    if state.storage.get_bucket(bucket_id)?.is_some() {
+    let exists = state
+        .blocking_storage(move |storage| storage.get_bucket(bucket_id))
+        .await??
+        .is_some();
+    if exists {
         return Ok(());
     }
-    let agreement = state
+    let max_bytes = state
         .auth
         .own_agreement(bucket_id)
         .await?
-        .ok_or(Error::NoAgreement(bucket_id))?;
-    state.storage.init_bucket(bucket_id, agreement.max_bytes)?;
+        .ok_or(Error::NoAgreement(bucket_id))?
+        .max_bytes;
+    state
+        .blocking_storage(move |storage| storage.init_bucket(bucket_id, max_bytes))
+        .await??;
     Ok(())
 }
 
@@ -271,10 +278,11 @@ async fn upload_node(
         .transpose()?;
     let node = ChunkTreeNode::from_wire(data, children)?;
 
-    ensure_bucket(&state, request.bucket_id).await?;
-
-    // Store node
-    state.storage.store_node(request.bucket_id, hash, node)?;
+    let bucket_id = request.bucket_id;
+    ensure_bucket(&state, bucket_id).await?;
+    state
+        .blocking_storage(move |storage| storage.store_node(bucket_id, hash, node))
+        .await??;
 
     Ok(Json(UploadNodeResponse { stored: true }))
 }
