@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-import { waitForPrimaryProvider, Web3Storage } from "@web3-storage/sdk";
+import { Web3Storage } from "@web3-storage/sdk";
 import { getApi } from "./chain-api";
 import type { DevSigner } from "./signers";
 
@@ -21,12 +21,10 @@ const DEFAULT_DURATION = 10_000;
 // look up the bucket ids they created instead of expecting an empty list.
 
 export interface CreateBucketOptions {
-  /** Bytes to reserve. Default 10 MB. Alias: `maxCapacity`. */
-  maxBytes?: bigint;
+  /** Bytes to reserve. Default 10 MB. */
   maxCapacity?: bigint;
-  /** Agreement duration in blocks. Default 10_000. Alias: `storagePeriod`. */
+  /** Agreement duration in blocks. Default 10_000. */
   duration?: number;
-  storagePeriod?: number;
   /** Read visibility of the bucket (default Private). */
   visibility?: "Public" | "Private";
 }
@@ -36,11 +34,10 @@ export interface BucketHandle {
 }
 
 /**
- * Create a bucket via the negotiate → atomic establish flow: the SDK client
+ * Create a bucket via the negotiate → atomic establish flow: the SDK
  * auto-discovers the accepting dev provider, POSTs /negotiate for signed
- * terms, then submits `create_bucket_with_primary`. Finalized submission
- * (test-setup semantics). The trailing `waitForPrimaryProvider` guards
- * against a misconfigured provider node.
+ * terms, then submits `create_bucket_with_primary`, which sets the primary
+ * provider in the same call. Finalized submission (test-setup semantics).
  */
 export async function createBucketViaApi(
   signer: DevSigner,
@@ -49,17 +46,10 @@ export async function createBucketViaApi(
   const api = getApi();
   const storage = new Web3Storage({ api, signer, providerUrl: DEV_PROVIDER_URL });
   const { bucketId } = await storage.createBucket({
-    maxCapacity: opts.maxCapacity ?? opts.maxBytes ?? DEFAULT_MAX_BYTES,
-    duration: opts.storagePeriod ?? opts.duration ?? DEFAULT_DURATION,
+    maxCapacity: opts.maxCapacity ?? DEFAULT_MAX_BYTES,
+    duration: opts.duration ?? DEFAULT_DURATION,
     visibility: opts.visibility,
   });
-  try {
-    await waitForPrimaryProvider(api, bucketId, { timeoutMs: 90_000 });
-  } catch (e) {
-    throw new Error(
-      `createBucketViaApi: ${(e as Error).message} — provider node may not be running or not accepting agreements.`,
-    );
-  }
   return { bucketId };
 }
 

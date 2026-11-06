@@ -14,6 +14,7 @@ import {
 } from "@web3-storage/core";
 import { parseMultiaddrToUrl, resolveProviderEndpoint, toSs58, type ParachainApi } from "./address.js";
 import { getAgreementNonce } from "./pallets/storage-provider.js";
+import { ALL_PROVIDERS, NO_PRICE_CAP } from "./providers.js";
 import { waitForPrimaryProvider, type WaitOpts } from "./waits.js";
 
 export type NegotiateProviderResult =
@@ -144,11 +145,6 @@ export interface ProviderChoice {
   /** /negotiate base URL. Omitted means "resolve from the registered multiaddr". */
   url?: string;
 }
-
-/** Largest u128: requests no price cap from `find_matching_providers`. */
-const NO_PRICE_CAP = (1n << 128n) - 1n;
-/** Largest u32: `find_matching_providers` returns every registered provider. */
-const ALL_PROVIDERS = 0xffff_ffff;
 
 /**
  * Pick an on-chain provider that would accept a primary agreement for

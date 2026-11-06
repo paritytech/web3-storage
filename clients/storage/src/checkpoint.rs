@@ -1227,16 +1227,19 @@ impl CheckpointManager {
                             }
                         }
                     } else {
-                        let error = format!("Provider returned status {}", response.status());
+                        let error = ClientError::HttpStatus {
+                            request: "GET /commitment",
+                            status: response.status().as_u16(),
+                        };
                         if retries < self.config.max_retries {
                             retries += 1;
                             tokio::time::sleep(delay).await;
                             delay *= 2;
                             continue;
                         }
-                        self.record_provider_failure(&provider.account_id, error.clone())
+                        self.record_provider_failure(&provider.account_id, error.to_string())
                             .await;
-                        return Err(ClientError::Api(error));
+                        return Err(error);
                     }
                 }
                 Ok(Err(e)) => {
@@ -1246,10 +1249,10 @@ impl CheckpointManager {
                         delay *= 2;
                         continue;
                     }
-                    let error = format!("Request failed: {e}");
-                    self.record_provider_failure(&provider.account_id, error.clone())
+                    let error = ClientError::Http(e);
+                    self.record_provider_failure(&provider.account_id, error.to_string())
                         .await;
-                    return Err(ClientError::Api(error));
+                    return Err(error);
                 }
                 Err(_) => {
                     if retries < self.config.max_retries {
@@ -1258,10 +1261,13 @@ impl CheckpointManager {
                         delay *= 2;
                         continue;
                     }
-                    let error = "Request timeout".to_string();
-                    self.record_provider_failure(&provider.account_id, error.clone())
+                    let error = ClientError::ProviderUnavailable(format!(
+                        "{} did not answer GET /commitment within {:?}",
+                        provider.endpoint, self.config.provider_timeout
+                    ));
+                    self.record_provider_failure(&provider.account_id, error.to_string())
                         .await;
-                    return Err(ClientError::Api(error));
+                    return Err(error);
                 }
             }
         }
@@ -1406,22 +1412,28 @@ impl CheckpointManager {
                 Ok(())
             }
             Ok(Ok(response)) => {
-                let error = format!("Health check returned {}", response.status());
-                self.record_provider_failure(&provider.account_id, error.clone())
+                let error = ClientError::HttpStatus {
+                    request: "GET /health",
+                    status: response.status().as_u16(),
+                };
+                self.record_provider_failure(&provider.account_id, error.to_string())
                     .await;
-                Err(ClientError::Api(error))
+                Err(error)
             }
             Ok(Err(e)) => {
-                let error = format!("Health check failed: {e}");
-                self.record_provider_failure(&provider.account_id, error.clone())
+                let error = ClientError::Http(e);
+                self.record_provider_failure(&provider.account_id, error.to_string())
                     .await;
-                Err(ClientError::Api(error))
+                Err(error)
             }
             Err(_) => {
-                let error = "Health check timeout".to_string();
-                self.record_provider_failure(&provider.account_id, error.clone())
+                let error = ClientError::ProviderUnavailable(format!(
+                    "{} did not answer GET /health within 5s",
+                    provider.endpoint
+                ));
+                self.record_provider_failure(&provider.account_id, error.to_string())
                     .await;
-                Err(ClientError::Api(error))
+                Err(error)
             }
         }
     }
