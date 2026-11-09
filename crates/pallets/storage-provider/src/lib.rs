@@ -2427,14 +2427,10 @@ pub mod pallet {
                 }
 
                 if let Some(current) = bucket.snapshot.as_ref() {
-                    let current = current.commitment;
-                    let forward = if commitment.start_seq == current.start_seq {
-                        commitment.range_end() > current.range_end()
-                    } else {
-                        commitment.start_seq > current.start_seq
-                            && commitment.range_end() >= current.range_end()
-                    };
-                    ensure!(forward, Error::<T>::SnapshotNotForward);
+                    ensure!(
+                        commitment.moves_forward_from(&current.commitment),
+                        Error::<T>::SnapshotNotForward
+                    );
                 }
 
                 // Verify signatures and build signer bitfield
