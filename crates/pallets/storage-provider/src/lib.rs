@@ -376,10 +376,10 @@ pub mod pallet {
     /// Number of unresolved challenges outstanding against a specific
     /// `(bucket, provider)` pair. Maintained in lockstep with
     /// [`PendingChallenges`] and gates that bucket's agreement teardown
-    /// (`end_agreement`, `claim_expired_agreement`) and bucket removal
-    /// (`delete_bucket`). An entry exists only
-    /// while the count is positive, so a bucket with no entry under its
-    /// prefix has no open challenge.
+    /// (`end_agreement`, `claim_expired_agreement`, `remove_slashed`) and
+    /// bucket removal (`delete_bucket`). An entry exists only while the count
+    /// is positive, so a bucket with no entry under its prefix has no open
+    /// challenge.
     #[pallet::storage]
     pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
         _,
@@ -548,6 +548,10 @@ pub mod pallet {
         /// Maximum storage capacity in bytes. 0 = unlimited (backward compatible).
         /// When set, provider cannot accept agreements that would exceed this capacity.
         pub max_capacity: u64,
+        /// Smallest agreement size, in bytes, that the provider accepts, for
+        /// primary and replica agreements. 0 = no minimum. Must not exceed a
+        /// non-zero `max_capacity`.
+        pub min_agreement_bytes: u64,
     }
 
     impl<T: Config> Default for ProviderSettings<T> {
@@ -560,6 +564,7 @@ pub mod pallet {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 0, // 0 = unlimited (backward compatible)
+                min_agreement_bytes: 0,
             }
         }
     }
@@ -807,6 +812,7 @@ pub mod pallet {
             mmr_proof: MmrProof,
         },
         /// Data was deleted - show newer commitment without this seq.
+        /// Primary providers only; a replica gets `InvalidDeletionClaim`.
         Deleted {
             /// Root of the newer commitment that no longer holds the
             /// challenged sequence.
@@ -820,6 +826,7 @@ pub mod pallet {
             admin_signature: sp_runtime::MultiSignature,
         },
         /// Challenged state has been superseded by canonical.
+        /// Primary providers only; a replica gets `InvalidSupersededClaim`.
         Superseded,
     }
 
@@ -1164,6 +1171,10 @@ pub mod pallet {
         InsufficientStakeForCapacity,
         /// Provider settings specify `min_duration > max_duration`.
         MinDurationExceedsMaxDuration,
+        /// Provider settings specify `min_agreement_bytes > max_capacity` while
+        /// `max_capacity` is limited. Lower `min_agreement_bytes` or raise
+        /// `max_capacity`.
+        MinAgreementBytesExceedsMaxCapacity,
         /// Provider has already announced a deregistration; the action is
         /// rejected until they complete or cancel it.
         DeregisterAnnounced,
@@ -1268,11 +1279,13 @@ pub mod pallet {
         /// unknown, or a `ChunkOutOfRange` response names a chunk the leaf has.
         /// The challenge stays open; respond again before the deadline.
         InvalidProof,
-        /// `new_start_seq` does not cover the challenged leaf, or the admin
-        /// signature does not verify. The challenge stays open.
+        /// `new_start_seq` does not cover the challenged leaf, the admin
+        /// signature does not verify, or the responder is a replica
+        /// (`Deleted` is a primary-only defense). The challenge stays open.
         InvalidDeletionClaim,
         /// No canonical snapshot replaces the challenged root and covers the
-        /// challenged leaf. The challenge stays open.
+        /// challenged leaf, or the responder is a replica (`Superseded` is a
+        /// primary-only defense). The challenge stays open.
         InvalidSupersededClaim,
         /// The provider did not sign the bucket's current snapshot, so there
         /// is no on-chain commitment to challenge; use `challenge_offchain`
@@ -1351,6 +1364,9 @@ pub mod pallet {
         TermsBucketMismatch,
         /// Storage agreement requested 0 byte
         InvalidMaxBytesRequest,
+        /// The terms' `max_bytes` is below the provider's `min_agreement_bytes`.
+        /// Negotiate a quote with at least that many bytes.
+        MaxBytesBelowMinimum,
         /// A challenge against a provider on this bucket is still open.
         /// Resolve it with `respond_to_challenge` or
         /// `resolve_expired_challenge`, then retry.
@@ -1563,11 +1579,13 @@ pub mod pallet {
         }
 
         /// Replace the calling provider's settings: accepted durations, price
-        /// per byte, replica sync price, acceptance flags, and capacity.
+        /// per byte, replica sync price, acceptance flags, capacity, and
+        /// minimum agreement size.
         ///
         /// Rejected while a deregistration is announced, if
         /// `min_duration > max_duration`, if capacity drops below the bytes
-        /// already committed, or if the stake cannot back the capacity.
+        /// already committed, if the stake cannot back the capacity, or if
+        /// `min_agreement_bytes` exceeds a limited `max_capacity`.
         #[pallet::call_index(3)]
         #[pallet::weight(T::WeightInfo::update_provider_settings())]
         pub fn update_provider_settings(
@@ -1740,6 +1758,9 @@ pub mod pallet {
         /// `visibility` sets the new bucket's read visibility (see
         /// [`Visibility`]); it is the owner's choice and not part of the
         /// provider-signed terms.
+        ///
+        /// Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the
+        /// provider's `min_agreement_bytes`.
         #[pallet::call_index(17)]
         #[pallet::weight(T::WeightInfo::create_bucket_with_primary())]
         pub fn create_bucket_with_primary(
@@ -1763,6 +1784,9 @@ pub mod pallet {
         ///
         /// The new provider has none of the bucket's data and is not in the
         /// current snapshot's signer bitfield.
+        ///
+        /// Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the
+        /// provider's `min_agreement_bytes`.
         #[pallet::call_index(18)]
         #[pallet::weight(T::WeightInfo::add_primary_provider())]
         pub fn add_primary_provider(
@@ -1909,6 +1933,9 @@ pub mod pallet {
         /// to its depositor, and removes the provider from the bucket. The
         /// provider's own deposit is on its provider record and is released
         /// by `complete_deregister`; slashing takes the stake only.
+        /// Fails with `AgreementHasPendingChallenge` while a challenge against
+        /// this provider on this bucket is open: the agreement remains until
+        /// every challenge on it resolves.
         #[pallet::call_index(15)]
         #[pallet::weight(T::WeightInfo::remove_slashed())]
         pub fn remove_slashed(
@@ -1924,6 +1951,14 @@ pub mod pallet {
             ensure!(
                 provider_info.stake.is_zero(),
                 Error::<T>::ProviderNotSlashed
+            );
+
+            // Answering a challenge reads the agreement (the responder's role
+            // decides which defenses it may use), so the agreement remains
+            // until every challenge on it resolves.
+            ensure!(
+                PendingChallengesByBucket::<T>::get(bucket_id, &provider) == 0,
+                Error::<T>::AgreementHasPendingChallenge
             );
 
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
@@ -1975,6 +2010,9 @@ pub mod pallet {
         /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with
         /// `bucket: BucketTarget::Existing(bucket_id)` and
         /// `replica_params: Some(_)` off-chain; the caller submits it here.
+        ///
+        /// Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the
+        /// provider's `min_agreement_bytes`.
         #[pallet::call_index(20)]
         #[pallet::weight(T::WeightInfo::add_replica_provider())]
         pub fn add_replica_provider(
@@ -2418,7 +2456,10 @@ pub mod pallet {
                 // Must be writer or admin
                 Self::ensure_writer_or_admin(&who, bucket)?;
 
-                // Check frozen constraint
+                // Frozen buckets are append-only: start_seq is pinned to the
+                // frozen value exactly — only leaf_count may grow. `>=` here
+                // would let a checkpoint advance start_seq and delete
+                // history, defeating the freeze.
                 if let Some(frozen_start) = bucket.frozen_start_seq {
                     ensure!(
                         commitment.start_seq == frozen_start,
@@ -2698,7 +2739,9 @@ pub mod pallet {
         /// Challenged provider only. Answer before the deadline with a chunk
         /// proof, a proof that the leaf has no chunk at the challenged index, a
         /// proof that the data was legitimately deleted, or a note that the
-        /// challenged state has been superseded.
+        /// challenged state has been superseded (`Deleted` and `Superseded`:
+        /// primary providers only; a replica is liable for exactly the root
+        /// it confirmed).
         ///
         /// A valid response settles the deposit between challenger and
         /// provider. An invalid one is rejected (`InvalidProof`,
@@ -2771,6 +2814,11 @@ pub mod pallet {
                 } => {
                     Self::ensure_admin(&admin, &bucket)?;
 
+                    ensure!(
+                        Self::responder_is_primary(&challenge),
+                        Error::<T>::InvalidDeletionClaim
+                    );
+
                     let challenged_seq = challenge
                         .commitment
                         .start_seq
@@ -2798,6 +2846,11 @@ pub mod pallet {
                     );
                 }
                 ChallengeResponse::Superseded => {
+                    ensure!(
+                        Self::responder_is_primary(&challenge),
+                        Error::<T>::InvalidSupersededClaim
+                    );
+
                     // Valid only when a newer canonical snapshot replaced the
                     // challenged root and still covers the challenged seq. A
                     // root equal to the canonical one means the data is live

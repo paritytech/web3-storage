@@ -397,7 +397,7 @@ common::backend_tests! {
 }
 
 common::backend_tests! {
-    async fn test_upload_node_rejects_leaf_above_max_chunk_size(backend) {
+    async fn test_upload_node_rejects_oversized_leaf_and_body(backend) {
         let server = TestServer::new(backend).await;
         let max = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
 
@@ -422,6 +422,10 @@ common::backend_tests! {
         assert_eq!(body["error"], "chunk_too_large");
         assert_eq!(body["details"]["size"], max + 1);
         assert_eq!(body["details"]["max"], max);
+
+        // Over the request body limit once base64-encoded.
+        let response = put(vec![7u8; 4 * max]).await;
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }
 
@@ -1027,8 +1031,9 @@ common::backend_tests! {
 
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["total_buckets"], 1);
-        assert!(body["total_nodes"].as_u64().unwrap() > 0);
-        assert!(body["total_bytes"].as_u64().unwrap() > 0);
+        // upload_and_commit stores one 25-byte chunk.
+        assert_eq!(body["total_nodes"], 1);
+        assert_eq!(body["total_bytes"], 25);
         assert!(body.get("buckets").is_none());
     }
 }
@@ -1093,6 +1098,97 @@ common::backend_tests! {
     }
 }
 
+// Uploads a tree over three chunks and checks every chunk proof against the
+// data root. A three-chunk tree is not a power of two, so the left/right split
+// at the root is uneven. The first two chunks are full and the last is
+// partial, the only shape `commit` accepts.
+common::backend_tests! {
+    async fn test_chunk_proofs_verify_for_every_chunk_of_an_uneven_tree(backend) {
+        let server = TestServer::new(backend).await;
+
+        let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+        let chunks: Vec<Vec<u8>> = vec![
+            vec![b'a'; chunk_size],
+            vec![b'b'; chunk_size],
+            vec![b'c'; 1000],
+        ];
+        let leaves: Vec<H256> = chunks.iter().map(|c| storage_primitives::hash_leaf(c)).collect();
+
+        // Chunks first, then the internal nodes in the clients' canonical
+        // shape, children before parents.
+        let (root, internal) = storage_primitives::merkle_tree(&leaves);
+        let chunk_nodes = chunks.iter().zip(&leaves).map(|(chunk, hash)| {
+            (*hash, json!(BASE64.encode(chunk)), Value::Null)
+        });
+        let internal_nodes = internal.iter().map(|n| {
+            (n.hash, Value::Null, json!([format!("{:#x}", n.left), format!("{:#x}", n.right)]))
+        });
+        for (hash, data, children) in chunk_nodes.chain(internal_nodes) {
+            let resp = server
+                .client
+                .request_bucket(Method::PUT, server.url("/node"), 1)
+                .json(&json!({
+                    "bucket_id": 1,
+                    "hash": format!("{hash:#x}"),
+                    "data": data,
+                    "children": children,
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        }
+
+        let root_hex = format!("{root:#x}");
+        let commit = server
+            .client
+            .request_bucket(Method::POST, server.url("/commit"), 1)
+            .json(&json!({ "bucket_id": 1, "data_roots": [root_hex] }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(commit.status(), StatusCode::OK);
+
+        for (index, chunk) in chunks.iter().enumerate() {
+            let resp = server
+                .client
+                .get(server.url(&format!(
+                    "/chunk_proof?bucket_id=1&data_root={root_hex}&chunk_index={index}"
+                )))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body: Value = resp.json().await.unwrap();
+
+            let chunk_data = BASE64
+                .decode(body["chunk_data"].as_str().unwrap())
+                .unwrap();
+            assert_eq!(chunk_data.as_slice(), chunk.as_slice(), "chunk {index} data");
+
+            let chunk_hash: H256 = body["chunk_hash"].as_str().unwrap().parse().unwrap();
+            assert_eq!(chunk_hash, leaves[index]);
+
+            let siblings: Vec<H256> = body["proof"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().parse().unwrap())
+                .collect();
+            assert!(
+                storage_primitives::verify_merkle_proof(
+                    chunk_hash,
+                    index as u64,
+                    3,
+                    &siblings,
+                    &root
+                ),
+                "chunk {index} proof did not verify against the data root"
+            );
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MMR peaks and subtree
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1120,6 +1216,26 @@ common::backend_tests! {
             leaf_count: commit["leaf_count"].as_u64().unwrap(),
         };
         assert!(storage_primitives::verify_mmr_proof(proof, 1, &commitment));
+    }
+}
+
+common::backend_tests! {
+    async fn test_mmr_proof_leaf_index_out_of_range(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await; // stores a single leaf at index 0
+
+        let resp = server
+            .client
+            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "not_found");
+        assert_eq!(body["details"]["bucket_id"], 1);
+        assert_eq!(body["details"]["leaf_index"], 1);
     }
 }
 
@@ -1594,12 +1710,10 @@ common::backend_tests! {
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
-        // No chunks found for nonexistent root → empty chunks array
         let body: Value = resp.json().await.unwrap();
-        let chunks = body["chunks"].as_array().unwrap();
-        assert!(chunks.is_empty());
+        assert_eq!(body["error"], "not_found");
     }
 }
 

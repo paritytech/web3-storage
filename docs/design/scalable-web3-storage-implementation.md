@@ -154,6 +154,8 @@ it stay valid. The bucket remains until an admin calls `delete_bucket`.
 
 **Snapshot liability**: Providers remain liable for snapshots they signed until those snapshots are superseded by a new checkpoint that doesn't include them, or until the bucket's canonical depth grows past the data they signed for.
 
+A checkpoint voids any prior existing *shorter* off-chain commitments. A primary challenged on an off-chain commitment to a different root answers with `Superseded` for the leaves the checkpoint covers, whether or not it signed the checkpoint: the client decides how many signatures to collect before it submits the checkpoint.
+
 ### Multi-Provider Coordination (Primary Providers)
 
 Primary providers don't sync with each other. Clients are responsible for uploading to each primary provider they want to store their data.
@@ -449,9 +451,10 @@ pub struct ProviderSettings<T: Config> {
     /// `committed_bytes` past this value, and the provider's stake must back
     /// it: `stake >= max_capacity * MinStakePerByte`.
     pub max_capacity: u64,
-    /// Minimum `max_bytes` per agreement, primary or replica. `0` means no
-    /// minimum. Redeem calls reject `terms.max_bytes` below this value.
-    pub min_bytes: u64,
+    /// Smallest agreement size, in bytes, that the provider accepts, for
+    /// primary and replica agreements. `0` means no minimum. Redeem calls
+    /// reject `terms.max_bytes` below this value.
+    pub min_agreement_bytes: u64,
 }
 
 /// Monotonically increasing bucket ID counter. Ensures stable, unique IDs.
@@ -787,10 +790,10 @@ pub type PendingChallenges<T: Config> =
 /// Number of unresolved challenges outstanding against a specific
 /// `(bucket, provider)` pair. Maintained in lockstep with
 /// `PendingChallenges` and gates that bucket's agreement teardown
-/// (`end_agreement`, `claim_expired_agreement`) and bucket removal
-/// (`delete_bucket`). An entry exists only while
-/// the count is positive, so a bucket with no entry under its prefix has no
-/// open challenge, and the removal gate is one `next_key` read.
+/// (`end_agreement`, `claim_expired_agreement`, `remove_slashed`) and bucket
+/// removal (`delete_bucket`). An entry exists only while the count is
+/// positive, so a bucket with no entry under its prefix has no open
+/// challenge, and the removal gate is one `next_key` read.
 #[pallet::storage]
 pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
     _,
@@ -1284,8 +1287,8 @@ impl<T: Config> Pallet<T> {
     ///   (`CapacityBelowCommitted`) and stake must cover it,
     ///   i.e. `stake >= max_capacity * MinStakePerByte`
     ///   (`InsufficientStakeForCapacity`).
-    /// - If `max_capacity > 0`: `min_bytes` must be `<= max_capacity`
-    ///   (`MinBytesExceedsMaxCapacity`).
+    /// - If `max_capacity > 0`: `min_agreement_bytes` must be `<= max_capacity`
+    ///   (`MinAgreementBytesExceedsMaxCapacity`).
     /// - Settings are frozen while a deregister announcement is in flight —
     ///   call `cancel_deregister` first.
     /// 
@@ -1352,10 +1355,9 @@ impl<T: Config> Pallet<T> {
     /// Requires:
     /// - no storage agreement on the bucket (`BucketNotEmpty`);
     /// - no entry under the bucket's `PendingChallengesByBucket` prefix
-    ///   (`BucketHasPendingChallenge`). No agreements is not enough:
-    ///   `remove_slashed` removes a slashed provider's agreement without
-    ///   checking for pending challenges, so another challenge against that
-    ///   provider can still be open, and answering it reads the bucket.
+    ///   (`BucketHasPendingChallenge`). Every agreement removal is gated on
+    ///   the same counter, so a bucket with no agreement has no open
+    ///   challenge; the prefix check is a one-read guard of that invariant.
     ///
     /// For every member (at most `MaxMembers`) releases the member deposit to
     /// its `depositor` and removes the bucket from the member's
@@ -1487,7 +1489,7 @@ impl<T: Config> Pallet<T> {
     //   its duration bounds, and the added `terms.max_bytes` must fit its
     //   declared capacity (`CapacityExceeded`) and stake
     //   (`InsufficientStakeForBytes`)
-    // - `terms.max_bytes` must be `>= settings.min_bytes` (`MaxBytesBelowMinimum`)
+    // - `terms.max_bytes` must be `>= settings.min_agreement_bytes` (`MaxBytesBelowMinimum`)
     //
     // Payment `terms.price_per_byte * terms.max_bytes * terms.duration` is
     // held on the owner at the price the provider signed for — the
@@ -1738,6 +1740,9 @@ impl<T: Config> Pallet<T> {
     /// The agreement's remaining payment is handled as follows:
     /// - If slashed while agreement was active: remaining payment returned to owner
     ///   (provider already punished via stake slash, client shouldn't also lose payment)
+    ///
+    /// Fails with `AgreementHasPendingChallenge` while a challenge against
+    /// this provider on this bucket is open.
     #[pallet::weight(...)]
     pub fn remove_slashed(
         origin: OriginFor<T>,
@@ -1803,6 +1808,11 @@ impl<T: Config> Pallet<T> {
     // - Uses the replica's on-chain sync confirmation (last_synced_root)
     // - No signature needed - chain already has their commitment
     // - Replicas are liable for roots they've confirmed synced to
+    // - `Superseded` and `Deleted` are not defenses for a replica: they cover
+    //   commitments that canonical history moved past, and a replica is
+    //   liable for exactly the root it confirmed. A replica challenge targets
+    //   a leaf of that commitment, so a challenged replica answers with `Proof`,
+    //   or `ChunkOutOfRange` when the chunk index is past the leaf's last chunk
     //
     // For hot buckets, challenge_checkpoint may fail due to race conditions,
     // but this is acceptable: active writers have signatures and can use
@@ -1985,8 +1995,9 @@ impl<T: Config> Pallet<T> {
     /// 
     /// Must provide the challenged chunk with Merkle proofs, or prove the data
     /// was legitimately deleted (newer commitment with higher start_seq), or
-    /// show the challenged state has been superseded by canonical. An invalid
-    /// response is rejected (`InvalidProof`, `InvalidDeletionClaim`,
+    /// show the challenged state has been superseded by canonical (`Deleted`
+    /// and `Superseded`: primary providers only). An invalid response is
+    /// rejected (`InvalidProof`, `InvalidDeletionClaim`,
     /// `InvalidSupersededClaim`) and the challenge stays open until the
     /// deadline.
     /// 
@@ -2049,6 +2060,7 @@ pub enum ChallengeResponse<T: Config> {
     /// Admin signature proves the admin authorized the deletion (new MMR excludes the challenged data).
     /// Only admins can delete data (by increasing start_seq), so the signature must be from an admin.
     /// Provider signature not needed - they're submitting this response.
+    /// Primary providers only; a replica gets `InvalidDeletionClaim`.
     Deleted {
         new_mmr_root: H256,
         new_start_seq: u64,
@@ -2056,6 +2068,7 @@ pub enum ChallengeResponse<T: Config> {
         admin_signature: Signature,
     },
     /// Challenged state has been superseded by a larger canonical checkpoint.
+    /// Primary providers only; a replica gets `InvalidSupersededClaim`.
     /// Valid when: canonical.mmr_root != challenged mmr_root AND
     /// canonical.start_seq <= challenged_seq < canonical.start_seq + canonical.leaf_count
     /// (The leaf exists in canonical - challenger should challenge the snapshot instead)
@@ -2785,7 +2798,7 @@ check).
     └─ Challenger obtains the chunk via the on-chain proof (full on-chain
        cost applies—a last-resort recovery path, not a cheap bulk channel)
 
-3b. Provider responds with deletion proof
+3b. Provider responds with deletion proof (primary providers only)
     └─ Shows newer admin-signed commitment with start_seq > challenged seq
     └─ Challenge rejected (data was legitimately deleted)
     └─ Treated as a valid response: provider's fee reimbursed as in 3a,
@@ -2864,6 +2877,15 @@ fn verify_challenge_response(
             //
             // `admin` must be a bucket admin (dispatch error otherwise, see above).
 
+            // Replicas: never valid (see the `challenge_replica` notes).
+            let Some(agreement) = StorageAgreements::get(challenge.bucket_id, &challenge.provider)
+            else {
+                return Err(Error::InvalidDeletionClaim);
+            };
+            if matches!(agreement.role, ProviderRole::Replica { .. }) {
+                return Err(Error::InvalidDeletionClaim);
+            }
+
             // The purge must actually cover the challenged leaf.
             if challenged_seq >= *new_start_seq {
                 return Err(Error::InvalidDeletionClaim);
@@ -2898,6 +2920,15 @@ fn verify_challenge_response(
             // Provider IS liable when the challenged root is still canonical (the
             // data is live, only a Proof defends it) or when challenged_seq lies
             // beyond canonical_end (they signed something canonical never covered).
+            //
+            // Replicas: never valid (see the `challenge_replica` notes).
+            let Some(agreement) = StorageAgreements::get(challenge.bucket_id, &challenge.provider)
+            else {
+                return Err(Error::InvalidSupersededClaim);
+            };
+            if matches!(agreement.role, ProviderRole::Replica { .. }) {
+                return Err(Error::InvalidSupersededClaim);
+            }
             let Some(snapshot) = bucket.snapshot.as_ref() else {
                 // Nothing canonical to lean on: the claim is unsupported.
                 return Err(Error::InvalidSupersededClaim);

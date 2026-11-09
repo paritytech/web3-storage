@@ -40,6 +40,21 @@ impl StorageUserClient {
         })
     }
 
+    /// Create a storage user client that talks to one provider, with the
+    /// default configuration otherwise.
+    ///
+    /// Trailing `/` characters of `provider_url` are removed, so
+    /// `http://host:3333/` and `http://host:3333` address the same provider.
+    pub fn for_provider(provider_url: &str, auth_signer: Signer) -> ClientResult<Self> {
+        Self::new(
+            ClientConfig {
+                provider_urls: vec![provider_url.trim_end_matches('/').to_string()],
+                ..Default::default()
+            },
+            auth_signer,
+        )
+    }
+
     /// Attach the signed `Authorization` header (`method` = upper-case HTTP verb).
     fn sign(
         &self,
@@ -221,10 +236,10 @@ impl StorageUserClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Provider returned error: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /read",
+                status: response.status().as_u16(),
+            });
         }
 
         let read_response: ReadResponse = response.json().await?;
@@ -302,10 +317,10 @@ impl StorageUserClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Node not found or error: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /node",
+                status: response.status().as_u16(),
+            });
         }
 
         let node_response: NodeResponse = response
@@ -382,10 +397,10 @@ impl StorageUserClient {
         let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Commit failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "POST /commit",
+                status: response.status().as_u16(),
+            });
         }
 
         response
@@ -412,10 +427,10 @@ impl StorageUserClient {
         let response = self.sign(req, "GET", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Checkpoint signature request failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /checkpoint-signature",
+                status: response.status().as_u16(),
+            });
         }
 
         response
@@ -545,10 +560,10 @@ impl StorageUserClient {
         let response = self.sign(req, "PUT", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Upload failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "PUT /node",
+                status: response.status().as_u16(),
+            });
         }
 
         Ok(hash)
@@ -597,6 +612,21 @@ impl StorageUserClient {
 
     /// Get the current MMR commitment for a bucket from the provider.
     pub async fn get_commitment(&self, bucket_id: BucketId) -> ClientResult<CommitmentResponse> {
+        self.get_commitment_if_exists(bucket_id)
+            .await?
+            .ok_or(ClientError::HttpStatus {
+                request: "GET /commitment",
+                status: 404,
+            })
+    }
+
+    /// Like [`Self::get_commitment`], but returns `None` when the provider
+    /// answers 404 (it has no record of the bucket: it has received no data
+    /// for it yet).
+    pub async fn get_commitment_if_exists(
+        &self,
+        bucket_id: BucketId,
+    ) -> ClientResult<Option<CommitmentResponse>> {
         let provider_url = self.base.get_provider_url()?;
         let req = self
             .base
@@ -605,11 +635,47 @@ impl StorageUserClient {
             .query(&[("bucket_id", bucket_id.to_string())]);
         let response = self.sign(req, "GET", bucket_id).send().await?;
 
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            return Err(ClientError::HttpStatus {
+                request: "GET /commitment",
+                status: status.as_u16(),
+            });
+        }
+        response
+            .json()
+            .await
+            .map(Some)
+            .map_err(|e| ClientError::Serialization(e.to_string()))
+    }
+
+    /// Get the MMR proof of the leaf at `leaf_index` of the bucket's current
+    /// MMR (`GET /mmr_proof`). The proof is not verified here: check it with
+    /// [`storage_primitives::verify_mmr_proof`] against a trusted MMR root.
+    pub async fn get_mmr_proof(
+        &self,
+        bucket_id: BucketId,
+        leaf_index: u64,
+    ) -> ClientResult<storage_primitives::MmrProof> {
+        let provider_url = self.base.get_provider_url()?;
+        let req = self
+            .base
+            .http
+            .get(format!("{provider_url}/mmr_proof"))
+            .query(&[
+                ("bucket_id", bucket_id.to_string()),
+                ("leaf_index", leaf_index.to_string()),
+            ]);
+        let response = self.sign(req, "GET", bucket_id).send().await?;
+
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Commitment request failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /mmr_proof",
+                status: response.status().as_u16(),
+            });
         }
         response
             .json()
@@ -636,10 +702,10 @@ impl StorageUserClient {
         let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Exists check failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "POST /exists",
+                status: response.status().as_u16(),
+            });
         }
         response
             .json()
@@ -832,6 +898,23 @@ impl CommitmentResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn for_provider_ignores_trailing_slashes() {
+        let signer = Signer::from_seed("//Alice").unwrap();
+        for url in [
+            "http://host:3333",
+            "http://host:3333/",
+            "http://host:3333//",
+        ] {
+            let client = StorageUserClient::for_provider(url, signer.clone()).unwrap();
+            assert_eq!(
+                client.base.get_provider_url().unwrap(),
+                "http://host:3333",
+                "url {url}"
+            );
+        }
+    }
 
     #[test]
     fn node_from_wire_takes_data_or_exactly_two_children() {
