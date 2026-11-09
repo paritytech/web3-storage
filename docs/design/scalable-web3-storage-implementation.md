@@ -2102,8 +2102,8 @@ Three Reader-level exemptions, all resolved from the same cached lookup:
   account passes any Reader check. Provider accounts are never bucket
   members, and the operator can read the node's disk anyway; this is what
   lets the provider's own tooling (e.g. the dashboard building a challenge
-  response) fetch `/mmr_proof` on a private bucket. It never grants Writer
-  or Admin.
+  response) fetch `/mmr_proof` with the challenge's commitment on a private
+  bucket. It never grants Writer or Admin.
 
 **Hash-keyed reads are capability reads.** `GET /node`, `GET /read`,
 `GET /chunk_proof` and `POST /fetch_nodes` are keyed by a blake2-256 hash or
@@ -2377,14 +2377,35 @@ for the checkpoint workflow, where the signature goes into the
 Get MMR Proof
 ─────────────
 GET /mmr_proof?bucket_id=0x...&leaf_index=5
+GET /mmr_proof?bucket_id=0x...&leaf_index=5&mmr_root=0x...&start_seq=0&leaf_count=42
 Authorization: Web3Storage <...>       # Reader; the provider's own account
                                        # also passes (operator self-auth)
+
+Without `mmr_root`, `start_seq` and `leaf_count`, the proof is for the leaf
+at `leaf_index` in the bucket's current MMR. With them, the proof is for the
+leaf at `leaf_index` (relative to `start_seq`) in the MMR of that commitment,
+rebuilt from the node's leaf history. A challenge response must use the
+challenge's `commitment`: `respond_to_challenge` verifies against it, and the
+current MMR differs from it once a later commit or prune has run. A node that
+does not support these parameters ignores them and returns a proof against
+the current MMR, so the client verifies the returned proof against the
+commitment before it submits the response.
 
 Response:
 {
   "leaf": { "leaf_version": 1, "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
   "items": ["0x...", ...]
 }
+
+Response (400 Bad Request):
+{ "error": "incomplete_commitment" }      // some but not all of mmr_root, start_seq, leaf_count
+
+Response (404 Not Found):
+{ "error": "bucket_not_found" }
+{ "error": "commitment_not_reproducible", "details": { "reason": "..." } }
+  // leaf_index >= leaf_count, start_seq below the node's current start_seq
+  // (leaves pruned), range past the local leaves, or the rebuilt root
+  // differs from mmr_root
 
 Get Chunk Proof
 ───────────────

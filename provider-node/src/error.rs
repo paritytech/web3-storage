@@ -106,6 +106,11 @@ pub enum Error {
 
     #[error("Too many requests")]
     RateLimited,
+
+    /// `GET /mmr_proof` received some but not all of `mmr_root`,
+    /// `start_seq` and `leaf_count`. Send all three or none.
+    #[error("Incomplete commitment: send all of mmr_root, start_seq and leaf_count, or none")]
+    IncompleteCommitment,
 }
 
 impl Error {
@@ -519,6 +524,13 @@ impl IntoResponse for Error {
                     details: None,
                 },
             ),
+            Error::IncompleteCommitment => (
+                StatusCode::BAD_REQUEST,
+                ErrorResponse {
+                    error: "incomplete_commitment".to_string(),
+                    details: None,
+                },
+            ),
         };
 
         (status, Json(error_response)).into_response()
@@ -641,6 +653,10 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
         assert_eq!(status_of(Error::InvalidSignature), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            status_of(Error::IncompleteCommitment),
+            StatusCode::BAD_REQUEST
+        );
         assert_eq!(
             status_of(Error::NotAuthorized("x".into())),
             StatusCode::FORBIDDEN

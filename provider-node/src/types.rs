@@ -177,11 +177,38 @@ pub struct CheckpointSignatureResponse {
 // Proof Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Query for MMR proof.
+/// Query for `GET /mmr_proof`.
+///
+/// Without `mmr_root`, `start_seq` and `leaf_count`, the proof is for the
+/// leaf at `leaf_index` in the bucket's current MMR. With all three, it is for
+/// the leaf at `leaf_index` (relative to `start_seq`) in that commitment's
+/// MMR, which is what a challenge response needs.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MmrProofQuery {
     pub bucket_id: BucketId,
     pub leaf_index: u64,
+    pub mmr_root: Option<String>,
+    pub start_seq: Option<u64>,
+    pub leaf_count: Option<u64>,
+}
+
+impl MmrProofQuery {
+    /// The commitment to prove against: `None` when none of the three
+    /// commitment parameters is set. Returns `IncompleteCommitment` when only
+    /// some are set, and `InvalidHash` for a malformed `mmr_root`.
+    pub fn commitment(&self) -> Result<Option<storage_primitives::Commitment>, Error> {
+        match (&self.mmr_root, self.start_seq, self.leaf_count) {
+            (None, None, None) => Ok(None),
+            (Some(mmr_root), Some(start_seq), Some(leaf_count)) => {
+                Ok(Some(storage_primitives::Commitment {
+                    mmr_root: decode_hash(mmr_root)?,
+                    start_seq,
+                    leaf_count,
+                }))
+            }
+            _ => Err(Error::IncompleteCommitment),
+        }
+    }
 }
 
 /// Query for chunk proof.
@@ -389,5 +416,65 @@ mod tests {
         for bad in ["ab".repeat(31), "ab".repeat(33), "zz".repeat(32)] {
             assert!(matches!(decode_hash(&bad), Err(Error::InvalidHash { .. })));
         }
+    }
+
+    fn mmr_proof_query(
+        mmr_root: Option<&str>,
+        start_seq: Option<u64>,
+        leaf_count: Option<u64>,
+    ) -> MmrProofQuery {
+        MmrProofQuery {
+            bucket_id: 1,
+            leaf_index: 0,
+            mmr_root: mmr_root.map(str::to_string),
+            start_seq,
+            leaf_count,
+        }
+    }
+
+    #[test]
+    fn mmr_proof_query_commitment_is_none_without_parameters() {
+        assert!(mmr_proof_query(None, None, None)
+            .commitment()
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn mmr_proof_query_commitment_from_all_three_parameters() {
+        let root = format!("0x{}", "ab".repeat(32));
+        let commitment = mmr_proof_query(Some(&root), Some(3), Some(5))
+            .commitment()
+            .unwrap()
+            .unwrap();
+        assert_eq!(commitment.mmr_root, H256::repeat_byte(0xab));
+        assert_eq!(commitment.start_seq, 3);
+        assert_eq!(commitment.leaf_count, 5);
+    }
+
+    #[test]
+    fn mmr_proof_query_rejects_a_partial_commitment() {
+        let root = "ab".repeat(32);
+        for query in [
+            mmr_proof_query(Some(&root), None, None),
+            mmr_proof_query(None, Some(0), None),
+            mmr_proof_query(None, None, Some(1)),
+            mmr_proof_query(Some(&root), Some(0), None),
+            mmr_proof_query(Some(&root), None, Some(1)),
+            mmr_proof_query(None, Some(0), Some(1)),
+        ] {
+            assert!(matches!(
+                query.commitment(),
+                Err(Error::IncompleteCommitment)
+            ));
+        }
+    }
+
+    #[test]
+    fn mmr_proof_query_rejects_a_malformed_root() {
+        assert!(matches!(
+            mmr_proof_query(Some("zz"), Some(0), Some(1)).commitment(),
+            Err(Error::InvalidHash { .. })
+        ));
     }
 }
