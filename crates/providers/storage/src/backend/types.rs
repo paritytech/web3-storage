@@ -29,10 +29,12 @@ use storage_primitives::{hash_children, MmrLeaf, DEFAULT_CHUNK_SIZE};
 /// Bump it whenever a change alters what [`ChunkTreeNode`] or [`BucketState`]
 /// encode to, so a build fails on a database in another format instead of
 /// misreading its bytes.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 
-/// One pruned-but-not-yet-erased leaf range: the retention stash keeping
-/// challenges over the range provable until erasure is permitted.
+/// One pruned leaf range. Erasure deletes the range's nodes but keeps its
+/// leaves: a commitment signed before the prune also covers later leaves the
+/// provider still stores, and a proof for those needs the pruned leaves to
+/// rebuild the commitment's root.
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
 pub struct PrunedRange {
     /// Global sequence number of `leaves[0]`.
@@ -41,6 +43,8 @@ pub struct PrunedRange {
     pub leaves: Vec<MmrLeaf>,
     /// The start_seq this prune advanced the bucket to.
     pub new_start_seq: u64,
+    /// Whether the range's nodes were deleted.
+    pub erased: bool,
 }
 
 /// An admin-signed deletion authorization: the durable evidence for the
@@ -74,14 +78,16 @@ pub struct BucketState {
     pub node_count: u64,
     /// Quota agreed on-chain for this bucket.
     pub max_bytes: u64,
-    /// Pruned-but-not-yet-erased leaf ranges (the pending-erasure queue).
+    /// Pruned leaf ranges, oldest first; the ones not `erased` are the
+    /// pending-erasure queue.
     pub pruned: Vec<PrunedRange>,
     /// Admin-signed deletion receipts keyed by `new_start_seq` (one per
     /// prune point), kept even after their ranges are erased — permanent
     /// evidence for the on-chain `Deleted` defense.
     pub deletion_receipts: BTreeMap<u64, DeletionReceipt>,
     /// Set when the bucket was deleted on-chain (or the agreement ended).
-    /// The bucket row is removed once `leaves` and `pruned` are both empty.
+    /// The bucket row is removed once `leaves` is empty and every pruned
+    /// range is erased.
     pub condemned: bool,
 }
 
@@ -245,6 +251,37 @@ mod tests {
                     "00",
                     // condemned: bool = false
                     "00",
+                ),
+            );
+        }
+
+        #[test]
+        fn pruned_range() {
+            assert_golden(
+                PrunedRange {
+                    first_seq: 3,
+                    leaves: vec![MmrLeaf {
+                        leaf_version: LEAF_VERSION,
+                        data_root: H256::repeat_byte(0xcd),
+                        data_size: 111,
+                        total_size: 222,
+                    }],
+                    new_start_seq: 4,
+                    erased: true,
+                },
+                concat!(
+                    // first_seq: u64 = 3
+                    "0300000000000000",
+                    // leaves: Vec<MmrLeaf>, compact length 1, then the leaf
+                    "04",
+                    "01",
+                    "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+                    "6f00000000000000",
+                    "de00000000000000",
+                    // new_start_seq: u64 = 4
+                    "0400000000000000",
+                    // erased: bool = true
+                    "01",
                 ),
             );
         }

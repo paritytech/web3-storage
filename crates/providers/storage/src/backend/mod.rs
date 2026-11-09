@@ -328,9 +328,11 @@ pub trait StorageBackend: Send + Sync {
 
     /// Physically erase one stashed range: decrement refcounts along each
     /// leaf's tree, delete zero-ref nodes, credit `used_bytes` back to each
-    /// node's charged bucket, and drop the range — one atomic write.
-    /// Idempotent: an unknown `first_seq` is a no-op `Ok`. On a condemned
-    /// bucket, removes the bucket row once nothing stashed or live remains.
+    /// node's charged bucket, and mark the range erased — one atomic write.
+    /// The range's leaves remain (see [`PrunedRange`]). Idempotent: an
+    /// unknown or already erased `first_seq` is a no-op `Ok`. On a condemned
+    /// bucket, removes the bucket row once no live leaf and no unerased range
+    /// remains.
     ///
     /// Callers are responsible for checking that liability has passed
     /// (canonical checkpoint past the range, the admin's deletion receipt

@@ -527,6 +527,51 @@ impl ChallengeResponder {
         }
     }
 
+    /// Answer a challenge the provider cannot prove with the admin's deletion
+    /// receipt, if one covers the challenged leaf: the leaf was pruned and its
+    /// nodes may be erased. Without a receipt, report `proof_error`.
+    async fn respond_with_receipt(
+        &self,
+        challenge: &DetectedChallenge,
+        what: &str,
+        proof_error: &ChallengeError,
+    ) -> ChallengeResponseResult {
+        let challenge_id = (challenge.deadline, challenge.index);
+        let challenged_seq = challenge
+            .commitment
+            .start_seq
+            .saturating_add(challenge.target.leaf_index);
+        let receipt = match self
+            .proof_source
+            .deletion_receipt_covering(challenge.bucket_id, challenged_seq)
+        {
+            Ok(Some(receipt)) => receipt,
+            Ok(None) => return proof_failure(challenge, what, proof_error),
+            Err(lookup) => {
+                return proof_failure(challenge, "Failed to read deletion receipt", &lookup)
+            }
+        };
+        tracing::info!(
+            "Defending challenge {:?} with the admin's deletion receipt (new_start_seq {})",
+            challenge_id,
+            receipt.new_start_seq
+        );
+        match self
+            .chain_client
+            .submit_deleted_response(challenge_id, &receipt)
+            .await
+        {
+            Ok(block_hash) => ChallengeResponseResult::Success {
+                challenge_id,
+                block_hash,
+            },
+            Err(e) => ChallengeResponseResult::SubmissionFailed {
+                challenge_id,
+                error: e.to_string(),
+            },
+        }
+    }
+
     /// Respond to a specific challenge.
     async fn respond_to_challenge(&self, challenge: &DetectedChallenge) -> ChallengeResponseResult {
         let challenge_id = (challenge.deadline, challenge.index);
@@ -548,45 +593,9 @@ impl ChallengeResponder {
         ) {
             Ok(proof) => proof,
             Err(e) => {
-                // The cited leaves may be pruned and already physically
-                // erased. If the admin's deletion authorization covers the
-                // challenged leaf, that receipt IS the defense.
-                let challenged_seq = challenge
-                    .commitment
-                    .start_seq
-                    .saturating_add(challenge.target.leaf_index);
-                let receipt = match self
-                    .proof_source
-                    .deletion_receipt_covering(challenge.bucket_id, challenged_seq)
-                {
-                    Ok(Some(receipt)) => receipt,
-                    Ok(None) => {
-                        return proof_failure(challenge, "Failed to generate MMR proof", &e)
-                    }
-                    Err(lookup) => {
-                        return proof_failure(challenge, "Failed to read deletion receipt", &lookup)
-                    }
-                };
-                tracing::info!(
-                    "Defending challenge {:?} with the admin's deletion receipt \
-                     (new_start_seq {})",
-                    challenge_id,
-                    receipt.new_start_seq
-                );
-                return match self
-                    .chain_client
-                    .submit_deleted_response(challenge_id, &receipt)
+                return self
+                    .respond_with_receipt(challenge, "Failed to generate MMR proof", &e)
                     .await
-                {
-                    Ok(block_hash) => ChallengeResponseResult::Success {
-                        challenge_id,
-                        block_hash,
-                    },
-                    Err(e) => ChallengeResponseResult::SubmissionFailed {
-                        challenge_id,
-                        error: e.to_string(),
-                    },
-                };
             }
         };
 
@@ -609,7 +618,11 @@ impl ChallengeResponder {
                 .get_chunk_at_index(mmr_proof.leaf.data_root, challenge.target.chunk_index)
             {
                 Ok(data) => data,
-                Err(e) => return proof_failure(challenge, "Failed to get chunk data", &e),
+                Err(e) => {
+                    return self
+                        .respond_with_receipt(challenge, "Failed to get chunk data", &e)
+                        .await
+                }
             };
             ChallengeResponse::Proof {
                 chunk_data,
