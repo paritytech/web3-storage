@@ -542,6 +542,8 @@ impl FileSystemClient {
 
 ## Conflict Resolution Protocol
 
+The storage client does not implement this protocol. [#578](https://github.com/paritytech/web3-storage/issues/578) removed the client's conflict detection and automatic challenge code: no caller used it, and `challenge_checkpoint` rejects a provider that did not sign the snapshot.
+
 When providers disagree, the system follows a resolution protocol:
 
 ```
@@ -704,12 +706,6 @@ fs_client.on_checkpoint_failed(|event| {
     println!("  Reason: {:?}", event.reason);
     println!("  Will retry: {}", event.will_retry);
 });
-
-fs_client.on_provider_conflict(|event| {
-    println!("Provider conflict detected!");
-    println!("  Majority: {:?}", event.majority_root);
-    println!("  Disagreeing: {:?}", event.disagreeing_providers);
-});
 ```
 
 ---
@@ -726,12 +722,9 @@ fs_client.on_provider_conflict(|event| {
 ### Phase 2: Reliability ✅
 - [x] Retry with exponential backoff
 - [x] Provider health tracking (`ProviderHealthHistory`)
-- [x] Conflict detection and logging (`ProviderConflict`, `ConflictType`)
 - [x] Background batched checkpoint loop (`CheckpointLoopHandle`)
 
 ### Phase 3: Advanced
-- [x] Conflict resolution protocol (`ConflictResolution`)
-- [ ] Automatic challenge for divergent providers
 - [x] Event/callback system (`CheckpointCallback`)
 - [ ] Metrics and monitoring
 
@@ -763,12 +756,6 @@ use storage_client::{
     ProviderInfo,
     ProviderStatus,
     ProviderHealthHistory,
-
-    // Conflict Detection
-    ProviderConflict,
-    ConflictType,
-    ConflictResolution,
-    ConflictingProvider,
 
     // Callbacks
     CheckpointCallback,
@@ -882,50 +869,6 @@ let healthy_providers = manager.get_providers_by_health(bucket_id).await?;
 
 // Check if enough healthy providers for consensus
 let can_checkpoint = manager.has_enough_healthy_providers(bucket_id).await?;
-```
-
-### Conflict Detection
-
-```rust
-use storage_client::{ConflictType, ConflictResolution};
-
-// Collect commitments with conflict analysis
-let (collection, conflict) = manager.collect_commitments_with_conflicts(bucket_id).await?;
-
-if let Some(conflict) = conflict {
-    println!("Conflict detected!");
-    println!("  Majority root: {:?}", conflict.majority_root);
-    println!("  Majority count: {}", conflict.majority_count);
-
-    for c in &conflict.conflicts {
-        match &c.conflict_type {
-            ConflictType::SyncDelay { behind_by } => {
-                println!("  {} is {} leaves behind (sync delay)", c.account_id, behind_by);
-            }
-            ConflictType::DataDivergence => {
-                println!("  {} has different data (potential corruption)", c.account_id);
-            }
-            ConflictType::Ahead { ahead_by } => {
-                println!("  {} is {} leaves ahead", c.account_id, ahead_by);
-            }
-        }
-    }
-
-    match &conflict.resolution {
-        ConflictResolution::WaitForSync { estimated_blocks } => {
-            println!("  Resolution: Wait ~{} blocks for sync", estimated_blocks);
-        }
-        ConflictResolution::ProceedWithMajority => {
-            println!("  Resolution: Proceed with majority");
-        }
-        ConflictResolution::ConsiderChallenge { provider } => {
-            println!("  Resolution: Consider challenging {}", provider);
-        }
-        ConflictResolution::ManualIntervention { reason } => {
-            println!("  Resolution: Manual intervention needed - {}", reason);
-        }
-    }
-}
 ```
 
 ### FileSystemClient Integration
