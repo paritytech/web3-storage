@@ -83,8 +83,8 @@ over Layer 0's raw blob storage.
 just start-chain            # Terminal 1: relay + parachain
 just start-provider         # Terminal 2: provider node
 
-# Then run the file-system integration example:
-just fs-demo-ci             # Terminal 3
+# Then run the file system and S3 objects demo:
+just file-system-demo       # Terminal 3
 ```
 
 **What you get:**
@@ -95,8 +95,8 @@ just fs-demo-ci             # Terminal 3
 ### File System Commands
 
 ```bash
-just fs-test-all            # Run all unit tests across primitives, pallet, client
-just fs-demo-ci             # Integration example against a running chain + provider
+cargo test -p storage-formats  # Unit and integration tests
+just file-system-demo          # Demo against a running chain + provider
 ```
 
 **Complete guide**: [FILE_SYSTEM_QUICKSTART.md](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
@@ -131,13 +131,11 @@ just stats                   # Provider storage stats
 
 # End-to-end demos (require chain + provider running)
 just demo                    # Layer-0 PAPI demo: setup, upload, 2 challenges
-just fs-demo-ci              # Layer-1 file-system integration example
-just s3-demo-ci              # Layer-1 S3-compatible integration example
+just file-system-demo        # File system and S3 objects demo
 
 # Tests
 cargo test --workspace       # All unit + integration tests
-just fs-test-all             # File-system layer only
-just s3-test-all             # S3 layer only
+cargo test -p storage-formats  # File system and S3 objects
 ```
 
 ## Documentation
@@ -190,16 +188,16 @@ Two types of nodes work together:
 ```
 web3-storage/
 ├── crates/
-│   ├── pallets/            # FRAME pallets: storage-provider, drive-registry, s3-registry
-│   │                       #   each with a precompiles/ subfolder (pallet_revive precompiles)
-│   ├── primitives/         # Shared types: storage, file-system, s3
+│   ├── pallets/            # FRAME pallet: storage-provider
+│   │                       #   with a precompiles/ subfolder (pallet_revive precompile)
+│   ├── primitives/         # Shared types: storage, file-system
 │   ├── providers/          # Provider-node library crates
 │   ├── storage-subxt/      # Static subxt runtime bindings
 │   └── utils/              # Ultility crates
 ├── runtimes/               # Parachain runtimes: web3-storage-local, web3-storage-paseo
 ├── provider-node/          # Off-chain provider binary
 ├── clients/                # Rust client SDKs: storage (Layer 0), file-system, s3 (Layer 1)
-├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,layer1,papi,sdk}
+├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,file-system,papi,sdk}
 ├── user-interfaces/        # Web apps: landing, explorer, drive-ui, provider, s3-ui, photos, shared
 ├── examples/               # contracts/ (Solidity dApps), papi/ (end-to-end PAPI demos)
 ├── scripts/                # Helper scripts (chain spec, health checks, smoke test)
@@ -257,17 +255,17 @@ The provider node uses environment variables for configuration:
 ## Example: Basic Upload Flow
 
 ```rust
-use storage_client::{Signer, StorageUserClient};
+use storage_client::{ChunkingStrategy, Signer, StorageUserClient};
 
 // Connect to provider
 let client = StorageUserClient::new(config, Signer::from_seed("//Alice")?)?;
 
 // Upload data (off-chain)
 let data = b"Hello, decentralized storage!";
-let result = client.upload(bucket_id, data).await?;
+let data_root = client.upload(bucket_id, data, ChunkingStrategy::default()).await?;
 
 // Verify upload
-let downloaded = client.download(bucket_id, result.seq).await?;
+let downloaded = client.download(bucket_id, &data_root, 0, data.len() as u64).await?;
 assert_eq!(data, downloaded);
 ```
 

@@ -40,6 +40,21 @@ impl StorageUserClient {
         })
     }
 
+    /// Create a storage user client that talks to one provider, with the
+    /// default configuration otherwise.
+    ///
+    /// Trailing `/` characters of `provider_url` are removed, so
+    /// `http://host:3333/` and `http://host:3333` address the same provider.
+    pub fn for_provider(provider_url: &str, auth_signer: Signer) -> ClientResult<Self> {
+        Self::new(
+            ClientConfig {
+                provider_urls: vec![provider_url.trim_end_matches('/').to_string()],
+                ..Default::default()
+            },
+            auth_signer,
+        )
+    }
+
     /// Attach the signed `Authorization` header (`method` = upper-case HTTP verb).
     fn sign(
         &self,
@@ -82,7 +97,8 @@ impl StorageUserClient {
     /// 4. Return the data root hash
     ///
     /// Returns [`ClientError::Config`] before any request if a
-    /// [`ChunkingStrategy::Fixed`] size is 0 or above `DEFAULT_CHUNK_SIZE`.
+    /// [`ChunkingStrategy::Fixed`] size is 0 or above `DEFAULT_CHUNK_SIZE`,
+    /// or if the data to upload is empty: empty data has no chunk tree.
     ///
     /// # Example
     /// ```no_run
@@ -91,7 +107,7 @@ impl StorageUserClient {
     /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
     /// let data = b"Hello, decentralized world!";
     /// let data_root = client.upload(1, data, Default::default()).await?;
-    /// println!("Uploaded data with root: 0x{}", hex::encode(data_root.as_bytes()));
+    /// println!("Uploaded data with root: {data_root:#x}");
     /// # Ok(())
     /// # }
     /// ```
@@ -121,6 +137,11 @@ impl StorageUserClient {
         } else {
             data
         };
+        if upload_data.is_empty() {
+            return Err(ClientError::Config(
+                "empty data has no chunk tree".to_string(),
+            ));
+        }
 
         // Chunk the data
         let chunks = Self::chunk_data(upload_data, strategy);
@@ -187,13 +208,14 @@ impl StorageUserClient {
     /// # use sp_core::H256;
     /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
-    /// let data = client.download(&data_root, 0, 1024).await?;
+    /// let data = client.download(1, &data_root, 0, 1024).await?;
     /// println!("Downloaded {} bytes", data.len());
     /// # Ok(())
     /// # }
     /// ```
     pub async fn download(
         &self,
+        bucket_id: BucketId,
         data_root: &H256,
         offset: u64,
         length: u64,
@@ -205,7 +227,8 @@ impl StorageUserClient {
             .http
             .get(format!("{provider_url}/read"))
             .query(&[
-                ("data_root", BaseClient::hex_encode(data_root.as_bytes())),
+                ("bucket_id", bucket_id.to_string()),
+                ("data_root", format!("{:#x}", data_root)),
                 ("offset", offset.to_string()),
                 ("length", length.to_string()),
             ])
@@ -213,10 +236,10 @@ impl StorageUserClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Provider returned error: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /read",
+                status: response.status().as_u16(),
+            });
         }
 
         let read_response: ReadResponse = response.json().await?;
@@ -228,9 +251,8 @@ impl StorageUserClient {
                 .map_err(|e| ClientError::Serialization(e.to_string()))?;
 
             // Verify chunk hash
-            let expected_hash = BaseClient::hex_decode(&chunk.hash)?;
-            let actual_hash = hash_leaf(&chunk_data);
-            if actual_hash.as_bytes() != expected_hash.as_slice() {
+            let expected_hash = parse_h256(&chunk.hash)?;
+            if hash_leaf(&chunk_data) != expected_hash {
                 return Err(ClientError::VerificationFailed);
             }
 
@@ -256,8 +278,13 @@ impl StorageUserClient {
     }
 
     /// Download entire file by data root.
-    pub async fn download_full(&self, data_root: &H256, total_size: u64) -> ClientResult<Vec<u8>> {
-        self.download(data_root, 0, total_size).await
+    pub async fn download_full(
+        &self,
+        bucket_id: BucketId,
+        data_root: &H256,
+        total_size: u64,
+    ) -> ClientResult<Vec<u8>> {
+        self.download(bucket_id, data_root, 0, total_size).await
     }
 
     /// Read a single node by its hash.
@@ -271,29 +298,29 @@ impl StorageUserClient {
     /// # use sp_core::H256;
     /// # async fn example(hash: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
-    /// if let storage_client::Node::Chunk(data) = client.read_node(&hash).await? {
+    /// if let storage_client::Node::Chunk(data) = client.read_node(1, &hash).await? {
     ///     println!("Read {} bytes", data.len());
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn read_node(&self, hash: &H256) -> ClientResult<Node> {
+    pub async fn read_node(&self, bucket_id: BucketId, hash: &H256) -> ClientResult<Node> {
         let provider_url = self.base.get_provider_url()?;
-        let hash_hex = BaseClient::hex_encode(hash.as_bytes());
+        let hash_hex = format!("{:#x}", hash);
 
         let response = self
             .base
             .http
             .get(format!("{provider_url}/node"))
-            .query(&[("hash", &hash_hex)])
+            .query(&[("bucket_id", bucket_id.to_string()), ("hash", hash_hex)])
             .send()
             .await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Node not found or error: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /node",
+                status: response.status().as_u16(),
+            });
         }
 
         let node_response: NodeResponse = response
@@ -301,12 +328,14 @@ impl StorageUserClient {
             .await
             .map_err(|e| ClientError::Serialization(e.to_string()))?;
 
-        // Decode base64 data
-        let data = BASE64
-            .decode(&node_response.data)
-            .map_err(|e| ClientError::Serialization(format!("Invalid base64: {e}")))?;
-
-        // Parse children hashes if present
+        let data = node_response
+            .data
+            .map(|data| {
+                BASE64
+                    .decode(data)
+                    .map_err(|e| ClientError::Serialization(format!("Invalid base64: {e}")))
+            })
+            .transpose()?;
         let children = node_response
             .children
             .map(|c| {
@@ -320,8 +349,8 @@ impl StorageUserClient {
     }
 
     /// Read a node and verify that it hashes to `hash`.
-    pub async fn read_node_verified(&self, hash: &H256) -> ClientResult<Node> {
-        let node = self.read_node(hash).await?;
+    pub async fn read_node_verified(&self, bucket_id: BucketId, hash: &H256) -> ClientResult<Node> {
+        let node = self.read_node(bucket_id, hash).await?;
         if &node.hash() != hash {
             return Err(ClientError::VerificationFailed);
         }
@@ -357,10 +386,7 @@ impl StorageUserClient {
 
         let request = CommitRequest {
             bucket_id,
-            data_roots: data_roots
-                .iter()
-                .map(|h| BaseClient::hex_encode(h.as_bytes()))
-                .collect(),
+            data_roots: data_roots.iter().map(|h| format!("{:#x}", h)).collect(),
         };
 
         let req = self
@@ -371,10 +397,10 @@ impl StorageUserClient {
         let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Commit failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "POST /commit",
+                status: response.status().as_u16(),
+            });
         }
 
         response
@@ -393,19 +419,18 @@ impl StorageUserClient {
     ) -> ClientResult<CheckpointSignatureResponse> {
         let provider_url = self.base.get_provider_url()?;
 
-        let response = self
+        let req = self
             .base
             .http
             .get(format!("{provider_url}/checkpoint-signature"))
-            .query(&[("bucket_id", bucket_id.to_string())])
-            .send()
-            .await?;
+            .query(&[("bucket_id", bucket_id.to_string())]);
+        let response = self.sign(req, "GET", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Checkpoint signature request failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /checkpoint-signature",
+                status: response.status().as_u16(),
+            });
         }
 
         response
@@ -421,7 +446,12 @@ impl StorageUserClient {
     /// Perform a spot-check on a provider to verify data integrity.
     ///
     /// Returns true if the check passed.
-    pub async fn spot_check(&mut self, data_root: &H256, chunk_index: u64) -> ClientResult<bool> {
+    pub async fn spot_check(
+        &mut self,
+        bucket_id: BucketId,
+        data_root: &H256,
+        chunk_index: u64,
+    ) -> ClientResult<bool> {
         use std::time::Instant;
 
         let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
@@ -429,7 +459,9 @@ impl StorageUserClient {
         let provider_url = self.base.get_provider_url()?.to_string();
 
         let start = Instant::now();
-        let result = self.download(data_root, offset, chunk_size).await;
+        let result = self
+            .download(bucket_id, data_root, offset, chunk_size)
+            .await;
         let duration = start.elapsed();
 
         match result {
@@ -451,6 +483,7 @@ impl StorageUserClient {
     /// Returns (passed_count, failed_count).
     pub async fn spot_check_batch(
         &mut self,
+        bucket_id: BucketId,
         data_root: &H256,
         num_checks: usize,
         total_chunks: u64,
@@ -463,7 +496,7 @@ impl StorageUserClient {
 
         for _ in 0..num_checks {
             let chunk_index = rng.gen_range(0..total_chunks);
-            if self.spot_check(data_root, chunk_index).await? {
+            if self.spot_check(bucket_id, data_root, chunk_index).await? {
                 passed += 1;
             } else {
                 failed += 1;
@@ -505,19 +538,16 @@ impl StorageUserClient {
         node: &Node,
     ) -> ClientResult<H256> {
         let (data, children) = match node {
-            Node::Chunk(data) => (BASE64.encode(data), None),
+            Node::Chunk(data) => (Some(BASE64.encode(data)), None),
             Node::Internal { left, right } => (
-                BASE64.encode([left.as_bytes(), right.as_bytes()].concat()),
-                Some(vec![
-                    BaseClient::hex_encode(left.as_bytes()),
-                    BaseClient::hex_encode(right.as_bytes()),
-                ]),
+                None,
+                Some(vec![format!("{:#x}", left), format!("{:#x}", right)]),
             ),
         };
         let hash = node.hash();
         let request = UploadNodeRequest {
             bucket_id,
-            hash: BaseClient::hex_encode(hash.as_bytes()),
+            hash: format!("{:#x}", hash),
             data,
             children,
         };
@@ -530,10 +560,10 @@ impl StorageUserClient {
         let response = self.sign(req, "PUT", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Upload failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "PUT /node",
+                status: response.status().as_u16(),
+            });
         }
 
         Ok(hash)
@@ -545,11 +575,6 @@ impl StorageUserClient {
         bucket_id: BucketId,
         leaf_hashes: &[H256],
     ) -> ClientResult<H256> {
-        if leaf_hashes.is_empty() {
-            return Err(ClientError::Api(
-                "Cannot build Merkle tree with no leaves".to_string(),
-            ));
-        }
         let (root, nodes) = storage_primitives::merkle_tree(leaf_hashes);
         for node in nodes {
             self.upload_node(
@@ -587,20 +612,70 @@ impl StorageUserClient {
 
     /// Get the current MMR commitment for a bucket from the provider.
     pub async fn get_commitment(&self, bucket_id: BucketId) -> ClientResult<CommitmentResponse> {
+        self.get_commitment_if_exists(bucket_id)
+            .await?
+            .ok_or(ClientError::HttpStatus {
+                request: "GET /commitment",
+                status: 404,
+            })
+    }
+
+    /// Like [`Self::get_commitment`], but returns `None` when the provider
+    /// answers 404 (it has no record of the bucket: it has received no data
+    /// for it yet).
+    pub async fn get_commitment_if_exists(
+        &self,
+        bucket_id: BucketId,
+    ) -> ClientResult<Option<CommitmentResponse>> {
         let provider_url = self.base.get_provider_url()?;
-        let response = self
+        let req = self
             .base
             .http
             .get(format!("{provider_url}/commitment"))
-            .query(&[("bucket_id", bucket_id.to_string())])
-            .send()
-            .await?;
+            .query(&[("bucket_id", bucket_id.to_string())]);
+        let response = self.sign(req, "GET", bucket_id).send().await?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            return Err(ClientError::HttpStatus {
+                request: "GET /commitment",
+                status: status.as_u16(),
+            });
+        }
+        response
+            .json()
+            .await
+            .map(Some)
+            .map_err(|e| ClientError::Serialization(e.to_string()))
+    }
+
+    /// Get the MMR proof of the leaf at `leaf_index` of the bucket's current
+    /// MMR (`GET /mmr_proof`). The proof is not verified here: check it with
+    /// [`storage_primitives::verify_mmr_proof`] against a trusted MMR root.
+    pub async fn get_mmr_proof(
+        &self,
+        bucket_id: BucketId,
+        leaf_index: u64,
+    ) -> ClientResult<storage_primitives::MmrProof> {
+        let provider_url = self.base.get_provider_url()?;
+        let req = self
+            .base
+            .http
+            .get(format!("{provider_url}/mmr_proof"))
+            .query(&[
+                ("bucket_id", bucket_id.to_string()),
+                ("leaf_index", leaf_index.to_string()),
+            ]);
+        let response = self.sign(req, "GET", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Commitment request failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /mmr_proof",
+                status: response.status().as_u16(),
+            });
         }
         response
             .json()
@@ -617,24 +692,20 @@ impl StorageUserClient {
         let provider_url = self.base.get_provider_url()?;
         let request = ExistsRequest {
             bucket_id,
-            hashes: hashes
-                .iter()
-                .map(|h| BaseClient::hex_encode(h.as_bytes()))
-                .collect(),
+            hashes: hashes.iter().map(|h| format!("{:#x}", h)).collect(),
         };
-        let response = self
+        let req = self
             .base
             .http
             .post(format!("{provider_url}/exists"))
-            .json(&request)
-            .send()
-            .await?;
+            .json(&request);
+        let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Exists check failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "POST /exists",
+                status: response.status().as_u16(),
+            });
         }
         response
             .json()
@@ -648,11 +719,12 @@ impl StorageUserClient {
 impl crate::verification::ProviderReadAccess for StorageUserClient {
     async fn read_data(
         &self,
+        bucket_id: BucketId,
         data_root: &H256,
         offset: u64,
         length: u64,
     ) -> Result<Vec<u8>, crate::ClientError> {
-        self.download(data_root, offset, length).await
+        self.download(bucket_id, data_root, offset, length).await
     }
 
     fn provider_url(&self) -> &str {
@@ -687,21 +759,20 @@ impl Node {
         }
     }
 
-    /// Build a node from the `data` and `children` of a `/node` response.
-    /// `VerificationFailed` if an internal node does not have exactly two
-    /// children or its `data` is not the left child hash followed by the right
-    /// child hash.
-    fn from_wire(data: Vec<u8>, children: Option<Vec<H256>>) -> ClientResult<Self> {
-        let Some(children) = children else {
-            return Ok(Self::Chunk(data));
-        };
-        let [left, right]: [H256; 2] = children
-            .try_into()
-            .map_err(|_| ClientError::VerificationFailed)?;
-        if data != [left.as_bytes(), right.as_bytes()].concat() {
-            return Err(ClientError::VerificationFailed);
+    /// Build a node from the `data` or the `children` of a `/node` response.
+    /// `VerificationFailed` if the response has both or neither, or an
+    /// internal node does not have exactly two children.
+    fn from_wire(data: Option<Vec<u8>>, children: Option<Vec<H256>>) -> ClientResult<Self> {
+        match (data, children) {
+            (Some(data), None) => Ok(Self::Chunk(data)),
+            (None, Some(children)) => {
+                let [left, right]: [H256; 2] = children
+                    .try_into()
+                    .map_err(|_| ClientError::VerificationFailed)?;
+                Ok(Self::Internal { left, right })
+            }
+            _ => Err(ClientError::VerificationFailed),
         }
-        Ok(Self::Internal { left, right })
     }
 }
 
@@ -709,7 +780,9 @@ impl Node {
 struct UploadNodeRequest {
     bucket_id: u64,
     hash: String,
-    data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<String>>,
 }
 
@@ -771,7 +844,7 @@ struct ChunkWithProof {
 #[allow(dead_code)]
 struct NodeResponse {
     hash: String,
-    data: String,
+    data: Option<String>,
     children: Option<Vec<String>>,
 }
 
@@ -827,25 +900,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn node_from_wire_checks_child_count_and_data() {
+    fn for_provider_ignores_trailing_slashes() {
+        let signer = Signer::from_seed("//Alice").unwrap();
+        for url in [
+            "http://host:3333",
+            "http://host:3333/",
+            "http://host:3333//",
+        ] {
+            let client = StorageUserClient::for_provider(url, signer.clone()).unwrap();
+            assert_eq!(
+                client.base.get_provider_url().unwrap(),
+                "http://host:3333",
+                "url {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn node_from_wire_takes_data_or_exactly_two_children() {
         let (left, right) = (H256::repeat_byte(1), H256::repeat_byte(2));
-        let data = [left.as_bytes(), right.as_bytes()].concat();
 
         assert_eq!(
-            Node::from_wire(vec![1, 2, 3], None).unwrap(),
+            Node::from_wire(Some(vec![1, 2, 3]), None).unwrap(),
             Node::Chunk(vec![1, 2, 3])
         );
         assert_eq!(
-            Node::from_wire(data.clone(), Some(vec![left, right])).unwrap(),
+            Node::from_wire(None, Some(vec![left, right])).unwrap(),
             Node::Internal { left, right }
         );
         for (data, children) in [
-            (data.clone(), vec![left]),
-            (data, vec![left, right, left]),
-            (Vec::new(), vec![left, right]),
+            (None, Some(vec![left])),
+            (None, Some(vec![left, right, left])),
+            (Some(vec![1, 2, 3]), Some(vec![left, right])),
+            (None, None),
         ] {
             assert!(matches!(
-                Node::from_wire(data, Some(children)),
+                Node::from_wire(data, children),
                 Err(ClientError::VerificationFailed)
             ));
         }
@@ -870,12 +960,12 @@ mod tests {
     fn sr25519_signature_hex() -> String {
         use codec::Encode;
         let sig = sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([9u8; 64]));
-        format!("0x{}", hex::encode(sig.encode()))
+        array_bytes::bytes2hex("0x", sig.encode())
     }
 
     #[test]
     fn commitment_response_deserializes_typed_root_and_signature() {
-        let root_hex = format!("0x{}", hex::encode([7u8; 32]));
+        let root_hex = array_bytes::bytes2hex("0x", [7u8; 32]);
         let resp: CommitmentResponse =
             serde_json::from_str(&commitment_json(&root_hex, &sr25519_signature_hex())).unwrap();
         assert_eq!(resp.mmr_root, H256::from([7u8; 32]));
@@ -888,13 +978,13 @@ mod tests {
     #[test]
     fn commitment_response_rejects_undecodable_signature() {
         // Not hex at all.
-        let root_hex = format!("0x{}", hex::encode([7u8; 32]));
+        let root_hex = array_bytes::bytes2hex("0x", [7u8; 32]);
         assert!(
             serde_json::from_str::<CommitmentResponse>(&commitment_json(&root_hex, "not-hex"))
                 .is_err()
         );
         // 0x01 tags Sr25519, whose signature is 64 bytes — 63 must not decode.
-        let truncated = format!("0x01{}", hex::encode([9u8; 63]));
+        let truncated = array_bytes::bytes2hex("0x", [[1u8].as_slice(), &[9u8; 63]].concat());
         assert!(
             serde_json::from_str::<CommitmentResponse>(&commitment_json(&root_hex, &truncated))
                 .is_err(),
@@ -902,7 +992,7 @@ mod tests {
         );
         // Trailing bytes past a well-formed signature must be refused too,
         // not silently ignored — the JS SDK rejects the same value.
-        let overlong = format!("0x01{}", hex::encode([9u8; 65]));
+        let overlong = array_bytes::bytes2hex("0x", [[1u8].as_slice(), &[9u8; 65]].concat());
         assert!(
             serde_json::from_str::<CommitmentResponse>(&commitment_json(&root_hex, &overlong))
                 .is_err(),

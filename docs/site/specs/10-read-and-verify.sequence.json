@@ -35,7 +35,7 @@
   ],
   "segments": [
     { "from": 165, "to": 350, "label": "Discovery (runtime API): bucket → agreements → provider endpoints" },
-    { "from": 370, "to": 555, "label": "Read: chunks with proofs, checked by the client" },
+    { "from": 370, "to": 555, "label": "Read: MMR proof (Reader-gated), then chunks by data_root" },
     { "from": 575, "to": 695, "label": "Fallback: another provider, then challenge" }
   ],
   "messages": [
@@ -44,11 +44,11 @@
     { "id": "agreements", "from": "client", "to": "chain", "y": 262, "label": "bucket_agreements(bucket_id)", "variant": "default", "note": "primary and replica agreements" },
     { "id": "provider-info", "from": "client", "to": "chain", "y": 298, "label": "provider_info(provider)", "variant": "default" },
     { "id": "endpoint", "from": "chain", "to": "client", "y": 334, "label": "multiaddr, public_key", "variant": "return" },
-    { "id": "read", "from": "client", "to": "primary", "y": 395, "label": "GET /read?data_root&offset&length", "variant": "emphasis", "note": "private: Authorization header, Reader role" },
+    { "id": "mmr-proof", "from": "client", "to": "primary", "y": 395, "label": "GET /mmr_proof?bucket_id&leaf_index", "variant": "emphasis", "note": "private: Authorization header, Reader role" },
     { "id": "members", "from": "primary", "to": "chain", "y": 431, "label": "bucket.members (TTL-cached)", "variant": "security" },
-    { "id": "chunks", "from": "primary", "to": "client", "y": 467, "label": "chunks: hash, data, proof", "variant": "return", "note": "client checks blake2_256 and Merkle path" },
-    { "id": "mmr-proof", "from": "client", "to": "primary", "y": 503, "label": "GET /mmr_proof?bucket_id&leaf_index", "variant": "default", "note": "data_root from a checkpoint or a signed commit" },
-    { "id": "mmr-leaf", "from": "primary", "to": "client", "y": 539, "label": "leaf, peaks, siblings", "variant": "return", "note": "client checks against the snapshot or the signed commit mmr_root" },
+    { "id": "mmr-leaf", "from": "primary", "to": "client", "y": 467, "label": "leaf (data_root), items", "variant": "return", "note": "client checks against the snapshot or the signed commit mmr_root" },
+    { "id": "read", "from": "client", "to": "primary", "y": 503, "label": "GET /read?bucket_id&data_root&offset&length", "variant": "default", "note": "no auth: the data_root is the read key" },
+    { "id": "chunks", "from": "primary", "to": "client", "y": 539, "label": "chunks: hash, data, proof", "variant": "return", "note": "client checks blake2_256 and Merkle path" },
     { "id": "replica-read", "from": "client", "to": "replica", "y": 600, "label": "GET /read (same range)", "variant": "default", "note": "replicas serve everyone" },
     { "id": "replica-chunks", "from": "replica", "to": "client", "y": 636, "label": "chunks with proofs", "variant": "return" },
     { "id": "challenge", "from": "client", "to": "chain", "y": 672, "label": "challenge (persistent failure)", "variant": "dashed", "note": "see pages 12 and 13" }
@@ -63,7 +63,7 @@
       "dot": "emerald",
       "title": "What the client verifies",
       "items": [
-        "blake2_256(chunk) equals its hash",
+        "blake2_256(0x00 ++ chunk) equals its hash",
         "Merkle path from chunk to data_root",
         "MMR proof from data_root to mmr_root"
       ]
@@ -72,9 +72,9 @@
       "dot": "rose",
       "title": "Private and public reads",
       "items": [
-        "Private: primaries serve members only",
-        "Replicas and public primaries serve anyone",
-        "Chain does not enforce it; encrypt data"
+        "Private: primaries gate bucket-bound reads to members",
+        "Reads by hash or data_root need no auth",
+        "Replicas serve everyone; encrypt private data"
       ]
     },
     {

@@ -7,7 +7,7 @@
 //! coordinator's safety-net interval (50ms here, so passes repeat quickly).
 
 use parking_lot::Mutex;
-use provider_chain::EVENT_CHANNEL_CAPACITY;
+use provider_events::EVENT_CHANNEL_CAPACITY;
 use provider_storage::{ChunkTreeNode, DeletionReceipt};
 use provider_types::ChainClientError;
 use sp_core::H256;
@@ -132,7 +132,7 @@ fn start_gc(
     mock: MockGcChainClient,
 ) -> (
     storage_provider_node::GcCoordinatorHandle,
-    tokio::sync::broadcast::Sender<provider_chain::BlockEvent>,
+    tokio::sync::broadcast::Sender<provider_events::BlockEvent>,
 ) {
     let (handle, tx, _mock) = start_gc_shared(state, Arc::new(mock));
     (handle, tx)
@@ -145,7 +145,7 @@ fn start_gc_shared(
     mock: Arc<MockGcChainClient>,
 ) -> (
     storage_provider_node::GcCoordinatorHandle,
-    tokio::sync::broadcast::Sender<provider_chain::BlockEvent>,
+    tokio::sync::broadcast::Sender<provider_events::BlockEvent>,
     Arc<MockGcChainClient>,
 ) {
     let (tx, rx) = tokio::sync::broadcast::channel(EVENT_CHANNEL_CAPACITY);
@@ -173,19 +173,21 @@ async fn erases_after_canonical_checkpoint_with_receipt() {
 
     assert!(
         wait_for(5, 25, || async {
-            state.storage.pruned_ranges(1).is_empty()
-                && state.storage.get_node(&hashes[0]).is_none()
+            state.storage.pruned_ranges(1).unwrap().is_empty()
+                && state.storage.get_node(&hashes[0]).unwrap().is_none()
         })
         .await,
         "pruned range should be physically erased"
     );
     // Quota credited exactly for the erased leaf; the live one stays charged.
-    let stats = state.storage.get_bucket_stats();
-    let bucket = stats.iter().find(|s| s.bucket_id == 1).unwrap();
-    assert_eq!(bucket.bytes_stored, used_before - 8);
-    assert!(state.storage.get_node(&hashes[1]).is_some());
+    assert_eq!(state.storage.stats().bytes, used_before - 8);
+    assert!(state.storage.get_node(&hashes[1]).unwrap().is_some());
     // The receipt outlives the erasure — it is the permanent defense.
-    assert!(state.storage.deletion_receipt_covering(1, 0).is_some());
+    assert!(state
+        .storage
+        .deletion_receipt_covering(1, 0)
+        .unwrap()
+        .is_some());
     handle.stop();
 }
 
@@ -203,7 +205,7 @@ async fn missing_receipt_blocks_erasure() {
 
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
-        state.storage.pruned_ranges(1).len(),
+        state.storage.pruned_ranges(1).unwrap().len(),
         1,
         "stash must survive until the admin's deletion receipt is held"
     );
@@ -224,7 +226,7 @@ async fn canonical_behind_blocks_erasure() {
 
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
-        state.storage.pruned_ranges(1).len(),
+        state.storage.pruned_ranges(1).unwrap().len(),
         1,
         "stash must survive while the canonical checkpoint lags"
     );
@@ -245,7 +247,7 @@ async fn pending_challenge_blocks_erasure() {
 
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
-        state.storage.pruned_ranges(1).len(),
+        state.storage.pruned_ranges(1).unwrap().len(),
         1,
         "stash must survive while a challenge is pending"
     );
@@ -264,11 +266,14 @@ async fn missing_chain_row_condemns_and_erases_bucket() {
     let (handle, _tx) = start_gc(state.clone(), mock);
 
     assert!(
-        wait_for(5, 25, || async { state.storage.get_bucket(1).is_none() }).await,
+        wait_for(5, 25, || async {
+            state.storage.get_bucket(1).unwrap().is_none()
+        })
+        .await,
         "bucket row should be gone after teardown erasure"
     );
     for hash in hashes {
-        assert!(state.storage.get_node(&hash).is_none());
+        assert!(state.storage.get_node(&hash).unwrap().is_none());
     }
     handle.stop();
 }
@@ -318,6 +323,7 @@ async fn converges_local_prune_on_canonical_start_seq() {
             state
                 .storage
                 .get_bucket(1)
+                .unwrap()
                 .is_some_and(|info| info.start_seq == 1)
         })
         .await,
@@ -325,7 +331,7 @@ async fn converges_local_prune_on_canonical_start_seq() {
     );
     // The converged prune is stashed like any other; without an admin
     // receipt it stays stashed.
-    assert_eq!(state.storage.pruned_ranges(1).len(), 1);
+    assert_eq!(state.storage.pruned_ranges(1).unwrap().len(), 1);
     handle.stop();
 }
 
@@ -362,7 +368,7 @@ async fn top_up_raises_the_enforced_quota() {
 
     // Top-up on chain, announced by its agreement event.
     mock.agreements.lock().insert(1, 100);
-    let _ = tx.send(provider_chain::BlockEvent::AgreementChanged {
+    let _ = tx.send(provider_events::BlockEvent::AgreementChanged {
         bucket_id: 1,
         provider: sp_runtime::AccountId32::new([0u8; 32]),
     });

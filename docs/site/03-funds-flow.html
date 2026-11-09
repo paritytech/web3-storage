@@ -379,9 +379,9 @@
 
         <!-- Flow labels -->
         <g data-detail="context" data-edge-from="provider_acct" data-edge-to="stake" data-edge-label="register_provider, add_stake" data-edge-key="0" data-edge-id="stake-in">
-          <rect x="133.4" y="94" width="149.2" height="27" rx="4" class="c-mask"/>
-          <text x="208" y="105" class="t-backend" font-size="8" text-anchor="middle">register_provider, add_stake</text>
-        <text data-detail="fine" x="208" y="116" class="t-dim" font-size="7" text-anchor="middle">stake + ED free</text>
+          <rect x="84.65" y="94" width="222.7" height="27" rx="4" class="c-mask"/>
+          <text x="196" y="105" class="t-backend" font-size="8" text-anchor="middle">register_provider, add_stake</text>
+        <text data-detail="fine" x="196" y="116" class="t-dim" font-size="7" text-anchor="middle">register: stake + storage deposit + ED free</text>
         </g>
         <g data-detail="context" data-edge-from="challenger_acct" data-edge-to="deposit" data-edge-label="challenge_*" data-edge-key="1" data-edge-id="deposit-in">
           <rect x="133.4" y="203" width="149.2" height="27" rx="4" class="c-mask"/>
@@ -648,12 +648,13 @@
       <div class="card">
         <div class="card-header">
           <div class="card-dot cyan"></div>
-          <h3>Three hold reasons</h3>
+          <h3>Four hold reasons</h3>
         </div>
         <ul>
           <li>&bull; ProviderStake: provider collateral</li>
           <li>&bull; AgreementPayment: fee and sync_balance, on the owner; moves on transfer_agreement_ownership</li>
           <li>&bull; ChallengeDeposit: challenger deposit</li>
+          <li>&bull; StorageDeposit: one per provider, bucket, member and agreement record, on the account that created it; released when the record is removed</li>
         </ul>
       </div>
 

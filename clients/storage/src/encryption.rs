@@ -94,7 +94,7 @@ impl Cipher for XChaCha20Poly1305Cipher {
         let ciphertext = self
             .cipher
             .encrypt(nonce, plaintext)
-            .map_err(|e| ClientError::Api(format!("Encryption failed: {e}")))?;
+            .map_err(|e| ClientError::Encryption(format!("Encryption failed: {e}")))?;
 
         let mut out = Vec::with_capacity(1 + NONCE_SIZE + ciphertext.len());
         out.push(VERSION_XCHACHA20);
@@ -106,7 +106,7 @@ impl Cipher for XChaCha20Poly1305Cipher {
     fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, ClientError> {
         let min_len = 1 + NONCE_SIZE + TAG_SIZE;
         if data.len() < min_len {
-            return Err(ClientError::Api(format!(
+            return Err(ClientError::Encryption(format!(
                 "Encrypted data too short: {} bytes, minimum {min_len}",
                 data.len()
             )));
@@ -114,7 +114,7 @@ impl Cipher for XChaCha20Poly1305Cipher {
 
         let version = data[0];
         if version != VERSION_XCHACHA20 {
-            return Err(ClientError::Api(format!(
+            return Err(ClientError::Encryption(format!(
                 "Unknown encryption version: 0x{version:02x}"
             )));
         }
@@ -122,9 +122,9 @@ impl Cipher for XChaCha20Poly1305Cipher {
         let nonce = XNonce::from_slice(&data[1..1 + NONCE_SIZE]);
         let ciphertext = &data[1 + NONCE_SIZE..];
 
-        self.cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|_| ClientError::Api("Decryption failed: invalid key or tampered data".into()))
+        self.cipher.decrypt(nonce, ciphertext).map_err(|_| {
+            ClientError::Encryption("Decryption failed: invalid key or tampered data".into())
+        })
     }
 }
 

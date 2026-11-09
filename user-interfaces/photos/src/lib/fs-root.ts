@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Client-side bucket enumeration + metadata-root recompute over the shared
-// FileSystemClient. These aren't part of the SDK: they trust nothing the
-// provider claims about content — they download every file and re-hash it
-// locally. Kept free of any browser/chain-client coupling (the caller passes
-// the FileSystemClient) so the headless scripts can import them too.
+// Client-side bucket enumeration + metadata-root recompute over the library's
+// file tree. These aren't part of the SDK: they trust nothing the provider
+// claims about content — they download every file and re-hash it locally.
+// Kept free of any browser/chain-client coupling (the caller passes the tree)
+// so the headless scripts can import them too.
 
-import { computeDataRoot, metadataMerkleRoot, type MerkleEntry } from '@web3-storage/sdk'
-import type { FileSystemClient } from '@web3-storage/sdk/fs'
+import { computeDataRoot, metadataMerkleRoot, type FsTree, type MerkleEntry } from '@web3-storage/sdk'
 import type { LocalIndex } from './local-index'
 
 /**
@@ -23,12 +22,8 @@ import type { LocalIndex } from './local-index'
  * (`setDir`/`setFile`), fully repopulating the index so the caller can treat it
  * as authoritative afterwards.
  */
-export async function enumerateEntries(
-  client: FileSystemClient,
-  bucketId: bigint,
-  index?: LocalIndex,
-): Promise<MerkleEntry[]> {
-  const listing = await client.listDirectory(bucketId, '/', { recursive: true })
+export async function enumerateEntries(drive: FsTree, index?: LocalIndex): Promise<MerkleEntry[]> {
+  const listing = await drive.list('/', { recursive: true })
   return Promise.all(
     listing.map(async (e): Promise<MerkleEntry> => {
       if (e.entryType !== 'file') {
@@ -37,7 +32,7 @@ export async function enumerateEntries(
       }
       const cached = index?.getFile(e.path)
       if (cached) return { path: e.path, dataRoot: cached.dataRoot, size: cached.size }
-      const bytes = await client.downloadFile(bucketId, e.path)
+      const { bytes } = await drive.getFile(e.path)
       const dataRoot = computeDataRoot(bytes)
       const size = BigInt(bytes.length)
       index?.setFile(e.path, dataRoot, size)
@@ -57,10 +52,6 @@ export async function enumerateEntries(
  * `index` — files *and* directories — so the caller can then treat it as
  * authoritative and anchor future roots from `index.root()` alone.
  */
-export async function recomputeRoot(
-  client: FileSystemClient,
-  bucketId: bigint,
-  index: LocalIndex,
-): Promise<Uint8Array> {
-  return metadataMerkleRoot(await enumerateEntries(client, bucketId, index))
+export async function recomputeRoot(drive: FsTree, index: LocalIndex): Promise<Uint8Array> {
+  return metadataMerkleRoot(await enumerateEntries(drive, index))
 }

@@ -23,7 +23,7 @@
 //! bucket with no chain row").
 
 use crate::{Error, ProviderState};
-use provider_chain::{BlockEvent, BlockEventRx};
+use provider_events::{BlockEvent, BlockEventRx};
 use provider_types::ChainClientError;
 use std::sync::Arc;
 use std::time::Duration;
@@ -141,7 +141,7 @@ impl GcCoordinator {
                         Ok(BlockEvent::BucketCheckpointed { bucket_id, .. })
                         | Ok(BlockEvent::BucketDeleted { bucket_id })
                         | Ok(BlockEvent::AgreementChanged { bucket_id, .. }) => {
-                            if self.state.storage.get_bucket(bucket_id).is_some() {
+                            if self.state.storage.get_bucket(bucket_id).ok().flatten().is_some() {
                                 self.reconcile_bucket(bucket_id).await;
                             }
                         }
@@ -160,8 +160,8 @@ impl GcCoordinator {
 
     /// Reconcile every locally-known bucket against chain truth.
     async fn rescan(&self) {
-        for summary in self.state.storage.list_buckets() {
-            self.reconcile_bucket(summary.bucket_id).await;
+        for bucket_id in self.state.storage.bucket_ids() {
+            self.reconcile_bucket(bucket_id).await;
         }
     }
 
@@ -184,7 +184,7 @@ impl GcCoordinator {
         // Obligation ends when the bucket row or our agreement row is gone.
         let obligation_gone = !chain.exists || agreement_max.is_none();
 
-        if !self.state.storage.is_condemned(bucket_id) {
+        if !self.state.storage.is_condemned(bucket_id)? {
             if obligation_gone {
                 tracing::info!(bucket_id, "GC: no on-chain obligation, condemning bucket");
                 self.state.storage.condemn_bucket(bucket_id)?;
@@ -196,7 +196,7 @@ impl GcCoordinator {
                 // (replicas never receive /delete; a restored node may lag).
                 if let (Some(canonical), Some(info)) = (
                     chain.canonical_start_seq,
-                    self.state.storage.get_bucket(bucket_id),
+                    self.state.storage.get_bucket(bucket_id)?,
                 ) {
                     if canonical > info.start_seq {
                         tracing::info!(
@@ -224,11 +224,11 @@ impl GcCoordinator {
         //   defense instead of the erased bytes).
         //
         // Either way, challenges already open must be resolved first.
-        let ranges = self.state.storage.pruned_ranges(bucket_id);
+        let ranges = self.state.storage.pruned_ranges(bucket_id)?;
         if ranges.is_empty() {
             return Ok(());
         }
-        let condemned = self.state.storage.is_condemned(bucket_id);
+        let condemned = self.state.storage.is_condemned(bucket_id)?;
         // Lazily fetched once per pass, only when a range is otherwise ripe.
         let mut pending_challenges: Option<bool> = None;
 

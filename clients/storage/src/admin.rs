@@ -12,14 +12,15 @@
 use crate::agreement::SignedTerms;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::convert;
-use crate::substrate::{extrinsics, SubstrateClient};
+use crate::substrate::{
+    created_bucket_id, extrinsics, fetch_bucket, fetch_member_bucket_ids, SubstrateClient,
+};
 use crate::Signer;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::{BucketId, Commitment, EndAction, Role};
 use storage_subxt::api;
 use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
-use storage_subxt::api::storage_provider::events::BucketCreated;
 
 /// Client for bucket administrators.
 pub struct AdminClient {
@@ -92,7 +93,7 @@ impl AdminClient {
     ) -> ClientResult<BucketId> {
         let tx = extrinsics::create_bucket(min_providers, visibility);
         let events = self.base.chain()?.submit(&tx).await?;
-        let bucket_id = Self::created_bucket_id(&events)?;
+        let bucket_id = created_bucket_id(&events)?;
 
         tracing::info!("Created bucket {} for {}", bucket_id, self.admin_account());
         Ok(bucket_id)
@@ -150,7 +151,7 @@ impl AdminClient {
             visibility,
         );
         let events = self.base.chain()?.submit(&tx).await?;
-        let bucket_id = Self::created_bucket_id(&events)?;
+        let bucket_id = created_bucket_id(&events)?;
 
         tracing::info!(
             "Bucket {} created with primary provider {} (max_bytes={}, duration={})",
@@ -185,21 +186,6 @@ impl AdminClient {
             bucket_id
         );
         Ok(())
-    }
-
-    /// The bucket id from the `BucketCreated` event a creation call emits.
-    fn created_bucket_id(
-        events: &subxt::extrinsics::ExtrinsicEvents<subxt::PolkadotConfig>,
-    ) -> ClientResult<BucketId> {
-        let created = events
-            .find_first::<BucketCreated>()
-            .ok_or_else(|| {
-                ClientError::Chain("BucketCreated event not found in transaction".to_string())
-            })?
-            .map_err(|e| {
-                ClientError::Chain(format!("Failed to decode BucketCreated event: {e}"))
-            })?;
-        Ok(created.bucket_id)
     }
 
     /// Add a member to a bucket with a specific role.
@@ -469,9 +455,9 @@ impl AdminClient {
         self.base.chain()?.submit(&tx).await?;
 
         tracing::info!(
-            "Checkpoint submitted for bucket {} with MMR root 0x{}",
+            "Checkpoint submitted for bucket {} with MMR root {:#x}",
             bucket_id,
-            hex::encode(commitment.mmr_root.as_bytes())
+            commitment.mmr_root
         );
         Ok(())
     }
@@ -485,16 +471,9 @@ impl AdminClient {
         let chain = self.base.chain()?;
 
         let at = chain.at_current_block().await?;
-        let value = at
-            .storage()
-            .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
+        let bucket = fetch_bucket(&at, bucket_id)
+            .await?
             .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?;
-
-        let bucket = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
 
         let members = bucket
             .members
@@ -564,24 +543,7 @@ impl AdminClient {
         let chain = self.base.chain()?;
 
         let at = chain.at_current_block().await?;
-        let value = at
-            .storage()
-            .try_fetch(
-                api::storage().storage_provider().member_buckets(),
-                (convert::to_subxt_account(&self.admin_account()),),
-            )
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch member buckets: {e}")))?;
-
-        let Some(value) = value else {
-            return Ok(vec![]);
-        };
-
-        let bucket_ids = value
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode member buckets: {e}")))?;
-
-        Ok(convert::unbounded(bucket_ids))
+        fetch_member_bucket_ids(&at, &self.admin_account()).await
     }
 }
 

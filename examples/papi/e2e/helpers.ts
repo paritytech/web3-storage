@@ -17,7 +17,7 @@ import {
   getAgreementNonce,
   hashChildren,
   negotiateTerms,
-  putChunk,
+  putInternalNode,
   READ_OPTS,
   waitForBlockProduction,
   waitForChainReady,
@@ -26,7 +26,9 @@ import {
   type ChainSigner,
   type ParachainApi,
   type SignedTerms,
+  type FsTree,
   type SubmittableTx,
+  Web3Storage,
 } from "@web3-storage/sdk";
 
 // ── Test runner primitives ──────────────────────────────────────────────────
@@ -279,10 +281,71 @@ export async function putInternal(
   left: Uint8Array,
   right: Uint8Array,
 ): Promise<Uint8Array> {
-  const data = new Uint8Array(64);
-  data.set(left, 0);
-  data.set(right, 32);
-  const { cid } = await putChunk(providerUrl, bucketId, data, signer, [left, right]);
+  const { cid } = await putInternalNode(providerUrl, bucketId, left, right, signer);
   assert.ok(bytesEq(cid, hashChildren(left, right)), "internal node hash must equal H(left, right)");
   return cid;
+}
+
+// ── Bucket access after a membership change ──────────────────────────────────
+
+/** Bound on how long the provider may take to apply a membership change. */
+const MEMBERSHIP_DEADLINE_MS = 60_000;
+
+export const INSUFFICIENT_ROLE = /: 403 \{"error":"insufficient_role"\}/;
+
+/**
+ * `Web3Storage` for `signer` against the provider at `providerUrl`. Chain
+ * writes wait for finalization: the provider reads bucket membership from its
+ * finalized view, so an in-block change would race the next HTTP request.
+ */
+export function storageFor(api: ParachainApi, signer: ChainSigner, providerUrl: string): Web3Storage {
+  return new Web3Storage({
+    api,
+    signer,
+    providerUrl,
+    readOpts: READ_OPTS,
+    submitMode: "finalized",
+  });
+}
+
+/** The file at `path` in `tree`, decoded as UTF-8. */
+export async function readText(tree: FsTree, path: string): Promise<string> {
+  return new TextDecoder().decode((await tree.getFile(path)).bytes);
+}
+
+/** Retry `fn` until it resolves; fail with the last error after the deadline. */
+export async function eventually<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  const started = Date.now();
+  let last: unknown;
+  while (Date.now() - started < MEMBERSHIP_DEADLINE_MS) {
+    try {
+      return await fn();
+    } catch (err) {
+      last = err;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.fail(`${label}: not satisfied within ${MEMBERSHIP_DEADLINE_MS}ms: ${last}`);
+}
+
+/**
+ * Retry until `fn` rejects with an error matching `expected`; rethrow any
+ * other error at once; fail if it keeps resolving past the deadline.
+ */
+export async function eventuallyRejects(
+  fn: () => Promise<unknown>,
+  expected: RegExp,
+  label: string
+): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < MEMBERSHIP_DEADLINE_MS) {
+    try {
+      await fn();
+    } catch (err) {
+      if (expected.test((err as Error).message)) return;
+      throw err;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.fail(`${label}: still accepted after ${MEMBERSHIP_DEADLINE_MS}ms`);
 }
