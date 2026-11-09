@@ -56,21 +56,6 @@ pub enum Error {
     #[error("Storage task failed: {0}")]
     StorageTaskFailed(String),
 
-    #[error("Object not found: bucket {bucket_id}, key {key}")]
-    ObjectNotFound { bucket_id: u64, key: String },
-
-    #[error("Invalid object key: {0}")]
-    InvalidObjectKey(String),
-
-    #[error("File not found: bucket {bucket_id}, path {path}")]
-    FileNotFound { bucket_id: u64, path: String },
-
-    #[error("Not a file: bucket {bucket_id}, path {path}")]
-    NotAFile { bucket_id: u64, path: String },
-
-    #[error("Invalid path: {0}")]
-    InvalidPath(String),
-
     #[error(transparent)]
     Auth(#[from] AuthError),
 
@@ -99,6 +84,12 @@ pub enum Error {
         max_capacity: u64,
     },
 
+    #[error("Requested {requested} bytes is below the provider's minimum of {min_agreement_bytes} bytes")]
+    MaxBytesBelowMinimum {
+        requested: u64,
+        min_agreement_bytes: u64,
+    },
+
     #[error("Provider is deregistering; not accepting new agreements")]
     ProviderDeregistering,
 
@@ -107,15 +98,16 @@ pub enum Error {
     )]
     ChainStateNotReady,
 
+    /// The node has not connected to the chain yet.
     #[error(transparent)]
-    Chain(#[from] provider_chain::Error),
+    ChainNotConnected(#[from] crate::chain_connection::NotConnected),
 
     /// The node cannot sign with its registered key. Each reason keeps the
     /// response code it had when these were three separate variants.
     #[error(transparent)]
     Signing(#[from] provider_types::SigningRefused),
 
-    #[error("Storage agreement requested 0 byte")]
+    #[error("Storage agreement requested 0 bytes")]
     InvalidMaxBytesRequest,
 
     #[error("Too many requests")]
@@ -142,7 +134,6 @@ struct ErrorResponse {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        use provider_chain::Error as ChainError;
         use provider_storage::Error as StorageError;
         let (status, error_response) = match &self {
             // Exhaustive on purpose — no wildcard — so a new storage variant
@@ -153,6 +144,18 @@ impl IntoResponse for Error {
                     ErrorResponse {
                         error: "not_found".to_string(),
                         details: Some(serde_json::json!({ "hash": hash })),
+                    },
+                ),
+                StorageError::LeafNotFound {
+                    bucket_id,
+                    leaf_index,
+                } => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "not_found".to_string(),
+                        details: Some(
+                            serde_json::json!({ "bucket_id": bucket_id, "leaf_index": leaf_index }),
+                        ),
                     },
                 ),
                 StorageError::ChildrenMissing(children) => (
@@ -179,10 +182,23 @@ impl IntoResponse for Error {
                         })),
                     },
                 ),
-                StorageError::InvalidInternalNodeData => (
+                StorageError::ChunkIndexOutOfRange {
+                    chunk_index,
+                    chunk_count,
+                } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
-                        error: "invalid_internal_node_data".to_string(),
+                        error: "chunk_index_out_of_range".to_string(),
+                        details: Some(serde_json::json!({
+                            "chunk_index": chunk_index,
+                            "chunk_count": chunk_count,
+                        })),
+                    },
+                ),
+                StorageError::InvalidNode => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_node".to_string(),
                         details: None,
                     },
                 ),
@@ -241,6 +257,23 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "reason": reason })),
                     },
                 ),
+                StorageError::LeavesNotHeld {
+                    start_seq,
+                    leaf_count,
+                    local_start_seq,
+                    local_end,
+                } => (
+                    StatusCode::NOT_FOUND,
+                    ErrorResponse {
+                        error: "leaves_not_held".to_string(),
+                        details: Some(serde_json::json!({
+                            "start_seq": start_seq,
+                            "leaf_count": leaf_count,
+                            "local_start_seq": local_start_seq,
+                            "local_end": local_end,
+                        })),
+                    },
+                ),
                 StorageError::InvalidHash { expected, actual } => (
                     StatusCode::BAD_REQUEST,
                     ErrorResponse {
@@ -258,20 +291,17 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "data_root": root })),
                     },
                 ),
+                // Backend faults, including a stored record that no longer
+                // decodes: the request was fine, the provider's store is not.
                 e @ (StorageError::RocksDb(_)
                 | StorageError::ColumnFamilyMissing(_)
-                | StorageError::IncompatibleFormat(_)) => (
+                | StorageError::IncompatibleFormat(_)
+                | StorageError::Mmr(_)
+                | StorageError::Serialization(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ErrorResponse {
                         error: "internal_error".to_string(),
                         details: Some(serde_json::json!({ "message": e.to_string() })),
-                    },
-                ),
-                StorageError::Serialization(msg) => (
-                    StatusCode::BAD_REQUEST,
-                    ErrorResponse {
-                        error: "serialization_error".to_string(),
-                        details: Some(serde_json::json!({ "message": msg })),
                     },
                 ),
             },
@@ -335,41 +365,6 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "serialization_error".to_string(),
                     details: Some(serde_json::json!({ "message": e.to_string() })),
-                },
-            ),
-            Error::ObjectNotFound { bucket_id, key } => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "object_not_found".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "key": key })),
-                },
-            ),
-            Error::InvalidObjectKey(key) => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "invalid_object_key".to_string(),
-                    details: Some(serde_json::json!({ "key": key })),
-                },
-            ),
-            Error::FileNotFound { bucket_id, path } => (
-                StatusCode::NOT_FOUND,
-                ErrorResponse {
-                    error: "file_not_found".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "path": path })),
-                },
-            ),
-            Error::NotAFile { bucket_id, path } => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "not_a_file".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "path": path })),
-                },
-            ),
-            Error::InvalidPath(msg) => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "invalid_path".to_string(),
-                    details: Some(serde_json::json!({ "message": msg })),
                 },
             ),
             Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
@@ -488,6 +483,19 @@ impl IntoResponse for Error {
                     })),
                 },
             ),
+            Error::MaxBytesBelowMinimum {
+                requested,
+                min_agreement_bytes,
+            } => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "max_bytes_below_minimum".to_string(),
+                    details: Some(serde_json::json!({
+                        "requested": requested,
+                        "min_agreement_bytes": min_agreement_bytes,
+                    })),
+                },
+            ),
             Error::InvalidMaxBytesRequest => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 ErrorResponse {
@@ -505,24 +513,15 @@ impl IntoResponse for Error {
                     })),
                 },
             ),
-            Error::Chain(err) => match err {
-                ChainError::NotConnected => (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    ErrorResponse {
-                        error: "chain_unavailable".to_string(),
-                        details: Some(serde_json::json!({
-                            "message": "the node has not yet established a connection to the chain"
-                        })),
-                    },
-                ),
-                ChainError::Connection(_) | ChainError::Internal(_) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    ErrorResponse {
-                        error: "internal_error".to_string(),
-                        details: Some(serde_json::json!({ "message": err.to_string() })),
-                    },
-                ),
-            },
+            Error::ChainNotConnected(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "chain_unavailable".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "the node has not yet established a connection to the chain"
+                    })),
+                },
+            ),
             Error::ProviderDeregistering => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -551,6 +550,7 @@ mod tests {
     use super::*;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+    use sp_core::H256;
 
     fn status_of(err: Error) -> StatusCode {
         err.into_response().status()
@@ -560,7 +560,7 @@ mod tests {
     fn test_all_error_variants_status_codes() {
         assert_eq!(
             status_of(Error::from(provider_storage::Error::NodeNotFound(
-                "x".into()
+                H256::zero()
             ))),
             StatusCode::NOT_FOUND
         );
@@ -580,6 +580,13 @@ mod tests {
         assert_eq!(
             status_of(Error::from(provider_storage::Error::ChunkTooLarge {
                 size: 2
+            })),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::ChunkIndexOutOfRange {
+                chunk_index: 1,
+                chunk_count: 1
             })),
             StatusCode::BAD_REQUEST
         );
@@ -617,8 +624,17 @@ mod tests {
             StatusCode::NOT_FOUND
         );
         assert_eq!(
+            status_of(Error::from(provider_storage::Error::LeavesNotHeld {
+                start_seq: 0,
+                leaf_count: 2,
+                local_start_seq: 1,
+                local_end: 2,
+            })),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
             status_of(Error::from(provider_storage::Error::RootNotFound(
-                "x".into()
+                H256::zero()
             ))),
             StatusCode::NOT_FOUND
         );
@@ -631,6 +647,13 @@ mod tests {
         assert_eq!(
             status_of(Error::from(provider_storage::Error::BucketBusy(1))),
             StatusCode::SERVICE_UNAVAILABLE
+        );
+        // A stored record that no longer decodes is the provider's fault.
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::Serialization(
+                codec::Error::from("corrupt record")
+            ))),
+            StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::ColumnFamilyMissing(
@@ -677,35 +700,6 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
-            status_of(Error::ObjectNotFound {
-                bucket_id: 1,
-                key: "k".into()
-            }),
-            StatusCode::NOT_FOUND
-        );
-        assert_eq!(
-            status_of(Error::InvalidObjectKey("k".into())),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_of(Error::FileNotFound {
-                bucket_id: 1,
-                path: "/a".into()
-            }),
-            StatusCode::NOT_FOUND
-        );
-        assert_eq!(
-            status_of(Error::NotAFile {
-                bucket_id: 1,
-                path: "/a".into()
-            }),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            status_of(Error::InvalidPath("p".into())),
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
             status_of(AuthError::AuthRequired.into()),
             StatusCode::UNAUTHORIZED
         );
@@ -739,22 +733,17 @@ mod tests {
             status_of(SigningRefused::NoKey.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
-        // A connection that was never established is retryable; a failed
-        // connect attempt is a bug. They must not share a status code.
+        // A connection that was never established is retryable.
         assert_eq!(
-            status_of(provider_chain::Error::NotConnected.into()),
+            status_of(crate::chain_connection::NotConnected.into()),
             StatusCode::SERVICE_UNAVAILABLE
-        );
-        assert_eq!(
-            status_of(provider_chain::Error::Internal("boom".into()).into()),
-            StatusCode::INTERNAL_SERVER_ERROR
         );
     }
 
     #[test]
     fn test_error_response_json_structure() {
-        let resp =
-            Error::from(provider_storage::Error::NodeNotFound("0xabc".into())).into_response();
+        let hash = H256::repeat_byte(0xab);
+        let resp = Error::from(provider_storage::Error::NodeNotFound(hash)).into_response();
         let (parts, body) = resp.into_parts();
         assert_eq!(parts.status, StatusCode::NOT_FOUND);
 
@@ -764,7 +753,11 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(json["error"], "not_found");
         assert!(json.get("details").is_some());
-        assert_eq!(json["details"]["hash"], "0xabc");
+        // The storage engine holds an H256; the response renders it as hex.
+        assert_eq!(
+            json["details"]["hash"],
+            "0xabababababababababababababababababababababababababababababababab"
+        );
     }
 
     #[test]

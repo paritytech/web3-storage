@@ -83,8 +83,8 @@ async function main() {
         const { hash } = await uploadChunk(PROVIDER_URL, bucketId, chunk(i), client);
         chunkHashes.push(hash);
       }
-      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
-      await submitClientCheckpoint(api, client, provider, bucketId, ck);
+      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, client);
+      await submitClientCheckpoint(api, client, bucketId, [{ provider, commit: ck }]);
     },
   });
 
@@ -170,12 +170,12 @@ async function main() {
       name: "12.8 Pruned chunks are physically gone (404)",
       fn: async () => {
         await assert.rejects(
-          downloadChunk(PROVIDER_URL, chunkHashes[0]),
+          downloadChunk(PROVIDER_URL, bucketId, chunkHashes[0]),
           /404|not_found/,
           "erased chunk must not be downloadable",
         );
         // The surviving leaf's chunk is untouched.
-        await downloadChunk(PROVIDER_URL, chunkHashes[2]);
+        await downloadChunk(PROVIDER_URL, bucketId, chunkHashes[2]);
       },
     });
   }

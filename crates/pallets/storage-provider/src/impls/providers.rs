@@ -2,6 +2,7 @@
 
 use crate::*;
 use frame_support::pallet_prelude::*;
+use frame_support::traits::Consideration;
 use sp_runtime::traits::CheckedMul;
 
 impl<T: Config> Pallet<T> {
@@ -34,6 +35,11 @@ impl<T: Config> Pallet<T> {
             ensure!(
                 settings.max_capacity >= committed_bytes,
                 Error::<T>::CapacityBelowCommitted
+            );
+
+            ensure!(
+                settings.min_agreement_bytes <= settings.max_capacity,
+                Error::<T>::MinAgreementBytesExceedsMaxCapacity
             );
 
             // Validate stake backs declared capacity
@@ -99,6 +105,7 @@ impl<T: Config> Pallet<T> {
                 ..Default::default()
             },
             deregister_at: None,
+            deposit: T::StorageDeposit::new(who, Self::provider_footprint())?,
         };
 
         Providers::<T>::insert(who, provider_info);

@@ -60,14 +60,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ChunkingStrategy::default(),
     ).await?;
 
-    println!("Uploaded with root: 0x{}", hex::encode(data_root.as_bytes()));
+    println!("Uploaded with root: {data_root:#x}");
 
     // Commit to chain (makes it official)
     let commitment = client.commit(1, vec![data_root]).await?;
     println!("MMR root: {}", commitment.mmr_root);
 
     // Download and verify
-    let retrieved = client.download(&data_root, 0, data.len() as u64).await?;
+    let retrieved = client.download(1, &data_root, 0, data.len() as u64).await?;
     assert_eq!(retrieved, data);
 
     Ok(())
@@ -251,7 +251,7 @@ All client operations return `ClientResult<T>`:
 use storage_client::ClientError;
 
 match client.upload(1, data, Default::default()).await {
-    Ok(data_root) => println!("Success: 0x{}", hex::encode(data_root.as_bytes())),
+    Ok(data_root) => println!("Success: {data_root:#x}"),
     Err(ClientError::ProviderUnavailable(msg)) => eprintln!("Provider issue: {}", msg),
     Err(ClientError::VerificationFailed) => eprintln!("Data integrity check failed!"),
     Err(e) => eprintln!("Error: {}", e),
@@ -272,7 +272,7 @@ match client.upload(1, data, Default::default()).await {
 ### ProviderClient
 
 - ✅ Register as storage provider with stake
-- ✅ Update provider settings (pricing, capacity)
+- ✅ Update provider settings (pricing, capacity, minimum agreement size)
 - ✅ Accept storage agreements
 - ✅ Respond to challenges with proofs
 - ✅ Confirm replica syncs for payment
@@ -484,9 +484,9 @@ use storage_client::{EventFilter, EventStream};
 use storage_subxt::api;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Event as SpEvent;
 
-// Stream events from the three storage pallets
+// Stream StorageProvider pallet events
 let mut stream =
-    EventStream::connect("ws://127.0.0.1:2222", EventFilter::storage_pallets()).await?;
+    EventStream::connect("ws://127.0.0.1:2222", EventFilter::storage_provider()).await?;
 
 while let Some(ev) = stream.next().await {
     match ev.event {
@@ -514,25 +514,9 @@ let filter = EventFilter::storage_provider().with_predicate(move |ev| {
 let mut stream = EventStream::connect("ws://127.0.0.1:2222", filter).await?;
 ```
 
-## Layer 1 File System Interface
+## Layer 1: Storage Formats
 
-For most users, consider using the **Layer 1 File System Client** instead, which provides a familiar file system abstraction (drives, folders, files) over Layer 0's raw blob storage.
-
-**When to use Layer 1 (File System Client):**
-- You need a familiar file/folder interface
-- You want automatic setup and provider selection
-- You're building a general-purpose file storage application
-- You prefer simplicity over low-level control
-
-**When to use Layer 0 (Storage Client - this SDK):**
-- You need full control over storage operations
-- You're building custom storage logic
-- You want to implement your own data structures on top of blob storage
-- You need direct access to buckets and agreements
-
-**Layer 1 Documentation:** See [File System Client](../file-system/README.md)
-
-**Layer 1 Client:** `clients/file-system/`
+[Storage Formats](../storage-formats/README.md) stores files, directories and S3-style objects in a Layer 0 bucket, on top of this SDK. Use this SDK directly to store your own data structures as blobs, or to manage buckets, members and agreements.
 
 ## Status
 
