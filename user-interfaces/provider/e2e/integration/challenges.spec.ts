@@ -12,7 +12,7 @@
  *
  * The second test commits another chunk to the bucket after the challenge, so
  * the bucket's current MMR no longer matches the challenged commitment. The
- * response must still prove the leaf against that commitment (#523).
+ * response must still prove the leaf against that commitment.
  */
 import type { Page } from "@playwright/test";
 import { makeLocalPageFixture, expect } from "@web3-storage/test-helpers/playwright";
@@ -51,7 +51,7 @@ async function challengeNewBucket(
   const upload = await uploadChunk(PROVIDER_URL, bucketId, `${label} @ ${Date.now()}`, Bob);
   const checkpoint = await fetchCheckpointSignature(PROVIDER_URL, bucketId, Bob);
   await submitClientCheckpoint(api, Bob, bucketId, [{ provider: Alice, commit: checkpoint }]);
-  challengeId = await challengeOffchain(api, Bob, Alice, bucketId, {
+  const challengeId = await challengeOffchain(api, Bob, Alice, bucketId, {
     leafIndex: upload.commit.leaf_indices[0],
     mmrRoot: upload.commit.mmr_root,
     startSeq: upload.commit.start_seq,

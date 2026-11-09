@@ -302,12 +302,10 @@ export type ChallengeResponse = Parameters<
  * the chunk, or `ChunkOutOfRange` with the leaf's MMR proof alone when the
  * challenged `chunk_index` is at or past the leaf's chunk count.
  *
- * The MMR proof is for the commitment the challenge cites, not the bucket's
- * current state: `respond_to_challenge` verifies against that commitment.
- * `fetchChallengeProof` verifies the proof against that commitment, so a
- * provider node that ignores the commitment parameters (one older than this
- * client) makes it throw before the caller submits `respond_to_challenge` and
- * pays its fee.
+ * The MMR proof is for the challenge's commitment, which `respond_to_challenge`
+ * verifies against. A proof that does not verify against it (from a provider
+ * node that ignores the commitment parameters) throws here, before the caller
+ * submits `respond_to_challenge` and pays its fee.
  *
  * `signer` authenticates the `GET /mmr_proof` step, which is Reader-gated on
  * private buckets — a bucket member works, and so does the provider's own
@@ -359,11 +357,11 @@ export async function fetchChallengeProof(
   // `respond_to_challenge` takes the proof as hex with snake_case fields.
   const leaf = {
     leaf_version: proof.leaf.leafVersion,
-    data_root: asHex(proof.leaf.dataRoot),
+    data_root: toHex(proof.leaf.dataRoot),
     data_size: proof.leaf.dataSize,
     total_size: proof.leaf.totalSize,
   };
-  const mmr_proof = { leaf, items: proof.items.map((h) => asHex(h)) };
+  const mmr_proof = { leaf, items: proof.items.map((h) => toHex(h)) };
   if (challenge.target.chunk_index >= BigInt(leafChunkCount(leaf))) {
     return Enum("ChunkOutOfRange", { mmr_proof });
   }
