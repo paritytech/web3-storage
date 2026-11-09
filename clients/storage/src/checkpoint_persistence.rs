@@ -6,7 +6,6 @@
 //! - Provider health history
 //! - Checkpoint metrics
 //! - Bucket checkpoint status
-//! - Conflict history for auto-challenge analysis
 //!
 //! # Example
 //!
@@ -117,8 +116,6 @@ pub struct PersistedCheckpointState {
     pub metrics: PersistedMetrics,
     /// Bucket checkpoint statuses.
     pub bucket_statuses: HashMap<BucketId, PersistedBucketStatus>,
-    /// Conflict history for auto-challenge.
-    pub conflict_history: HashMap<String, Vec<PersistedConflict>>,
 }
 
 impl PersistedCheckpointState {
@@ -200,10 +197,6 @@ pub struct PersistedMetrics {
     pub unreachable_failures: u64,
     /// Checkpoints failed due to transaction errors.
     pub transaction_failures: u64,
-    /// Total conflicts detected.
-    pub conflicts_detected: u64,
-    /// Conflicts where auto-challenge was recommended.
-    pub auto_challenge_recommended: u64,
     /// Total providers queried.
     pub providers_queried: u64,
     /// Successful provider queries.
@@ -222,8 +215,6 @@ impl From<&CheckpointMetrics> for PersistedMetrics {
             insufficient_consensus_count: metrics.insufficient_consensus_count,
             unreachable_failures: metrics.unreachable_failures,
             transaction_failures: metrics.transaction_failures,
-            conflicts_detected: metrics.conflicts_detected,
-            auto_challenge_recommended: metrics.auto_challenge_recommended,
             providers_queried: metrics.providers_queried,
             providers_responded: metrics.providers_responded,
             avg_submission_time_ms: metrics.avg_submission_time_ms,
@@ -241,8 +232,6 @@ impl PersistedMetrics {
             insufficient_consensus_count: self.insufficient_consensus_count,
             unreachable_failures: self.unreachable_failures,
             transaction_failures: self.transaction_failures,
-            conflicts_detected: self.conflicts_detected,
-            auto_challenge_recommended: self.auto_challenge_recommended,
             providers_queried: self.providers_queried,
             providers_responded: self.providers_responded,
             avg_submission_time_ms: self.avg_submission_time_ms,
@@ -286,23 +275,6 @@ impl PersistedBucketStatus {
             consecutive_failures: self.consecutive_failures,
         }
     }
-}
-
-/// Serializable conflict record.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PersistedConflict {
-    /// Bucket ID.
-    pub bucket_id: BucketId,
-    /// The majority MMR root (hex encoded).
-    pub majority_root: String,
-    /// Number of providers agreeing on majority.
-    pub majority_count: usize,
-    /// When the conflict was detected (Unix timestamp).
-    pub detected_at: u64,
-    /// Conflict type.
-    pub conflict_type: String,
-    /// Provider's MMR root if different.
-    pub provider_root: Option<String>,
 }
 
 // ============================================================================
@@ -649,7 +621,6 @@ mod tests {
             health_histories: HashMap::new(),
             metrics: PersistedMetrics::default(),
             bucket_statuses: HashMap::new(),
-            conflict_history: HashMap::new(),
         };
 
         let json = serde_json::to_string(&state).unwrap();
@@ -657,6 +628,38 @@ mod tests {
 
         assert_eq!(restored.version, 1);
         assert_eq!(restored.saved_at, 1234567890);
+    }
+
+    /// State files written before the conflict history was removed still load.
+    #[test]
+    fn test_persisted_state_ignores_removed_conflict_fields() {
+        let json = r#"{
+            "version": 1,
+            "saved_at": 1234567890,
+            "health_histories": {},
+            "metrics": {
+                "total_attempts": 7,
+                "successful_submissions": 6,
+                "insufficient_consensus_count": 1,
+                "unreachable_failures": 0,
+                "transaction_failures": 0,
+                "conflicts_detected": 2,
+                "auto_challenge_recommended": 1,
+                "providers_queried": 0,
+                "providers_responded": 0,
+                "avg_submission_time_ms": 0,
+                "avg_consensus_rate": 0.0
+            },
+            "bucket_statuses": {},
+            "conflict_history": {}
+        }"#;
+
+        let state: PersistedCheckpointState = serde_json::from_str(json).unwrap();
+
+        assert_eq!(state.version, 1);
+        assert_eq!(state.saved_at, 1234567890);
+        assert_eq!(state.metrics.total_attempts, 7);
+        assert_eq!(state.metrics.successful_submissions, 6);
     }
 
     #[test]
@@ -682,7 +685,6 @@ mod tests {
         let metrics = CheckpointMetrics {
             total_attempts: 100,
             successful_submissions: 95,
-            conflicts_detected: 5,
             ..Default::default()
         };
 

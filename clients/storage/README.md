@@ -307,10 +307,8 @@ match client.upload(1, data, Default::default()).await {
 
 - ✅ Multi-provider checkpoint coordination
 - ✅ Consensus verification (configurable threshold)
-- ✅ Conflict detection and resolution
 - ✅ Automatic background checkpointing
 - ✅ Provider health tracking and metrics
-- ✅ Auto-challenge recommendations
 
 ### EventStream
 
@@ -416,9 +414,6 @@ match result {
     }
     CheckpointResult::InsufficientConsensus { agreed, total } => {
         println!("Failed: only {}/{} providers agreed", agreed, total);
-    }
-    CheckpointResult::Conflict { conflicts } => {
-        println!("Conflict detected! {} providers disagree", conflicts.len());
     }
     _ => {}
 }
