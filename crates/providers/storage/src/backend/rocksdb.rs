@@ -502,18 +502,6 @@ impl DiskStorage {
         Ok(commitment_of(&bucket))
     }
 
-    /// Get MMR proof for a leaf.
-    pub fn get_mmr_proof(
-        &self,
-        bucket_id: BucketId,
-        leaf_index: u64,
-    ) -> Result<storage_primitives::MmrProof, Error> {
-        let bucket = self
-            .get_bucket(bucket_id)?
-            .ok_or(Error::BucketNotFound(bucket_id))?;
-        Ok(leaf_proof(bucket_id, &bucket.leaves, leaf_index)?.1)
-    }
-
     /// See [`StorageBackend::get_mmr_proof_for_commitment`].
     pub fn get_mmr_proof_for_commitment(
         &self,
@@ -626,14 +614,6 @@ impl StorageBackend for DiskStorage {
 
     fn delete_before(&self, bucket_id: BucketId, new_start_seq: u64) -> Result<Commitment, Error> {
         self.delete_before(bucket_id, new_start_seq)
-    }
-
-    fn get_mmr_proof(
-        &self,
-        bucket_id: BucketId,
-        leaf_index: u64,
-    ) -> Result<storage_primitives::MmrProof, Error> {
-        self.get_mmr_proof(bucket_id, leaf_index)
     }
 
     fn get_mmr_proof_for_commitment(
@@ -1235,7 +1215,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
 
-        let err = storage.get_mmr_proof(42, 0).unwrap_err();
+        let err = storage
+            .get_mmr_proof_for_commitment(42, &Commitment::default(), 0)
+            .unwrap_err();
         assert!(matches!(err, Error::BucketNotFound(42)));
     }
 
@@ -1249,7 +1231,9 @@ mod tests {
 
         corrupt(&storage, CF_BUCKETS, &BUCKET.to_le_bytes());
 
-        let err = storage.get_mmr_proof(BUCKET, 0).unwrap_err();
+        let err = storage
+            .get_mmr_proof_for_commitment(BUCKET, &Commitment::default(), 0)
+            .unwrap_err();
         assert!(
             matches!(err, Error::Serialization(_)),
             "expected Serialization, got {err:?}"
@@ -1314,24 +1298,6 @@ mod tests {
             matches!(err, Error::NodeNotFound(_)),
             "expected NodeNotFound, got {err:?}"
         );
-    }
-
-    #[test]
-    fn proof_for_a_missing_leaf_is_leaf_not_found() {
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
-        bucket_with_leaves(&storage, 1, 0);
-        bucket_with_leaves(&storage, 2, 4);
-
-        assert!(matches!(
-            storage.get_mmr_proof(1, 0),
-            Err(Error::LeafNotFound { .. })
-        ));
-        assert!(matches!(
-            storage.get_mmr_proof(2, 4),
-            Err(Error::LeafNotFound { .. })
-        ));
-        assert!(storage.get_mmr_proof(2, 3).is_ok());
     }
 
     #[test]

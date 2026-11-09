@@ -1193,32 +1193,6 @@ common::backend_tests! {
 // MMR peaks and subtree
 // ─────────────────────────────────────────────────────────────────────────────
 
-common::backend_tests! {
-    async fn test_mmr_proof_endpoint(backend) {
-        let server = TestServer::new(backend).await;
-        upload_and_commit(&server, 1).await;
-        let (_, commit) = upload_and_commit(&server, 1).await;
-
-        let resp = server
-            .client
-            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=1"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        let proof: storage_primitives::MmrProof = resp.json().await.unwrap();
-
-        let h256 = |v: &Value| v.as_str().unwrap().parse::<H256>().unwrap();
-        assert!(!proof.items.is_empty());
-        let commitment = storage_primitives::Commitment {
-            mmr_root: h256(&commit["mmr_root"]),
-            start_seq: commit["start_seq"].as_u64().unwrap(),
-            leaf_count: commit["leaf_count"].as_u64().unwrap(),
-        };
-        assert!(storage_primitives::verify_mmr_proof(proof, 1, &commitment));
-    }
-}
-
 /// The signed commitment from a `/commit` response.
 fn commitment_of(commit: &Value) -> Commitment {
     Commitment {
@@ -1234,6 +1208,26 @@ fn mmr_proof_url(server: &TestServer, leaf_index: u64, commitment: &Commitment) 
         "/mmr_proof?bucket_id=1&leaf_index={leaf_index}&mmr_root={:#x}&start_seq={}&leaf_count={}",
         commitment.mmr_root, commitment.start_seq, commitment.leaf_count
     ))
+}
+
+common::backend_tests! {
+    async fn test_mmr_proof_endpoint(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
+        let (_, commit) = upload_and_commit(&server, 1).await;
+        let commitment = commitment_of(&commit);
+
+        let resp = server
+            .client
+            .get(mmr_proof_url(&server, 1, &commitment))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let proof: storage_primitives::MmrProof = resp.json().await.unwrap();
+        assert!(!proof.items.is_empty());
+        assert!(storage_primitives::verify_mmr_proof(proof, 1, &commitment));
+    }
 }
 
 common::backend_tests! {
@@ -1253,35 +1247,27 @@ common::backend_tests! {
         assert_eq!(resp.status(), StatusCode::OK);
         let proof: storage_primitives::MmrProof = resp.json().await.unwrap();
         assert!(storage_primitives::verify_mmr_proof(proof, 0, &older));
-
-        // Without the commitment, the proof is for the current MMR and does
-        // not verify against the older commitment.
-        let resp = server
-            .client
-            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=0"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        let current: storage_primitives::MmrProof = resp.json().await.unwrap();
-        assert!(!storage_primitives::verify_mmr_proof(current, 0, &older));
     }
 }
 
 common::backend_tests! {
-    async fn test_mmr_proof_rejects_an_incomplete_commitment(backend) {
+    async fn test_mmr_proof_rejects_a_missing_or_malformed_commitment(backend) {
         let server = TestServer::new(backend).await;
         upload_and_commit(&server, 1).await;
 
-        let resp = server
-            .client
-            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=0&leaf_count=1"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let body: Value = resp.json().await.unwrap();
-        assert_eq!(body["error"], "incomplete_commitment");
+        for query in [
+            "bucket_id=1&leaf_index=0",
+            "bucket_id=1&leaf_index=0&start_seq=0&leaf_count=1",
+            "bucket_id=1&leaf_index=0&mmr_root=0xzz&start_seq=0&leaf_count=1",
+        ] {
+            let resp = server
+                .client
+                .get(server.url(&format!("/mmr_proof?{query}")))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{query}");
+        }
     }
 }
 
@@ -1322,26 +1308,6 @@ common::backend_tests! {
                 );
             }
         }
-    }
-}
-
-common::backend_tests! {
-    async fn test_mmr_proof_leaf_index_out_of_range(backend) {
-        let server = TestServer::new(backend).await;
-        upload_and_commit(&server, 1).await; // stores a single leaf at index 0
-
-        let resp = server
-            .client
-            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=1"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-
-        let body: Value = resp.json().await.unwrap();
-        assert_eq!(body["error"], "not_found");
-        assert_eq!(body["details"]["bucket_id"], 1);
-        assert_eq!(body["details"]["leaf_index"], 1);
     }
 }
 

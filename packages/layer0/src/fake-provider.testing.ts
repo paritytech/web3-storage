@@ -123,7 +123,7 @@ export class FakeProvider {
       case "GET /commitment":
         return authed ? this.commitment(query.bucket_id) : json(401, { error: "unauthorized" });
       case "GET /mmr_proof":
-        return authed ? this.mmrProof(query.bucket_id, Number(query.leaf_index)) : json(401, { error: "unauthorized" });
+        return authed ? this.mmrProof(query) : json(401, { error: "unauthorized" });
       default:
         return json(404, { error: `no route ${route}` });
     }
@@ -252,11 +252,19 @@ export class FakeProvider {
     });
   }
 
-  private mmrProof(bucketId: string, leafIndex: number): Response {
-    const leaves = this.buckets.get(bucketId);
-    if (!leaves) return json(404, { error: "bucket_not_found" });
+  private mmrProof(query: Record<string, string>): Response {
+    const { bucket_id, leaf_index, mmr_root, start_seq, leaf_count } = query;
+    if (!(leaf_index && mmr_root && start_seq && leaf_count)) return json(400, { error: "invalid_query" });
+    const held = this.buckets.get(bucket_id);
+    if (!held) return json(404, { error: "bucket_not_found" });
+    const start = Number(start_seq);
+    const end = start + Number(leaf_count);
+    if (end > held.length) return json(404, { error: "leaves_not_held" });
+    const leaves = held.slice(start, end);
+    const leafIndex = Number(leaf_index);
     const leaf = leaves[leafIndex];
-    if (!leaf) return json(404, { error: "not_found" });
+    if (!leaf || toHex(this.mmrRoot(leaves)) !== mmr_root.toLowerCase())
+      return json(404, { error: "commitment_not_reproducible" });
     const peaks = mmrPeaks(leaves.map(leafHash));
     const peakIndex = peaks.findIndex((p) => leafIndex >= p.start && leafIndex < p.start + p.size);
     const peakRoots = peaks.map((p) => p.levels[p.levels.length - 1][0]);

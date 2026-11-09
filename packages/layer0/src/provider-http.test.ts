@@ -150,8 +150,11 @@ describe("commitDataRoots / getCommitment / getMmrProof", () => {
     const commitment = (await getCommitment(PROVIDER, BUCKET, { fetch: provider.fetch, signer }))!;
     expect(commitment.leafCount).toBe(3n);
     expect(toHex(commitment.mmrRoot)).toBe(commit.mmrRoot);
+    // A later commit does not change the proofs for this commitment.
+    const later = await uploadBlob(PROVIDER, BUCKET, blob(4), signer, { fetch: provider.fetch });
+    await commitDataRoots(PROVIDER, BUCKET, [later.dataRoot], signer, { fetch: provider.fetch });
     for (const index of [0n, 1n, 2n]) {
-      const proof = await getMmrProof(PROVIDER, BUCKET, index, { fetch: provider.fetch, signer });
+      const proof = await getMmrProof(PROVIDER, BUCKET, commitment, index, { fetch: provider.fetch, signer });
       expect(proof.leaf.leafVersion).toBe(LEAF_VERSION);
       expect(toHex(proof.leaf.dataRoot)).toBe(roots[Number(index)]);
       expect(verifyMmrProof(proof, index, commitment.mmrRoot, commitment.leafCount)).toBe(true);
@@ -163,31 +166,23 @@ describe("commitDataRoots / getCommitment / getMmrProof", () => {
     const r = await uploadBlob(PROVIDER, BUCKET, blob(1), signer, { fetch: provider.fetch });
     await commitDataRoots(PROVIDER, BUCKET, [r.dataRoot], signer, { fetch: provider.fetch });
     await expect(getCommitment(PROVIDER, BUCKET, { fetch: provider.fetch })).rejects.toMatchObject({ status: 401 });
-    await expect(getMmrProof(PROVIDER, BUCKET, 0, { fetch: provider.fetch })).rejects.toMatchObject({ status: 401 });
-    expect(await getCommitment(PROVIDER, BUCKET, { fetch: provider.fetch, signer })).not.toBeNull();
-    expect((await getMmrProof(PROVIDER, BUCKET, 0, { fetch: provider.fetch, signer })).items).toEqual([]);
+    const commitment = (await getCommitment(PROVIDER, BUCKET, { fetch: provider.fetch, signer }))!;
+    await expect(getMmrProof(PROVIDER, BUCKET, commitment, 0, { fetch: provider.fetch })).rejects.toMatchObject({
+      status: 401,
+    });
+    expect((await getMmrProof(PROVIDER, BUCKET, commitment, 0, { fetch: provider.fetch, signer })).items).toEqual([]);
   });
 
-  it("sends no commitment parameters without opts.commitment", async () => {
-    const fetchMock = stubFetch(() => ({
-      leaf: { leaf_version: LEAF_VERSION, data_root: toHex(new Uint8Array(32)), data_size: 1, total_size: 1 },
-      items: [],
-    }));
-    await getMmrProof(PROVIDER, BUCKET, 3);
-    const url = new URL(fetchMock.mock.calls[0][0]);
-    expect(url.searchParams.get("bucket_id")).toBe("5");
-    expect(url.searchParams.get("leaf_index")).toBe("3");
-    for (const name of ["mmr_root", "start_seq", "leaf_count"]) expect(url.searchParams.has(name)).toBe(false);
-  });
-
-  it("sends all three commitment parameters with opts.commitment", async () => {
+  it("sends the commitment parameters", async () => {
     const fetchMock = stubFetch(() => ({
       leaf: { leaf_version: LEAF_VERSION, data_root: toHex(new Uint8Array(32)), data_size: 1, total_size: 1 },
       items: [],
     }));
     const mmrRoot = new Uint8Array(32).fill(7);
-    await getMmrProof(PROVIDER, BUCKET, 3, { commitment: { mmrRoot, startSeq: 2n, leafCount: 9n } });
+    await getMmrProof(PROVIDER, BUCKET, { mmrRoot, startSeq: 2n, leafCount: 9n }, 3);
     const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.searchParams.get("bucket_id")).toBe("5");
+    expect(url.searchParams.get("leaf_index")).toBe("3");
     expect(url.searchParams.get("mmr_root")).toBe(toHex(mmrRoot));
     expect(url.searchParams.get("start_seq")).toBe("2");
     expect(url.searchParams.get("leaf_count")).toBe("9");
@@ -195,7 +190,8 @@ describe("commitDataRoots / getCommitment / getMmrProof", () => {
 
   it("rejects an /mmr_proof leaf without leaf_version", async () => {
     stubFetch(() => ({ leaf: { data_root: toHex(new Uint8Array(32)), data_size: 1, total_size: 1 }, items: [] }));
-    await expect(getMmrProof(PROVIDER, BUCKET, 0)).rejects.toThrow(/no `leaf_version`/);
+    const commitment = { mmrRoot: new Uint8Array(32), startSeq: 0n, leafCount: 1n };
+    await expect(getMmrProof(PROVIDER, BUCKET, commitment, 0)).rejects.toThrow(/no `leaf_version`/);
   });
 
   it("signs writes", async () => {

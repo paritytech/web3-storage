@@ -303,9 +303,8 @@ export type ChallengeResponse = Parameters<
  * challenged `chunk_index` is at or past the leaf's chunk count.
  *
  * The MMR proof is for the challenge's commitment, which `respond_to_challenge`
- * verifies against. A proof that does not verify against it (from a provider
- * node that ignores the commitment parameters) throws here, before the caller
- * submits `respond_to_challenge` and pays its fee.
+ * verifies against. A proof that does not verify against it throws here,
+ * before the caller submits `respond_to_challenge` and pays its fee.
  *
  * `signer` authenticates the `GET /mmr_proof` step, which is Reader-gated on
  * private buckets — a bucket member works, and so does the provider's own
@@ -339,9 +338,8 @@ export async function fetchChallengeProof(
     startSeq: challenge.commitment.start_seq,
     leafCount: challenge.commitment.leaf_count,
   };
-  const proof = await getMmrProof(providerUrl, challenge.bucket_id, challenge.target.leaf_index, {
+  const proof = await getMmrProof(providerUrl, challenge.bucket_id, commitment, challenge.target.leaf_index, {
     signer,
-    commitment,
   });
   if (!verifyMmrProof(proof, challenge.target.leaf_index, commitment.mmrRoot, commitment.leafCount))
     throw new Error(
@@ -572,28 +570,27 @@ export interface MmrProofCommitment {
 }
 
 /**
- * `GET /mmr_proof`: the MMR leaf at `leafIndex` and its inclusion proof.
- * Without `opts.commitment`, the proof is for the bucket's current MMR and
- * `leafIndex` counts from its current `start_seq`. With it, the proof is for
- * that commitment's MMR and `leafIndex` counts from `commitment.startSeq`;
- * a challenge response needs this form. Check the proof with
- * `verifyMmrProof` against a trusted MMR root. Reader-gated like
- * {@link getCommitment}: pass a member as `opts.signer` on a private bucket.
+ * `GET /mmr_proof`: the MMR leaf at `leafIndex`, counted from
+ * `commitment.startSeq`, in the MMR of `commitment`, and its inclusion proof.
+ * Check the proof with `verifyMmrProof` against `commitment`. Reader-gated
+ * like {@link getCommitment}: pass a member as `opts.signer` on a private
+ * bucket.
  */
 export async function getMmrProof(
   providerUrl: string,
   bucketId: bigint | number,
+  commitment: MmrProofCommitment,
   leafIndex: bigint | number,
-  opts: ProviderHttpOpts & { signer?: ChainSigner; commitment?: MmrProofCommitment } = {},
+  opts: ProviderHttpOpts & { signer?: ChainSigner } = {},
 ): Promise<MmrProof> {
-  const params: Record<string, string | number | bigint> = { bucket_id: bucketId, leaf_index: leafIndex };
-  if (opts.commitment) {
-    params.mmr_root = toHex(opts.commitment.mmrRoot);
-    params.start_seq = opts.commitment.startSeq;
-    params.leaf_count = opts.commitment.leafCount;
-  }
   const res = await providerFetch(providerUrl, "/mmr_proof", {
-    params,
+    params: {
+      bucket_id: bucketId,
+      leaf_index: leafIndex,
+      mmr_root: toHex(commitment.mmrRoot),
+      start_seq: commitment.startSeq,
+      leaf_count: commitment.leafCount,
+    },
     sign: opts.signer ? { signer: opts.signer.signer, bucketId } : undefined,
     retries: opts.retries ?? IDEMPOTENT_RETRIES,
     fetch: opts.fetch,
