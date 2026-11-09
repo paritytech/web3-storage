@@ -618,6 +618,7 @@ impl DiskStorage {
                 first_seq: bucket.start_seq,
                 leaves: removed,
                 new_start_seq,
+                erased: false,
             });
             bucket.start_seq = new_start_seq;
 
@@ -652,6 +653,7 @@ impl DiskStorage {
         Ok(bucket
             .pruned
             .iter()
+            .filter(|range| !range.erased)
             .map(|range| PrunedRangeInfo {
                 first_seq: range.first_seq,
                 end_seq: range.first_seq.saturating_add(range.leaves.len() as u64),
@@ -735,14 +737,15 @@ impl DiskStorage {
                 first_seq,
                 leaves,
                 new_start_seq,
+                erased: false,
             });
             bucket.start_seq = new_start_seq;
             bucket.mmr_root = mmr::root(&bucket.leaves)?;
         }
         bucket.condemned = true;
 
-        if bucket.pruned.is_empty() {
-            // Nothing committed was ever stored: no liability, drop the row.
+        if bucket.pruned.iter().all(|range| range.erased) {
+            // No stored nodes left to erase: drop the row.
             let cf = self
                 .db
                 .cf_handle(CF_BUCKETS)
@@ -769,7 +772,7 @@ impl DiskStorage {
         let Some(range) = bucket
             .pruned
             .into_iter()
-            .find(|range| range.first_seq == first_seq)
+            .find(|range| range.first_seq == first_seq && !range.erased)
         else {
             return Ok(EraseOutcome::default());
         };
@@ -798,13 +801,12 @@ impl DiskStorage {
         walk
     }
 
-    /// Drop `range` from the stash and apply `walk.decrements` in one
-    /// transaction.
+    /// Mark `range` erased and apply `walk.decrements` in one transaction.
     ///
-    /// `walk` comes from `range` alone. While the range is stashed,
+    /// `walk` comes from `range` alone. While the range is not erased,
     /// each node it reaches keeps a count of at least this range's share, so
     /// no other erase deletes such a node and the walk outside the
-    /// transaction stays valid. A range no longer stashed under the lock was
+    /// transaction stays valid. A range already erased under the lock was
     /// erased by another call after the snapshot, so this call is a no-op.
     fn apply_erase(
         &self,
@@ -816,10 +818,10 @@ impl DiskStorage {
         let mut bucket = self
             .bucket_for_update(&txn, bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
-        let Some(position) = bucket.pruned.iter().position(|stashed| stashed == range) else {
+        let Some(stashed) = bucket.pruned.iter_mut().find(|stashed| *stashed == range) else {
             return Ok(EraseOutcome::default());
         };
-        bucket.pruned.remove(position);
+        stashed.erased = true;
         for error in &walk.failures {
             // Nodes reached before the failure lose this leaf's reference;
             // unreachable ones keep their count and leak, which is the safe
@@ -908,7 +910,7 @@ impl DiskStorage {
             let fully_gone = id == bucket_id
                 && state.condemned
                 && state.leaves.is_empty()
-                && state.pruned.is_empty();
+                && state.pruned.iter().all(|range| range.erased);
             if fully_gone {
                 txn.delete_cf(&cf_buckets, id.to_le_bytes())
                     .map_err(write_error)?;
@@ -937,8 +939,8 @@ impl DiskStorage {
     }
 
     /// See [`StorageBackend::get_mmr_proof_for_commitment`]. The cited
-    /// window is read from the full known leaf history: stashed (pruned but
-    /// not yet erased) ranges, then the live leaves.
+    /// window is read from the full known leaf history: pruned ranges, erased
+    /// or not, then the live leaves.
     pub fn get_mmr_proof_for_commitment(
         &self,
         bucket_id: BucketId,
@@ -2006,40 +2008,30 @@ mod tests {
     }
 
     #[test]
-    fn proof_from_stash_until_erased() {
+    fn older_commitment_stays_provable_after_erase() {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
-        bucket_with_leaves(&storage, 1, 2);
+        let roots = bucket_with_leaves(&storage, 1, 2);
         let cited = Commitment {
             mmr_root: storage.get_bucket(1).unwrap().unwrap().mmr_root,
             start_seq: 0,
             leaf_count: 2,
         };
 
-        storage.delete_before(1, 2).unwrap();
+        storage.delete_before(1, 1).unwrap();
 
         // Pruned leaves remain in the stash: the provider must stay able to
         // prove the old commitment while it is still challengeable.
         let proof = storage.get_mmr_proof_for_commitment(1, &cited, 0).unwrap();
         assert!(storage_primitives::verify_mmr_proof(proof, 0, &cited));
 
-        // After physical erasure the leaves (and proofs) are gone for good.
+        // Erasure deletes leaf 0's nodes but keeps the leaf: the cited
+        // commitment also covers leaf 1, which the provider still stores, and
+        // a proof for leaf 1 needs leaf 0 to rebuild the cited root.
         storage.erase_pruned_range(1, 0).unwrap();
-        let err = storage
-            .get_mmr_proof_for_commitment(1, &cited, 0)
-            .unwrap_err();
-        assert!(
-            matches!(
-                err,
-                Error::LeavesNotHeld {
-                    start_seq: 0,
-                    leaf_count: 2,
-                    local_start_seq: 2,
-                    local_end: 2,
-                }
-            ),
-            "got {err:?}"
-        );
+        assert!(storage.get_node(&roots[0]).unwrap().is_none());
+        let proof = storage.get_mmr_proof_for_commitment(1, &cited, 1).unwrap();
+        assert!(storage_primitives::verify_mmr_proof(proof, 1, &cited));
     }
 
     /// Store a two-chunk file: one full chunk, one short last chunk, and the
@@ -2458,6 +2450,33 @@ mod tests {
 
         // Condemning a bucket that never stored anything drops it directly.
         storage.init_bucket(2, u64::MAX).unwrap();
+        storage.condemn_bucket(2).unwrap();
+        assert!(storage.get_bucket(2).unwrap().is_none());
+    }
+
+    #[test]
+    fn condemn_after_an_earlier_erase_removes_bucket_row() {
+        // An erased range keeps its leaves, so the row must go once every
+        // range is erased, not once the range list is empty; otherwise a
+        // bucket pruned before its teardown would stay on disk forever.
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 2);
+        storage.delete_before(1, 1).unwrap();
+        storage.erase_pruned_range(1, 0).unwrap();
+        assert!(storage.get_bucket(1).unwrap().is_some());
+
+        storage.condemn_bucket(1).unwrap();
+        storage.erase_pruned_range(1, 1).unwrap();
+        assert!(
+            storage.get_bucket(1).unwrap().is_none(),
+            "bucket row must be gone"
+        );
+
+        // A condemned bucket with only erased ranges has nothing to erase.
+        bucket_with_leaves(&storage, 2, 1);
+        storage.delete_before(2, 1).unwrap();
+        storage.erase_pruned_range(2, 0).unwrap();
         storage.condemn_bucket(2).unwrap();
         assert!(storage.get_bucket(2).unwrap().is_none());
     }

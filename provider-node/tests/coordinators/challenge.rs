@@ -3,10 +3,11 @@
 //! Integration tests for the challenge responder.
 
 use super::{alice_account, test_state, test_state_with_data, wait_for};
+use provider_storage::ChunkTreeNode;
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_primitives::{BucketId, MmrLeaf};
+use storage_primitives::{hash_leaf, BucketId, MmrLeaf};
 use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::{
     ChallengeChainClient, ChallengeProofSource, ChallengeResponder, ChallengeResponderConfig,
@@ -295,6 +296,85 @@ async fn erased_leaves_are_defended_with_the_deletion_receipt() {
     assert!(
         mock.submitted.lock().unwrap().is_empty(),
         "no Proof response should be attempted for erased leaves"
+    );
+    handle.stop().await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn live_leaf_of_an_erased_commitment_is_answered() {
+    // A commitment signed before a prune covers one erased leaf and one live
+    // leaf. The receipt only defends leaves below its new_start_seq, so a
+    // challenge on the live leaf needs another response. Without one the
+    // provider is slashed although it still stores the challenged data.
+    let (state, first_leaf_challenge, _dir) = test_state_with_data();
+    let live_chunk = b"chunk-that-stays-after-the-prune";
+    let live_chunk_hash = hash_leaf(live_chunk);
+    state
+        .storage
+        .store_node(
+            1,
+            live_chunk_hash,
+            ChunkTreeNode::Chunk(live_chunk.to_vec()),
+        )
+        .unwrap();
+    let pre_prune = state.storage.commit(1, vec![live_chunk_hash]).unwrap();
+    let post_root = state.storage.delete_before(1, 1).unwrap().mmr_root;
+    state
+        .storage
+        .attach_deletion_receipt(
+            1,
+            provider_storage::DeletionReceipt {
+                mmr_root: post_root,
+                new_start_seq: 1,
+                admin: sp_core::crypto::AccountId32::new([7u8; 32]),
+                signature: sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from(
+                    [0u8; 64],
+                )),
+            },
+        )
+        .unwrap();
+    state.storage.erase_pruned_range(1, 0).unwrap();
+
+    let challenge = DetectedChallenge {
+        commitment: storage_primitives::Commitment {
+            mmr_root: pre_prune.mmr_root,
+            start_seq: pre_prune.start_seq,
+            leaf_count: pre_prune.leaf_count,
+        },
+        target: storage_primitives::ChunkLocation {
+            leaf_index: 1,
+            chunk_index: 0,
+        },
+        ..first_leaf_challenge
+    };
+    let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
+    let config = ChallengeResponderConfig {
+        poll_interval: Duration::from_millis(50),
+        auto_respond: true,
+        ..ChallengeResponderConfig::new(alice_account())
+    };
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
+
+    let mock_ref = Arc::clone(&mock);
+    assert!(
+        wait_for(5, 10, || {
+            let m = Arc::clone(&mock_ref);
+            async move { !m.submitted.lock().unwrap().is_empty() }
+        })
+        .await,
+        "the challenge on the live leaf should be answered"
+    );
+    assert!(
+        mock.deleted_submitted.lock().unwrap().is_empty(),
+        "the receipt does not cover a leaf at its new_start_seq; Deleted would fail on-chain"
     );
     handle.stop().await.unwrap();
 }
