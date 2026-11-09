@@ -25,6 +25,9 @@ desktop.ini
 *.tmp
 .test-vectors/
 
+# Built by `pnpm install` (prepare script of packages/storage-formats)
+packages/storage-formats/pkg/
+
 # Local config
 .env
 .env.local
