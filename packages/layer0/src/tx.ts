@@ -36,7 +36,7 @@ export const DEFAULT_TX_TIMEOUT_MS = 180_000;
  *
  * Real UIs keep "finalized" semantics (reorg-safe state display) — either
  * omit read options entirely (finalized is PAPI's default) or pass
- * {@link FINALIZED_READ_OPTS} explicitly; the layer-1 clients default to it.
+ * {@link FINALIZED_READ_OPTS} explicitly; `Web3Storage` defaults to it.
  */
 export const READ_OPTS = { at: "best" } as const;
 

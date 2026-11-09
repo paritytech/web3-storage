@@ -112,9 +112,11 @@ mod tests {
 
         let signer = Signer::from_seed("//Alice").unwrap();
         let account = AccountId32::new(signer.keypair().public_key().0);
-        let auth = Authenticator::new(StaticMembershipResolver(vec![
-            (account, Role::Writer).into()
-        ]));
+        let auth = Authenticator::new(StaticMembershipResolver::private(vec![(
+            account,
+            Role::Writer,
+        )
+            .into()]));
 
         let header = signer.auth_header("PUT", 7);
         assert!(auth

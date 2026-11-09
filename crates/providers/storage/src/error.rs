@@ -2,28 +2,45 @@
 
 //! Error types for the storage engine.
 
+use sp_core::H256;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Node not found: {0}")]
-    NodeNotFound(String),
+    #[error("Node not found: {0:?}")]
+    NodeNotFound(H256),
+
+    /// A leaf index past the end of a bucket's leaf list.
+    #[error("Leaf not found: index {leaf_index} in bucket {bucket_id}")]
+    LeafNotFound { bucket_id: u64, leaf_index: u64 },
 
     #[error("Commitment not reproducible from local leaves: {0}")]
     CommitmentNotReproducible(String),
 
+    /// A commitment cites leaves this store does not hold: they were pruned
+    /// below the local `start_seq`, or lie past the local end.
+    #[error(
+        "Leaves {start_seq}+{leaf_count} not held locally (local {local_start_seq}..{local_end})"
+    )]
+    LeavesNotHeld {
+        start_seq: u64,
+        leaf_count: u64,
+        local_start_seq: u64,
+        local_end: u64,
+    },
+
     #[error("Children missing: {0:?}")]
-    ChildrenMissing(Vec<String>),
+    ChildrenMissing(Vec<H256>),
 
     /// An internal node arrived with a child list that is not exactly two
     /// hashes. Send the left and right child hashes.
     #[error("Invalid child count: expected 2, got {0}")]
     InvalidChildCount(usize),
 
-    /// An internal node arrived with `data` that is not the left child hash
-    /// followed by the right child hash. Send exactly those 64 bytes.
-    #[error("Internal node data is not the concatenation of its children")]
-    InvalidInternalNodeData,
+    /// A node arrived with both `data` and `children`, or with neither. Send
+    /// `data` for a chunk or `children` for an internal node.
+    #[error("A node is either data (a chunk) or children (an internal node)")]
+    InvalidNode,
 
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
@@ -40,11 +57,16 @@ pub enum Error {
     #[error("Chunk too large: {size} bytes, max {max}", max = storage_primitives::DEFAULT_CHUNK_SIZE)]
     ChunkTooLarge { size: u64 },
 
+    /// `chunk_index` is at or beyond the chunk count of the tree under the
+    /// data root: the leaf has no such chunk.
+    #[error("Chunk index {chunk_index} out of range: the tree has {chunk_count} chunks")]
+    ChunkIndexOutOfRange { chunk_index: u64, chunk_count: u64 },
+
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
 
-    #[error("Root not found: {0}")]
-    RootNotFound(String),
+    #[error("Root not found: {0:?}")]
+    RootNotFound(H256),
 
     /// Another writer held the bucket past the lock timeout. Retry the
     /// request.
@@ -57,8 +79,8 @@ pub enum Error {
     #[error("Content tree exceeds {max_nodes} nodes")]
     TreeTooLarge { max_nodes: u64 },
 
-    #[error("Invalid hash: expected {expected}, got {actual}")]
-    InvalidHash { expected: String, actual: String },
+    #[error("Invalid hash: expected {expected:?}, got {actual:?}")]
+    InvalidHash { expected: H256, actual: H256 },
 
     /// The tree under a data root is not `merkle_tree` over chunks of
     /// `DEFAULT_CHUNK_SIZE` bytes, with only the last chunk shorter. Split the
@@ -67,8 +89,13 @@ pub enum Error {
     #[error("Non-canonical tree: {0}")]
     NonCanonicalTree(String),
 
+    /// A stored record could not be decoded.
     #[error("Serialization error: {0}")]
-    Serialization(String),
+    Serialization(#[from] codec::Error),
+
+    /// Building the bucket MMR or a proof from it failed.
+    #[error("MMR error: {0}")]
+    Mmr(#[from] storage_primitives::mmr::Error),
 
     /// The RocksDB engine itself failed. Carries the engine's error as
     /// `source()` so the cause survives instead of being flattened into a

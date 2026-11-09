@@ -2,26 +2,24 @@
   "name": "@web3-storage/sdk",
   "version": "0.1.0",
   "private": true,
-  "description": "Umbrella SDK for the storage parachain: re-exports @web3-storage/{core,layer0,layer1} and hosts the Web3Storage facade. Consumers import this; the physical core/layer0/layer1 split (#123) stays an implementation detail.",
+  "description": "Umbrella SDK for the storage parachain: re-exports @web3-storage/{core,layer0,file-system} and hosts the Web3Storage class (chain ops, provider resolution, per-bucket drive and object handles).",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./revive": "./src/revive.ts",
-    "./fs": "./src/fs.ts",
-    "./s3": "./src/s3.ts"
+    "./revive": "./src/revive.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@web3-storage/core": "workspace:*",
+    "@web3-storage/storage-formats": "workspace:*",
     "@web3-storage/layer0": "workspace:*",
-    "@web3-storage/layer1": "workspace:*",
-    "polkadot-api": "^3.1.0"
+    "polkadot-api": "^3.3.0"
   },
   "devDependencies": {
-    "@types/node": "^26.0.1",
+    "@types/node": "^26.6.6",
     "typescript": "~7.0.2"
   }
 }

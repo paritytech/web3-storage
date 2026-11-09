@@ -8,13 +8,33 @@ repository.workspace = true
 description = "Shared primitives for scalable Web3 storage"
 
 [dependencies]
-codec = { workspace = true }
-scale-info = { workspace = true }
-sp-core = { workspace = true }
-sp-io = { workspace = true }
+bitvec = { workspace = true }
+codec = { workspace = true, features = ["bit-vec"] }
+polkadot-ckb-merkle-mountain-range = { workspace = true }
+scale-info = { workspace = true, features = ["bit-vec"] }
+primitive-types = { workspace = true, features = ["codec", "scale-info"] }
+sp-crypto-hashing = { workspace = true }
 serde = { workspace = true, optional = true }
+
+# A runtime build (`--cfg substrate_runtime`, set by the wasm builder) hashes
+# through the host. Other builds, including the browser build of the bucket
+# tree, hash with `sp-crypto-hashing` and do not link `sp-io`.
+[target.'cfg(substrate_runtime)'.dependencies]
+sp-io = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["codec/std", "scale-info/std", "serde/std", "sp-core/std", "sp-io/std"]
-serde = ["dep:serde", "sp-core/serde"]
+std = [
+	"bitvec/std",
+	"codec/std",
+	"polkadot-ckb-merkle-mountain-range/std",
+	"primitive-types/std",
+	"scale-info/std",
+	"serde/std",
+	"sp-crypto-hashing/std",
+	"sp-io/std",
+]
+serde = ["bitvec/serde", "dep:serde", "primitive-types/serde_no_std"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(substrate_runtime)'] }

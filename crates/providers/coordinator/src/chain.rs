@@ -4,7 +4,7 @@
 //! node supplies the subxt implementation and tests supply mocks.
 
 use async_trait::async_trait;
-use provider_chain::BlockEvent;
+use provider_events::BlockEvent;
 use provider_types::{ChainClientError, ProviderInfo};
 use sp_runtime::AccountId32;
 

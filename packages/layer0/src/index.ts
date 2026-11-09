@@ -20,5 +20,6 @@ export * from "./tx.js";
 export * from "./waits.js";
 export * from "./provider-http.js";
 export * from "./pallets/storage-provider.js";
-export * from "./pallets/drive-registry.js";
-export * from "./pallets/s3-registry.js";
+export * from "./buckets.js";
+export * from "./provider-url.js";
+export * from "./providers.js";

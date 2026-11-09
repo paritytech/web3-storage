@@ -48,14 +48,13 @@ Unratified / WIP notes. **These need triage** ([#308](https://github.com/parityt
 - **[Checkpoint Protocol](./drafts/CHECKPOINT_PROTOCOL.md)** — multi-provider checkpoint coordination.
 - **[Provider-Initiated Checkpoints](./drafts/provider-initiated-checkpoints.md)** — extension where providers proactively commit state; removed in #306, archived (design + implementation) for potential re-evaluation.
 - **[Client-Side Encryption](./drafts/CLIENT_SIDE_ENCRYPTION.md)** — wire format, cipher choice.
-- **[S3 Metadata Index](./drafts/S3_METADATA_INDEX.md)** — how prefix/delimiter queries are served.
+- **[S3 Metadata Index](./drafts/S3_METADATA_INDEX.md)** — a provider-side index for S3 prefix/delimiter queries. The provider node does not implement this index.
 - **[Challenge Economics — Extensions](./drafts/challenge-economics-extensions.md)** — speculative "Capped Split for the general public"; also records that the design's two-tier challenger split isn't implemented yet.
 
 ## Clients
 
 - **[Storage Client SDK](../clients/storage/README.md)** — Layer-0 Rust client.
-- **[File System Client](../clients/file-system/README.md)** — Layer-1 drives, directories, and files.
-- **[S3 Interface](../clients/s3/README.md)** — Layer-1 S3-compatible Rust client.
+- **[Storage Formats](../clients/storage-formats/README.md)** — Rust library for drives, directories, files and S3-style objects stored in a bucket.
 - **TypeScript SDK** — `@web3-storage/sdk` at `packages/sdk` (`./fs`, `./s3`, `./revive` subpaths).
 
 ## External
