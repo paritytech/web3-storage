@@ -173,7 +173,10 @@ async fn test_commit_rejects_upload_with_non_default_chunk_size() {
         .await
         .err()
         .expect("commit must be rejected");
-    assert!(err.to_string().contains("400 Bad Request"), "got {err}");
+    assert!(
+        matches!(err, ClientError::HttpStatus { status: 400, .. }),
+        "got {err}"
+    );
 }
 
 #[tokio::test]

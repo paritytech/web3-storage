@@ -65,13 +65,13 @@ photo (canvas, longest edge ~320px) and PUTs the full photo plus the thumbnail, 
 from thumbnails (kilobytes per cell), and clicking a photo opens it full-resolution in a lightbox.
 Every mutation recomputes the bucket's metadata Merkle root client-side (`@web3-storage/core`'s `merkle.ts`) and
 anchors it on-chain via `setRoot`, so the on-chain anchor shown in the header updates live. The
-SDK's `FileSystemClient` keeps the directory tree in the bucket and uses the provider's Layer 0
+SDK's file tree (`FsTree`, from `Web3Storage.drive`) keeps the directory tree in the bucket and uses the provider's Layer 0
 routes only. Writes are signed with the user's account (a Writer on the bucket). Reads are
 unauthenticated: anyone who knows a file's CID can read it, so private photos need client-side
 encryption.
 
 `photos-flow` asserts the contract account is the bucket admin, the user holds a Writer role on the
-bucket, and `libraryOf(user)` reports the new bucket. It then uses the SDK's `FileSystemClient` (mkdir an album,
+bucket, and `libraryOf(user)` reports the new bucket. It then uses the SDK's `FsTree` (mkdir an album,
 PUT a multi-MB photo + a thumbnail), computes the bucket's metadata Merkle root **client-side**
 (`metadataMerkleRoot` in `packages/core/src/merkle.ts`), anchors it via `setRoot`, and
 verifies the locally recomputed root equals the on-chain anchor and that the bucket's file-system
