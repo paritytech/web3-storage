@@ -5,8 +5,9 @@
 //! A drive is a Layer 0 bucket of `pallet-storage-provider`, identified by
 //! its bucket id. Directories, file manifests and file contents are blobs in
 //! the bucket, and the root directory is the bucket's last MMR leaf. The
-//! [`tree`] module contains the format, the read and write logic and the
-//! limits; the [`s3`] module maps object keys onto the same tree.
+//! [`format`](mod@format) module defines these blobs and their limits,
+//! [`tree`] reads and writes them, and [`s3`] maps object keys onto the same
+//! tree.
 //!
 //! This crate makes no chain calls. Create the bucket and manage its members
 //! with `storage_client::AdminClient`, and checkpoint it with
@@ -37,31 +38,40 @@ pub mod tree;
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 pub mod wasm;
 
-use crate::format::Cid;
+#[cfg(test)]
+mod testing;
+
+use crate::format::{Cid, FileSystemError};
 use thiserror::Error;
 
 pub use storage_primitives::BucketId;
 pub use tree::{BlobLength, BlobStore, EmptyParents, FileContent, FileStat, Root, Tree};
 
-/// File system client errors
+/// Errors of the file tree and its blob store. The wasm build throws them as
+/// JS errors with the variant name as `code`.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum FsClientError {
-    #[error("Storage client error: {0}")]
-    StorageClient(String),
-
-    #[error("Path not found: {0}")]
-    PathNotFound(String),
-
+    /// The path does not start with `/`, has an empty name (trailing or
+    /// double `/`), or a name that breaks
+    /// [`crate::format::validate_entry_name`]. Also `/` where an
+    /// entry is needed.
     #[error("Invalid path: {0}")]
     InvalidPath(String),
 
+    /// Nothing exists at the path.
+    #[error("Path not found: {0}")]
+    PathNotFound(String),
+
+    /// An entry already exists at the path.
     #[error("Entry already exists: {0}")]
     EntryExists(String),
 
+    /// A name on the path, before the last one, is a file.
     #[error("Not a directory: {0}")]
     NotADirectory(String),
 
+    /// The path is a directory where the operation needs a file.
     #[error("Not a file: {0}")]
     NotAFile(String),
 
@@ -69,9 +79,19 @@ pub enum FsClientError {
     #[error("Directory not empty: {0}")]
     DirectoryNotEmpty(String),
 
+    /// A rule of the format rejected the write: the directory is full, the
+    /// file is too large, or the metadata is over its bounds or repeats a
+    /// key. `rule` says which.
+    #[error("{path}: {rule}")]
+    Format {
+        /// Path of the entry being written.
+        path: String,
+        /// The rule that failed.
+        rule: FileSystemError,
+    },
+
     /// The bucket's last MMR leaf is not a root directory of this drive.
-    /// Something other than the file system or S3 clients committed to the
-    /// bucket.
+    /// Something other than this crate committed to the bucket.
     #[error("Bucket {bucket_id} is not a file system bucket: {reason}")]
     NotAFileSystemBucket {
         /// The bucket that was read.
@@ -80,33 +100,27 @@ pub enum FsClientError {
         reason: String,
     },
 
+    /// A directory node or file manifest has a newer format version than
+    /// this code reads. Update the client.
+    #[error("Unsupported file-system format version {0}; update the client")]
+    UnsupportedFormatVersion(u8),
+
     /// The provider's MMR proof is not a proof of the last leaf of its
     /// commitment. A commit by another writer between the two requests also
     /// causes it; retry the operation.
     #[error("Invalid MMR proof for the last leaf of bucket {0}")]
     InvalidMmrProof(BucketId),
 
-    #[cfg(feature = "http")]
-    #[error("Network error: {0}")]
-    Network(#[from] reqwest::Error),
-
-    #[error("Serialization error: {0}")]
-    Serialization(String),
-
-    #[error("Blockchain error: {0}")]
-    Blockchain(String),
-
-    #[error("Event not found in transaction")]
-    EventNotFound,
-
-    #[error("Bounded collection overflow")]
-    BoundedOverflow,
-
-    #[error("No signer configured")]
-    NoSigner,
-
-    #[error("Configuration error: {0}")]
-    Config(String),
+    /// A blob below the root is not what its parent entry says: the wrong
+    /// length, not a valid directory node or manifest, or a manifest whose
+    /// chunk list does not match its size.
+    #[error("Invalid blob at {path}: {reason}")]
+    InvalidBlob {
+        /// Path of the entry whose blob was read.
+        path: String,
+        /// What is wrong with the blob.
+        reason: String,
+    },
 
     /// A blob's data root is not the CID that references it.
     #[error("CID mismatch: expected {expected:?}, got {got:?}")]
@@ -116,20 +130,19 @@ pub enum FsClientError {
         /// The data root of the bytes read or uploaded.
         got: Cid,
     },
-}
 
-#[cfg(feature = "http")]
-impl From<storage_client::ClientError> for FsClientError {
-    fn from(e: storage_client::ClientError) -> Self {
-        use storage_client::ClientError;
-        match e {
-            ClientError::Http(e) => Self::Network(e),
-            ClientError::Chain(message) => Self::Blockchain(message),
-            ClientError::Config(message) => Self::Config(message),
-            ClientError::Serialization(message) => Self::Serialization(message),
-            other => Self::StorageClient(other.to_string()),
-        }
-    }
+    /// A provider request failed; see [`storage_client::ClientError`]. A 403
+    /// ([`storage_client::ClientError::HttpStatus`]) means the signer lacks
+    /// the bucket role the request needs.
+    #[cfg(feature = "http")]
+    #[error(transparent)]
+    Provider(#[from] storage_client::ClientError),
+
+    /// A blob store other than the HTTP one failed. For the JS store of the
+    /// wasm build, the message is the message of the JS error, for example a
+    /// provider status.
+    #[error("Blob store error: {0}")]
+    Store(String),
 }
 
 pub type Result<T> = std::result::Result<T, FsClientError>;

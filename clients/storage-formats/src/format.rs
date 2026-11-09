@@ -3,18 +3,18 @@
 //! Blob format of the Layer 1 file system.
 //!
 //! The file system and S3 clients store every directory and file manifest as
-//! a SCALE encoded blob in the drive's bucket:
+//! a blob in the drive's bucket: a header ([`FORMAT_MAGIC`] and
+//! [`FORMAT_VERSION`]) and the SCALE encoding.
 //!
 //! - **DirectoryNode**: a directory and the references to its children
 //! - **FileManifest**: a file's size, content type and chunks
 //! - **CID**: Content Identifier of a blob: its Layer 0 `data_root`
 //!   (see [`compute_cid`])
 //!
-//! The root directory is the data root of the bucket's last MMR leaf. The
-//! TypeScript clients use the same format (`packages/core/src/file-system.ts`).
+//! The root directory is the data root of the bucket's last MMR leaf.
 
 use bounded_collections::{BoundedVec, Get};
-use codec::{Decode, Encode, MaxEncodedLen};
+use codec::{Decode, DecodeAll, Encode, MaxEncodedLen};
 use primitive_types::H256;
 use storage_primitives::BucketId;
 
@@ -175,15 +175,52 @@ pub struct MetadataEntry {
 }
 
 impl MetadataEntry {
-    /// Create an entry. Fails with [`FileSystemError::BoundsExceeded`] if the
+    /// Create an entry. Fails with [`FileSystemError::MetadataTooLarge`] if the
     /// key is over 64 bytes or the value over 256 bytes.
     pub fn try_new(key: &[u8], value: &[u8]) -> Result<Self, FileSystemError> {
         Ok(Self {
-            key: BoundedVec::try_from(key.to_vec()).map_err(|_| FileSystemError::BoundsExceeded)?,
+            key: BoundedVec::try_from(key.to_vec())
+                .map_err(|_| FileSystemError::MetadataTooLarge)?,
             value: BoundedVec::try_from(value.to_vec())
-                .map_err(|_| FileSystemError::BoundsExceeded)?,
+                .map_err(|_| FileSystemError::MetadataTooLarge)?,
         })
     }
+}
+
+/// First bytes of every [`DirectoryNode`] and [`FileManifest`] blob.
+pub const FORMAT_MAGIC: [u8; 4] = *b"W3FS";
+
+/// Version of the blob format. A reader rejects blobs of other versions
+/// with [`FileSystemError::UnsupportedVersion`].
+pub const FORMAT_VERSION: u8 = 1;
+
+/// Length of the blob header: [`FORMAT_MAGIC`] and [`FORMAT_VERSION`].
+pub const HEADER_LEN: usize = 5;
+
+/// The blob of `value`: the header, then the SCALE encoding.
+fn to_blob(value: &impl Encode) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(HEADER_LEN + value.size_hint());
+    bytes.extend(FORMAT_MAGIC);
+    bytes.push(FORMAT_VERSION);
+    value.encode_to(&mut bytes);
+    bytes
+}
+
+/// Decode a blob written by [`to_blob`]. Fails with
+/// [`FileSystemError::UnsupportedVersion`] for another format version and
+/// with [`FileSystemError::NotAFormatBlob`] for anything else that is not
+/// exactly such a blob, trailing bytes included.
+fn from_blob<T: Decode>(bytes: &[u8]) -> Result<T, FileSystemError> {
+    let (header, mut body) = bytes
+        .split_at_checked(HEADER_LEN)
+        .ok_or(FileSystemError::NotAFormatBlob)?;
+    if header[..4] != FORMAT_MAGIC {
+        return Err(FileSystemError::NotAFormatBlob);
+    }
+    if header[4] != FORMAT_VERSION {
+        return Err(FileSystemError::UnsupportedVersion(header[4]));
+    }
+    T::decode_all(&mut body).map_err(|_| FileSystemError::NotAFormatBlob)
 }
 
 /// Directory node containing child references.
@@ -211,7 +248,7 @@ impl DirectoryNode {
     }
 
     /// Insert `entry`, or replace the child with the same name. Keeps the
-    /// children sorted. Fails with [`FileSystemError::BoundsExceeded`] if the
+    /// children sorted. Fails with [`FileSystemError::DirectoryFull`] if the
     /// directory already has 1024 children.
     pub fn upsert_child(&mut self, entry: DirectoryEntry) -> Result<(), FileSystemError> {
         match self.position(&entry.name) {
@@ -222,7 +259,7 @@ impl DirectoryNode {
             Err(pos) => self
                 .children
                 .try_insert(pos, entry)
-                .map_err(|_| FileSystemError::BoundsExceeded),
+                .map_err(|_| FileSystemError::DirectoryFull),
         }
     }
 
@@ -268,19 +305,26 @@ impl DirectoryNode {
         Ok(())
     }
 
-    /// Serialize to SCALE bytes
-    pub fn to_scale_bytes(&self) -> Vec<u8> {
-        self.encode()
+    /// The blob of this node: the header, then the SCALE encoding.
+    pub fn to_blob(&self) -> Vec<u8> {
+        to_blob(self)
     }
 
-    /// Deserialize from SCALE bytes
-    pub fn from_scale_bytes(bytes: &[u8]) -> Result<Self, codec::Error> {
-        Self::decode(&mut &bytes[..])
+    /// Decode a blob written by [`DirectoryNode::to_blob`] (see
+    /// [`FileSystemError::NotAFormatBlob`]).
+    pub fn from_blob(bytes: &[u8]) -> Result<Self, FileSystemError> {
+        from_blob(bytes)
     }
 
-    /// CID of the SCALE encoding (see [`compute_cid`])
+    /// Largest blob of a directory node: the header and the largest SCALE
+    /// encoding.
+    pub fn max_blob_len() -> usize {
+        HEADER_LEN + Self::max_encoded_len()
+    }
+
+    /// CID of the blob (see [`compute_cid`])
     pub fn compute_cid(&self) -> Cid {
-        compute_cid(&self.to_scale_bytes())
+        compute_cid(&self.to_blob())
     }
 }
 
@@ -317,16 +361,25 @@ pub struct FileManifest {
 
 impl FileManifest {
     /// Build the manifest of `content`: its chunk hashes, size, `mime_type`
-    /// ([`DEFAULT_MIME_TYPE`] if empty) and `user_metadata`. Fails with
-    /// [`FileSystemError::BoundsExceeded`] if
-    /// the MIME type is over 128 bytes, the content has more than 65536
-    /// chunks, or there are more than 64 metadata entries.
+    /// ([`DEFAULT_MIME_TYPE`] if empty) and `user_metadata`, sorted by key
+    /// bytes. Fails with [`FileSystemError::ContentTooLarge`] if the content
+    /// has more than 65536 chunks, with [`FileSystemError::MetadataTooLarge`]
+    /// if the MIME type is over 128 bytes or there are more than 64 metadata
+    /// entries, and with [`FileSystemError::DuplicateMetadataKey`] if two
+    /// entries have the same key.
     pub fn for_content(
         bucket_id: BucketId,
         content: &[u8],
         mime_type: &str,
-        user_metadata: Vec<MetadataEntry>,
+        mut user_metadata: Vec<MetadataEntry>,
     ) -> Result<Self, FileSystemError> {
+        user_metadata.sort_by(|a, b| a.key.cmp(&b.key));
+        if user_metadata
+            .windows(2)
+            .any(|pair| pair[0].key == pair[1].key)
+        {
+            return Err(FileSystemError::DuplicateMetadataKey);
+        }
         let chunks = chunk_hashes(content)
             .into_iter()
             .enumerate()
@@ -343,12 +396,12 @@ impl FileManifest {
         Ok(Self {
             bucket_id,
             mime_type: BoundedVec::try_from(mime_type.as_bytes().to_vec())
-                .map_err(|_| FileSystemError::BoundsExceeded)?,
+                .map_err(|_| FileSystemError::MetadataTooLarge)?,
             total_size: content.len() as u64,
-            chunks: BoundedVec::try_from(chunks).map_err(|_| FileSystemError::BoundsExceeded)?,
+            chunks: BoundedVec::try_from(chunks).map_err(|_| FileSystemError::ContentTooLarge)?,
             encryption_params: BoundedVec::default(),
             user_metadata: BoundedVec::try_from(user_metadata)
-                .map_err(|_| FileSystemError::BoundsExceeded)?,
+                .map_err(|_| FileSystemError::MetadataTooLarge)?,
         })
     }
 
@@ -370,8 +423,16 @@ impl FileManifest {
 
     /// Check the rules SCALE decoding does not: `chunks` has one entry per
     /// [`CHUNK_SIZE`] chunk of `total_size` bytes (none for empty content),
-    /// and each chunk's `sequence` is its index.
+    /// each chunk's `sequence` is its index, and `user_metadata` is sorted by
+    /// key bytes with unique keys.
     pub fn validate(&self) -> Result<(), FileSystemError> {
+        if self
+            .user_metadata
+            .windows(2)
+            .any(|pair| pair[0].key >= pair[1].key)
+        {
+            return Err(FileSystemError::InvalidManifest);
+        }
         let expected = self.total_size.div_ceil(CHUNK_SIZE as u64);
         if self.chunks.len() as u64 != expected {
             return Err(FileSystemError::InvalidManifest);
@@ -387,19 +448,26 @@ impl FileManifest {
         Ok(())
     }
 
-    /// Serialize to SCALE bytes
-    pub fn to_scale_bytes(&self) -> Vec<u8> {
-        self.encode()
+    /// The blob of this manifest: the header, then the SCALE encoding.
+    pub fn to_blob(&self) -> Vec<u8> {
+        to_blob(self)
     }
 
-    /// Deserialize from SCALE bytes
-    pub fn from_scale_bytes(bytes: &[u8]) -> Result<Self, codec::Error> {
-        Self::decode(&mut &bytes[..])
+    /// Decode a blob written by [`FileManifest::to_blob`] (see
+    /// [`FileSystemError::NotAFormatBlob`]).
+    pub fn from_blob(bytes: &[u8]) -> Result<Self, FileSystemError> {
+        from_blob(bytes)
     }
 
-    /// CID of the SCALE encoding (see [`compute_cid`])
+    /// Largest blob of a file manifest: the header and the largest SCALE
+    /// encoding.
+    pub fn max_blob_len() -> usize {
+        HEADER_LEN + Self::max_encoded_len()
+    }
+
+    /// CID of the blob (see [`compute_cid`])
     pub fn compute_cid(&self) -> Cid {
-        compute_cid(&self.to_scale_bytes())
+        compute_cid(&self.to_blob())
     }
 }
 
@@ -407,48 +475,44 @@ impl FileManifest {
 // Error types
 // ============================================================================
 
-/// Error types for file system operations
+/// Errors of the file-system format: building a node or manifest that breaks
+/// a bound, or reading one that breaks the format rules.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FileSystemError {
-    #[error("Invalid CID format")]
-    InvalidCid,
-
-    #[error("Serialization failed")]
-    SerializationError,
-
-    #[error("Deserialization failed")]
-    DeserializationError,
-
-    #[error("Entry not found: {0}")]
-    EntryNotFound(String),
-
-    #[error("Invalid path")]
-    InvalidPath,
-
-    #[error("Not a directory")]
-    NotADirectory,
-
-    #[error("Not a file")]
-    NotAFile,
-
     /// An entry name is empty, over 256 bytes, not UTF-8, contains `/`, or is
     /// `.` or `..`.
     #[error("Invalid entry name")]
     InvalidEntryName,
-
     /// A directory node has unsorted or duplicate child names, a directory
     /// entry with a non-zero size, or non-empty metadata.
     #[error("Invalid directory node")]
     InvalidDirectory,
-
-    /// A file manifest's chunk count does not match its `total_size`, or a
-    /// chunk's `sequence` is not its index.
+    /// A file manifest's chunk count does not match its `total_size`, a
+    /// chunk's `sequence` is not its index, or its user metadata is not
+    /// sorted by key with unique keys.
     #[error("Invalid file manifest")]
     InvalidManifest,
-
-    /// A value is over one of the format's size bounds.
-    #[error("Value exceeds a size bound")]
-    BoundsExceeded,
+    /// The directory already has 1024 children, the most a node holds.
+    #[error("Directory is full")]
+    DirectoryFull,
+    /// The content has more than 65536 chunks (16 GiB), the most a manifest
+    /// lists.
+    #[error("Content is too large")]
+    ContentTooLarge,
+    /// The MIME type is over 128 bytes, there are more than 64 metadata
+    /// entries, or a metadata key or value is over 64 or 256 bytes.
+    #[error("File metadata exceeds a size bound")]
+    MetadataTooLarge,
+    /// Two user metadata entries have the same key.
+    #[error("Duplicate metadata key")]
+    DuplicateMetadataKey,
+    /// The bytes do not start with the header of the expected kind of node,
+    /// or are not exactly the encoding of one.
+    #[error("Not a file-system blob of the expected kind")]
+    NotAFormatBlob,
+    /// The blob has a format version this code does not read.
+    #[error("Unsupported format version {0}")]
+    UnsupportedVersion(u8),
 }
 
 // ============================================================================
@@ -504,18 +568,16 @@ mod tests {
         DirectoryEntry::try_new(name, entry_type, h(name.as_bytes()), size, 1).unwrap()
     }
 
-    /// The TypeScript client reads directory and manifest blobs up to these
-    /// sizes (`DIRECTORY_NODE_MAX_SIZE`, `FILE_MANIFEST_MAX_SIZE` in
-    /// `packages/core/src/file-system.ts`) and asserts the same values.
+    /// Readers request directory and manifest blobs up to these sizes
+    /// ([`crate::tree::BlobLength::AtMost`]), so a change to them changes
+    /// which blobs a reader accepts.
     #[test]
-    fn max_encoded_len_matches_typescript() {
-        use codec::MaxEncodedLen;
-        assert_eq!(DirectoryNode::max_encoded_len(), 335_116);
-        assert_eq!(FileManifest::max_encoded_len(), 2_380_698);
+    fn max_blob_lengths_are_pinned() {
+        assert_eq!(DirectoryNode::max_blob_len(), 335_121);
+        assert_eq!(FileManifest::max_blob_len(), 2_380_703);
     }
 
-    /// Shared test vector: the TypeScript implementation asserts the same
-    /// encoding and CID.
+    /// Pinned encoding and CID: a change to the format changes them.
     #[test]
     fn directory_node_test_vector() {
         let mut dir = DirectoryNode::new_empty(7);
@@ -530,7 +592,7 @@ mod tests {
         .unwrap();
         assert_eq!(dir.children[0].name_str(), "a.txt");
         assert_eq!(
-            array_bytes::bytes2hex("", dir.to_scale_bytes()),
+            array_bytes::bytes2hex("", dir.to_blob()),
             DIRECTORY_NODE_HEX,
             "encoding"
         );
@@ -541,8 +603,7 @@ mod tests {
         );
     }
 
-    /// Shared test vector: the TypeScript implementation asserts the same
-    /// encoding and CID.
+    /// Pinned encoding and CID: a change to the format changes them.
     #[test]
     fn file_manifest_test_vector() {
         let manifest = FileManifest::for_content(
@@ -555,7 +616,7 @@ mod tests {
         assert_eq!(manifest.chunks[0].cid, h(b"a"));
         assert_eq!(manifest.content_root(), h(b"a"));
         assert_eq!(
-            array_bytes::bytes2hex("", manifest.to_scale_bytes()),
+            array_bytes::bytes2hex("", manifest.to_blob()),
             FILE_MANIFEST_HEX,
             "encoding"
         );
@@ -566,12 +627,12 @@ mod tests {
         );
     }
 
-    const DIRECTORY_NODE_HEX: &str = "07000000000000000814612e747874007234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686010000000000000000f153650000000010646f6373019fa96117cda5187dd7699a57a16cbf37bb3353c1385e7854ab6e131df63cc659000000000000000001f153650000000000";
+    const DIRECTORY_NODE_HEX: &str = "573346530107000000000000000814612e747874007234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686010000000000000000f153650000000010646f6373019fa96117cda5187dd7699a57a16cbf37bb3353c1385e7854ab6e131df63cc659000000000000000001f153650000000000";
     const DIRECTORY_NODE_CID: &str =
-        "0xdc2e9cfcc2612da5c6090a9d8f1ff953ef6f14fbb19a9e32a65bdffb990e50a5";
-    const FILE_MANIFEST_HEX: &str = "070000000000000028746578742f706c61696e0100000000000000047234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686000000000004186f726967696e1074657374";
+        "0xccfa3e63456971a857964b18a52e7dbbd498368b0caf5b2a0688dfebe2e7674c";
+    const FILE_MANIFEST_HEX: &str = "5733465301070000000000000028746578742f706c61696e0100000000000000047234082e1dd0b5ec0acd71875d61c9f374af30c100bc4de7aa4eb3f15bbed686000000000004186f726967696e1074657374";
     const FILE_MANIFEST_CID: &str =
-        "0xf7ea0f16d55dedab276a539b951c87b065a0d90c4f8c99510545bd2afc04e62e";
+        "0x1899737ddced289884db8a8926f994dc0d7cfd352fb1148cb8cd42d8d526d551";
 
     #[test]
     fn compute_cid_is_the_data_root() {
@@ -659,14 +720,14 @@ mod tests {
         let long_mime = "a".repeat(129);
         assert_eq!(
             FileManifest::for_content(1, b"x", &long_mime, vec![]),
-            Err(FileSystemError::BoundsExceeded)
+            Err(FileSystemError::MetadataTooLarge)
         );
         let too_many = (0..65)
             .map(|i| MetadataEntry::try_new(format!("k{i}").as_bytes(), b"v").unwrap())
             .collect();
         assert_eq!(
             FileManifest::for_content(1, b"x", DEFAULT_MIME_TYPE, too_many),
-            Err(FileSystemError::BoundsExceeded)
+            Err(FileSystemError::MetadataTooLarge)
         );
         assert!(MetadataEntry::try_new(&[b'k'; 65], b"v").is_err());
         assert!(MetadataEntry::try_new(b"k", &[b'v'; 257]).is_err());
@@ -677,7 +738,7 @@ mod tests {
         let mut dir = DirectoryNode::new_empty(123);
         dir.upsert_child(entry("file1.txt", EntryType::File, 1024))
             .unwrap();
-        let decoded = DirectoryNode::from_scale_bytes(&dir.to_scale_bytes()).unwrap();
+        let decoded = DirectoryNode::from_blob(&dir.to_blob()).unwrap();
         assert_eq!(decoded, dir);
 
         let manifest = FileManifest::for_content(
@@ -687,21 +748,89 @@ mod tests {
             vec![MetadataEntry::try_new(b"k", b"v").unwrap()],
         )
         .unwrap();
-        let decoded = FileManifest::from_scale_bytes(&manifest.to_scale_bytes()).unwrap();
+        let decoded = FileManifest::from_blob(&manifest.to_blob()).unwrap();
         assert_eq!(decoded, manifest);
+    }
+
+    /// A blob has one encoding, so its CID identifies the node: decoding
+    /// fails on trailing bytes and on non-canonical compact lengths.
+    #[test]
+    fn decode_rejects_trailing_bytes_and_non_canonical_lengths() {
+        let mut dir = DirectoryNode::new_empty(123);
+        dir.upsert_child(entry("file1.txt", EntryType::File, 1024))
+            .unwrap();
+        let bytes = dir.to_blob();
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(DirectoryNode::from_blob(&trailing).is_err());
+        // The child count 1 in the two-byte compact form: 0x0500, not 0x04.
+        let mut non_canonical = bytes[..HEADER_LEN + 8].to_vec();
+        non_canonical.extend([0x05, 0x00]);
+        non_canonical.extend(&bytes[HEADER_LEN + 9..]);
+        assert!(DirectoryNode::from_blob(&non_canonical).is_err());
+
+        let manifest = FileManifest::for_content(123, b"content", "text/plain", vec![]).unwrap();
+        let mut trailing = manifest.to_blob();
+        trailing.push(0);
+        assert!(FileManifest::from_blob(&trailing).is_err());
     }
 
     #[test]
     fn decode_enforces_bounds() {
         // A name of 257 bytes: compact length 257 = 0x0405, then the bytes.
-        let mut bytes = Encode::encode(&7u64);
+        let mut bytes = FORMAT_MAGIC.to_vec();
+        bytes.push(FORMAT_VERSION);
+        bytes.extend(Encode::encode(&7u64));
         bytes.extend(Encode::encode(&codec::Compact(1u32)));
         bytes.extend(Encode::encode(&codec::Compact(257u32)));
         bytes.extend([b'a'; 257]);
         bytes.push(0);
         bytes.extend([0u8; 32 + 8 + 8]);
         bytes.extend(Encode::encode(&codec::Compact(0u32)));
-        assert!(DirectoryNode::from_scale_bytes(&bytes).is_err());
+        assert_eq!(
+            DirectoryNode::from_blob(&bytes),
+            Err(FileSystemError::NotAFormatBlob)
+        );
+    }
+
+    /// The header tells a newer format apart from data that is not a node at
+    /// all.
+    #[test]
+    fn decode_checks_the_header() {
+        let dir = DirectoryNode::new_empty(1).to_blob();
+        assert_eq!(&dir[..HEADER_LEN], b"W3FS\x01");
+        let mut newer = dir.clone();
+        newer[4] = FORMAT_VERSION + 1;
+        assert_eq!(
+            DirectoryNode::from_blob(&newer),
+            Err(FileSystemError::UnsupportedVersion(FORMAT_VERSION + 1))
+        );
+        assert_eq!(
+            DirectoryNode::from_blob(b"raw layer 0 data"),
+            Err(FileSystemError::NotAFormatBlob)
+        );
+    }
+
+    /// Metadata is stored sorted by key, so one set of entries has one CID,
+    /// and a manifest with unsorted or repeated keys is invalid.
+    #[test]
+    fn manifest_metadata_is_sorted_with_unique_keys() {
+        let entry = |k: &[u8]| MetadataEntry::try_new(k, b"v").unwrap();
+        let sorted =
+            FileManifest::for_content(1, b"x", "", vec![entry(b"b"), entry(b"a")]).unwrap();
+        let keys: Vec<&[u8]> = sorted
+            .user_metadata
+            .iter()
+            .map(|e| e.key.as_slice())
+            .collect();
+        assert_eq!(keys, [&b"a"[..], b"b"]);
+        assert_eq!(
+            FileManifest::for_content(1, b"x", "", vec![entry(b"a"), entry(b"a")]),
+            Err(FileSystemError::DuplicateMetadataKey)
+        );
+        let mut unsorted = sorted.clone();
+        unsorted.user_metadata = vec![entry(b"b"), entry(b"a")].try_into().unwrap();
+        assert_eq!(unsorted.validate(), Err(FileSystemError::InvalidManifest));
     }
 
     #[test]
@@ -756,7 +885,7 @@ mod tests {
         }
         assert_eq!(
             dir.upsert_child(entry("overflow", EntryType::File, 0)),
-            Err(FileSystemError::BoundsExceeded)
+            Err(FileSystemError::DirectoryFull)
         );
     }
 

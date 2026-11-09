@@ -107,9 +107,10 @@ provider's HTTP API. `pnpm install` builds the wasm into
 version in `Cargo.lock`. Rebuild it after a change to the crate with
 `pnpm --filter @web3-storage/storage-formats build:wasm`.
 
-- Directories and files are SCALE-encoded `DirectoryNode` and
-  `FileManifest` blobs (`clients/storage-formats/src/format.rs`). A blob's CID is
-  its `data_root` (`computeDataRoot`).
+- Directories and files are `DirectoryNode` and `FileManifest` blobs
+  (`clients/storage-formats/src/format.rs`): a 5-byte header (magic `W3FS`
+  and format version) and the SCALE encoding. A blob's CID is its
+  `data_root` (`computeDataRoot`).
 - The root directory's CID is the bucket's last MMR leaf. A bucket with no
   leaves is an empty drive.
 - A write uploads the new content, its manifest and each rewritten
@@ -123,7 +124,7 @@ Rules for callers:
   concurrently can lose one change: the last commit wins.
 - **Only `FsTree` writes the bucket.** A raw Layer 0 commit becomes the
   last leaf, and the tree no longer loads (`FileSystemError` with code
-  `NotAFileSystem`).
+  `NotAFileSystemBucket`).
 - **An Admin prefix delete** (`/delete` with a new `start_seq`) can remove
   blobs that the current tree still references.
 - **Reads are unauthenticated.** Anyone who knows a CID can read the blob

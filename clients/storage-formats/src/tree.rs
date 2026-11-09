@@ -7,9 +7,11 @@
 //!
 //! # Format
 //!
-//! Directories are SCALE-encoded [`DirectoryNode`]s and files are a content
-//! blob plus a SCALE-encoded [`FileManifest`]. Every blob is addressed by its
-//! CID, the Layer 0 data root ([`compute_cid`]).
+//! Directories are [`DirectoryNode`] blobs and files are a content blob plus
+//! a [`FileManifest`] blob. A node blob is a 6-byte header (magic `W3FS`,
+//! format version, kind of node) and the SCALE encoding
+//! ([`DirectoryNode::to_blob`]). Every blob is addressed by its CID, the
+//! Layer 0 data root ([`compute_cid`]).
 //!
 //! # Root discovery
 //!
@@ -54,7 +56,6 @@ use crate::format::{
     MetadataEntry,
 };
 use crate::{FsClientError, Result};
-use codec::MaxEncodedLen;
 use std::collections::HashSet;
 use storage_primitives::{verify_mmr_proof, BucketId, Commitment, MmrProof};
 
@@ -128,12 +129,25 @@ impl<T: BlobStore + ?Sized> BlobStore for &T {
     }
 }
 
-/// Map a format error to the client error for `path`.
-fn format_error(path: &str, e: FileSystemError) -> FsClientError {
-    match e {
-        FileSystemError::InvalidEntryName => FsClientError::InvalidPath(path.to_string()),
-        FileSystemError::BoundsExceeded => FsClientError::BoundedOverflow,
-        other => FsClientError::Serialization(format!("{path}: {other}")),
+/// The error for a write at `path` that a format rule rejects.
+fn format_error(path: &str) -> impl Fn(FileSystemError) -> FsClientError + '_ {
+    move |rule| FsClientError::Format {
+        path: path.to_string(),
+        rule,
+    }
+}
+
+/// The error for a blob at `path` that breaks a format rule. A newer format
+/// version is [`FsClientError::UnsupportedFormatVersion`].
+fn invalid_blob(path: &str) -> impl Fn(FileSystemError) -> FsClientError + '_ {
+    move |source| match source {
+        FileSystemError::UnsupportedVersion(version) => {
+            FsClientError::UnsupportedFormatVersion(version)
+        }
+        source => FsClientError::InvalidBlob {
+            path: path.to_string(),
+            reason: source.to_string(),
+        },
     }
 }
 
@@ -270,7 +284,7 @@ impl<S: BlobStore> Tree<S> {
             bucket_id: self.bucket_id,
             reason,
         };
-        let max = max_len::<DirectoryNode>();
+        let max = DirectoryNode::max_blob_len() as u64;
         let bytes = self
             .store
             .get_blob(self.bucket_id, cid, BlobLength::AtMost(max))
@@ -281,8 +295,12 @@ impl<S: BlobStore> Tree<S> {
             )));
         }
         check_cid(cid, &bytes)?;
-        let node = DirectoryNode::from_scale_bytes(&bytes)
-            .map_err(|e| not_fs(format!("last leaf is not a directory node: {e}")))?;
+        let node = DirectoryNode::from_blob(&bytes).map_err(|e| match e {
+            FileSystemError::UnsupportedVersion(version) => {
+                FsClientError::UnsupportedFormatVersion(version)
+            }
+            other => not_fs(format!("last leaf is not a directory node: {other}")),
+        })?;
         node.validate()
             .map_err(|e| not_fs(format!("last leaf is not a valid directory node: {e}")))?;
         if node.bucket_id != self.bucket_id {
@@ -307,22 +325,6 @@ impl<S: BlobStore> Tree<S> {
             .next_back()
             .map(|dir| dir.children.into_inner())
             .unwrap_or_default())
-    }
-
-    /// List the entries of the directory at `path`, sorted by name, without
-    /// the subdirectories that contain no file at any depth. Reads each
-    /// subdirectory only until it finds a file.
-    pub async fn list_non_empty(&self, path: &str) -> Result<Vec<DirectoryEntry>> {
-        let names = parse_path(path)?;
-        let base = join(&names);
-        let mut entries = Vec::new();
-        for entry in self.list(path).await? {
-            let child = format!("{}/{}", base.trim_end_matches('/'), entry.name_str());
-            if entry.is_file() || self.contains_file(&child, entry.cid).await? {
-                entries.push(entry);
-            }
-        }
-        Ok(entries)
     }
 
     /// Read the entry and manifest of the file at `path`.
@@ -351,20 +353,10 @@ impl<S: BlobStore> Tree<S> {
         let data = if stat.size() == 0 {
             Vec::new()
         } else {
-            self.read_blob(stat.content_root(), BlobLength::Exact(stat.size()))
+            self.read_blob(path, stat.content_root(), BlobLength::Exact(stat.size()))
                 .await?
         };
         Ok(FileContent { stat, data })
-    }
-
-    /// Every file under the directory at `path`, at any depth, as
-    /// (path relative to `path`, entry). Order is unspecified.
-    pub async fn files_under(&self, path: &str) -> Result<Vec<(String, DirectoryEntry)>> {
-        let entries = self.entries_under(path).await?;
-        Ok(entries
-            .into_iter()
-            .filter(|(_, e)| !e.is_directory())
-            .collect())
     }
 
     /// Every entry below the directory at `path`, directories and files,
@@ -410,7 +402,7 @@ impl<S: BlobStore> Tree<S> {
             .split_last()
             .ok_or_else(|| FsClientError::NotAFile(path.to_string()))?;
         let manifest = FileManifest::for_content(self.bucket_id, data, content_type, user_metadata)
-            .map_err(|e| format_error(path, e))?;
+            .map_err(format_error(path))?;
 
         let root = self.load_root().await?;
         let mut chain = self.dir_chain(root.node, parents, true).await?;
@@ -419,7 +411,7 @@ impl<S: BlobStore> Tree<S> {
             return Err(FsClientError::NotAFile(path.to_string()));
         }
 
-        let manifest_bytes = manifest.to_scale_bytes();
+        let manifest_bytes = manifest.to_blob();
         let entry = DirectoryEntry::try_new(
             name,
             EntryType::File,
@@ -427,10 +419,10 @@ impl<S: BlobStore> Tree<S> {
             data.len() as u64,
             (self.now)(),
         )
-        .map_err(|e| format_error(path, e))?;
+        .map_err(format_error(path))?;
         parent
             .upsert_child(entry.clone())
-            .map_err(|e| format_error(path, e))?;
+            .map_err(format_error(path))?;
 
         let (dirs, root) = self.rewrite(chain, parents, path)?;
         let mut blobs = Vec::new();
@@ -501,6 +493,55 @@ impl<S: BlobStore> Tree<S> {
             .await
     }
 
+    /// Move the file or directory at `from` to `to` in one commit, without
+    /// copying content. Creates missing parents of `to` and keeps the entry's
+    /// `mtime`. Fails with [`FsClientError::PathNotFound`] if `from` does not
+    /// exist, [`FsClientError::EntryExists`] if `to` exists, and
+    /// [`FsClientError::InvalidPath`] for `/` or a `to` inside `from`.
+    /// Returns the CID of the new root directory.
+    pub async fn rename(&self, from: &str, to: &str) -> Result<Cid> {
+        let from_names = parse_path(from)?;
+        let to_names = parse_path(to)?;
+        let (Some((from_name, from_parents)), Some((to_name, to_parents))) =
+            (from_names.split_last(), to_names.split_last())
+        else {
+            return Err(FsClientError::InvalidPath("/".to_string()));
+        };
+        if to_names.starts_with(&from_names) {
+            return Err(FsClientError::InvalidPath(to.to_string()));
+        }
+        let common = from_parents
+            .iter()
+            .zip(to_parents)
+            .take_while(|(from_parent, to_parent)| from_parent == to_parent)
+            .count();
+
+        let root = self.load_root().await?;
+        let mut chain = self.dir_chain(root.node, from_parents, false).await?;
+        let entry = chain[from_parents.len()]
+            .remove_child(from_name)
+            .ok_or_else(|| FsClientError::PathNotFound(from.to_string()))?;
+        let mut dirs = self.rewrite_below(&mut chain, from_parents, common, from)?;
+        let mut chain = self.extend_chain(chain, to_parents, true).await?;
+        let parent = &mut chain[to_parents.len()];
+        if parent.find_child(to_name).is_some() {
+            return Err(FsClientError::EntryExists(to.to_string()));
+        }
+        let moved = DirectoryEntry::try_new(
+            to_name,
+            entry.entry_type,
+            entry.cid,
+            entry.size,
+            entry.mtime,
+        )
+        .map_err(format_error(to))?;
+        parent.upsert_child(moved).map_err(format_error(to))?;
+        let (to_dirs, root) = self.rewrite(chain, to_parents, to)?;
+        dirs.extend(to_dirs);
+        self.write(&dirs.iter().map(Vec::as_slice).collect::<Vec<_>>(), &root)
+            .await
+    }
+
     /// The directories along `names`, starting with `root`. With
     /// `create_missing`, a missing directory is a new empty one; otherwise it
     /// fails with [`FsClientError::PathNotFound`].
@@ -510,8 +551,19 @@ impl<S: BlobStore> Tree<S> {
         names: &[&str],
         create_missing: bool,
     ) -> Result<Vec<DirectoryNode>> {
-        let mut chain = vec![root];
-        for depth in 0..names.len() {
+        self.extend_chain(vec![root], names, create_missing).await
+    }
+
+    /// Extend `chain`, the directories along the first `chain.len() - 1`
+    /// names, to the directories along all of `names` (see
+    /// [`Tree::dir_chain`]).
+    async fn extend_chain(
+        &self,
+        mut chain: Vec<DirectoryNode>,
+        names: &[&str],
+        create_missing: bool,
+    ) -> Result<Vec<DirectoryNode>> {
+        for depth in chain.len() - 1..names.len() {
             let path = join(&names[..=depth]);
             let next = match chain[depth].find_child(names[depth]) {
                 Some(entry) if entry.is_directory() => self.read_dir(&path, entry.cid).await?,
@@ -534,20 +586,36 @@ impl<S: BlobStore> Tree<S> {
         names: &[&str],
         path: &str,
     ) -> Result<(Vec<Vec<u8>>, Vec<u8>)> {
+        let below_root = self.rewrite_below(&mut chain, names, 0, path)?;
+        Ok((below_root, chain[0].to_blob()))
+    }
+
+    /// Encode the directories of `chain` (the directories along `names`,
+    /// starting with the root) deeper than `depth`, bottom-up, put each new
+    /// CID into the parent's entry, and remove them from `chain`. Returns
+    /// their encodings, bottom-up.
+    fn rewrite_below(
+        &self,
+        chain: &mut Vec<DirectoryNode>,
+        names: &[&str],
+        depth: usize,
+        path: &str,
+    ) -> Result<Vec<Vec<u8>>> {
         debug_assert_eq!(chain.len(), names.len() + 1);
         let mtime = (self.now)();
-        let mut below_root = Vec::with_capacity(names.len());
-        for (depth, name) in names.iter().enumerate().rev() {
-            let bytes = chain[depth + 1].to_scale_bytes();
+        let mut encoded = Vec::with_capacity(names.len() - depth);
+        for (index, name) in names.iter().enumerate().skip(depth).rev() {
+            let bytes = chain[index + 1].to_blob();
             let entry =
                 DirectoryEntry::try_new(name, EntryType::Directory, compute_cid(&bytes), 0, mtime)
-                    .map_err(|e| format_error(path, e))?;
-            chain[depth]
+                    .map_err(format_error(path))?;
+            chain[index]
                 .upsert_child(entry)
-                .map_err(|e| format_error(path, e))?;
-            below_root.push(bytes);
+                .map_err(format_error(path))?;
+            encoded.push(bytes);
         }
-        Ok((below_root, chain[0].to_scale_bytes()))
+        chain.truncate(depth + 1);
+        Ok(encoded)
     }
 
     /// Upload `blobs`, then `root`, and commit their CIDs in one request, in
@@ -577,9 +645,20 @@ impl<S: BlobStore> Tree<S> {
 
     /// Data root of the bucket's last MMR leaf, or `None` if the bucket has
     /// no leaves. Fails with [`FsClientError::InvalidMmrProof`] unless the
-    /// store's proof proves that leaf against the store's commitment. The
-    /// provider signs the commitment; this does not check that signature.
+    /// store's proof proves that leaf against the store's commitment, after
+    /// one more read for a commit between the two reads. The provider signs
+    /// the commitment; this does not check that signature.
     async fn last_leaf(&self) -> Result<Option<Cid>> {
+        match self.read_last_leaf().await {
+            Err(FsClientError::InvalidMmrProof(_)) => self.read_last_leaf().await,
+            result => result,
+        }
+    }
+
+    /// One read of [`Tree::last_leaf`]. A commit between the commitment and
+    /// the proof read makes the proof one of a larger MMR, which fails with
+    /// [`FsClientError::InvalidMmrProof`].
+    async fn read_last_leaf(&self) -> Result<Option<Cid>> {
         let Some(commitment) = self.store.commitment(self.bucket_id).await? else {
             return Ok(None);
         };
@@ -594,8 +673,9 @@ impl<S: BlobStore> Tree<S> {
         Ok(Some(data_root))
     }
 
-    /// Read a blob and check its length and that its CID is `cid`.
-    async fn read_blob(&self, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
+    /// Read the blob of the entry at `path` and check its length and that
+    /// its CID is `cid`.
+    async fn read_blob(&self, path: &str, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
         let bytes = self.store.get_blob(self.bucket_id, cid, length).await?;
         let len = bytes.len() as u64;
         let length_ok = match length {
@@ -603,51 +683,38 @@ impl<S: BlobStore> Tree<S> {
             BlobLength::AtMost(max) => len <= max,
         };
         if !length_ok {
-            return Err(FsClientError::Serialization(format!(
-                "{cid:?}: {len} bytes, expected {length:?}"
-            )));
+            return Err(FsClientError::InvalidBlob {
+                path: path.to_string(),
+                reason: format!("{len} bytes, expected {length:?}"),
+            });
         }
         check_cid(cid, &bytes)?;
         Ok(bytes)
     }
 
-    async fn read_dir(&self, path: &str, cid: Cid) -> Result<DirectoryNode> {
+    pub(crate) async fn read_dir(&self, path: &str, cid: Cid) -> Result<DirectoryNode> {
         let bytes = self
-            .read_blob(cid, BlobLength::AtMost(max_len::<DirectoryNode>()))
+            .read_blob(
+                path,
+                cid,
+                BlobLength::AtMost(DirectoryNode::max_blob_len() as u64),
+            )
             .await?;
-        let node = DirectoryNode::from_scale_bytes(&bytes).map_err(|e| {
-            FsClientError::Serialization(format!("{path}: invalid directory node: {e}"))
-        })?;
-        node.validate().map_err(|e| format_error(path, e))?;
+        let node = DirectoryNode::from_blob(&bytes).map_err(invalid_blob(path))?;
+        node.validate().map_err(invalid_blob(path))?;
         Ok(node)
-    }
-
-    /// Whether the directory `cid` at `path` contains a file at any depth.
-    async fn contains_file(&self, path: &str, cid: Cid) -> Result<bool> {
-        let mut pending = vec![(path.to_string(), cid)];
-        while let Some((path, cid)) = pending.pop() {
-            let dir = self.read_dir(&path, cid).await?;
-            if dir.children.iter().any(DirectoryEntry::is_file) {
-                return Ok(true);
-            }
-            pending.extend(
-                dir.children
-                    .into_inner()
-                    .into_iter()
-                    .map(|entry| (format!("{path}/{}", entry.name_str()), entry.cid)),
-            );
-        }
-        Ok(false)
     }
 
     async fn read_manifest(&self, path: &str, cid: Cid) -> Result<FileManifest> {
         let bytes = self
-            .read_blob(cid, BlobLength::AtMost(max_len::<FileManifest>()))
+            .read_blob(
+                path,
+                cid,
+                BlobLength::AtMost(FileManifest::max_blob_len() as u64),
+            )
             .await?;
-        let manifest = FileManifest::from_scale_bytes(&bytes).map_err(|e| {
-            FsClientError::Serialization(format!("{path}: invalid file manifest: {e}"))
-        })?;
-        manifest.validate().map_err(|e| format_error(path, e))?;
+        let manifest = FileManifest::from_blob(&bytes).map_err(invalid_blob(path))?;
+        manifest.validate().map_err(invalid_blob(path))?;
         Ok(manifest)
     }
 }
@@ -659,11 +726,6 @@ fn check_cid(cid: Cid, bytes: &[u8]) -> Result<()> {
         return Err(FsClientError::CidMismatch { expected: cid, got });
     }
     Ok(())
-}
-
-/// Maximum SCALE encoded size of `T`, in bytes.
-fn max_len<T: MaxEncodedLen>() -> u64 {
-    T::max_encoded_len() as u64
 }
 
 /// `cids` in commit order: first occurrence order, each once, and the last
@@ -678,116 +740,174 @@ fn commit_order(cids: &[Cid]) -> Vec<Cid> {
     order
 }
 
-/// The MMR of an in-memory test store: one leaf per committed data root.
-#[cfg(test)]
-pub(crate) mod memory_mmr {
-    use super::*;
-    use storage_primitives::{mmr, MmrLeaf, LEAF_VERSION};
-
-    fn leaves(commits: &[Vec<Cid>]) -> Vec<MmrLeaf> {
-        commits
-            .iter()
-            .flatten()
-            .map(|&data_root| MmrLeaf {
-                leaf_version: LEAF_VERSION,
-                data_root,
-                data_size: 0,
-                total_size: 0,
-            })
-            .collect()
-    }
-
-    pub(crate) fn commitment(commits: &[Vec<Cid>]) -> Option<Commitment> {
-        let leaves = leaves(commits);
-        (!leaves.is_empty()).then(|| Commitment {
-            mmr_root: mmr::root(&leaves).unwrap(),
-            start_seq: 0,
-            leaf_count: leaves.len() as u64,
-        })
-    }
-
-    pub(crate) fn proof(commits: &[Vec<Cid>], leaf_index: u64) -> MmrProof {
-        mmr::proof(&leaves(commits), leaf_index)
-            .unwrap()
-            .expect("no leaf at this index")
-            .1
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use crate::testing::{tree, MemoryStore, BUCKET};
 
-    /// In-memory Layer 0: blobs by CID, and the committed leaves.
-    #[derive(Default)]
-    struct MemoryStore {
-        blobs: Mutex<HashMap<Cid, Vec<u8>>>,
-        commits: Mutex<Vec<Vec<Cid>>>,
-        /// Replaces the bytes returned for this CID.
-        tampered: Mutex<Option<(Cid, Vec<u8>)>>,
+    /// A commit by another writer between the commitment and the proof
+    /// gives a proof of a larger MMR, which does not prove the commitment's
+    /// last leaf. Two such commits in a row fail the root read.
+    #[tokio::test]
+    async fn root_read_rejects_a_proof_of_a_later_mmr_twice() {
+        let store = MemoryStore::default();
+        tree(&store).mkdir("/a").await.unwrap();
+        store
+            .commits_after_commitment
+            .lock()
+            .unwrap()
+            .extend([b"other writer".to_vec(), b"other writer again".to_vec()]);
+        assert!(matches!(
+            tree(&store).load_root().await,
+            Err(FsClientError::InvalidMmrProof(BUCKET))
+        ));
     }
 
-    impl MemoryStore {
-        fn commits(&self) -> Vec<Vec<Cid>> {
-            self.commits.lock().unwrap().clone()
-        }
-
-        fn raw_commit(&self, data: &[u8]) {
-            let cid = compute_cid(data);
-            self.blobs.lock().unwrap().insert(cid, data.to_vec());
-            self.commits.lock().unwrap().push(vec![cid]);
-        }
+    /// A root of a newer format version is reported as such, not as data
+    /// that is not a file system.
+    #[tokio::test]
+    async fn a_newer_format_version_is_reported() {
+        let store = MemoryStore::default();
+        let mut newer = DirectoryNode::new_empty(BUCKET).to_blob();
+        newer[4] = crate::format::FORMAT_VERSION + 1;
+        store.raw_commit(&newer);
+        assert!(matches!(
+            tree(&store).load_root().await,
+            Err(FsClientError::UnsupportedFormatVersion(v)) if v == crate::format::FORMAT_VERSION + 1
+        ));
     }
 
-    #[async_trait::async_trait]
-    impl BlobStore for MemoryStore {
-        async fn put_blob(&self, _bucket_id: BucketId, data: &[u8]) -> Result<Cid> {
-            let cid = compute_cid(data);
-            self.blobs.lock().unwrap().insert(cid, data.to_vec());
-            Ok(cid)
-        }
+    #[tokio::test]
+    async fn put_rejects_duplicate_metadata_keys() {
+        let store = MemoryStore::default();
+        let entry = MetadataEntry::try_new(b"k", b"v").unwrap();
+        assert!(matches!(
+            tree(&store)
+                .put_file("/f", b"x", "", vec![entry.clone(), entry])
+                .await,
+            Err(FsClientError::Format {
+                rule: FileSystemError::DuplicateMetadataKey,
+                ..
+            })
+        ));
+    }
 
-        async fn get_blob(
-            &self,
-            _bucket_id: BucketId,
-            cid: Cid,
-            _length: BlobLength,
-        ) -> Result<Vec<u8>> {
-            if let Some((tampered, bytes)) = self.tampered.lock().unwrap().clone() {
-                if tampered == cid {
-                    return Ok(bytes);
+    /// One commit by another writer between the commitment and the proof
+    /// read costs one more read, which sees that writer's root.
+    #[tokio::test]
+    async fn root_read_retries_after_a_commit_between_the_two_reads() {
+        let store = MemoryStore::default();
+        tree(&store).mkdir("/a").await.unwrap();
+        let other_root = DirectoryNode::new_empty(BUCKET).to_blob();
+        store
+            .commits_after_commitment
+            .lock()
+            .unwrap()
+            .push_back(other_root.clone());
+        let root = tree(&store).load_root().await.unwrap();
+        assert_eq!(root.cid, Some(compute_cid(&other_root)));
+    }
+
+    /// Every directory CID reachable from the root, the root included.
+    async fn directory_cids(t: &Tree<&MemoryStore>) -> HashSet<Cid> {
+        let root = t.load_root().await.unwrap();
+        let mut found = HashSet::from([root.cid.unwrap()]);
+        let mut pending = vec![root.node];
+        while let Some(dir) = pending.pop() {
+            for entry in dir.children.into_inner() {
+                if entry.is_directory() {
+                    found.insert(entry.cid);
+                    pending.push(t.read_dir("/", entry.cid).await.unwrap());
                 }
             }
-            self.blobs
-                .lock()
-                .unwrap()
-                .get(&cid)
-                .cloned()
-                .ok_or_else(|| FsClientError::StorageClient("missing blob".into()))
         }
-
-        async fn commit(&self, _bucket_id: BucketId, data_roots: Vec<Cid>) -> Result<()> {
-            let blobs = self.blobs.lock().unwrap();
-            assert!(data_roots.iter().all(|c| blobs.contains_key(c)));
-            self.commits.lock().unwrap().push(data_roots);
-            Ok(())
-        }
-
-        async fn commitment(&self, _bucket_id: BucketId) -> Result<Option<Commitment>> {
-            Ok(memory_mmr::commitment(&self.commits.lock().unwrap()))
-        }
-
-        async fn mmr_proof(&self, _bucket_id: BucketId, leaf_index: u64) -> Result<MmrProof> {
-            Ok(memory_mmr::proof(&self.commits.lock().unwrap(), leaf_index))
-        }
+        found
     }
 
-    const BUCKET: BucketId = 7;
+    /// A rename moves the entry in one commit without uploading the content
+    /// again, and commits only directories the new tree references.
+    #[tokio::test]
+    async fn rename_moves_an_entry_in_one_commit() {
+        let store = MemoryStore::default();
+        let t = tree(&store);
+        let (_, put) = t
+            .put_file("/a/x/f.txt", b"hello", "text/plain", vec![])
+            .await
+            .unwrap();
+        t.mkdir("/a/y").await.unwrap();
+        let commits_before = store.commits().len();
 
-    fn tree(store: &MemoryStore) -> Tree<&MemoryStore> {
-        Tree::new(store, BUCKET)
+        let root = t.rename("/a/x/f.txt", "/a/y/z/g.txt").await.unwrap();
+
+        let commits = store.commits();
+        assert_eq!(commits.len(), commits_before + 1);
+        let rename_commit = commits.last().unwrap();
+        assert_eq!(rename_commit.last(), Some(&root));
+        assert!(!rename_commit.contains(&compute_cid(b"hello")));
+        let reachable = directory_cids(&t).await;
+        assert!(rename_commit.iter().all(|cid| reachable.contains(cid)));
+
+        let moved = t.stat("/a/y/z/g.txt").await.unwrap();
+        assert_eq!(moved.entry.cid, put.entry.cid);
+        assert_eq!(moved.mtime(), put.mtime());
+        assert_eq!(t.get_file("/a/y/z/g.txt").await.unwrap().data, b"hello");
+        assert!(matches!(
+            t.stat("/a/x/f.txt").await,
+            Err(FsClientError::PathNotFound(_))
+        ));
+        assert!(t.list("/a/x").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn rename_moves_a_directory_with_its_subtree() {
+        let store = MemoryStore::default();
+        let t = tree(&store);
+        t.put_file("/d/e/f", b"deep", "", vec![]).await.unwrap();
+        t.rename("/d", "/top/d2").await.unwrap();
+        assert_eq!(t.get_file("/top/d2/e/f").await.unwrap().data, b"deep");
+        assert_eq!(names(&t.list("/").await.unwrap()), ["top"]);
+
+        t.rename("/top/d2/e/f", "/top/d2/e/f2").await.unwrap();
+        assert_eq!(names(&t.list("/top/d2/e").await.unwrap()), ["f2"]);
+    }
+
+    #[tokio::test]
+    async fn rename_rejects_missing_existing_and_nested_paths() {
+        let store = MemoryStore::default();
+        let t = tree(&store);
+        t.put_file("/a/f", b"x", "", vec![]).await.unwrap();
+        t.put_file("/b", b"y", "", vec![]).await.unwrap();
+        assert!(matches!(
+            t.rename("/missing", "/c").await,
+            Err(FsClientError::PathNotFound(_))
+        ));
+        assert!(matches!(
+            t.rename("/a/f", "/b").await,
+            Err(FsClientError::EntryExists(_))
+        ));
+        assert!(matches!(
+            t.rename("/a", "/a/inner").await,
+            Err(FsClientError::InvalidPath(_))
+        ));
+        assert!(matches!(
+            t.rename("/", "/c").await,
+            Err(FsClientError::InvalidPath(_))
+        ));
+    }
+
+    /// The root CID a write returns is the bucket's new last leaf.
+    #[tokio::test]
+    async fn writes_return_the_new_root() {
+        let store = MemoryStore::default();
+        let t = tree(&store);
+        let (put, _) = t.put_file("/f", b"x", "", vec![]).await.unwrap();
+        assert_eq!(t.load_root().await.unwrap().cid, Some(put));
+        let mkdir = t.mkdir("/d").await.unwrap();
+        assert_eq!(t.load_root().await.unwrap().cid, Some(mkdir));
+        let rename = t.rename("/d", "/e").await.unwrap();
+        assert_eq!(t.load_root().await.unwrap().cid, Some(rename));
+        let delete = t.delete("/e", EmptyParents::Keep).await.unwrap();
+        assert_eq!(t.load_root().await.unwrap().cid, Some(delete));
     }
 
     fn names(entries: &[DirectoryEntry]) -> Vec<String> {
@@ -840,26 +960,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_non_empty_drops_directories_without_files() {
-        let store = MemoryStore::default();
-        let t = tree(&store);
-        t.put_file("/f", b"x", DEFAULT, vec![]).await.unwrap();
-        t.put_file("/deep/a/b/f", b"x", DEFAULT, vec![])
-            .await
-            .unwrap();
-        t.mkdir("/deep/empty").await.unwrap();
-        t.mkdir("/nested/empty").await.unwrap();
-
-        assert_eq!(names(&t.list_non_empty("/").await.unwrap()), ["deep", "f"]);
-        assert_eq!(names(&t.list_non_empty("/deep").await.unwrap()), ["a"]);
-        assert!(t.list_non_empty("/nested").await.unwrap().is_empty());
-        assert!(matches!(
-            t.list_non_empty("/missing").await,
-            Err(FsClientError::PathNotFound(_))
-        ));
-    }
-
-    #[tokio::test]
     async fn put_file_commits_content_manifest_directories_then_root() {
         let store = MemoryStore::default();
         let (new_root, stat) = tree(&store)
@@ -876,11 +976,11 @@ mod tests {
 
         // Directories bottom-up: b, a, root.
         let blobs = store.blobs.lock().unwrap().clone();
-        let b = DirectoryNode::from_scale_bytes(&blobs[&order[2]]).unwrap();
+        let b = DirectoryNode::from_blob(&blobs[&order[2]]).unwrap();
         assert_eq!(names(&b.children), ["f.txt"]);
-        let a = DirectoryNode::from_scale_bytes(&blobs[&order[3]]).unwrap();
+        let a = DirectoryNode::from_blob(&blobs[&order[3]]).unwrap();
         assert_eq!(a.find_child("b").unwrap().cid, order[2]);
-        let root = DirectoryNode::from_scale_bytes(&blobs[&order[4]]).unwrap();
+        let root = DirectoryNode::from_blob(&blobs[&order[4]]).unwrap();
         assert_eq!(root.find_child("a").unwrap().cid, order[3]);
 
         assert_eq!(new_root, order[4]);
@@ -1035,33 +1135,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn files_under_walks_all_depths() {
-        let store = MemoryStore::default();
-        let t = tree(&store);
-        for path in ["/top", "/a/x", "/a/b/y", "/c/z"] {
-            t.put_file(path, b"1", DEFAULT, vec![]).await.unwrap();
-        }
-        let mut all: Vec<String> = t
-            .files_under("/")
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|(p, _)| p)
-            .collect();
-        all.sort();
-        assert_eq!(all, ["a/b/y", "a/x", "c/z", "top"]);
-        let mut under_a: Vec<String> = t
-            .files_under("/a")
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|(p, _)| p)
-            .collect();
-        under_a.sort();
-        assert_eq!(under_a, ["b/y", "x"]);
-    }
-
-    #[tokio::test]
     async fn multi_chunk_directory_round_trips() {
         let store = MemoryStore::default();
         let t = tree(&store);
@@ -1074,7 +1147,7 @@ mod tests {
             )
             .unwrap();
         }
-        let bytes = root.to_scale_bytes();
+        let bytes = root.to_blob();
         assert!(bytes.len() > crate::format::CHUNK_SIZE);
         store.raw_commit(&bytes);
         let loaded = t.load_root().await.unwrap();
@@ -1095,11 +1168,29 @@ mod tests {
         ));
 
         let store = MemoryStore::default();
-        store.raw_commit(&DirectoryNode::new_empty(BUCKET + 1).to_scale_bytes());
+        store.raw_commit(&DirectoryNode::new_empty(BUCKET + 1).to_blob());
         assert!(matches!(
             tree(&store).load_root().await,
             Err(FsClientError::NotAFileSystemBucket { .. })
         ));
+    }
+
+    /// The client reports the format rule that rejected a write, as the
+    /// primitives error, with the path; nothing is uploaded.
+    #[tokio::test]
+    async fn a_write_that_breaks_a_format_rule_reports_the_rule() {
+        let store = MemoryStore::default();
+        let content_type = "x".repeat(129);
+        let err = tree(&store)
+            .put_file("/a.txt", b"x", &content_type, vec![])
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            FsClientError::Format { ref path, rule: FileSystemError::MetadataTooLarge }
+                if path == "/a.txt"
+        ));
+        assert!(store.commits().is_empty());
     }
 
     #[tokio::test]
@@ -1145,24 +1236,26 @@ mod tests {
         let mut root = DirectoryNode::new_empty(BUCKET);
         root.upsert_child(DirectoryEntry::try_new("f", EntryType::File, cid, 1, 0).unwrap())
             .unwrap();
-        store.raw_commit(&root.to_scale_bytes());
+        store.raw_commit(&root.to_blob());
     }
 
     #[tokio::test]
     async fn metadata_reads_reject_blobs_over_the_max_encoded_size() {
         let store = MemoryStore::default();
-        store.raw_commit(&vec![0u8; DirectoryNode::max_encoded_len() + 1]);
+        store.raw_commit(&vec![0u8; DirectoryNode::max_blob_len() + 1]);
         assert!(matches!(
             tree(&store).load_root().await,
-            Err(FsClientError::NotAFileSystemBucket { bucket_id: BUCKET, reason })
-                if reason.contains("larger than a directory node")
+            Err(FsClientError::NotAFileSystemBucket {
+                bucket_id: BUCKET,
+                ..
+            })
         ));
 
         let store = MemoryStore::default();
-        commit_file_with_manifest(&store, &vec![0u8; FileManifest::max_encoded_len() + 1]);
+        commit_file_with_manifest(&store, &vec![0u8; FileManifest::max_blob_len() + 1]);
         assert!(matches!(
             tree(&store).stat("/f").await,
-            Err(FsClientError::Serialization(e)) if e.contains("expected AtMost")
+            Err(FsClientError::InvalidBlob { path, .. }) if path == "/f"
         ));
     }
 
@@ -1171,10 +1264,10 @@ mod tests {
         let store = MemoryStore::default();
         let mut manifest = FileManifest::for_content(BUCKET, b"x", DEFAULT, vec![]).unwrap();
         manifest.total_size = 1 << 20;
-        commit_file_with_manifest(&store, &manifest.to_scale_bytes());
+        commit_file_with_manifest(&store, &manifest.to_blob());
         assert!(matches!(
             tree(&store).stat("/f").await,
-            Err(FsClientError::Serialization(e)) if e.contains("Invalid file manifest")
+            Err(FsClientError::InvalidBlob { path, .. }) if path == "/f"
         ));
     }
 }

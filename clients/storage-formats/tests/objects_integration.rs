@@ -106,18 +106,13 @@ async fn list_and_delete() {
             .unwrap();
     }
 
-    let all = c
-        .list_objects_v2(ListObjectsParams::default())
-        .await
-        .unwrap();
+    let all = c.list_objects(ListObjectsParams::default()).await.unwrap();
     let keys: Vec<&str> = all.contents.iter().map(|o| o.key.as_str()).collect();
     assert_eq!(keys, ["a.txt", "b/1.txt", "b/2.txt", "b/c/3.txt", "b0.txt"]);
-    assert_eq!(all.key_count, 5);
-    assert_eq!(all.contents[1].etag, None);
     assert_eq!(all.contents[1].size, 7);
 
     let page = c
-        .list_objects_v2(ListObjectsParams {
+        .list_objects(ListObjectsParams {
             prefix: Some("b/".into()),
             delimiter: Some("/".into()),
             max_keys: Some(2),
@@ -133,18 +128,18 @@ async fn list_and_delete() {
 
     // `max_keys: 0` counts as 1, so the page names where to continue.
     let one = c
-        .list_objects_v2(ListObjectsParams {
+        .list_objects(ListObjectsParams {
             max_keys: Some(0),
             ..Default::default()
         })
         .await
         .unwrap();
-    assert_eq!(one.key_count, 1);
+    assert_eq!(one.contents.len(), 1);
     assert!(one.is_truncated);
     assert_eq!(one.next_start_after.as_deref(), Some("a.txt"));
 
     let empty = c
-        .list_objects_v2(ListObjectsParams {
+        .list_objects(ListObjectsParams {
             prefix: Some("zzz/".into()),
             ..Default::default()
         })
@@ -155,7 +150,7 @@ async fn list_and_delete() {
     // Deleting the last key under `b/c/` removes the `b/c` directory.
     c.delete_object("b/c/3.txt").await.unwrap();
     let top = c
-        .list_objects_v2(ListObjectsParams {
+        .list_objects(ListObjectsParams {
             prefix: Some("b/".into()),
             delimiter: Some("/".into()),
             ..Default::default()
@@ -163,5 +158,5 @@ async fn list_and_delete() {
         .await
         .unwrap();
     assert!(top.common_prefixes.is_empty());
-    assert_eq!(top.key_count, 2);
+    assert_eq!(top.contents.len(), 2);
 }

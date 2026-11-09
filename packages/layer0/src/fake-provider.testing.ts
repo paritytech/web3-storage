@@ -7,21 +7,22 @@
  * checks and JSON shapes as `provider-node/src/api.rs`. Signatures are not
  * verified; a write and a Reader-gated read (`GET /commitment`, `GET
  * /mmr_proof`) only need an `Authorization` header, as on a private bucket.
- * Test-only: not exported from the package.
+ * Exported for tests as `@web3-storage/layer0/testing`, not from the package
+ * root.
  */
 
 import {
   bagPeaks,
   bytesToBase64,
-  computeCid,
   DEFAULT_CHUNK_SIZE,
   hashChildren,
+  hashLeaf,
   hexToBytes,
   LEAF_VERSION,
+  mmrLeafHash,
   nodeHash,
   parseNode,
   toHex,
-  u64le,
 } from "@web3-storage/core";
 
 interface StoredNode {
@@ -47,12 +48,12 @@ function json(status: number, body: unknown): Response {
 }
 
 function leafHash(leaf: Leaf): Uint8Array {
-  const bytes = new Uint8Array(49);
-  bytes[0] = LEAF_VERSION;
-  bytes.set(hexToBytes(leaf.dataRoot), 1);
-  bytes.set(u64le(leaf.dataSize), 33);
-  bytes.set(u64le(leaf.totalSize), 41);
-  return computeCid(bytes);
+  return mmrLeafHash({
+    leafVersion: LEAF_VERSION,
+    dataRoot: hexToBytes(leaf.dataRoot),
+    dataSize: leaf.dataSize,
+    totalSize: leaf.totalSize,
+  });
 }
 
 /** Levels of the Merkle tree over `leaves`, bottom-up; an odd last node moves up unchanged. */
@@ -234,7 +235,7 @@ export class FakeProvider {
         idx >>= 1;
       }
       const data = this.nodes.get(hashes[i])!.data;
-      chunks.push({ hash: toHex(computeCid(data)), data: bytesToBase64(data), proof });
+      chunks.push({ hash: toHex(hashLeaf(data)), data: bytesToBase64(data), proof });
     }
     return json(200, { chunks });
   }
