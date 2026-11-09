@@ -568,6 +568,7 @@ export async function getCommitment(
 /** The commitment a {@link getMmrProof} proof is for. */
 export interface MmrProofCommitment {
   mmrRoot: Uint8Array;
+  /** First sequence number in the commitment; `leafIndex` counts from it. */
   startSeq: bigint;
   leafCount: bigint;
 }

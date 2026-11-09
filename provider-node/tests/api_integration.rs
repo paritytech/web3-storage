@@ -1299,12 +1299,12 @@ common::backend_tests! {
             leaf_count: commitment.leaf_count + 1,
             ..commitment
         };
-        // (leaf_index, commitment): a wrong root, a range past the local
-        // leaves, and a leaf_index outside the commitment.
-        for (leaf_index, unknown) in [
-            (0, wrong_root),
-            (0, past_local_leaves),
-            (commitment.leaf_count, commitment),
+        // (leaf_index, commitment, error code): a wrong root, a range past
+        // the local leaves, and a leaf_index outside the commitment.
+        for (leaf_index, unknown, error) in [
+            (0, wrong_root, "commitment_not_reproducible"),
+            (0, past_local_leaves, "leaves_not_held"),
+            (commitment.leaf_count, commitment, "commitment_not_reproducible"),
         ] {
             let resp = server
                 .client
@@ -1314,7 +1314,13 @@ common::backend_tests! {
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::NOT_FOUND);
             let body: Value = resp.json().await.unwrap();
-            assert_eq!(body["error"], "commitment_not_reproducible");
+            assert_eq!(body["error"], error);
+            if error == "leaves_not_held" {
+                assert_eq!(
+                    body["details"]["local_end"],
+                    commitment.start_seq + commitment.leaf_count
+                );
+            }
         }
     }
 }
