@@ -201,6 +201,43 @@ pub trait StorageBackend: Send + Sync {
         Ok(())
     }
 
+    /// Visit every node under `root`, a canonical tree of `chunk_count`
+    /// chunks, once per path that reaches it, in DFS order.
+    ///
+    /// A canonical tree over `n > 1` chunks puts the largest power of two
+    /// below `n` on the left and the rest on the right, so its shape follows
+    /// from `chunk_count`. A node that spans one chunk is a chunk: the walk
+    /// visits it by hash and does not read it. Only internal nodes are read.
+    /// Fails like [`Self::walk_tree`] on a missing internal node or a visit
+    /// count past the budget, and with [`Error::NonCanonicalTree`] when a
+    /// node that spans more than one chunk is not internal.
+    fn walk_canonical_tree(
+        &self,
+        root: H256,
+        chunk_count: u64,
+        visit: &mut dyn FnMut(H256),
+    ) -> Result<(), Error> {
+        let max_nodes = self.max_tree_walk_visits();
+        let mut visited = 0u64;
+        let mut stack = vec![(root, chunk_count)];
+        while let Some((hash, count)) = stack.pop() {
+            visited += 1;
+            if visited > max_nodes {
+                return Err(Error::TreeTooLarge { max_nodes });
+            }
+            if count > 1 {
+                let ChunkTreeNode::Internal { left, right } = node_at(self, &hash)? else {
+                    return Err(Error::NonCanonicalTree(format!("{:#x}", root)));
+                };
+                let split = 1u64 << (count - 1).ilog2();
+                stack.push((right, count - split));
+                stack.push((left, split));
+            }
+            visit(hash);
+        }
+        Ok(())
+    }
+
     /// Hash and byte size of each chunk under `root`, in leaf order.
     ///
     /// A missing node or a read failure must not silently shorten the result:

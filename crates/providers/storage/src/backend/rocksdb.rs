@@ -24,7 +24,7 @@ use std::path::Path;
 use std::sync::Arc;
 use storage_primitives::{
     mmr::{self, MmrLeaf, MmrProof},
-    BucketId, Commitment,
+    BucketId, Commitment, DEFAULT_CHUNK_SIZE,
 };
 
 /// Column families for organizing data
@@ -68,6 +68,16 @@ const BUCKET_LOCK_TIMEOUT_MS: i64 = 30_000;
 pub struct DiskStorage {
     db: Arc<TransactionDB>,
     max_tree_walk_visits: u64,
+}
+
+/// What `erase_pruned_range` learns from walking a stashed range before it
+/// opens the transaction.
+#[derive(Default)]
+struct EraseWalk {
+    /// Number of times each node occurs in the walked trees.
+    decrements: HashMap<H256, u64>,
+    /// One error per leaf tree the walk could not finish.
+    failures: Vec<Error>,
 }
 
 /// What `commit` learns from walking its roots before it opens the
@@ -753,36 +763,72 @@ impl DiskStorage {
         bucket_id: BucketId,
         first_seq: u64,
     ) -> Result<EraseOutcome, Error> {
+        let bucket = self
+            .get_bucket(bucket_id)?
+            .ok_or(Error::BucketNotFound(bucket_id))?;
+        let Some(range) = bucket
+            .pruned
+            .into_iter()
+            .find(|range| range.first_seq == first_seq)
+        else {
+            return Ok(EraseOutcome::default());
+        };
+        // Walk outside the transaction so that uploads and commits to the
+        // bucket do not wait for the walk.
+        let walk = self.walk_erase_range(&range.leaves);
+        self.apply_erase(bucket_id, &range, walk)
+    }
+
+    /// Refcount decrements for erasing `leaves`: one per encounter along
+    /// each leaf tree, symmetric with commit's increments.
+    ///
+    /// A committed leaf is a canonical tree of `data_size` bytes, so the walk
+    /// reads only its internal nodes and never a chunk body.
+    fn walk_erase_range(&self, leaves: &[MmrLeaf]) -> EraseWalk {
+        let mut walk = EraseWalk::default();
+        for leaf in leaves {
+            let chunk_count = leaf.data_size.div_ceil(u64::from(DEFAULT_CHUNK_SIZE));
+            let result = self.walk_canonical_tree(leaf.data_root, chunk_count, &mut |hash| {
+                *walk.decrements.entry(hash).or_default() += 1;
+            });
+            if let Err(error) = result {
+                walk.failures.push(error);
+            }
+        }
+        walk
+    }
+
+    /// Drop `range` from the stash and apply `walk.decrements` in one
+    /// transaction.
+    ///
+    /// `walk` comes from `range` alone. While the range is stashed,
+    /// each node it reaches keeps a count of at least this range's share, so
+    /// no other erase deletes such a node and the walk outside the
+    /// transaction stays valid. A range no longer stashed under the lock was
+    /// erased by another call after the snapshot, so this call is a no-op.
+    fn apply_erase(
+        &self,
+        bucket_id: BucketId,
+        range: &PrunedRange,
+        walk: EraseWalk,
+    ) -> Result<EraseOutcome, Error> {
         let txn = self.transaction();
         let mut bucket = self
             .bucket_for_update(&txn, bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
-        let Some(position) = bucket
-            .pruned
-            .iter()
-            .position(|range| range.first_seq == first_seq)
-        else {
+        let Some(position) = bucket.pruned.iter().position(|stashed| stashed == range) else {
             return Ok(EraseOutcome::default());
         };
-        let range = bucket.pruned.remove(position);
-
-        // Gather refcount decrements: one per encounter along each leaf tree,
-        // symmetric with commit's increments.
-        let mut decrements: HashMap<H256, u64> = HashMap::new();
-        for leaf in &range.leaves {
-            let walk = self.walk_tree(leaf.data_root, &mut |hash, _| {
-                *decrements.entry(hash).or_default() += 1;
-            });
-            if let Err(error) = walk {
-                // Nodes reached before the failure lose this leaf's
-                // reference; unreachable ones keep their count and leak,
-                // which is the safe direction.
-                tracing::warn!(
-                    bucket_id,
-                    error = %error,
-                    "erase: leaf tree incomplete, applying partial decrements"
-                );
-            }
+        bucket.pruned.remove(position);
+        for error in &walk.failures {
+            // Nodes reached before the failure lose this leaf's reference;
+            // unreachable ones keep their count and leak, which is the safe
+            // direction.
+            tracing::warn!(
+                bucket_id,
+                error = %error,
+                "erase: leaf tree incomplete, applying partial decrements"
+            );
         }
 
         let cf_nodes = self
@@ -802,7 +848,7 @@ impl DiskStorage {
         let mut nodes_deleted = 0u64;
         // Per charged bucket: (nodes deleted, bytes freed).
         let mut credits_by_bucket: HashMap<BucketId, (u64, u64)> = HashMap::new();
-        for (hash, n) in decrements {
+        for (hash, n) in walk.decrements {
             let Some((count, charged_bucket, size)) =
                 self.refcount_for_update(&txn, bucket_id, &hash)?
             else {
@@ -1085,7 +1131,7 @@ mod tests {
     use crate::backend::{build_merkle_tree, MAX_TREE_DEPTH};
     use rocksdb::DB;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use storage_primitives::{hash_leaf, verify_merkle_proof, DEFAULT_CHUNK_SIZE};
+    use storage_primitives::{hash_leaf, verify_merkle_proof};
     use tempfile::TempDir;
 
     /// Open the database at `path` directly, bypassing `DiskStorage::new` and
@@ -2214,6 +2260,175 @@ mod tests {
         assert!(first.nodes_deleted > 0);
         let second = storage.erase_pruned_range(1, 0).unwrap();
         assert_eq!(second, EraseOutcome::default());
+    }
+
+    /// The walk stops once the visit count passes the budget, after visiting
+    /// exactly the budget.
+    #[test]
+    fn canonical_walk_stops_at_the_visit_budget() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let root = diamond_tree(&storage, BUCKET, 4);
+        let storage = storage.with_max_tree_walk_visits(10);
+
+        let mut visited = Vec::new();
+        let result = storage.walk_canonical_tree(root, 16, &mut |hash| visited.push(hash));
+
+        assert!(matches!(result, Err(Error::TreeTooLarge { max_nodes: 10 })));
+        assert_eq!(visited.len(), 10);
+        assert_eq!(visited[0], root);
+    }
+
+    /// A chunk where the shape requires an internal node fails the walk
+    /// before the chunk is visited.
+    #[test]
+    fn canonical_walk_rejects_a_chunk_where_the_shape_needs_an_internal_node() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let chunk = store_chunk(&storage, 1);
+
+        let mut visited = Vec::new();
+        let result = storage.walk_canonical_tree(chunk, 2, &mut |hash| visited.push(hash));
+
+        assert!(matches!(result, Err(Error::NonCanonicalTree(_))));
+        assert!(visited.is_empty());
+    }
+
+    /// 16 chunks under 15 internal-node visits: the canonical walk reads
+    /// the internal nodes only and still visits every chunk.
+    #[test]
+    fn canonical_walk_reads_no_chunk() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let root = diamond_tree(&storage, BUCKET, 4);
+        let chunk = hash_leaf(&vec![0u8; DEFAULT_CHUNK_SIZE as usize]);
+
+        let reads = CountingReads::new(&storage);
+        let mut visited = Vec::new();
+        reads
+            .walk_canonical_tree(root, 16, &mut |hash| visited.push(hash))
+            .unwrap();
+
+        assert_eq!(reads.get_node_calls.load(Ordering::Relaxed), 15);
+        assert_eq!(visited.len(), 31);
+        assert_eq!(visited[0], root);
+        assert_eq!(visited.iter().filter(|hash| **hash == chunk).count(), 16);
+    }
+
+    /// The erase walk counts one decrement per path, like commit's
+    /// increments.
+    #[test]
+    fn erase_walk_counts_every_path() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let root = diamond_tree(&storage, BUCKET, 4);
+        storage.commit(BUCKET, vec![root]).unwrap();
+        storage.delete_before(BUCKET, 1).unwrap();
+        let range = storage.get_bucket(BUCKET).unwrap().unwrap().pruned[0].clone();
+        let chunk = hash_leaf(&vec![0u8; DEFAULT_CHUNK_SIZE as usize]);
+
+        let walk = storage.walk_erase_range(&range.leaves);
+
+        assert!(walk.failures.is_empty());
+        assert_eq!(walk.decrements.get(&root), Some(&1));
+        assert_eq!(walk.decrements.get(&chunk), Some(&16));
+        assert_eq!(walk.decrements.values().sum::<u64>(), 31);
+    }
+
+    /// Commit a tree of two full chunks and one 10-byte chunk to `BUCKET`
+    /// and stash it. Returns the root and the three chunks.
+    fn stash_three_chunk_tree(storage: &DiskStorage) -> (H256, [H256; 3]) {
+        let [c0, c1] = [1, 2].map(|b| store_chunk(storage, b));
+        let c2 = store_chunk_of_len(storage, 3, 10);
+        let root = build_merkle_tree(storage, BUCKET, &[c0, c1, c2]).unwrap();
+        storage.commit(BUCKET, vec![root]).unwrap();
+        storage.delete_before(BUCKET, 1).unwrap();
+        (root, [c0, c1, c2])
+    }
+
+    /// A tree whose chunk count is not a power of two and whose last chunk is
+    /// short: the erase removes every node commit counted.
+    #[test]
+    fn erase_removes_an_uneven_tree() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let (root, chunks) = stash_three_chunk_tree(&storage);
+
+        let outcome = storage.erase_pruned_range(BUCKET, 0).unwrap();
+
+        assert_eq!(outcome.nodes_deleted, 5);
+        assert_eq!(outcome.bytes_freed, 2 * FULL_CHUNK + 10 + 2 * 64);
+        for hash in chunks.into_iter().chain([root]) {
+            assert!(storage.get_node(&hash).unwrap().is_none());
+            assert_eq!(storage.refcount_entry(&hash).unwrap(), None);
+        }
+        let bucket = storage.get_bucket(BUCKET).unwrap().unwrap();
+        assert_eq!((bucket.used_bytes, bucket.node_count), (0, 0));
+    }
+
+    /// Another erase of the range runs between this call's snapshot and its
+    /// walk, so the walk stops at a deleted node. The transaction finds the
+    /// range gone and changes nothing.
+    #[test]
+    fn erase_applied_after_another_erase_is_a_no_op() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        stash_three_chunk_tree(&storage);
+        let range = storage.get_bucket(BUCKET).unwrap().unwrap().pruned[0].clone();
+
+        let first = storage.erase_pruned_range(BUCKET, 0).unwrap();
+        assert_eq!(first.nodes_deleted, 5);
+        let walk = storage.walk_erase_range(&range.leaves);
+        assert!(walk.decrements.is_empty(), "walk stops at the deleted root");
+        assert!(matches!(walk.failures[..], [Error::NodeNotFound(_)]));
+        let before = storage.get_bucket(BUCKET).unwrap().unwrap();
+        let second = storage.apply_erase(BUCKET, &range, walk).unwrap();
+
+        assert_eq!(second, EraseOutcome::default());
+        assert_eq!(storage.get_bucket(BUCKET).unwrap().unwrap(), before);
+    }
+
+    /// A commit between the walk and the transaction adds a reference to a
+    /// walked node: the erase removes only its own reference and keeps the
+    /// node.
+    #[test]
+    fn erase_keeps_a_node_committed_again_after_the_walk() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let roots = bucket_with_leaves(&storage, 1, 2);
+        storage.delete_before(1, 1).unwrap();
+        let range = storage.get_bucket(1).unwrap().unwrap().pruned[0].clone();
+        let walk = storage.walk_erase_range(&range.leaves);
+
+        storage.commit(1, vec![roots[0]]).unwrap();
+        let outcome = storage.apply_erase(1, &range, walk).unwrap();
+
+        assert_eq!(outcome, EraseOutcome::default());
+        assert!(storage.get_node(&roots[0]).unwrap().is_some());
+        assert_eq!(storage.refcount_entry(&roots[0]).unwrap(), Some((1, 1, 8)));
+    }
+
+    /// Writes to the bucket between the walk and the transaction do not
+    /// change what the erase removes.
+    #[test]
+    fn erase_applies_after_bucket_writes_since_the_walk() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let roots = bucket_with_leaves(&storage, 1, 3);
+        storage.delete_before(1, 1).unwrap();
+        let range = storage.get_bucket(1).unwrap().unwrap().pruned[0].clone();
+        let walk = storage.walk_erase_range(&range.leaves);
+
+        storage.delete_before(1, 2).unwrap();
+        let data = vec![9u8; 8];
+        let hash = hash_leaf(&data);
+        storage
+            .store_node(1, hash, ChunkTreeNode::Chunk(data))
+            .unwrap();
+        storage.commit(1, vec![hash]).unwrap();
+        let outcome = storage.apply_erase(1, &range, walk).unwrap();
+
+        assert_eq!(outcome.nodes_deleted, 1);
+        assert!(storage.get_node(&roots[0]).unwrap().is_none());
+        assert!(storage.get_node(&roots[1]).unwrap().is_some());
+        let ranges = storage.pruned_ranges(1).unwrap();
+        assert_eq!(ranges.len(), 1);
+        assert_eq!((ranges[0].first_seq, ranges[0].end_seq), (1, 2));
+        assert_eq!(storage.get_bucket(1).unwrap().unwrap().leaf_count(), 2);
     }
 
     #[test]
