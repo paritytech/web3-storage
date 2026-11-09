@@ -207,7 +207,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
     <tr><td><code>GET /checkpoint-signature</code></td><td>Reader on a private bucket</td><td>Signature for the <code>checkpoint</code> call</td></tr>
     <tr><td><code>GET /commitment</code></td><td>Reader on a private bucket</td><td>Signed commitment for <code>challenge_offchain</code></td></tr>
     <tr><td><code>GET /read</code>, <code>GET /node</code></td><td>— (the hash or <code>data_root</code> is the key)</td><td>Read chunks</td></tr>
-    <tr><td><code>GET /mmr_proof</code></td><td>Reader on a private bucket</td><td>Proof that a <code>data_root</code> is in the current MMR root, or, with <code>mmr_root</code>, <code>start_seq</code> and <code>leaf_count</code>, in that commitment's root (for a challenge response)</td></tr>
+    <tr><td><code>GET /mmr_proof</code></td><td>Reader on a private bucket</td><td>Proof that a leaf is in the MMR of the commitment given by <code>mmr_root</code>, <code>start_seq</code> and <code>leaf_count</code> (all required)</td></tr>
     <tr><td><code>GET /chunk_proof</code></td><td>— (the <code>data_root</code> is the key)</td><td>Proof that a chunk is in a <code>data_root</code></td></tr>
     <tr><td><code>POST /delete</code></td><td>Admin</td><td>Delete leaves before <code>new_start_seq</code></td></tr>
     <tr><td><code>GET /health</code>, <code>GET /info</code></td><td>—</td><td>Status</td></tr>

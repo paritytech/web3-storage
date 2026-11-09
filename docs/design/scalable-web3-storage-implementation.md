@@ -2376,20 +2376,19 @@ for the checkpoint workflow, where the signature goes into the
 
 Get MMR Proof
 ─────────────
-GET /mmr_proof?bucket_id=0x...&leaf_index=5
 GET /mmr_proof?bucket_id=0x...&leaf_index=5&mmr_root=0x...&start_seq=0&leaf_count=42
 Authorization: Web3Storage <...>       # Reader; the provider's own account
                                        # also passes (operator self-auth)
 
-Without `mmr_root`, `start_seq` and `leaf_count`, the proof is for the leaf
-at `leaf_index` in the bucket's current MMR. With them, the proof is for the
-leaf at `leaf_index` (relative to `start_seq`) in the MMR of that commitment,
-rebuilt from the node's leaf history. A challenge response must use the
-challenge's `commitment`: `respond_to_challenge` verifies against it, and the
-current MMR differs from it once a later commit or prune has run. A node that
-does not support these parameters ignores them and returns a proof against
-the current MMR, so the client verifies the returned proof against the
-commitment before it submits the response.
+The proof is for the leaf at `leaf_index` (counted from `start_seq`) in the
+MMR of the commitment `(mmr_root, start_seq, leaf_count)`, rebuilt from the
+node's leaf history. All three parameters are required: the bucket's current
+MMR changes with every commit or prune, so a proof against it does not
+verify against a commitment the client read earlier. A challenge response
+passes the challenge's `commitment`, which `respond_to_challenge` verifies
+against. A reader passes the commitment it got from `GET /commitment` or the
+on-chain checkpoint. The client verifies the proof against that commitment
+before it uses the proof.
 
 Response:
 {
@@ -2398,7 +2397,7 @@ Response:
 }
 
 Response (400 Bad Request):
-{ "error": "incomplete_commitment" }      // some but not all of mmr_root, start_seq, leaf_count
+  // a missing parameter, or an mmr_root that is not 32 bytes of hex
 
 Response (404 Not Found):
 { "error": "bucket_not_found" }
