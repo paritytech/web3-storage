@@ -16,7 +16,8 @@
 //! The limits of the [`crate::tree`] module apply.
 
 use crate::format::{
-    validate_entry_name, DirectoryEntry, MaxMetadataEntries, MetadataEntry, DEFAULT_MIME_TYPE,
+    validate_entry_name, DirectoryEntry, FileSystemError, MaxMetadataEntries, MetadataEntry,
+    DEFAULT_MIME_TYPE,
 };
 use crate::tree::{BlobStore, EmptyParents, FileStat, Tree};
 use crate::FsClientError;
@@ -29,7 +30,7 @@ use thiserror::Error;
 /// Maximum object key length in bytes.
 const MAX_OBJECT_KEY_LEN: usize = 1024;
 
-/// Default and maximum page size of [`Objects::list_objects_v2`].
+/// Default and maximum page size of [`Objects::list_objects`].
 const DEFAULT_MAX_KEYS: u32 = 1000;
 
 /// Errors of the object operations.
@@ -124,7 +125,7 @@ pub struct HeadObjectResponse {
     pub metadata: HashMap<String, String>,
 }
 
-/// Parameters for [`Objects::list_objects_v2`].
+/// Parameters for [`Objects::list_objects`].
 #[derive(Clone, Debug, Default)]
 pub struct ListObjectsParams {
     /// Return only keys that start with this prefix.
@@ -150,12 +151,9 @@ pub struct ObjectSummary {
     pub size: u64,
     /// Last modified time, in seconds since the Unix epoch.
     pub last_modified: u64,
-    /// Not set: listing reads no manifests. [`Objects::head_object`]
-    /// returns the ETag.
-    pub etag: Option<String>,
 }
 
-/// Response from [`Objects::list_objects_v2`].
+/// Response from [`Objects::list_objects`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListObjectsResponse {
     /// Matching objects, sorted by key bytes.
@@ -167,8 +165,6 @@ pub struct ListObjectsResponse {
     /// The last key or common prefix of this page when `is_truncated`; pass
     /// it as `start_after` for the next page.
     pub next_start_after: Option<String>,
-    /// Number of keys and common prefixes returned.
-    pub key_count: u32,
 }
 
 /// The objects of one bucket, stored in its file tree.
@@ -202,6 +198,10 @@ impl<S: BlobStore> Objects<S> {
                 FsClientError::NotAFile(_) | FsClientError::NotADirectory(_) => {
                     S3ClientError::KeyConflict(key.to_string())
                 }
+                FsClientError::Format {
+                    rule: FileSystemError::DuplicateMetadataKey,
+                    ..
+                } => S3ClientError::InvalidMetadata("two keys are equal after lowercasing".into()),
                 other => other.into(),
             })?;
         let cid = stat.content_root();
@@ -263,100 +263,75 @@ impl<S: BlobStore> Objects<S> {
 
     /// List objects, sorted by key bytes.
     ///
-    /// Reads the root and the deepest directory the prefix names. With
-    /// delimiter `/`, reads each of its subdirectories only until it finds an
-    /// object, unless `start_after` is a key inside one of them. With any
-    /// other delimiter or none, reads every directory under it. Reads no
-    /// manifests, so `etag` is not set.
-    pub async fn list_objects_v2(&self, params: ListObjectsParams) -> Result<ListObjectsResponse> {
+    /// Walks the deepest directory the prefix names in key order and stops
+    /// once the page is full. Skips every subtree that cannot change the
+    /// page: one outside the prefix, one that sorts before `start_after`, and
+    /// one whose keys all fall in a common prefix already on the page (with
+    /// delimiter `/`, each subdirectory is read only until it shows an
+    /// object). Reads no manifests: [`Objects::head_object`] returns an
+    /// object's ETag.
+    pub async fn list_objects(&self, params: ListObjectsParams) -> Result<ListObjectsResponse> {
         let prefix = params.prefix.unwrap_or_default();
         let delimiter = params.delimiter.as_deref().filter(|d| !d.is_empty());
-        let start_after = params.start_after.as_deref();
+        let max_keys = params
+            .max_keys
+            .unwrap_or(DEFAULT_MAX_KEYS)
+            .clamp(1, DEFAULT_MAX_KEYS) as usize;
+        let mut page =
+            PageBuilder::new(&prefix, delimiter, params.start_after.as_deref(), max_keys);
 
         // `a/b/c` lists under `/a/b`; `a/b/` lists under `/a/b`; `a` lists
         // under `/`.
         let dir_key = prefix.rfind('/').map_or("", |i| &prefix[..i]);
+        let base = if dir_key.is_empty() {
+            self.tree.list("/").await
+        } else {
+            match key_to_path(dir_key) {
+                Ok(path) => self.tree.list(&path).await,
+                // No valid key starts with an invalid directory key.
+                Err(_) => Ok(Vec::new()),
+            }
+        };
+        let base = match base {
+            Ok(entries) => entries,
+            Err(FsClientError::PathNotFound(_) | FsClientError::NotADirectory(_)) => Vec::new(),
+            Err(e) => return Err(e.into()),
+        };
         let key_prefix = if dir_key.is_empty() {
             String::new()
         } else {
             format!("{dir_key}/")
         };
-        // With delimiter `/`, each subdirectory of the listed directory that
-        // contains an object is one common prefix. If `start_after` is a key
-        // inside a subdirectory, the page shows that common prefix only if the
-        // subdirectory has a later key, so read every directory.
-        let start_after_in_subdir = start_after
-            .and_then(|after| after.strip_prefix(key_prefix.as_str()))
-            .is_some_and(|rel| rel.find('/').is_some_and(|i| i + 1 < rel.len()));
-        let dir_only = delimiter == Some("/") && !start_after_in_subdir;
 
-        let dir_path = if dir_key.is_empty() {
-            Ok("/".to_string())
-        } else {
-            key_to_path(dir_key)
-        };
-        let mut objects: Vec<(String, DirectoryEntry)> = match dir_path {
-            Ok(dir_path) => {
-                let listed = if dir_only {
-                    // A subdirectory gets the key `name/`, which `list_page`
-                    // turns into a common prefix.
-                    self.tree.list_non_empty(&dir_path).await.map(|entries| {
-                        entries
-                            .into_iter()
-                            .map(|entry| {
-                                let name = entry.name_str();
-                                let rel = if entry.is_directory() {
-                                    format!("{name}/")
-                                } else {
-                                    name
-                                };
-                                (rel, entry)
-                            })
-                            .collect()
-                    })
-                } else {
-                    self.tree.files_under(&dir_path).await
-                };
-                match listed {
-                    Ok(entries) => entries
-                        .into_iter()
-                        .map(|(rel, entry)| (format!("{key_prefix}{rel}"), entry))
-                        .collect(),
-                    Err(FsClientError::PathNotFound(_) | FsClientError::NotADirectory(_)) => {
-                        Vec::new()
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            }
-            // No valid key starts with an invalid directory key.
-            Err(_) => Vec::new(),
-        };
-
-        objects.sort_by(|a, b| a.0.cmp(&b.0));
-        let keys: Vec<&str> = objects.iter().map(|(k, _)| k.as_str()).collect();
-        let max_keys = params
-            .max_keys
-            .unwrap_or(DEFAULT_MAX_KEYS)
-            .clamp(1, DEFAULT_MAX_KEYS) as usize;
-        let page = list_page(&keys, &prefix, delimiter, start_after, max_keys);
-
-        let contents: Vec<ObjectSummary> = page
-            .contents
-            .iter()
-            .map(|&i| {
-                let (key, entry) = &objects[i];
-                ObjectSummary {
+        let mut stack = vec![(key_prefix, in_key_order(base))];
+        while let Some((dir, entries)) = stack.last_mut() {
+            let Some(entry) = entries.next() else {
+                stack.pop();
+                continue;
+            };
+            let key = format!("{dir}{}", entry.name_str());
+            if entry.is_file() {
+                let summary = || ObjectSummary {
                     key: key.clone(),
                     size: entry.size,
                     last_modified: entry.mtime,
-                    etag: None,
+                };
+                if !page.push(&key, summary) {
+                    break;
                 }
-            })
-            .collect();
+                continue;
+            }
+            let sub = format!("{key}/");
+            if page.skips(&sub) {
+                continue;
+            }
+            let node = self.tree.read_dir(&format!("/{key}"), entry.cid).await?;
+            stack.push((sub, in_key_order(node.children.into_inner())));
+        }
 
+        let page = page.finish();
         Ok(ListObjectsResponse {
-            key_count: (contents.len() + page.common_prefixes.len()) as u32,
-            contents,
+            contents: page.contents,
             common_prefixes: page.common_prefixes,
             is_truncated: page.is_truncated,
             next_start_after: page.next_start_after,
@@ -417,25 +392,18 @@ fn to_head(stat: &FileStat) -> HeadObjectResponse {
     }
 }
 
-/// Lowercase the keys and sort by key. Fails if two keys are equal after
-/// lowercasing or an entry is over the bounds.
+/// Lowercase the keys. Fails if there are too many entries or one is over
+/// the bounds.
 fn to_metadata_entries(metadata: HashMap<String, String>) -> Result<Vec<MetadataEntry>> {
-    let mut lowered: Vec<(String, String)> = metadata
+    let lowered: Vec<(String, String)> = metadata
         .into_iter()
         .map(|(k, v)| (k.to_lowercase(), v))
         .collect();
-    lowered.sort();
     let max_entries = MaxMetadataEntries::get() as usize;
     if lowered.len() > max_entries {
         return Err(S3ClientError::InvalidMetadata(format!(
             "{} entries, at most {max_entries}",
             lowered.len()
-        )));
-    }
-    if let Some(pair) = lowered.windows(2).find(|pair| pair[0].0 == pair[1].0) {
-        return Err(S3ClientError::InvalidMetadata(format!(
-            "duplicate key {:?}",
-            pair[0].0
         )));
     }
     lowered
@@ -447,68 +415,143 @@ fn to_metadata_entries(metadata: HashMap<String, String>) -> Result<Vec<Metadata
         .collect()
 }
 
-/// One page of a listing, as indices into the sorted keys.
+/// `entries` in key order: a file sorts by its name, a directory by its
+/// name and `/`, the order of the keys under it.
+fn in_key_order(mut entries: Vec<DirectoryEntry>) -> std::vec::IntoIter<DirectoryEntry> {
+    entries.sort_by_cached_key(|entry| {
+        let mut key = entry.name.to_vec();
+        if entry.is_directory() {
+            key.push(b'/');
+        }
+        key
+    });
+    entries.into_iter()
+}
+
+/// One page of a listing.
 #[derive(Debug, PartialEq, Eq)]
-struct Page {
-    contents: Vec<usize>,
+struct Page<T> {
+    contents: Vec<T>,
     common_prefixes: Vec<String>,
     is_truncated: bool,
     next_start_after: Option<String>,
 }
 
-/// Select one page from `keys` (sorted by bytes): keys that start with
-/// `prefix` and sort after `start_after`. With a `delimiter`, keys that
-/// contain it after the prefix collapse into one common prefix (the key up to
-/// and including the delimiter). A common prefix equal to `start_after` is
-/// skipped, so `next_start_after` pages past it.
-/// `max_keys` must be at least 1.
+/// Builds one page from keys added in key order (sorted by bytes): keys that
+/// start with `prefix` and sort after `start_after`. With a `delimiter`, keys
+/// that contain it after the prefix collapse into one common prefix (the key
+/// up to and including the delimiter). A common prefix equal to `start_after`
+/// is skipped, so `next_start_after` pages past it. At most `max_keys` (at
+/// least 1) keys and common prefixes.
+struct PageBuilder<'a, T> {
+    prefix: &'a str,
+    delimiter: Option<&'a str>,
+    start_after: Option<&'a str>,
+    max_keys: usize,
+    page: Page<T>,
+    last: Option<String>,
+}
+
+impl<'a, T> PageBuilder<'a, T> {
+    fn new(
+        prefix: &'a str,
+        delimiter: Option<&'a str>,
+        start_after: Option<&'a str>,
+        max_keys: usize,
+    ) -> Self {
+        Self {
+            prefix,
+            delimiter,
+            start_after,
+            max_keys,
+            page: Page {
+                contents: Vec::new(),
+                common_prefixes: Vec::new(),
+                is_truncated: false,
+                next_start_after: None,
+            },
+            last: None,
+        }
+    }
+
+    /// The common prefix of `key`, if `key` has the delimiter after the
+    /// prefix.
+    fn group<'k>(&self, key: &'k str) -> Option<&'k str> {
+        let d = self.delimiter?;
+        let rel = key.get(self.prefix.len()..)?;
+        rel.find(d).map(|i| &key[..self.prefix.len() + i + d.len()])
+    }
+
+    /// Add the next key, with the item `item` makes for it. Returns `false`
+    /// once the page is full: no later key fits on it.
+    fn push(&mut self, key: &str, item: impl FnOnce() -> T) -> bool {
+        if !key.starts_with(self.prefix) || self.start_after.is_some_and(|after| key <= after) {
+            return true;
+        }
+        let group = self.group(key);
+        if group.is_some_and(|g| Some(g) == self.start_after || Some(g) == self.last.as_deref()) {
+            return true;
+        }
+        if self.page.contents.len() + self.page.common_prefixes.len() == self.max_keys {
+            self.page.is_truncated = true;
+            return false;
+        }
+        match group {
+            Some(group) => {
+                self.page.common_prefixes.push(group.to_string());
+                self.last = Some(group.to_string());
+            }
+            None => {
+                self.page.contents.push(item());
+                self.last = Some(key.to_string());
+            }
+        }
+        true
+    }
+
+    /// Whether no key that starts with `dir` (a key prefix ending in `/`)
+    /// can change the page.
+    fn skips(&self, dir: &str) -> bool {
+        if !dir.starts_with(self.prefix) && !self.prefix.starts_with(dir) {
+            return true;
+        }
+        // `after` sorts after every key that starts with `dir`.
+        if self
+            .start_after
+            .is_some_and(|after| after > dir && !after.starts_with(dir))
+        {
+            return true;
+        }
+        // Every key under `dir` falls in the common prefix of `dir`.
+        self.group(dir)
+            .is_some_and(|g| Some(g) == self.start_after || Some(g) == self.last.as_deref())
+    }
+
+    fn finish(mut self) -> Page<T> {
+        if self.page.is_truncated {
+            self.page.next_start_after = self.last;
+        }
+        self.page
+    }
+}
+
+/// One page of `keys` (sorted by bytes), as indices into `keys`; see
+/// [`PageBuilder`].
+#[cfg(test)]
 fn list_page(
     keys: &[&str],
     prefix: &str,
     delimiter: Option<&str>,
     start_after: Option<&str>,
     max_keys: usize,
-) -> Page {
-    let mut page = Page {
-        contents: Vec::new(),
-        common_prefixes: Vec::new(),
-        is_truncated: false,
-        next_start_after: None,
-    };
-    let mut last: Option<&str> = None;
+) -> Page<usize> {
+    let mut page = PageBuilder::new(prefix, delimiter, start_after, max_keys);
     for (index, key) in keys.iter().enumerate() {
-        if !key.starts_with(prefix) || start_after.is_some_and(|after| *key <= after) {
-            continue;
-        }
-        let group = delimiter.and_then(|d| {
-            key[prefix.len()..]
-                .find(d)
-                .map(|i| &key[..prefix.len() + i + d.len()])
-        });
-        if let Some(group) = group {
-            if Some(group) == start_after || Some(group) == last {
-                continue;
-            }
-        }
-        if page.contents.len() + page.common_prefixes.len() == max_keys {
-            page.is_truncated = true;
+        if !page.push(key, || index) {
             break;
         }
-        match group {
-            Some(group) => {
-                page.common_prefixes.push(group.to_string());
-                last = Some(group);
-            }
-            None => {
-                page.contents.push(index);
-                last = Some(key);
-            }
-        }
     }
-    if page.is_truncated {
-        page.next_start_after = last.map(str::to_string);
-    }
-    page
+    page.finish()
 }
 
 #[cfg(test)]

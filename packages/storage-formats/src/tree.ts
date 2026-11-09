@@ -7,6 +7,7 @@
  * {@link BucketBlobStore}.
  */
 
+import { createLimiter } from "@web3-storage/core";
 import { loadWasm } from "#load-wasm";
 
 import {
@@ -54,13 +55,26 @@ export async function withErrors<T>(
 
 const fsError = (code: string, message: string, cause: unknown) => new FileSystemError(code, message, { cause });
 
-/** File-system operations on one bucket. */
+/** Runs writes one at a time, in call order (`createLimiter(1)`). */
+export type WriteQueue = <T>(write: () => Promise<T>) => Promise<T>;
+
+/**
+ * File-system operations on one bucket. Writes run through `writes` one at a
+ * time. Pass the same queue to every tree of one bucket in a process: two
+ * writes that read the same root and both commit keep only the last one's
+ * change. Default: a queue of this tree only.
+ */
 export class FsTree {
   readonly bucketId: bigint;
+  readonly writes: WriteQueue;
   private tree?: WasmTree;
 
-  constructor(readonly store: BucketBlobStore) {
+  constructor(
+    readonly store: BucketBlobStore,
+    opts: { writes?: WriteQueue } = {},
+  ) {
     this.bucketId = store.bucketId;
+    this.writes = opts.writes ?? createLimiter(1);
   }
 
   private async wasm(): Promise<WasmTree> {
@@ -86,16 +100,21 @@ export class FsTree {
 
   /** Write the file at `path`, creating the directories above it. */
   putFile(path: string, bytes: Uint8Array, options?: PutFileOptions): Promise<PutFileResult> {
-    return withErrors(async () => (await this.wasm()).putFile(path, bytes, options), fsError);
+    return this.writes(() => withErrors(async () => (await this.wasm()).putFile(path, bytes, options), fsError));
   }
 
   /** Create the directory at `path`, and the directories above it. */
   mkdir(path: string): Promise<TreeWriteResult> {
-    return withErrors(async () => (await this.wasm()).mkdir(path), fsError);
+    return this.writes(() => withErrors(async () => (await this.wasm()).mkdir(path), fsError));
+  }
+
+  /** Move the file or directory at `from` to `to` without copying content. */
+  rename(from: string, to: string): Promise<TreeWriteResult> {
+    return this.writes(() => withErrors(async () => (await this.wasm()).rename(from, to), fsError));
   }
 
   /** Delete the file or empty directory at `path`. */
   delete(path: string, options?: DeleteOptions): Promise<TreeWriteResult> {
-    return withErrors(async () => (await this.wasm()).delete(path, options), fsError);
+    return this.writes(() => withErrors(async () => (await this.wasm()).delete(path, options), fsError));
   }
 }

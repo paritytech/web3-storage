@@ -9,7 +9,7 @@
  * chain connection.
  */
 
-export { FileSystemError, FsTree } from "./tree.js";
+export { FileSystemError, FsTree, type WriteQueue } from "./tree.js";
 export { ObjectError, Objects } from "./objects.js";
 export * from "./store.js";
 export type {

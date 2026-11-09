@@ -5,7 +5,7 @@
 use crate::format::{compute_cid, Cid};
 use crate::tree::{BlobLength, BlobStore, Tree};
 use crate::{FsClientError, Result};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use storage_primitives::{mmr, BucketId, Commitment, MmrLeaf, MmrProof, LEAF_VERSION};
@@ -24,9 +24,9 @@ pub(crate) struct MemoryStore {
     pub(crate) reads: AtomicUsize,
     /// Replaces the bytes returned for this CID.
     pub(crate) tampered: Mutex<Option<(Cid, Vec<u8>)>>,
-    /// Committed right after the next `commitment` answer, as another writer
-    /// would.
-    pub(crate) commit_after_commitment: Mutex<Option<Vec<u8>>>,
+    /// Committed one per `commitment` answer, right after it, as another
+    /// writer would.
+    pub(crate) commits_after_commitment: Mutex<VecDeque<Vec<u8>>>,
 }
 
 impl MemoryStore {
@@ -100,7 +100,8 @@ impl BlobStore for MemoryStore {
             start_seq: 0,
             leaf_count: leaves.len() as u64,
         });
-        if let Some(data) = self.commit_after_commitment.lock().unwrap().take() {
+        let racing_commit = self.commits_after_commitment.lock().unwrap().pop_front();
+        if let Some(data) = racing_commit {
             self.raw_commit(&data);
         }
         Ok(commitment)
