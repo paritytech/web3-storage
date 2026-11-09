@@ -16,6 +16,7 @@ use storage_provider_node::{
 struct MockChallengeChainClient {
     challenges: Mutex<Vec<DetectedChallenge>>,
     submitted: Mutex<Vec<((u32, u16), ChallengeResponse)>>,
+    deleted_submitted: Mutex<Vec<((u32, u16), u64)>>,
     submit_error: Mutex<Option<String>>,
 }
 
@@ -24,6 +25,7 @@ impl MockChallengeChainClient {
         Self {
             challenges: Mutex::new(Vec::new()),
             submitted: Mutex::new(Vec::new()),
+            deleted_submitted: Mutex::new(Vec::new()),
             submit_error: Mutex::new(None),
         }
     }
@@ -79,6 +81,18 @@ impl ChallengeChainClient for MockChallengeChainClient {
         }
         Ok(H256::zero())
     }
+
+    async fn submit_deleted_response(
+        &self,
+        challenge_id: (u32, u16),
+        receipt: &provider_challenge::DeletionReceipt,
+    ) -> Result<H256, ChallengeError> {
+        self.deleted_submitted
+            .lock()
+            .unwrap()
+            .push((challenge_id, receipt.new_start_seq));
+        Ok(H256::zero())
+    }
 }
 
 /// A [`ChallengeProofSource`] that delegates `get_mmr_proof_for_commitment` to a real
@@ -106,6 +120,14 @@ impl ChallengeProofSource for StepTwoBackendFailure {
         Err(ChallengeError::Storage {
             reason: "simulated RocksDB outage".to_string(),
         })
+    }
+
+    fn deletion_receipt_covering(
+        &self,
+        bucket_id: BucketId,
+        seq: u64,
+    ) -> Result<Option<provider_challenge::DeletionReceipt>, ChallengeError> {
+        self.0.deletion_receipt_covering(bucket_id, seq)
     }
 }
 
@@ -214,6 +236,68 @@ async fn test_stop_command() {
 }
 
 // --- Tests with realistic storage data ---
+
+#[tokio::test(start_paused = true)]
+async fn erased_leaves_are_defended_with_the_deletion_receipt() {
+    // A challenge cites a commitment whose leaves were pruned, confirmed by
+    // the admin, and physically erased: the proof cannot be rebuilt, but the
+    // stored receipt defends via the Deleted response.
+    let (state, challenge, _dir) = test_state_with_data();
+    let post_root = state.storage.delete_before(1, 1).unwrap().mmr_root;
+    state
+        .storage
+        .attach_deletion_receipt(
+            1,
+            provider_storage::DeletionReceipt {
+                mmr_root: post_root,
+                new_start_seq: 1,
+                admin: sp_core::crypto::AccountId32::new([7u8; 32]),
+                signature: sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from(
+                    [0u8; 64],
+                )),
+            },
+        )
+        .unwrap();
+    state.storage.erase_pruned_range(1, 0).unwrap();
+
+    // `challenge` cites leaf 0 of the erased (pre-prune) commitment.
+    let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
+
+    let config = ChallengeResponderConfig {
+        poll_interval: Duration::from_millis(50),
+        auto_respond: true,
+        ..ChallengeResponderConfig::new(alice_account())
+    };
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
+
+    let mock_ref = Arc::clone(&mock);
+    assert!(
+        wait_for(5, 10, || {
+            let m = Arc::clone(&mock_ref);
+            async move {
+                m.deleted_submitted
+                    .lock()
+                    .unwrap()
+                    .contains(&((1000, 0), 1))
+            }
+        })
+        .await,
+        "the Deleted response should be submitted with the stored receipt"
+    );
+    assert!(
+        mock.submitted.lock().unwrap().is_empty(),
+        "no Proof response should be attempted for erased leaves"
+    );
+    handle.stop().await.unwrap();
+}
 
 #[tokio::test(start_paused = true)]
 async fn test_successful_challenge_response() {
@@ -477,6 +561,14 @@ impl ChallengeProofSource for EditLeaf {
         chunk_index: u64,
     ) -> Result<(Vec<u8>, Vec<H256>), ChallengeError> {
         self.0.get_chunk_at_index(data_root, chunk_index)
+    }
+
+    fn deletion_receipt_covering(
+        &self,
+        bucket_id: BucketId,
+        seq: u64,
+    ) -> Result<Option<provider_challenge::DeletionReceipt>, ChallengeError> {
+        self.0.deletion_receipt_covering(bucket_id, seq)
     }
 }
 
