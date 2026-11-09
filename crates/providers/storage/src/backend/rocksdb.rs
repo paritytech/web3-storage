@@ -68,8 +68,15 @@ const BUCKET_LOCK_TIMEOUT_MS: i64 = 30_000;
 pub struct DiskStorage {
     db: Arc<TransactionDB>,
     max_tree_walk_visits: u64,
-    #[cfg(test)]
-    get_node_calls: std::sync::atomic::AtomicU64,
+}
+
+/// What `commit` learns from walking its roots before it opens the
+/// transaction.
+struct CommitWalk {
+    data_roots: Vec<H256>,
+    data_sizes: Vec<u64>,
+    /// Number of times each node occurs in the walked trees.
+    increments: HashMap<H256, u64>,
 }
 
 /// The commitment the provider signs for the bucket in this state.
@@ -108,8 +115,6 @@ impl DiskStorage {
         Ok(Self {
             db: Arc::new(db),
             max_tree_walk_visits: super::MAX_TREE_WALK_VISITS,
-            #[cfg(test)]
-            get_node_calls: Default::default(),
         })
     }
 
@@ -149,13 +154,6 @@ impl DiskStorage {
     fn with_max_tree_walk_visits(mut self, max_visits: u64) -> Self {
         self.max_tree_walk_visits = max_visits;
         self
-    }
-
-    /// `get_node` calls since the last call to this method.
-    #[cfg(test)]
-    fn take_get_node_calls(&self) -> u64 {
-        self.get_node_calls
-            .swap(0, std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Options this engine opens its database with.
@@ -425,9 +423,6 @@ impl DiskStorage {
     /// `Ok(None)` means the node genuinely does not exist. `Err` means the
     /// backend itself failed - the node may still be there.
     pub fn get_node(&self, hash: &H256) -> Result<Option<ChunkTreeNode>, Error> {
-        #[cfg(test)]
-        self.get_node_calls
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.read_decoded(CF_NODES, hash.as_bytes())
     }
 
@@ -465,6 +460,12 @@ impl DiskStorage {
         bucket_id: BucketId,
         data_roots: Vec<H256>,
     ) -> Result<CommitOutcome, Error> {
+        let walk = self.walk_commit_roots(data_roots)?;
+        self.apply_commit(bucket_id, walk)
+    }
+
+    /// Check the trees under `data_roots` outside any transaction.
+    fn walk_commit_roots(&self, data_roots: Vec<H256>) -> Result<CommitWalk, Error> {
         // Verify all roots exist
         for root in &data_roots {
             if !self.has_node(root)? {
@@ -476,13 +477,11 @@ impl DiskStorage {
         // before the MMR changes, measure the data size, and gather the
         // refcount increments this commit adds.
         let mut increments: HashMap<H256, u64> = HashMap::new();
-        let mut node_sizes: HashMap<H256, u64> = HashMap::new();
         let mut data_sizes = Vec::with_capacity(data_roots.len());
         for root in &data_roots {
             let mut leaves = Vec::new();
             self.walk_tree(*root, &mut |hash, node| {
                 *increments.entry(hash).or_default() += 1;
-                node_sizes.entry(hash).or_insert(node.size());
                 if let ChunkTreeNode::Chunk(data) = node {
                     leaves.push((hash, data.len()));
                 }
@@ -490,6 +489,21 @@ impl DiskStorage {
             data_sizes.push(canonical_size(*root, &leaves)?);
         }
 
+        Ok(CommitWalk {
+            data_roots,
+            data_sizes,
+            increments,
+        })
+    }
+
+    /// Append the walked roots as leaves and add their refcounts in one
+    /// transaction.
+    fn apply_commit(&self, bucket_id: BucketId, walk: CommitWalk) -> Result<CommitOutcome, Error> {
+        let CommitWalk {
+            data_roots,
+            data_sizes,
+            increments,
+        } = walk;
         let txn = self.transaction();
         let mut bucket = self
             .bucket_for_update(&txn, bucket_id)?
@@ -526,12 +540,17 @@ impl DiskStorage {
             .cf_handle(CF_REFCOUNTS)
             .ok_or(Error::ColumnFamilyMissing(CF_REFCOUNTS))?;
         for (hash, n) in increments {
-            // A missing entry means the node predates refcounting; charge
-            // attribution defaults to the committing bucket.
-            let fallback_size = node_sizes.get(&hash).copied().unwrap_or(0);
+            // The row exists while the node does, so a missing row means an
+            // erase deleted the node after the walk. Enforcing user to re-upload
+            // rather than use fallback calculation for better accuracy.
+            //
+            // E.g. Bucket B uploads the same data that bucket A committed and then
+            // deleted, so both use one stored node. A's erase deletes the
+            // node between B's walk and this transaction. Recreating the row
+            // would commit a leaf whose data no longer exists.
             let (count, charged_bucket, size) = self
                 .refcount_for_update(&txn, bucket_id, &hash)?
-                .unwrap_or((0, bucket_id, fallback_size));
+                .ok_or(Error::NodeNotFound(hash))?;
             txn.put_cf(
                 &cf_refcounts,
                 hash.as_bytes(),
@@ -1065,6 +1084,7 @@ mod tests {
     use super::*;
     use crate::backend::{build_merkle_tree, MAX_TREE_DEPTH};
     use rocksdb::DB;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use storage_primitives::{hash_leaf, verify_merkle_proof, DEFAULT_CHUNK_SIZE};
     use tempfile::TempDir;
 
@@ -1072,6 +1092,95 @@ mod tests {
     /// its format-version check.
     fn open_raw(path: &Path) -> DB {
         DB::open_cf(&DiskStorage::db_options(), path, COLUMN_FAMILIES).unwrap()
+    }
+
+    /// Read-only backend over a `DiskStorage` that counts `get_node` calls.
+    /// The read tests use it to bound how many nodes a read visits.
+    struct CountingReads<'a> {
+        inner: &'a DiskStorage,
+        get_node_calls: AtomicU64,
+    }
+
+    impl<'a> CountingReads<'a> {
+        fn new(inner: &'a DiskStorage) -> Self {
+            Self {
+                inner,
+                get_node_calls: Default::default(),
+            }
+        }
+    }
+
+    impl StorageBackend for CountingReads<'_> {
+        fn max_tree_walk_visits(&self) -> u64 {
+            self.inner.max_tree_walk_visits
+        }
+        fn get_node(&self, hash: &H256) -> Result<Option<ChunkTreeNode>, Error> {
+            self.get_node_calls.fetch_add(1, Ordering::Relaxed);
+            self.inner.get_node(hash)
+        }
+        fn init_bucket(&self, _: BucketId, _: u64) -> Result<(), Error> {
+            unreachable!("read-only")
+        }
+        fn get_bucket(&self, _: BucketId) -> Result<Option<BucketInfo>, Error> {
+            unreachable!("read-only")
+        }
+        fn bucket_ids(&self) -> Vec<BucketId> {
+            unreachable!("read-only")
+        }
+        fn stats(&self) -> StorageStats {
+            unreachable!("read-only")
+        }
+        fn store_node(&self, _: BucketId, _: H256, _: ChunkTreeNode) -> Result<(), Error> {
+            unreachable!("read-only")
+        }
+        fn check_exists(&self, _: BucketId, _: &[H256]) -> Result<(Vec<H256>, Vec<H256>), Error> {
+            unreachable!("read-only")
+        }
+        fn commit(&self, _: BucketId, _: Vec<H256>) -> Result<CommitOutcome, Error> {
+            unreachable!("read-only")
+        }
+        fn delete_before(&self, _: BucketId, _: u64) -> Result<Commitment, Error> {
+            unreachable!("read-only")
+        }
+        fn attach_deletion_receipt(&self, _: BucketId, _: DeletionReceipt) -> Result<(), Error> {
+            unreachable!("read-only")
+        }
+        fn deletion_receipt_covering(
+            &self,
+            _: BucketId,
+            _: u64,
+        ) -> Result<Option<DeletionReceipt>, Error> {
+            unreachable!("read-only")
+        }
+        fn set_bucket_quota(&self, _: BucketId, _: u64) -> Result<(), Error> {
+            unreachable!("read-only")
+        }
+        fn pruned_ranges(&self, _: BucketId) -> Result<Vec<PrunedRangeInfo>, Error> {
+            unreachable!("read-only")
+        }
+        fn is_condemned(&self, _: BucketId) -> Result<bool, Error> {
+            unreachable!("read-only")
+        }
+        fn erase_pruned_range(&self, _: BucketId, _: u64) -> Result<EraseOutcome, Error> {
+            unreachable!("read-only")
+        }
+        fn condemn_bucket(&self, _: BucketId) -> Result<(), Error> {
+            unreachable!("read-only")
+        }
+        fn get_mmr_proof(&self, _: BucketId, _: u64) -> Result<MmrProof, Error> {
+            unreachable!("read-only")
+        }
+        fn get_mmr_proof_for_commitment(
+            &self,
+            _: BucketId,
+            _: &Commitment,
+            _: u64,
+        ) -> Result<MmrProof, Error> {
+            unreachable!("read-only")
+        }
+        fn get_mmr_peaks(&self, _: BucketId) -> Result<(H256, Vec<H256>), Error> {
+            unreachable!("read-only")
+        }
     }
 
     /// A database with bucket 1 of `quota` bytes.
@@ -2042,6 +2151,58 @@ mod tests {
         assert_eq!(storage.get_bucket(1).unwrap().unwrap().used_bytes, 0);
     }
 
+    /// Bucket 1 commits X, deletes it (X stays stashed with count 1) and
+    /// uploads X again. Returns X.
+    fn stash_and_reupload(storage: &DiskStorage) -> H256 {
+        let data = vec![3u8; 16];
+        let hash = hash_leaf(&data);
+        storage
+            .store_node(1, hash, ChunkTreeNode::Chunk(data.clone()))
+            .unwrap();
+        storage.commit(1, vec![hash]).unwrap();
+        storage.delete_before(1, 1).unwrap();
+        storage
+            .store_node(1, hash, ChunkTreeNode::Chunk(data))
+            .unwrap();
+        hash
+    }
+
+    #[test]
+    fn commit_fails_when_an_erase_deletes_a_walked_node() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+        let hash = stash_and_reupload(&storage);
+        let before = storage.get_bucket(1).unwrap().unwrap();
+
+        // The erase runs between commit's walk and its transaction.
+        let walk = storage.walk_commit_roots(vec![hash]).unwrap();
+        let erased = storage.erase_pruned_range(1, 0).unwrap();
+        assert_eq!(erased.nodes_deleted, 1);
+        let result = storage.apply_commit(1, walk);
+
+        assert!(matches!(result, Err(Error::NodeNotFound(h)) if h == hash));
+        let after = storage.get_bucket(1).unwrap().unwrap();
+        assert_eq!(after.leaf_count(), 0);
+        assert_eq!(after.mmr_root, before.mmr_root);
+        assert_eq!(storage.refcount_entry(&hash).unwrap(), None);
+    }
+
+    #[test]
+    fn erase_keeps_a_node_committed_again_before_it() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.init_bucket(1, u64::MAX).unwrap();
+        let hash = stash_and_reupload(&storage);
+
+        storage.commit(1, vec![hash]).unwrap();
+        let erased = storage.erase_pruned_range(1, 0).unwrap();
+
+        assert_eq!(erased, EraseOutcome::default());
+        assert!(storage.get_node(&hash).unwrap().is_some());
+        assert_eq!(storage.refcount_entry(&hash).unwrap(), Some((1, 1, 16)));
+    }
+
     #[test]
     fn erase_is_idempotent() {
         let dir = TempDir::new().unwrap();
@@ -2250,14 +2411,14 @@ mod tests {
         let count = 1u64 << 21;
         let chunk = hash_leaf(&vec![0u8; DEFAULT_CHUNK_SIZE as usize]);
 
-        storage.take_get_node_calls();
-        let range = storage.get_chunks_in_range(root, 0..1).unwrap();
-        assert!(storage.take_get_node_calls() < 1000);
+        let reads = CountingReads::new(&storage);
+        let range = reads.get_chunks_in_range(root, 0..1).unwrap();
+        assert!(reads.get_node_calls.swap(0, Ordering::Relaxed) < 1000);
         assert_eq!(range.len(), 1);
         assert!(verify_merkle_proof(chunk, 0, count, &range[0].2, &root));
 
-        let (_, proof) = storage.get_chunk_at_index(root, count - 1).unwrap();
-        assert!(storage.take_get_node_calls() < 1000);
+        let (_, proof) = reads.get_chunk_at_index(root, count - 1).unwrap();
+        assert!(reads.get_node_calls.swap(0, Ordering::Relaxed) < 1000);
         assert!(verify_merkle_proof(chunk, count - 1, count, &proof, &root));
     }
 
@@ -2277,12 +2438,14 @@ mod tests {
                 };
             }
 
-            storage.take_get_node_calls();
+            let reads = CountingReads::new(&storage);
             assert!(matches!(
-                storage.get_chunks_in_range(root, 0..1),
+                reads.get_chunks_in_range(root, 0..1),
                 Err(Error::NonCanonicalTree(_))
             ));
-            assert!(storage.take_get_node_calls() <= 2 * (MAX_TREE_DEPTH as u64 + 1));
+            assert!(
+                reads.get_node_calls.load(Ordering::Relaxed) <= 2 * (MAX_TREE_DEPTH as u64 + 1)
+            );
         }
     }
 
