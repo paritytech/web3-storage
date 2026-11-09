@@ -19,7 +19,7 @@ use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
 use storage_primitives::{
-    mmr::{self, MmrLeaf, MmrProof},
+    mmr::{self, MmrLeaf},
     BucketId, Commitment,
 };
 
@@ -513,11 +513,14 @@ impl DiskStorage {
             .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        if leaf_index >= commitment.leaf_count {
-            return Err(Error::CommitmentNotReproducible(format!(
+        let outside = || {
+            Error::CommitmentNotReproducible(format!(
                 "leaf_{leaf_index} outside commitment ({} leaves)",
                 commitment.leaf_count
-            )));
+            ))
+        };
+        if leaf_index >= commitment.leaf_count {
+            return Err(outside());
         }
 
         // Rebase the commitment window onto the local leaf vector, which
@@ -538,7 +541,8 @@ impl DiskStorage {
             return Err(not_held());
         }
 
-        let (root, proof) = leaf_proof(bucket_id, &bucket.leaves[offset..end], leaf_index)?;
+        let (root, proof) =
+            mmr::proof(&bucket.leaves[offset..end], leaf_index)?.ok_or_else(outside)?;
         // The rebuilt prefix must reproduce the cited root; a mismatch means
         // the local history diverged from what was signed, and any proof from
         // it would fail on-chain verification anyway.
@@ -628,18 +632,6 @@ impl StorageBackend for DiskStorage {
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         self.get_mmr_peaks(bucket_id)
     }
-}
-
-/// Root of the MMR over `leaves` and the proof for the leaf at `leaf_index`.
-fn leaf_proof(
-    bucket_id: BucketId,
-    leaves: &[MmrLeaf],
-    leaf_index: u64,
-) -> Result<(H256, MmrProof), Error> {
-    mmr::proof(leaves, leaf_index)?.ok_or(Error::LeafNotFound {
-        bucket_id,
-        leaf_index,
-    })
 }
 
 #[cfg(test)]
