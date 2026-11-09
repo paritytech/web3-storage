@@ -9,7 +9,7 @@ pub mod rocksdb;
 pub mod types;
 
 pub use rocksdb::DiskStorage;
-pub use types::{BucketState, ChunkTreeNode};
+pub use types::{BucketState, ChunkTreeNode, DeletionReceipt, PrunedRange};
 
 use crate::error::Error;
 use sp_core::H256;
@@ -103,6 +103,29 @@ pub struct StorageStats {
     pub bytes: u64,
 }
 
+/// View of one pruned-but-not-yet-erased leaf range (the GC work queue).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrunedRangeInfo {
+    /// Global sequence number of the first stashed leaf.
+    pub first_seq: u64,
+    /// One past the last stashed leaf (`first_seq + len`).
+    pub end_seq: u64,
+    /// The start_seq the prune advanced the bucket to.
+    pub new_start_seq: u64,
+    /// Whether an admin-signed deletion receipt covering this range is held
+    /// (required before the range may be physically erased).
+    pub has_receipt: bool,
+}
+
+/// Result of physically erasing one pruned range.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EraseOutcome {
+    /// Nodes whose refcount reached zero and were deleted.
+    pub nodes_deleted: u64,
+    /// Bytes credited back to bucket quotas (sum over charged buckets).
+    pub bytes_freed: u64,
+}
+
 /// Storage engine interface. Callers hold an `Arc<dyn StorageBackend>` rather
 /// than a concrete engine.
 pub trait StorageBackend: Send + Sync {
@@ -110,7 +133,10 @@ pub trait StorageBackend: Send + Sync {
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
 
     /// Get bucket information.
-    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo>;
+    ///
+    /// `Ok(None)` means the bucket genuinely does not exist. `Err` means the
+    /// backend itself failed - the bucket may still be there.
+    fn get_bucket(&self, bucket_id: BucketId) -> Result<Option<BucketInfo>, Error>;
 
     /// Ids of every locally-held bucket.
     fn bucket_ids(&self) -> Vec<BucketId>;
@@ -127,10 +153,18 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<(), Error>;
 
     /// Get a node by hash.
-    fn get_node(&self, hash: &H256) -> Option<ChunkTreeNode>;
+    ///
+    /// `Ok(None)` means the node genuinely does not exist. `Err` means the
+    /// backend itself failed - the node may still be there.
+    fn get_node(&self, hash: &H256) -> Result<Option<ChunkTreeNode>, Error>;
 
-    /// Check which hashes exist in storage.
-    fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>);
+    /// Split `hashes` into those stored and those missing. `Err` means a
+    /// read failed, not that a node is absent.
+    fn check_exists(
+        &self,
+        bucket_id: BucketId,
+        hashes: &[H256],
+    ) -> Result<(Vec<H256>, Vec<H256>), Error>;
 
     /// Commit data roots to the bucket's MMR.
     fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
@@ -157,9 +191,7 @@ pub trait StorageBackend: Send + Sync {
             if visited > max_nodes {
                 return Err(Error::TreeTooLarge { max_nodes });
             }
-            let node = self
-                .get_node(&hash)
-                .ok_or_else(|| Error::NodeNotFound(format!("{:#x}", hash)))?;
+            let node = self.get_node(&hash)?.ok_or(Error::NodeNotFound(hash))?;
             if let ChunkTreeNode::Internal { left, right } = node {
                 stack.push(right);
                 stack.push(left);
@@ -169,7 +201,49 @@ pub trait StorageBackend: Send + Sync {
         Ok(())
     }
 
+    /// Visit every node under `root`, a canonical tree of `chunk_count`
+    /// chunks, once per path that reaches it, in DFS order.
+    ///
+    /// A canonical tree over `n > 1` chunks puts the largest power of two
+    /// below `n` on the left and the rest on the right, so its shape follows
+    /// from `chunk_count`. A node that spans one chunk is a chunk: the walk
+    /// visits it by hash and does not read it. Only internal nodes are read.
+    /// Fails like [`Self::walk_tree`] on a missing internal node or a visit
+    /// count past the budget, and with [`Error::NonCanonicalTree`] when a
+    /// node that spans more than one chunk is not internal.
+    fn walk_canonical_tree(
+        &self,
+        root: H256,
+        chunk_count: u64,
+        visit: &mut dyn FnMut(H256),
+    ) -> Result<(), Error> {
+        let max_nodes = self.max_tree_walk_visits();
+        let mut visited = 0u64;
+        let mut stack = vec![(root, chunk_count)];
+        while let Some((hash, count)) = stack.pop() {
+            visited += 1;
+            if visited > max_nodes {
+                return Err(Error::TreeTooLarge { max_nodes });
+            }
+            if count > 1 {
+                let ChunkTreeNode::Internal { left, right } = node_at(self, &hash)? else {
+                    return Err(Error::NonCanonicalTree(format!("{:#x}", root)));
+                };
+                let split = 1u64 << (count - 1).ilog2();
+                stack.push((right, count - split));
+                stack.push((left, split));
+            }
+            visit(hash);
+        }
+        Ok(())
+    }
+
     /// Hash and byte size of each chunk under `root`, in leaf order.
+    ///
+    /// A missing node or a read failure must not silently shorten the result:
+    /// this backs [`Self::get_chunk_at_index`], the challenge proof path,
+    /// where a shortened list would make a transient backend failure
+    /// indistinguishable from the chunk actually being missing.
     fn collect_leaves(&self, root: H256) -> Result<Vec<(H256, usize)>, Error> {
         let mut leaves = Vec::new();
         self.walk_tree(root, &mut |hash, node| {
@@ -180,23 +254,9 @@ pub trait StorageBackend: Send + Sync {
         Ok(leaves)
     }
 
-    /// Byte size of the data under `root`. Fails with `NonCanonicalTree` unless
-    /// `root` is `merkle_root` over chunks of `DEFAULT_CHUNK_SIZE` bytes, except
-    /// the last, which has 1 to `DEFAULT_CHUNK_SIZE` bytes.
+    /// Byte size of the data under `root`; see [`canonical_size`].
     fn canonical_data_size(&self, root: H256) -> Result<u64, Error> {
-        let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) =
-            self.collect_leaves(root)?.into_iter().unzip();
-        let chunk_size = DEFAULT_CHUNK_SIZE as usize;
-        let fixed_sizes = match chunk_sizes.split_last() {
-            None => false,
-            Some((last, rest)) => {
-                rest.iter().all(|size| *size == chunk_size) && (1..=chunk_size).contains(last)
-            }
-        };
-        if !fixed_sizes || merkle_root(&chunk_hashes) != root {
-            return Err(Error::NonCanonicalTree(format!("{:#x}", root)));
-        }
-        Ok(chunk_sizes.iter().map(|size| *size as u64).sum())
+        canonical_size(root, &self.collect_leaves(root)?)
     }
 
     /// Chunk data and Merkle proof at `chunk_index` under `data_root`.
@@ -218,7 +278,8 @@ pub trait StorageBackend: Send + Sync {
     }
 
     /// Hash, data and Merkle proof of each chunk of `data_root` with an index
-    /// in `range`. Leaves out indices past the last chunk.
+    /// in `range`. Leaves out indices past the last chunk. An unknown
+    /// `data_root` has no chunks.
     fn get_chunks_in_range(
         &self,
         data_root: H256,
@@ -230,9 +291,63 @@ pub trait StorageBackend: Send + Sync {
             .collect()
     }
 
-    /// Delete data before a sequence number. Returns the commitment after
-    /// the prune.
+    /// Delete data before a sequence number.
+    ///
+    /// The pruned leaves are moved into a retention stash, not erased: the
+    /// provider stays able to prove challenges against commitments covering
+    /// them until an admin-signed deletion receipt is held and the canonical
+    /// checkpoint has passed the range.
     fn delete_before(&self, bucket_id: BucketId, new_start_seq: u64) -> Result<Commitment, Error>;
+
+    /// Store an admin-signed deletion receipt for a stashed range (matched
+    /// by `new_start_seq`). Replaces a previous receipt for the same range.
+    fn attach_deletion_receipt(
+        &self,
+        bucket_id: BucketId,
+        receipt: DeletionReceipt,
+    ) -> Result<(), Error>;
+
+    /// The stored receipt with the smallest `new_start_seq` strictly greater
+    /// than `seq` — the evidence defending a challenge on leaf `seq` after
+    /// its bytes were erased.
+    fn deletion_receipt_covering(
+        &self,
+        bucket_id: BucketId,
+        seq: u64,
+    ) -> Result<Option<DeletionReceipt>, Error>;
+
+    /// Set/refresh the bucket quota learned from the chain agreement.
+    /// Never creates a bucket; errors if it does not exist.
+    fn set_bucket_quota(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
+
+    /// Pruned ranges awaiting physical erasure, oldest first.
+    fn pruned_ranges(&self, bucket_id: BucketId) -> Result<Vec<PrunedRangeInfo>, Error>;
+
+    /// Whether the bucket was condemned (deleted on-chain / agreement gone).
+    fn is_condemned(&self, bucket_id: BucketId) -> Result<bool, Error>;
+
+    /// Physically erase one stashed range: decrement refcounts along each
+    /// leaf's tree, delete zero-ref nodes, credit `used_bytes` back to each
+    /// node's charged bucket, and drop the range — one atomic write.
+    /// Idempotent: an unknown `first_seq` is a no-op `Ok`. On a condemned
+    /// bucket, removes the bucket row once nothing stashed or live remains.
+    ///
+    /// Callers are responsible for checking that liability has passed
+    /// (canonical checkpoint past the range, the admin's deletion receipt
+    /// held, no pending challenges).
+    fn erase_pruned_range(
+        &self,
+        bucket_id: BucketId,
+        first_seq: u64,
+    ) -> Result<EraseOutcome, Error>;
+
+    /// Bucket teardown, first half: stash all remaining leaves as one pruned
+    /// range and mark the bucket condemned. The second half is the caller
+    /// (the GC) invoking [`erase_pruned_range`](Self::erase_pruned_range)
+    /// once liability has passed — on a condemned bucket that also removes
+    /// the bucket row itself. Idempotent; `Ok` if the bucket is already
+    /// condemned or already gone.
+    fn condemn_bucket(&self, bucket_id: BucketId) -> Result<(), Error>;
 
     /// Get MMR proof for a leaf.
     fn get_mmr_proof(
@@ -259,10 +374,27 @@ pub trait StorageBackend: Send + Sync {
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
 }
 
+/// Byte size of the chunks `leaves` (hash and byte size, in leaf order) under
+/// `root`. Fails with `NonCanonicalTree` unless `root` is `merkle_root` over
+/// chunks of `DEFAULT_CHUNK_SIZE` bytes, except the last, which has 1 to
+/// `DEFAULT_CHUNK_SIZE` bytes.
+pub(crate) fn canonical_size(root: H256, leaves: &[(H256, usize)]) -> Result<u64, Error> {
+    let (chunk_hashes, chunk_sizes): (Vec<H256>, Vec<usize>) = leaves.iter().copied().unzip();
+    let chunk_size = DEFAULT_CHUNK_SIZE as usize;
+    let fixed_sizes = match chunk_sizes.split_last() {
+        None => false,
+        Some((last, rest)) => {
+            rest.iter().all(|size| *size == chunk_size) && (1..=chunk_size).contains(last)
+        }
+    };
+    if !fixed_sizes || merkle_root(&chunk_hashes) != root {
+        return Err(Error::NonCanonicalTree(format!("{:#x}", root)));
+    }
+    Ok(chunk_sizes.iter().map(|size| *size as u64).sum())
+}
+
 fn node_at<B: StorageBackend + ?Sized>(backend: &B, hash: &H256) -> Result<ChunkTreeNode, Error> {
-    backend
-        .get_node(hash)
-        .ok_or_else(|| Error::NodeNotFound(format!("{:#x}", hash)))
+    backend.get_node(hash)?.ok_or(Error::NodeNotFound(*hash))
 }
 
 /// Number of chunks under `root`, from the nodes down its right edge.
