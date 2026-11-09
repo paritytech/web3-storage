@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! Storage engine for provider nodes: content-addressed blob storage with MMR
+//! commitments. No HTTP or chain dependencies.
+//!
+pub mod backend;
+pub mod error;
+
+#[cfg(any(test, feature = "test-helpers"))]
+pub use backend::build_merkle_tree;
+pub use backend::{
+    BucketInfo, BucketState, ChunkTreeNode, CommitOutcome, DeletionReceipt, DiskStorage,
+    StorageBackend, StorageBackendSpec, StorageStats,
+};
+pub use error::Error;
+
+/// Names the scratch directories [`temp_rocksdb`] creates.
+#[cfg(any(test, feature = "test-helpers"))]
+pub const TEMP_DIR_PREFIX: &str = "w3s-provider-storage-";
+
+/// What [`temp_rocksdb`] returns.
+#[cfg(any(test, feature = "test-helpers"))]
+pub type TempBackend = (std::sync::Arc<dyn StorageBackend>, tempfile::TempDir);
+
+/// A RocksDB backend on a scratch directory. Keep the guard for as long as the
+/// backend is in use — dropping it takes the database with it.
+///
+/// The directory is prefixed, so anything a test leaks stays greppable.
+#[cfg(any(test, feature = "test-helpers"))]
+pub fn temp_rocksdb() -> TempBackend {
+    let dir = tempfile::Builder::new()
+        .prefix(TEMP_DIR_PREFIX)
+        .tempdir()
+        .expect("temp dir");
+    let storage = StorageBackendSpec::RocksDb {
+        path: dir.path().to_path_buf(),
+    }
+    .build()
+    .expect("RocksDB opens");
+    (storage, dir)
+}
