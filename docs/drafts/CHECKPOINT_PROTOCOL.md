@@ -107,6 +107,7 @@ pub enum ProviderStatus {
     Healthy,
     Degraded { last_error: String },
     Unreachable { since: Instant },
+    Unknown,
 }
 
 /// Result of commitment collection
