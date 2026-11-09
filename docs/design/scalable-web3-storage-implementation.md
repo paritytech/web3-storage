@@ -2403,9 +2403,8 @@ Response (404 Not Found):
 { "error": "bucket_not_found" }
 { "error": "leaves_not_held", "details": { "start_seq": 0, "leaf_count": 42,
   "local_start_seq": 10, "local_end": 50 } }
-  // the commitment cites leaves the node does not store: start_seq below
-  // the node's current start_seq (leaves pruned), or a range past the local
-  // leaves
+  // the commitment cites leaves the node does not hold: leaves it has
+  // already deleted, or a range past its local leaves
 { "error": "commitment_not_reproducible", "details": { "reason": "..." } }
   // leaf_index >= leaf_count, or the rebuilt root differs from mmr_root
 
