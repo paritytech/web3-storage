@@ -51,6 +51,6 @@ export function providerBlobStore(
       await commitDataRoots(providerUrl, bucketId, cids, requireSigner(), http);
     },
     commitment: () => getCommitment(providerUrl, bucketId, reads),
-    mmrProof: (leafIndex) => getMmrProof(providerUrl, bucketId, leafIndex, reads),
+    mmrProof: (commitment, leafIndex) => getMmrProof(providerUrl, bucketId, commitment, leafIndex, reads),
   };
 }
