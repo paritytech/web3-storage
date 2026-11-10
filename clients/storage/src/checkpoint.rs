@@ -28,7 +28,6 @@
 //! # }
 //! ```
 
-use crate::challenger::{ChallengeId, ChallengerClient};
 use crate::checkpoint_persistence::{
     CheckpointPersistence, PersistedCheckpointState, PersistenceConfig, StateBuilder,
 };
@@ -41,7 +40,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use storage_primitives::{BucketId, ChunkLocation, Commitment};
+use storage_primitives::{BucketId, Commitment};
 use storage_subxt::api;
 use tokio::sync::{mpsc, RwLock};
 
@@ -242,60 +241,6 @@ pub struct CommitmentCollection {
     pub unreachable_providers: Vec<AccountId32>,
 }
 
-/// Detected conflict between providers.
-#[derive(Clone, Debug)]
-pub struct ProviderConflict {
-    /// Bucket where conflict was detected.
-    pub bucket_id: BucketId,
-    /// The majority MMR root (what most providers agree on).
-    pub majority_root: H256,
-    /// Number of providers agreeing on majority.
-    pub majority_count: usize,
-    /// Conflicting providers with their different roots.
-    pub conflicts: Vec<ConflictingProvider>,
-    /// When the conflict was detected.
-    pub detected_at: Instant,
-    /// Possible resolution strategy.
-    pub resolution: ConflictResolution,
-}
-
-/// A provider that disagrees with the majority.
-#[derive(Clone, Debug)]
-pub struct ConflictingProvider {
-    /// Provider account ID.
-    pub account_id: AccountId32,
-    /// Their MMR root (different from majority).
-    pub mmr_root: H256,
-    /// Their leaf count.
-    pub leaf_count: u64,
-    /// Whether they're behind (likely sync delay) or divergent (data corruption).
-    pub conflict_type: ConflictType,
-}
-
-/// Type of conflict detected.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ConflictType {
-    /// Provider is behind (lower leaf count) - likely sync delay.
-    SyncDelay { behind_by: u64 },
-    /// Provider has same leaf count but different root - data divergence.
-    DataDivergence,
-    /// Provider is ahead of majority - unusual.
-    Ahead { ahead_by: u64 },
-}
-
-/// Suggested resolution for a conflict.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ConflictResolution {
-    /// Wait for sync and retry.
-    WaitForSync { estimated_blocks: u32 },
-    /// Proceed with majority (above threshold).
-    ProceedWithMajority,
-    /// Manual intervention required.
-    ManualIntervention { reason: String },
-    /// Consider challenging the provider.
-    ConsiderChallenge { provider: AccountId32 },
-}
-
 // ============================================================================
 // Background Checkpoint Loop Types
 // ============================================================================
@@ -438,7 +383,7 @@ impl CheckpointLoopHandle {
 pub type CheckpointCallback = Arc<dyn Fn(BucketId, &CheckpointResult) + Send + Sync>;
 
 // ============================================================================
-// Phase 3: Metrics & Auto-Challenge Types
+// Metrics Types
 // ============================================================================
 
 /// Metrics for checkpoint operations.
@@ -454,10 +399,6 @@ pub struct CheckpointMetrics {
     pub unreachable_failures: u64,
     /// Checkpoints failed due to transaction errors.
     pub transaction_failures: u64,
-    /// Total conflicts detected.
-    pub conflicts_detected: u64,
-    /// Conflicts where auto-challenge was recommended.
-    pub auto_challenge_recommended: u64,
     /// Total providers queried.
     pub providers_queried: u64,
     /// Successful provider queries.
@@ -503,19 +444,6 @@ impl CheckpointMetrics {
         }
     }
 
-    /// Record a conflict detection.
-    pub fn record_conflict(&mut self, conflict: &ProviderConflict) {
-        self.conflicts_detected += 1;
-
-        // Check if auto-challenge is recommended
-        for c in &conflict.conflicts {
-            if matches!(c.conflict_type, ConflictType::DataDivergence) {
-                self.auto_challenge_recommended += 1;
-                break;
-            }
-        }
-    }
-
     /// Calculate success rate.
     pub fn success_rate(&self) -> f64 {
         if self.total_attempts == 0 {
@@ -533,115 +461,6 @@ impl CheckpointMetrics {
             self.providers_responded as f64 / self.providers_queried as f64
         }
     }
-}
-
-/// Configuration for automatic challenge submission.
-#[derive(Clone, Debug)]
-pub struct AutoChallengeConfig {
-    /// Whether auto-challenge is enabled.
-    pub enabled: bool,
-    /// Minimum conflict occurrences before challenging.
-    pub min_conflict_count: u32,
-    /// Time to wait for sync before considering challenge.
-    pub sync_wait_duration: Duration,
-    /// Whether to challenge on data divergence (same leaf count, different root).
-    pub challenge_on_divergence: bool,
-}
-
-impl Default for AutoChallengeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false, // Disabled by default for safety
-            min_conflict_count: 3,
-            sync_wait_duration: Duration::from_secs(60),
-            challenge_on_divergence: true,
-        }
-    }
-}
-
-/// Challenge recommendation from conflict analysis.
-#[derive(Clone, Debug)]
-pub struct ChallengeRecommendation {
-    /// Provider to potentially challenge.
-    pub provider: AccountId32,
-    /// Reason for the recommendation.
-    pub reason: ChallengeReason,
-    /// Confidence level (0.0 - 1.0).
-    pub confidence: f64,
-    /// Number of times this conflict was observed.
-    pub occurrence_count: u32,
-    /// Evidence for the challenge.
-    pub evidence: ChallengeEvidence,
-}
-
-/// Reason for challenge recommendation.
-#[derive(Clone, Debug)]
-pub enum ChallengeReason {
-    /// Same leaf count but different MMR root.
-    DataDivergence {
-        majority_root: H256,
-        provider_root: H256,
-        leaf_count: u64,
-    },
-    /// Provider persistently behind after sync wait.
-    PersistentlySyncing { behind_by: u64, duration: Duration },
-    /// Provider claiming to be ahead of majority.
-    ClaimingAhead {
-        claimed_leaf_count: u64,
-        majority_leaf_count: u64,
-    },
-}
-
-/// Evidence to support a challenge.
-#[derive(Clone, Debug)]
-pub struct ChallengeEvidence {
-    /// Bucket ID where conflict occurred.
-    pub bucket_id: BucketId,
-    /// Majority commitment from agreeing providers.
-    pub majority_commitment: (H256, u64, u64), // (mmr_root, start_seq, leaf_count)
-    /// Signatures from majority providers.
-    pub majority_signatures: Vec<(AccountId32, sp_runtime::MultiSignature)>,
-    /// Provider's commitment that conflicts.
-    pub provider_commitment: Option<(H256, u64, u64)>,
-    /// Timestamps of conflict observations.
-    pub observation_times: Vec<Instant>,
-}
-
-/// Result of executing auto-challenges.
-#[derive(Clone, Debug)]
-pub struct AutoChallengeResult {
-    /// Number of providers analyzed.
-    pub providers_analyzed: usize,
-    /// Challenges successfully submitted.
-    pub challenges_submitted: Vec<SubmittedChallenge>,
-    /// Challenges that failed to submit.
-    pub challenges_failed: Vec<FailedChallenge>,
-    /// Providers skipped (below confidence threshold).
-    pub providers_skipped: usize,
-}
-
-/// A successfully submitted challenge.
-#[derive(Clone, Debug)]
-pub struct SubmittedChallenge {
-    /// The provider challenged.
-    pub provider: AccountId32,
-    /// Challenge ID from the chain.
-    pub challenge_id: ChallengeId,
-    /// Reason for the challenge.
-    pub reason: ChallengeReason,
-    /// Confidence level of the recommendation.
-    pub confidence: f64,
-}
-
-/// A challenge that failed to submit.
-#[derive(Clone, Debug)]
-pub struct FailedChallenge {
-    /// The provider we tried to challenge.
-    pub provider: AccountId32,
-    /// Reason for the challenge attempt.
-    pub reason: ChallengeReason,
-    /// Error message.
-    pub error: String,
 }
 
 /// Result of attempting to submit a checkpoint.
@@ -689,7 +508,6 @@ pub enum CheckpointResult {
 /// - Verifying consensus (majority agreement)
 /// - Submitting checkpoint transactions on-chain
 /// - Tracking provider health over time
-#[allow(clippy::type_complexity)]
 pub struct CheckpointManager {
     /// Configuration.
     config: CheckpointConfig,
@@ -705,10 +523,6 @@ pub struct CheckpointManager {
     health_history: Arc<RwLock<HashMap<AccountId32, ProviderHealthHistory>>>,
     /// Metrics tracking.
     metrics: Arc<RwLock<CheckpointMetrics>>,
-    /// Conflict history for auto-challenge analysis.
-    conflict_history: Arc<RwLock<HashMap<(BucketId, AccountId32), Vec<ProviderConflict>>>>,
-    /// Auto-challenge configuration.
-    auto_challenge_config: AutoChallengeConfig,
 }
 
 /// Cached provider information with TTL.
@@ -734,8 +548,6 @@ impl CheckpointManager {
             provider_cache: Arc::new(RwLock::new(HashMap::new())),
             health_history: Arc::new(RwLock::new(HashMap::new())),
             metrics: Arc::new(RwLock::new(CheckpointMetrics::default())),
-            conflict_history: Arc::new(RwLock::new(HashMap::new())),
-            auto_challenge_config: AutoChallengeConfig::default(),
         })
     }
 
@@ -749,15 +561,7 @@ impl CheckpointManager {
             provider_cache: Arc::new(RwLock::new(HashMap::new())),
             health_history: Arc::new(RwLock::new(HashMap::new())),
             metrics: Arc::new(RwLock::new(CheckpointMetrics::default())),
-            conflict_history: Arc::new(RwLock::new(HashMap::new())),
-            auto_challenge_config: AutoChallengeConfig::default(),
         }
-    }
-
-    /// Configure auto-challenge settings.
-    pub fn with_auto_challenge(mut self, config: AutoChallengeConfig) -> Self {
-        self.auto_challenge_config = config;
-        self
     }
 
     /// Add a provider endpoint for commitment collection.
@@ -1439,97 +1243,6 @@ impl CheckpointManager {
     }
 
     // ========================================================================
-    // Conflict Detection
-    // ========================================================================
-
-    /// Analyze a commitment collection for conflicts.
-    ///
-    /// Returns Some(ProviderConflict) if any providers disagree with the majority.
-    pub fn analyze_conflicts(&self, collection: &CommitmentCollection) -> Option<ProviderConflict> {
-        if collection.disagreeing_providers.is_empty() {
-            return None;
-        }
-
-        let _majority_leaf_count = collection.leaf_count;
-        let mut conflicts = Vec::new();
-
-        for (account_id, their_root) in &collection.disagreeing_providers {
-            // Determine conflict type
-            // Note: We don't have their leaf_count directly, so we make assumptions
-            // In a full implementation, we'd query each provider for full commitment
-            let conflict_type = if their_root == &collection.mmr_root {
-                // Same root - shouldn't be in disagreeing list
-                continue;
-            } else {
-                // Different root - assume data divergence for now
-                // A full implementation would compare leaf counts
-                ConflictType::DataDivergence
-            };
-
-            conflicts.push(ConflictingProvider {
-                account_id: account_id.clone(),
-                mmr_root: *their_root,
-                leaf_count: 0, // Unknown without additional query
-                conflict_type,
-            });
-        }
-
-        if conflicts.is_empty() {
-            return None;
-        }
-
-        // Determine resolution strategy
-        let total_providers = collection.agreeing_providers.len()
-            + collection.disagreeing_providers.len()
-            + collection.unreachable_providers.len();
-
-        let majority_percentage =
-            collection.agreeing_providers.len() as f64 / total_providers as f64 * 100.0;
-
-        let resolution = if majority_percentage >= self.config.consensus_threshold_percent as f64 {
-            ConflictResolution::ProceedWithMajority
-        } else if conflicts
-            .iter()
-            .all(|c| matches!(c.conflict_type, ConflictType::SyncDelay { .. }))
-        {
-            ConflictResolution::WaitForSync {
-                estimated_blocks: 10, // Estimate
-            }
-        } else if conflicts.len() == 1 {
-            ConflictResolution::ConsiderChallenge {
-                provider: conflicts[0].account_id.clone(),
-            }
-        } else {
-            ConflictResolution::ManualIntervention {
-                reason: format!(
-                    "{} providers disagree, only {:.0}% consensus",
-                    conflicts.len(),
-                    majority_percentage
-                ),
-            }
-        };
-
-        Some(ProviderConflict {
-            bucket_id: collection.bucket_id,
-            majority_root: collection.mmr_root,
-            majority_count: collection.agreeing_providers.len(),
-            conflicts,
-            detected_at: Instant::now(),
-            resolution,
-        })
-    }
-
-    /// Collect commitments and return any detected conflicts.
-    pub async fn collect_commitments_with_conflicts(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<(CommitmentCollection, Option<ProviderConflict>), ClientError> {
-        let collection = self.collect_commitments(bucket_id).await?;
-        let conflict = self.analyze_conflicts(&collection);
-        Ok((collection, conflict))
-    }
-
-    // ========================================================================
     // Health Tracking
     // ========================================================================
 
@@ -1639,374 +1352,6 @@ impl CheckpointManager {
             .write()
             .await
             .record_attempt(result, duration_ms);
-    }
-
-    /// Record a conflict in metrics and history.
-    ///
-    /// Called when a conflict is detected. Stores the conflict for
-    /// auto-challenge analysis and updates metrics.
-    pub async fn record_conflict(&self, bucket_id: BucketId, conflict: &ProviderConflict) {
-        // Update metrics
-        self.metrics.write().await.record_conflict(conflict);
-
-        // Store in conflict history for auto-challenge analysis
-        let mut history = self.conflict_history.write().await;
-        for conflicting in &conflict.conflicts {
-            let key = (bucket_id, conflicting.account_id.clone());
-            history
-                .entry(key)
-                .or_insert_with(Vec::new)
-                .push(conflict.clone());
-        }
-    }
-
-    // ========================================================================
-    // Auto-Challenge Analysis (Phase 3)
-    // ========================================================================
-
-    /// Analyze conflict history and generate challenge recommendations.
-    ///
-    /// Returns a list of providers that should potentially be challenged
-    /// based on repeated conflicts and the configured auto-challenge settings.
-    pub async fn analyze_challenge_candidates(
-        &self,
-        bucket_id: BucketId,
-    ) -> Vec<ChallengeRecommendation> {
-        let history = self.conflict_history.read().await;
-        let mut recommendations = Vec::new();
-
-        // Get all conflicts for this bucket
-        let bucket_conflicts: Vec<_> = history
-            .iter()
-            .filter(|((bid, _), _)| *bid == bucket_id)
-            .collect();
-
-        for ((_, provider), conflicts) in bucket_conflicts {
-            // Check if enough conflicts to consider challenge
-            if conflicts.len() < self.auto_challenge_config.min_conflict_count as usize {
-                continue;
-            }
-
-            // Analyze conflict types
-            let divergence_count = conflicts
-                .iter()
-                .flat_map(|c| &c.conflicts)
-                .filter(|c| c.account_id == *provider)
-                .filter(|c| matches!(c.conflict_type, ConflictType::DataDivergence))
-                .count();
-
-            let sync_delay_count = conflicts
-                .iter()
-                .flat_map(|c| &c.conflicts)
-                .filter(|c| c.account_id == *provider)
-                .filter(|c| matches!(c.conflict_type, ConflictType::SyncDelay { .. }))
-                .count();
-
-            // Generate recommendation based on conflict patterns
-            if self.auto_challenge_config.challenge_on_divergence && divergence_count > 0 {
-                // Data divergence - high confidence recommendation
-                if let Some(latest_conflict) = conflicts.last() {
-                    if let Some(provider_conflict) = latest_conflict
-                        .conflicts
-                        .iter()
-                        .find(|c| c.account_id == *provider)
-                    {
-                        recommendations.push(ChallengeRecommendation {
-                            provider: provider.clone(),
-                            reason: ChallengeReason::DataDivergence {
-                                majority_root: latest_conflict.majority_root,
-                                provider_root: provider_conflict.mmr_root,
-                                leaf_count: provider_conflict.leaf_count,
-                            },
-                            confidence: 0.9, // High confidence for data divergence
-                            occurrence_count: divergence_count as u32,
-                            evidence: ChallengeEvidence {
-                                bucket_id,
-                                majority_commitment: (
-                                    latest_conflict.majority_root,
-                                    0, // start_seq not tracked in conflict
-                                    provider_conflict.leaf_count,
-                                ),
-                                majority_signatures: Vec::new(), // Would need to be collected
-                                provider_commitment: Some((
-                                    provider_conflict.mmr_root,
-                                    0,
-                                    provider_conflict.leaf_count,
-                                )),
-                                observation_times: conflicts
-                                    .iter()
-                                    .map(|c| c.detected_at)
-                                    .collect(),
-                            },
-                        });
-                    }
-                }
-            } else if sync_delay_count as u32 >= self.auto_challenge_config.min_conflict_count * 2 {
-                // Persistently syncing - lower confidence
-                if let Some(latest_conflict) = conflicts.last() {
-                    if let Some(provider_conflict) = latest_conflict
-                        .conflicts
-                        .iter()
-                        .find(|c| c.account_id == *provider)
-                    {
-                        if let ConflictType::SyncDelay { behind_by } =
-                            provider_conflict.conflict_type
-                        {
-                            let first_seen = conflicts
-                                .first()
-                                .map(|c| c.detected_at)
-                                .unwrap_or_else(Instant::now);
-                            let duration = first_seen.elapsed();
-
-                            if duration >= self.auto_challenge_config.sync_wait_duration {
-                                recommendations.push(ChallengeRecommendation {
-                                    provider: provider.clone(),
-                                    reason: ChallengeReason::PersistentlySyncing {
-                                        behind_by,
-                                        duration,
-                                    },
-                                    confidence: 0.5, // Lower confidence for sync issues
-                                    occurrence_count: sync_delay_count as u32,
-                                    evidence: ChallengeEvidence {
-                                        bucket_id,
-                                        majority_commitment: (
-                                            latest_conflict.majority_root,
-                                            0,
-                                            provider_conflict.leaf_count + behind_by,
-                                        ),
-                                        majority_signatures: Vec::new(),
-                                        provider_commitment: Some((
-                                            provider_conflict.mmr_root,
-                                            0,
-                                            provider_conflict.leaf_count,
-                                        )),
-                                        observation_times: conflicts
-                                            .iter()
-                                            .map(|c| c.detected_at)
-                                            .collect(),
-                                    },
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Sort by confidence (highest first)
-        recommendations.sort_by(|a, b| {
-            b.confidence
-                .partial_cmp(&a.confidence)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        recommendations
-    }
-
-    /// Check if auto-challenge is enabled.
-    pub fn is_auto_challenge_enabled(&self) -> bool {
-        self.auto_challenge_config.enabled
-    }
-
-    /// Get auto-challenge configuration.
-    pub fn auto_challenge_config(&self) -> &AutoChallengeConfig {
-        &self.auto_challenge_config
-    }
-
-    /// Clear conflict history for a bucket.
-    pub async fn clear_conflict_history(&self, bucket_id: BucketId) {
-        let mut history = self.conflict_history.write().await;
-        history.retain(|(bid, _), _| *bid != bucket_id);
-    }
-
-    /// Get conflict count for a specific provider in a bucket.
-    pub async fn get_conflict_count(&self, bucket_id: BucketId, provider: &AccountId32) -> usize {
-        let history = self.conflict_history.read().await;
-        history
-            .get(&(bucket_id, provider.clone()))
-            .map(|v| v.len())
-            .unwrap_or(0)
-    }
-
-    // ========================================================================
-    // Auto-Challenge Execution
-    // ========================================================================
-
-    /// Execute auto-challenges for a bucket based on conflict analysis.
-    ///
-    /// This method:
-    /// 1. Analyzes conflict history to find providers to challenge
-    /// 2. Filters by confidence threshold
-    /// 3. Submits challenges on-chain using the provided ChallengerClient
-    /// 4. Updates metrics and clears conflict history for challenged providers
-    ///
-    /// # Arguments
-    ///
-    /// * `bucket_id` - The bucket to check for conflicts
-    /// * `challenger` - A connected ChallengerClient for submitting challenges
-    /// * `min_confidence` - Minimum confidence threshold (0.0 - 1.0)
-    ///
-    /// # Returns
-    ///
-    /// `AutoChallengeResult` with details of submitted and failed challenges.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Setup challenger client
-    /// let mut challenger = ChallengerClient::with_defaults(Signer::from_seed("//Alice")?)?;
-    /// challenger.connect().await?;
-    ///
-    /// // Execute auto-challenges
-    /// let result = manager.execute_auto_challenges(bucket_id, &challenger, 0.7).await?;
-    /// println!("Submitted {} challenges", result.challenges_submitted.len());
-    /// ```
-    pub async fn execute_auto_challenges(
-        &self,
-        bucket_id: BucketId,
-        challenger: &ChallengerClient,
-        min_confidence: f64,
-    ) -> Result<AutoChallengeResult, ClientError> {
-        // Check if auto-challenge is enabled
-        if !self.auto_challenge_config.enabled {
-            return Err(ClientError::Config(
-                "Auto-challenge is not enabled. Use with_auto_challenge() to enable.".to_string(),
-            ));
-        }
-
-        // Get challenge recommendations
-        let recommendations = self.analyze_challenge_candidates(bucket_id).await;
-
-        let mut result = AutoChallengeResult {
-            providers_analyzed: recommendations.len(),
-            challenges_submitted: Vec::new(),
-            challenges_failed: Vec::new(),
-            providers_skipped: 0,
-        };
-
-        for recommendation in recommendations {
-            // Skip if below confidence threshold
-            if recommendation.confidence < min_confidence {
-                result.providers_skipped += 1;
-                continue;
-            }
-
-            // Determine leaf_index and chunk_index based on challenge reason
-            let (leaf_index, chunk_index) = match &recommendation.reason {
-                ChallengeReason::DataDivergence { leaf_count, .. } => {
-                    // Challenge a random leaf within the divergent range
-                    // For simplicity, pick the last leaf and first chunk
-                    (leaf_count.saturating_sub(1), 0u64)
-                }
-                ChallengeReason::PersistentlySyncing { behind_by, .. } => {
-                    // Challenge at the point where they fell behind
-                    let majority_count = recommendation.evidence.majority_commitment.2;
-                    (majority_count.saturating_sub(*behind_by), 0u64)
-                }
-                ChallengeReason::ClaimingAhead {
-                    majority_leaf_count,
-                    ..
-                } => {
-                    // Challenge at the majority's edge
-                    (majority_leaf_count.saturating_sub(1), 0u64)
-                }
-            };
-
-            // Convert AccountId32 to SS58 string
-            let provider_ss58 = format!("{}", recommendation.provider);
-
-            // Submit the challenge
-            match challenger
-                .challenge_checkpoint(
-                    bucket_id,
-                    provider_ss58,
-                    ChunkLocation {
-                        leaf_index,
-                        chunk_index,
-                    },
-                )
-                .await
-            {
-                Ok(challenge_id) => {
-                    tracing::info!(
-                        "Auto-challenge submitted for provider {:?} on bucket {} (confidence: {:.2})",
-                        recommendation.provider,
-                        bucket_id,
-                        recommendation.confidence
-                    );
-
-                    result.challenges_submitted.push(SubmittedChallenge {
-                        provider: recommendation.provider.clone(),
-                        challenge_id,
-                        reason: recommendation.reason.clone(),
-                        confidence: recommendation.confidence,
-                    });
-
-                    // Clear conflict history for this provider since we've challenged them
-                    let mut history = self.conflict_history.write().await;
-                    history.remove(&(bucket_id, recommendation.provider.clone()));
-
-                    // Update metrics
-                    let mut metrics = self.metrics.write().await;
-                    metrics.auto_challenge_recommended += 1;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to submit auto-challenge for provider {:?}: {}",
-                        recommendation.provider,
-                        e
-                    );
-
-                    result.challenges_failed.push(FailedChallenge {
-                        provider: recommendation.provider,
-                        reason: recommendation.reason,
-                        error: e.to_string(),
-                    });
-                }
-            }
-        }
-
-        Ok(result)
-    }
-
-    /// Execute auto-challenges for all buckets with tracked conflicts.
-    ///
-    /// This is a convenience method that iterates over all buckets with
-    /// recorded conflicts and executes auto-challenges for each.
-    pub async fn execute_all_auto_challenges(
-        &self,
-        challenger: &ChallengerClient,
-        min_confidence: f64,
-    ) -> Result<Vec<(BucketId, AutoChallengeResult)>, ClientError> {
-        // Get all bucket IDs with conflicts
-        let bucket_ids: Vec<BucketId> = {
-            let history = self.conflict_history.read().await;
-            history
-                .keys()
-                .map(|(bid, _)| *bid)
-                .collect::<std::collections::HashSet<_>>()
-                .into_iter()
-                .collect()
-        };
-
-        let mut results = Vec::new();
-        for bucket_id in bucket_ids {
-            match self
-                .execute_auto_challenges(bucket_id, challenger, min_confidence)
-                .await
-            {
-                Ok(result) => results.push((bucket_id, result)),
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to execute auto-challenges for bucket {}: {}",
-                        bucket_id,
-                        e
-                    );
-                }
-            }
-        }
-
-        Ok(results)
     }
 
     // ========================================================================
@@ -2213,7 +1558,7 @@ impl CheckpointManager {
 
     /// Save the current state to a persistence file.
     ///
-    /// This saves metrics, provider health history, and conflict history
+    /// This saves metrics and provider health history
     /// so they can be restored after a restart.
     ///
     /// # Example
@@ -2237,7 +1582,7 @@ impl CheckpointManager {
 
     /// Restore state from a persistence file.
     ///
-    /// This restores metrics, provider health history, and conflict history
+    /// This restores metrics and provider health history
     /// from a previous session.
     ///
     /// # Example
@@ -2316,23 +1661,6 @@ impl CheckpointManager {
         provider: &AccountId32,
     ) -> Option<ProviderHealthHistory> {
         self.health_history.read().await.get(provider).cloned()
-    }
-
-    /// Clear all conflict history for all buckets.
-    ///
-    /// Useful after resolving conflicts or starting fresh.
-    pub async fn clear_all_conflict_history(&self) {
-        self.conflict_history.write().await.clear();
-    }
-
-    /// Get the total number of recorded conflicts for a bucket across all providers.
-    pub async fn get_bucket_conflict_count(&self, bucket_id: BucketId) -> usize {
-        let history = self.conflict_history.read().await;
-        history
-            .iter()
-            .filter(|((bid, _), _)| *bid == bucket_id)
-            .map(|(_, conflicts)| conflicts.len())
-            .sum()
     }
 }
 
@@ -2614,55 +1942,6 @@ mod tests {
     }
 
     // ========================================================================
-    // ConflictType Tests
-    // ========================================================================
-
-    #[test]
-    fn test_conflict_type_equality() {
-        assert_eq!(ConflictType::DataDivergence, ConflictType::DataDivergence);
-        assert_eq!(
-            ConflictType::SyncDelay { behind_by: 5 },
-            ConflictType::SyncDelay { behind_by: 5 }
-        );
-        assert_eq!(
-            ConflictType::Ahead { ahead_by: 3 },
-            ConflictType::Ahead { ahead_by: 3 }
-        );
-        assert_ne!(
-            ConflictType::SyncDelay { behind_by: 5 },
-            ConflictType::SyncDelay { behind_by: 10 }
-        );
-    }
-
-    // ========================================================================
-    // ConflictResolution Tests
-    // ========================================================================
-
-    #[test]
-    fn test_conflict_resolution_equality() {
-        assert_eq!(
-            ConflictResolution::ProceedWithMajority,
-            ConflictResolution::ProceedWithMajority
-        );
-        assert_eq!(
-            ConflictResolution::WaitForSync {
-                estimated_blocks: 10
-            },
-            ConflictResolution::WaitForSync {
-                estimated_blocks: 10
-            }
-        );
-
-        let account = AccountId32::new([1u8; 32]);
-        assert_eq!(
-            ConflictResolution::ConsiderChallenge {
-                provider: account.clone()
-            },
-            ConflictResolution::ConsiderChallenge { provider: account }
-        );
-    }
-
-    // ========================================================================
     // CommitmentCollection Tests
     // ========================================================================
 
@@ -2881,7 +2160,6 @@ mod tests {
         assert_eq!(metrics.insufficient_consensus_count, 0);
         assert_eq!(metrics.unreachable_failures, 0);
         assert_eq!(metrics.transaction_failures, 0);
-        assert_eq!(metrics.conflicts_detected, 0);
         assert_eq!(metrics.success_rate(), 1.0); // No attempts = 100%
     }
 
@@ -2933,214 +2211,6 @@ mod tests {
         assert_eq!(metrics.total_attempts, 3);
         assert_eq!(metrics.successful_submissions, 0);
         assert_eq!(metrics.success_rate(), 0.0);
-    }
-
-    #[test]
-    fn test_checkpoint_metrics_record_conflict() {
-        let mut metrics = CheckpointMetrics::default();
-
-        let conflict = ProviderConflict {
-            bucket_id: 1,
-            majority_root: H256::zero(),
-            majority_count: 2,
-            conflicts: vec![ConflictingProvider {
-                account_id: AccountId32::new([1u8; 32]),
-                mmr_root: H256::repeat_byte(0x11),
-                leaf_count: 10,
-                conflict_type: ConflictType::DataDivergence,
-            }],
-            detected_at: Instant::now(),
-            resolution: ConflictResolution::ConsiderChallenge {
-                provider: AccountId32::new([1u8; 32]),
-            },
-        };
-
-        metrics.record_conflict(&conflict);
-
-        assert_eq!(metrics.conflicts_detected, 1);
-        assert_eq!(metrics.auto_challenge_recommended, 1);
-    }
-
-    // ========================================================================
-    // Phase 3: Auto-Challenge Config Tests
-    // ========================================================================
-
-    #[test]
-    fn test_auto_challenge_config_default() {
-        let config = AutoChallengeConfig::default();
-        assert!(!config.enabled); // Disabled by default
-        assert_eq!(config.min_conflict_count, 3);
-        assert_eq!(config.sync_wait_duration, Duration::from_secs(60));
-        assert!(config.challenge_on_divergence);
-    }
-
-    // ========================================================================
-    // Phase 3: Challenge Reason Tests
-    // ========================================================================
-
-    #[test]
-    fn test_challenge_reason_data_divergence() {
-        let reason = ChallengeReason::DataDivergence {
-            majority_root: H256::zero(),
-            provider_root: H256::repeat_byte(0x11),
-            leaf_count: 100,
-        };
-
-        match reason {
-            ChallengeReason::DataDivergence { leaf_count, .. } => {
-                assert_eq!(leaf_count, 100);
-            }
-            _ => panic!("Expected DataDivergence"),
-        }
-    }
-
-    #[test]
-    fn test_challenge_reason_persistently_syncing() {
-        let reason = ChallengeReason::PersistentlySyncing {
-            behind_by: 50,
-            duration: Duration::from_secs(120),
-        };
-
-        match reason {
-            ChallengeReason::PersistentlySyncing {
-                behind_by,
-                duration,
-            } => {
-                assert_eq!(behind_by, 50);
-                assert_eq!(duration, Duration::from_secs(120));
-            }
-            _ => panic!("Expected PersistentlySyncing"),
-        }
-    }
-
-    #[test]
-    fn test_challenge_evidence() {
-        let evidence = ChallengeEvidence {
-            bucket_id: 1,
-            majority_commitment: (H256::zero(), 0, 100),
-            majority_signatures: vec![],
-            provider_commitment: Some((H256::repeat_byte(0x11), 0, 100)),
-            observation_times: vec![Instant::now()],
-        };
-
-        assert_eq!(evidence.bucket_id, 1);
-        assert!(evidence.provider_commitment.is_some());
-        assert_eq!(evidence.observation_times.len(), 1);
-    }
-
-    // ========================================================================
-    // Auto-Challenge Execution Tests
-    // ========================================================================
-
-    #[test]
-    fn test_auto_challenge_result_empty() {
-        let result = AutoChallengeResult {
-            providers_analyzed: 5,
-            challenges_submitted: vec![],
-            challenges_failed: vec![],
-            providers_skipped: 3,
-        };
-
-        assert_eq!(result.providers_analyzed, 5);
-        assert!(result.challenges_submitted.is_empty());
-        assert!(result.challenges_failed.is_empty());
-        assert_eq!(result.providers_skipped, 3);
-    }
-
-    #[test]
-    fn test_submitted_challenge() {
-        let challenge = SubmittedChallenge {
-            provider: AccountId32::new([1u8; 32]),
-            challenge_id: ChallengeId {
-                deadline: 1000,
-                index: 1,
-            },
-            reason: ChallengeReason::DataDivergence {
-                majority_root: H256::zero(),
-                provider_root: H256::repeat_byte(0x11),
-                leaf_count: 100,
-            },
-            confidence: 0.9,
-        };
-
-        assert_eq!(challenge.challenge_id.deadline, 1000);
-        assert_eq!(challenge.challenge_id.index, 1);
-        assert_eq!(challenge.confidence, 0.9);
-    }
-
-    #[test]
-    fn test_failed_challenge() {
-        let failed = FailedChallenge {
-            provider: AccountId32::new([2u8; 32]),
-            reason: ChallengeReason::PersistentlySyncing {
-                behind_by: 10,
-                duration: Duration::from_secs(60),
-            },
-            error: "Transaction failed".to_string(),
-        };
-
-        assert_eq!(failed.error, "Transaction failed");
-        match failed.reason {
-            ChallengeReason::PersistentlySyncing { behind_by, .. } => {
-                assert_eq!(behind_by, 10);
-            }
-            _ => panic!("Expected PersistentlySyncing"),
-        }
-    }
-
-    #[test]
-    fn test_auto_challenge_result_with_submissions() {
-        let result = AutoChallengeResult {
-            providers_analyzed: 10,
-            challenges_submitted: vec![
-                SubmittedChallenge {
-                    provider: AccountId32::new([1u8; 32]),
-                    challenge_id: ChallengeId {
-                        deadline: 1000,
-                        index: 0,
-                    },
-                    reason: ChallengeReason::DataDivergence {
-                        majority_root: H256::zero(),
-                        provider_root: H256::repeat_byte(0x11),
-                        leaf_count: 100,
-                    },
-                    confidence: 0.95,
-                },
-                SubmittedChallenge {
-                    provider: AccountId32::new([2u8; 32]),
-                    challenge_id: ChallengeId {
-                        deadline: 1000,
-                        index: 1,
-                    },
-                    reason: ChallengeReason::DataDivergence {
-                        majority_root: H256::zero(),
-                        provider_root: H256::repeat_byte(0x22),
-                        leaf_count: 100,
-                    },
-                    confidence: 0.85,
-                },
-            ],
-            challenges_failed: vec![FailedChallenge {
-                provider: AccountId32::new([3u8; 32]),
-                reason: ChallengeReason::PersistentlySyncing {
-                    behind_by: 5,
-                    duration: Duration::from_secs(120),
-                },
-                error: "Insufficient funds".to_string(),
-            }],
-            providers_skipped: 7,
-        };
-
-        assert_eq!(result.providers_analyzed, 10);
-        assert_eq!(result.challenges_submitted.len(), 2);
-        assert_eq!(result.challenges_failed.len(), 1);
-        assert_eq!(result.providers_skipped, 7);
-
-        // Verify first submitted challenge
-        assert_eq!(result.challenges_submitted[0].confidence, 0.95);
-
-        // Verify failed challenge error
-        assert_eq!(result.challenges_failed[0].error, "Insufficient funds");
     }
 
     // ========================================================================
