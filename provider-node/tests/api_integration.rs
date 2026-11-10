@@ -203,6 +203,78 @@ common::backend_tests! {
     }
 }
 
+/// Upload `data` as a leaf chunk of bucket 1 and return its hash.
+async fn upload_chunk(server: &TestServer, data: &[u8]) -> (H256, reqwest::Response) {
+    let hash = storage_primitives::hash_leaf(data);
+    let response = server
+        .client
+        .put(server.url("/node"))
+        .json(&json!({
+            "bucket_id": 1,
+            "hash": format!("{hash:#x}"),
+            "data": BASE64.encode(data),
+            "children": null
+        }))
+        .send()
+        .await
+        .unwrap();
+    (hash, response)
+}
+
+#[tokio::test]
+async fn upload_and_commit_on_condemned_bucket_return_gone() {
+    let mut storage = None;
+    let server = TestServer::start(StorageBackendKind::RocksDb, |deps| {
+        storage = Some(deps.storage.clone());
+        ProviderState::with_seed(deps, common::PROVIDER_SEED).expect("//Alice is a valid SURI")
+    })
+    .await;
+    let storage = storage.unwrap();
+
+    let (stored, response) = upload_chunk(&server, b"stored before condemnation").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (late, response) = upload_chunk(&server, b"stored, committed too late").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({ "bucket_id": 1, "data_roots": [format!("{stored:#x}")] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    storage.condemn_bucket(1).unwrap();
+    let leaf_count = |server: &TestServer| {
+        let request = server.client.get(server.url("/commitment?bucket_id=1"));
+        async move {
+            let body: Value = request.send().await.unwrap().json().await.unwrap();
+            body["leaf_count"].clone()
+        }
+    };
+    let before = leaf_count(&server).await;
+
+    let (_, response) = upload_chunk(&server, b"uploaded after condemnation").await;
+    assert_eq!(response.status(), StatusCode::GONE);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "bucket_condemned");
+    assert_eq!(body["details"]["bucket_id"], 1);
+
+    let response = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({ "bucket_id": 1, "data_roots": [format!("{late:#x}")] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::GONE);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "bucket_condemned");
+    assert_eq!(body["details"]["bucket_id"], 1);
+
+    assert_eq!(leaf_count(&server).await, before);
+}
+
 common::backend_tests! {
     async fn test_commit_and_get_commitment(backend) {
         let server = TestServer::new(backend).await;

@@ -144,7 +144,8 @@ pub trait StorageBackend: Send + Sync {
     /// Totals across all buckets, read from the per-bucket counters.
     fn stats(&self) -> StorageStats;
 
-    /// Store a node under the hash the caller claims for it.
+    /// Store a node under the hash the caller claims for it. Fails with
+    /// [`Error::BucketCondemned`] on a condemned bucket.
     fn store_node(
         &self,
         bucket_id: BucketId,
@@ -166,7 +167,8 @@ pub trait StorageBackend: Send + Sync {
         hashes: &[H256],
     ) -> Result<(Vec<H256>, Vec<H256>), Error>;
 
-    /// Commit data roots to the bucket's MMR.
+    /// Commit data roots to the bucket's MMR. Fails with
+    /// [`Error::BucketCondemned`] on a condemned bucket.
     fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
 
     /// Node budget for one content-tree traversal; see [`MAX_TREE_WALK_VISITS`].
@@ -348,7 +350,8 @@ pub trait StorageBackend: Send + Sync {
     /// (the GC) invoking [`erase_pruned_range`](Self::erase_pruned_range)
     /// once liability has passed — on a condemned bucket that also removes
     /// the bucket row itself. Idempotent; `Ok` if the bucket is already
-    /// condemned or already gone.
+    /// condemned or already gone. A condemned bucket rejects `store_node` and
+    /// `commit` with [`Error::BucketCondemned`].
     fn condemn_bucket(&self, bucket_id: BucketId) -> Result<(), Error>;
 
     /// Get MMR proof for a leaf.

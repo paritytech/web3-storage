@@ -393,6 +393,9 @@ impl DiskStorage {
         let mut bucket = self
             .bucket_for_update(&txn, bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
+        if bucket.condemned {
+            return Err(Error::BucketCondemned(bucket_id));
+        }
 
         let charge = node.size();
 
@@ -518,6 +521,9 @@ impl DiskStorage {
         let mut bucket = self
             .bucket_for_update(&txn, bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
+        if bucket.condemned {
+            return Err(Error::BucketCondemned(bucket_id));
+        }
 
         let start_seq = bucket.start_seq;
         let mut leaf_indices = Vec::new();
@@ -2479,6 +2485,60 @@ mod tests {
         storage.erase_pruned_range(2, 0).unwrap();
         storage.condemn_bucket(2).unwrap();
         assert!(storage.get_bucket(2).unwrap().is_none());
+    }
+
+    #[test]
+    fn store_node_on_condemned_bucket_is_rejected() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let roots = bucket_with_leaves(&storage, 1, 1);
+        storage.condemn_bucket(1).unwrap();
+        let before = storage.get_bucket(1).unwrap().unwrap();
+
+        // A new node.
+        let data = vec![9u8; 8];
+        let hash = hash_leaf(&data);
+        let err = storage
+            .store_node(1, hash, ChunkTreeNode::Chunk(data))
+            .unwrap_err();
+        assert!(matches!(err, Error::BucketCondemned(1)), "got {err:?}");
+        assert!(storage.get_node(&hash).unwrap().is_none());
+        assert_eq!(storage.refcount_entry(&hash).unwrap(), None);
+
+        // A node that is already stored.
+        let err = storage
+            .store_node(1, roots[0], ChunkTreeNode::Chunk(vec![0u8; 8]))
+            .unwrap_err();
+        assert!(matches!(err, Error::BucketCondemned(1)), "got {err:?}");
+
+        let after = storage.get_bucket(1).unwrap().unwrap();
+        assert_eq!(after.used_bytes, before.used_bytes);
+        assert_eq!(after.node_count, before.node_count);
+    }
+
+    #[test]
+    fn commit_on_condemned_bucket_is_rejected() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 1);
+
+        // Stored before condemnation, committed after it.
+        let data = vec![9u8; 8];
+        let hash = hash_leaf(&data);
+        storage
+            .store_node(1, hash, ChunkTreeNode::Chunk(data))
+            .unwrap();
+        storage.condemn_bucket(1).unwrap();
+
+        let err = storage.commit(1, vec![hash]).unwrap_err();
+        assert!(matches!(err, Error::BucketCondemned(1)), "got {err:?}");
+        let bucket = storage.get_bucket(1).unwrap().unwrap();
+        assert!(bucket.leaves.is_empty());
+        assert_eq!(storage.refcount_entry(&hash).unwrap(), Some((0, 1, 8)));
+
+        // The rejected writes leave nothing behind: erasing drops the row.
+        storage.erase_pruned_range(1, 0).unwrap();
+        assert!(storage.get_bucket(1).unwrap().is_none());
     }
 
     #[test]

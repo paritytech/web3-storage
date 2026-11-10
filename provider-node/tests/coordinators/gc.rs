@@ -279,6 +279,56 @@ async fn missing_chain_row_condemns_and_erases_bucket() {
 }
 
 #[tokio::test]
+async fn ended_agreement_condemns_bucket_and_rejects_writes_until_erased() {
+    let (state, _dir) = test_state();
+    let hashes = seed_bucket(&state, 1, 2);
+
+    // The bucket stays on chain but this provider's agreement ends. A pending
+    // challenge defers erasure, so the condemned bucket stays on disk.
+    let mock = Arc::new(
+        MockGcChainClient::new()
+            .with_bucket(1, Some(0))
+            .with_agreement(1, u64::MAX)
+            .with_pending_challenge(1),
+    );
+    let (handle, _tx, mock) = start_gc_shared(state.clone(), Arc::clone(&mock));
+    mock.agreements.lock().remove(&1);
+
+    assert!(
+        wait_for(5, 25, || async { state.storage.is_condemned(1).unwrap() }).await,
+        "bucket should be condemned once the agreement is gone"
+    );
+
+    let data = vec![9u8; 8];
+    let hash = hash_leaf(&data);
+    let stored = state
+        .storage
+        .store_node(1, hash, ChunkTreeNode::Chunk(data));
+    assert!(
+        matches!(stored, Err(provider_storage::Error::BucketCondemned(1))),
+        "store_node on a condemned bucket: {stored:?}"
+    );
+    let committed = state.storage.commit(1, vec![hashes[0]]);
+    assert!(
+        matches!(committed, Err(provider_storage::Error::BucketCondemned(1))),
+        "commit on a condemned bucket: {committed:?}"
+    );
+
+    mock.pending.lock().remove(&1);
+    assert!(
+        wait_for(5, 25, || async {
+            state.storage.get_bucket(1).unwrap().is_none()
+        })
+        .await,
+        "bucket row should be gone once the challenge clears"
+    );
+    for hash in hashes {
+        assert!(state.storage.get_node(&hash).unwrap().is_none());
+    }
+    handle.stop();
+}
+
+#[tokio::test]
 async fn quota_synced_from_agreement() {
     let (state, _dir) = test_state();
     seed_bucket(&state, 1, 1); // 8 bytes used

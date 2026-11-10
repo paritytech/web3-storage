@@ -65,6 +65,12 @@ pub enum Error {
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
 
+    /// The bucket is being torn down on this provider: its agreement ended or
+    /// the bucket was deleted. The provider accepts no more nodes or commits
+    /// for it. Upload to a provider that holds an agreement for the bucket.
+    #[error("Bucket {0} is condemned")]
+    BucketCondemned(u64),
+
     #[error("Root not found: {0:?}")]
     RootNotFound(H256),
 
