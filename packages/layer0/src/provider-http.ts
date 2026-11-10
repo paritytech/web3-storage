@@ -346,18 +346,20 @@ export interface BucketUsage {
 }
 
 /**
- * Read one bucket's usage against its paid quota from `GET /buckets`.
- * Throws if the provider does not know the bucket.
+ * Read one bucket's usage against its paid quota from `GET /usage`.
+ * `signer` authenticates the request: the read is Reader-gated on private
+ * buckets (anonymous works only while the bucket is public). Throws if the
+ * provider does not know the bucket.
  */
 export async function fetchBucketUsage(
   providerUrl: string,
   bucketId: bigint | number,
+  signer?: ChainSigner,
 ): Promise<BucketUsage> {
-  const resp = await providerFetch(providerUrl, "/buckets");
-  const bucket = (resp.buckets ?? []).find(
-    (b: any) => BigInt(b.bucket_id) === BigInt(bucketId),
-  );
-  if (!bucket) throw new Error(`bucket ${bucketId} not found on provider`);
+  const bucket = await providerFetch(providerUrl, "/usage", {
+    params: { bucket_id: bucketId },
+    sign: signer ? { signer: signer.signer, bucketId } : undefined,
+  });
   // u64::MAX survives JSON as an imprecise float; anything >= 2^63 can only
   // be the sentinel (real quotas are far below 2^53, where JSON is exact).
   const quotaSynced = Number(bucket.max_bytes) < 2 ** 63;

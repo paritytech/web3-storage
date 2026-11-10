@@ -84,6 +84,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/read", get(read_chunks))
         // Commitment and proofs
         .route("/commitment", get(get_commitment))
+        .route("/usage", get(get_usage))
         .route("/checkpoint-signature", get(get_checkpoint_signature))
         .route("/mmr_proof", get(get_mmr_proof))
         .route("/chunk_proof", get(get_chunk_proof))
@@ -408,6 +409,31 @@ async fn get_commitment(
         start_seq: bucket.start_seq,
         leaf_count: bucket.leaf_count,
         provider_signature: signature,
+    }))
+}
+
+/// Bucket-bound read (Reader on a private bucket): how much of the agreement
+/// quota the bucket uses on this node.
+async fn get_usage(
+    State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<CommitmentQuery>,
+) -> Result<Json<UsageResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "GET",
+        query.bucket_id,
+        RequiredRole::Reader,
+    )
+    .await?;
+
+    let bucket = require_bucket(&state, query.bucket_id).await?;
+
+    Ok(Json(UsageResponse {
+        bucket_id: query.bucket_id,
+        used_bytes: bucket.used_bytes,
+        max_bytes: bucket.max_bytes,
     }))
 }
 

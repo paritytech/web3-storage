@@ -234,7 +234,7 @@ export class S3Client {
 
   /** Physical usage vs paid quota, read from the bucket's provider node. */
   async getBucketUsage(bucketId: bigint): Promise<BucketUsage> {
-    return fetchBucketUsage(await this.getProviderUrl(bucketId), bucketId);
+    return fetchBucketUsage(await this.getProviderUrl(bucketId), bucketId, this.owner ?? undefined);
   }
 
   // ── S3 Object operations (the bucket's own tree, via the SDK's Objects) ────

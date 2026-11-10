@@ -2101,7 +2101,7 @@ The provider node exposes a JSON-over-HTTP API (axum) on, by default,
 Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`,
 `POST /delete/confirm`) and
 every **bucket-bound read** — Layer-0
-(`GET /commitment`, `GET /checkpoint-signature`, `GET /mmr_proof`,
+(`GET /commitment`, `GET /checkpoint-signature`, `GET /usage`, `GET /mmr_proof`,
 `GET /mmr_peaks`, `POST /exists`, `GET /replica/historical_roots`,
 `GET /replica/sync_status`) — require an `Authorization` header at Reader
 level. The provider node verifies an sr25519 signature locally and resolves

@@ -77,11 +77,13 @@ export class DriveClient {
   private signer: Signer | null = null;
   private signerAddress: string | null = null;
   private keypair: Keypair | null = null;
+  private owner: ChainSigner | null = null;
   private w3s: Web3Storage | null = null;
 
   private rebuild(): void {
     if (!this.api) {
       this.w3s = null;
+      this.owner = null;
       return;
     }
     let chainSigner: ChainSigner | null = null;
@@ -93,6 +95,7 @@ export class DriveClient {
         keypair: this.keypair ?? undefined,
       };
     }
+    this.owner = chainSigner;
     this.w3s = new Web3Storage({ api: this.api, signer: chainSigner });
   }
 
@@ -251,7 +254,7 @@ export class DriveClient {
 
   /** Physical usage vs paid quota, read from the drive's provider node. */
   async getDriveUsage(bucketId: bigint): Promise<BucketUsage> {
-    return fetchBucketUsage(await this.getProviderUrl(bucketId), bucketId);
+    return fetchBucketUsage(await this.getProviderUrl(bucketId), bucketId, this.owner ?? undefined);
   }
 
   // ── FS HTTP operations ────────────────────────────────────────────────────

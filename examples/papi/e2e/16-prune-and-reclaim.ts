@@ -62,6 +62,11 @@ async function main() {
 
   // A quota tight enough that three 100-byte chunks nearly fill it.
   const maxBytes = 400n;
+  // Nodes are content-addressed across buckets and charged to the first
+  // bucket that stores them, so payloads must differ between runs.
+  const run = `${Date.now()}`;
+  const chunk = (tag: number) => `${tag}-${run}-`.padEnd(100, "x");
+  const overQuotaChunk = `z-${run}-`.padEnd(150, "z");
   const { bucketId } = await negotiateAndEstablish(
     api,
     PROVIDER_URL,
@@ -72,7 +77,6 @@ async function main() {
   );
 
   const chunkHashes: string[] = [];
-  const chunk = (tag: number) => String.fromCharCode(65 + tag).repeat(100);
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
@@ -94,7 +98,7 @@ async function main() {
       // The checkpoint event drives the provider's GC reconcile, which
       // clamps the bucket quota to the agreement's max_bytes.
       const usage = await pollUntil("quota sync", 90_000, 3_000, async () => {
-        const u = await fetchBucketUsage(PROVIDER_URL, bucketId);
+        const u = await fetchBucketUsage(PROVIDER_URL, bucketId, client);
         return u.quotaSynced ? u : null;
       });
       assert.strictEqual(usage.maxBytes, maxBytes, "quota should equal agreement max_bytes");
@@ -106,7 +110,7 @@ async function main() {
     name: "16.3 Over-quota upload is refused (507 quota_exceeded)",
     fn: async () => {
       await assert.rejects(
-        uploadChunk(PROVIDER_URL, bucketId, "z".repeat(150), client),
+        uploadChunk(PROVIDER_URL, bucketId, overQuotaChunk, client),
         /quota_exceeded/,
         "a 150-byte chunk must not fit into 400 - 300 remaining",
       );
@@ -139,46 +143,39 @@ async function main() {
     },
   });
 
-  {
-    tests.push({
-      name: "16.6 Physical erasure reclaims the quota headroom",
-      fn: async () => {
-        // Erasure requires the prune-checkpoint to be canonical and the
-        // admin's deletion receipt — both done in 16.4 by pruneAndCheckpoint.
-        const usage = await pollUntil("erasure + quota reclaim", 120_000, 3_000, async () => {
-          const u = await fetchBucketUsage(PROVIDER_URL, bucketId);
-          return u.usedBytes === 100n ? u : null;
-        });
-        assert.strictEqual(usage.usedBytes, 100n, "only the surviving leaf remains charged");
-      },
-    });
+  tests.push({
+    name: "16.6 Physical erasure reclaims the quota headroom",
+    fn: async () => {
+      // Erasure requires the prune-checkpoint to be canonical and the
+      // admin's deletion receipt — both done in 16.4 by pruneAndCheckpoint.
+      const usage = await pollUntil("erasure + quota reclaim", 120_000, 3_000, async () => {
+        const u = await fetchBucketUsage(PROVIDER_URL, bucketId, client);
+        return u.usedBytes === 100n ? u : null;
+      });
+      assert.strictEqual(usage.usedBytes, 100n, "only the surviving leaf remains charged");
+    },
+  });
 
-    tests.push({
-      name: "16.7 Re-upload fits within the reclaimed headroom",
-      fn: async () => {
-        const { commit } = await uploadChunk(
-          PROVIDER_URL,
-          bucketId,
-          "z".repeat(150),
-          client,
-        );
-        assert.ok(commit.mmr_root, "the same-size upload that failed in 16.3 now fits");
-      },
-    });
+  tests.push({
+    name: "16.7 Re-upload fits within the reclaimed headroom",
+    fn: async () => {
+      const { commit } = await uploadChunk(PROVIDER_URL, bucketId, overQuotaChunk, client);
+      assert.ok(commit.mmr_root, "the same-size upload that failed in 16.3 now fits");
+    },
+  });
 
-    tests.push({
-      name: "16.8 Pruned chunks are physically gone (404)",
-      fn: async () => {
-        await assert.rejects(
-          downloadChunk(PROVIDER_URL, bucketId, chunkHashes[0]),
-          /404|not_found/,
-          "erased chunk must not be downloadable",
-        );
-        // The surviving leaf's chunk is untouched.
-        await downloadChunk(PROVIDER_URL, bucketId, chunkHashes[2]);
-      },
-    });
-  }
+  tests.push({
+    name: "16.8 Pruned chunks are physically gone (404)",
+    fn: async () => {
+      await assert.rejects(
+        downloadChunk(PROVIDER_URL, bucketId, chunkHashes[0]),
+        /404|not_found/,
+        "erased chunk must not be downloadable",
+      );
+      // The surviving leaf's chunk is untouched.
+      await downloadChunk(PROVIDER_URL, bucketId, chunkHashes[2]);
+    },
+  });
 
   await runSuite("16 — Prune & Reclaim", tests, { api, papi });
 

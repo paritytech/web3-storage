@@ -329,6 +329,7 @@ async fn public_bucket_node_upload_still_requires_auth() {
 const L0_GATED_GETS: &[&str] = &[
     "/mmr_peaks?bucket_id=1",
     "/commitment?bucket_id=1",
+    "/usage?bucket_id=1",
     "/checkpoint-signature?bucket_id=1",
     "/mmr_proof?bucket_id=1&leaf_index=0",
     "/replica/historical_roots?bucket_id=1",
