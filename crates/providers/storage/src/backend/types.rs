@@ -10,48 +10,49 @@
 //!
 //! Their SCALE encoding *is* the on-disk format. Adding, removing, reordering,
 //! or retyping a field - here or in any type they embed, such as
-//! [`MmrLeaf`] - changes that format, and a provider restarted on data written
-//! by the previous build will fail to decode it. The golden-vector tests in
-//! [`tests::compatibility_tests`] pin the encoding byte-for-byte so such a change breaks the build
-//! instead of a live provider; when one is intended, bump [`FORMAT_VERSION`]
-//! alongside the new vectors.
+//! [`MmrLeaf`](storage_primitives::MmrLeaf) - changes that format, and a
+//! provider restarted on data written by the previous build will fail to
+//! decode it. The golden-vector tests in [`tests::compatibility_tests`] pin
+//! the encoding byte-for-byte so such a change breaks the build instead of a
+//! live provider; when one is intended, bump [`FORMAT_VERSION`] alongside the
+//! new vectors.
 //!
 //! [`StorageBackend`]: super::StorageBackend
 
 use crate::error::Error;
 use codec::{Decode, Encode};
 use sp_core::H256;
-use std::collections::BTreeMap;
-use storage_primitives::{hash_children, MmrLeaf, DEFAULT_CHUNK_SIZE};
+use storage_primitives::{hash_children, DEFAULT_CHUNK_SIZE};
 
 /// Version of the on-disk encoding of the records in this module.
-///
-/// Bump it whenever a change alters what [`ChunkTreeNode`] or [`BucketState`]
-/// encode to, so a build fails on a database in another format instead of
-/// misreading its bytes.
-pub const FORMAT_VERSION: u32 = 4;
+pub const FORMAT_VERSION: u32 = 1;
 
 /// One pruned leaf range. Erasure deletes the range's nodes but keeps its
 /// leaves: a commitment signed before the prune also covers later leaves the
 /// provider still stores, and a proof for those needs the pruned leaves to
-/// rebuild the commitment's root.
-#[derive(Debug, Clone, PartialEq, Encode, Decode)]
+/// rebuild the commitment's root. The leaves are in the leaf store, and the
+/// range is stored under `first_seq` until every leaf's nodes are deleted.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct PrunedRange {
     /// Global sequence number of `leaves[0]`.
     pub first_seq: u64,
-    /// The removed leaves, contiguous from `first_seq`.
-    pub leaves: Vec<MmrLeaf>,
-    /// The start_seq this prune advanced the bucket to.
+    /// The start_seq this prune advanced the bucket to, one past the last
+    /// removed leaf.
     pub new_start_seq: u64,
-    /// How many leaves from the start of `leaves` have had their nodes
+    /// How many leaves from the start of the range have had their nodes
     /// deleted.
     pub erased_leaves: u64,
 }
 
 impl PrunedRange {
+    /// Number of leaves in the range.
+    pub fn leaf_count(&self) -> u64 {
+        self.new_start_seq.saturating_sub(self.first_seq)
+    }
+
     /// Whether every leaf's nodes were deleted.
     pub fn is_erased(&self) -> bool {
-        self.erased_leaves == self.leaves.len() as u64
+        self.erased_leaves == self.leaf_count()
     }
 }
 
@@ -70,32 +71,31 @@ pub struct DeletionReceipt {
     pub signature: sp_runtime::MultiSignature,
 }
 
-/// Per-bucket state a backend persists: the bucket's MMR, its quota usage,
-/// and its deletion lifecycle (stash, receipts, condemnation).
+/// Per-bucket state a backend persists: the bucket's MMR summary and its
+/// quota usage. Every field has a fixed size apart from `peaks`, which has at
+/// most 64 entries, so the record does not grow with the bucket's history. The
+/// leaves, pruned ranges and deletion receipts are separate records keyed by
+/// bucket and sequence number.
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
 pub struct BucketState {
-    /// Root of the MMR over `leaves`.
+    /// Root of the MMR over the retained leaves.
     pub mmr_root: H256,
-    /// Sequence number of `leaves[0]`; advances as `delete_before` prunes.
+    /// Sequence number of the first retained leaf; advances as `delete_before`
+    /// prunes.
     pub start_seq: u64,
-    /// MMR leaves still retained, oldest first.
-    pub leaves: Vec<MmrLeaf>,
+    /// Number of retained leaves.
+    pub leaf_count: u64,
+    /// Peaks of the MMR over the retained leaves, left to right.
+    pub peaks: Vec<H256>,
     /// Bytes of node data charged against the quota.
     pub used_bytes: u64,
     /// Number of nodes this bucket stored.
     pub node_count: u64,
     /// Quota agreed on-chain for this bucket.
     pub max_bytes: u64,
-    /// Pruned leaf ranges, oldest first; the ones not erased are the
-    /// pending-erasure queue.
-    pub pruned: Vec<PrunedRange>,
-    /// Admin-signed deletion receipts keyed by `new_start_seq` (one per
-    /// prune point), kept even after their ranges are erased — permanent
-    /// evidence for the on-chain `Deleted` defense.
-    pub deletion_receipts: BTreeMap<u64, DeletionReceipt>,
     /// Set when the bucket was deleted on-chain (or the agreement ended).
-    /// The bucket row is removed once `leaves` is empty and every pruned
-    /// range is erased.
+    /// The bucket's records are removed once no retained leaf and no pruned
+    /// range is left to erase.
     pub condemned: bool,
 }
 
@@ -105,19 +105,18 @@ impl BucketState {
         Self {
             mmr_root: H256::zero(),
             start_seq: 0,
-            leaves: Vec::new(),
+            leaf_count: 0,
+            peaks: Vec::new(),
             used_bytes: 0,
             node_count: 0,
             max_bytes,
-            pruned: Vec::new(),
-            deletion_receipts: BTreeMap::new(),
             condemned: false,
         }
     }
 
-    /// Number of MMR leaves currently retained.
-    pub fn leaf_count(&self) -> u64 {
-        self.leaves.len() as u64
+    /// Sequence number one past the last retained leaf.
+    pub fn end_seq(&self) -> u64 {
+        self.start_seq.saturating_add(self.leaf_count)
     }
 }
 
@@ -188,7 +187,7 @@ impl ChunkTreeNode {
 mod tests {
     use super::*;
     use codec::DecodeAll;
-    use storage_primitives::LEAF_VERSION;
+    use storage_primitives::{MmrLeaf, LEAF_VERSION};
 
     /// Pins the exact bytes these records encode to. A failure here means
     /// existing provider databases can no longer be decoded - bump
@@ -221,17 +220,11 @@ mod tests {
                 BucketState {
                     mmr_root: H256::repeat_byte(0xab),
                     start_seq: 7,
-                    leaves: vec![MmrLeaf {
-                        leaf_version: LEAF_VERSION,
-                        data_root: H256::repeat_byte(0xcd),
-                        data_size: 111,
-                        total_size: 222,
-                    }],
+                    leaf_count: 3,
+                    peaks: vec![H256::repeat_byte(0x11), H256::repeat_byte(0x22)],
                     used_bytes: 999,
                     node_count: 5,
                     max_bytes: 1_000_000,
-                    pruned: Vec::new(),
-                    deletion_receipts: BTreeMap::new(),
                     condemned: false,
                 },
                 concat!(
@@ -239,24 +232,18 @@ mod tests {
                     "abababababababababababababababababababababababababababababababab",
                     // start_seq: u64 = 7 (little-endian)
                     "0700000000000000",
-                    // leaves: Vec<MmrLeaf>, compact length 1
-                    "04",
-                    // leaves[0]: leaf_version = 1, data_root (0xcd * 32), data_size = 111,
-                    // total_size = 222
-                    "01",
-                    "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
-                    "6f00000000000000",
-                    "de00000000000000",
+                    // leaf_count: u64 = 3
+                    "0300000000000000",
+                    // peaks: Vec<H256>, compact length 2, then the peaks
+                    "08",
+                    "1111111111111111111111111111111111111111111111111111111111111111",
+                    "2222222222222222222222222222222222222222222222222222222222222222",
                     // used_bytes: u64 = 999
                     "e703000000000000",
                     // node_count: u64 = 5
                     "0500000000000000",
                     // max_bytes: u64 = 1_000_000
                     "40420f0000000000",
-                    // pruned: Vec<PrunedRange>, compact length 0
-                    "00",
-                    // deletion_receipts: BTreeMap, compact length 0
-                    "00",
                     // condemned: bool = false
                     "00",
                 ),
@@ -268,24 +255,12 @@ mod tests {
             assert_golden(
                 PrunedRange {
                     first_seq: 3,
-                    leaves: vec![MmrLeaf {
-                        leaf_version: LEAF_VERSION,
-                        data_root: H256::repeat_byte(0xcd),
-                        data_size: 111,
-                        total_size: 222,
-                    }],
                     new_start_seq: 4,
                     erased_leaves: 1,
                 },
                 concat!(
                     // first_seq: u64 = 3
                     "0300000000000000",
-                    // leaves: Vec<MmrLeaf>, compact length 1, then the leaf
-                    "04",
-                    "01",
-                    "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
-                    "6f00000000000000",
-                    "de00000000000000",
                     // new_start_seq: u64 = 4
                     "0400000000000000",
                     // erased_leaves: u64 = 1
@@ -361,21 +336,30 @@ mod tests {
     #[test]
     fn bucket_state_new_is_empty() {
         let bucket = BucketState::new(1_000);
-        assert_eq!(bucket.leaf_count(), 0);
+        assert_eq!(bucket.leaf_count, 0);
         assert_eq!(bucket.used_bytes, 0);
         assert_eq!(bucket.max_bytes, 1_000);
     }
 
     #[test]
-    fn bucket_state_leaf_count_tracks_leaves() {
+    fn bucket_state_end_seq_follows_the_retained_leaves() {
         let mut bucket = BucketState::new(1_000);
-        bucket.leaves.push(MmrLeaf {
-            leaf_version: LEAF_VERSION,
-            data_root: H256::repeat_byte(0xcd),
-            data_size: 111,
-            total_size: 222,
-        });
-        assert_eq!(bucket.leaf_count(), 1);
+        bucket.start_seq = 4;
+        bucket.leaf_count = 5;
+        assert_eq!(bucket.end_seq(), 9);
+    }
+
+    #[test]
+    fn pruned_range_is_erased_when_every_leaf_is() {
+        let mut range = PrunedRange {
+            first_seq: 3,
+            new_start_seq: 5,
+            erased_leaves: 1,
+        };
+        assert_eq!(range.leaf_count(), 2);
+        assert!(!range.is_erased());
+        range.erased_leaves = 2;
+        assert!(range.is_erased());
     }
 
     #[test]

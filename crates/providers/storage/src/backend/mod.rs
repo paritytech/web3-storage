@@ -303,6 +303,7 @@ pub trait StorageBackend: Send + Sync {
 
     /// Store an admin-signed deletion receipt for a stashed range (matched
     /// by `new_start_seq`). Replaces a previous receipt for the same range.
+    /// A condemned bucket rejects it with [`Error::BucketCondemned`].
     fn attach_deletion_receipt(
         &self,
         bucket_id: BucketId,
@@ -330,13 +331,13 @@ pub trait StorageBackend: Send + Sync {
 
     /// Physically erase one stashed range: decrement refcounts along each
     /// leaf's tree, delete zero-ref nodes, credit `used_bytes` back to each
-    /// node's charged bucket, and mark the leaves erased. The work runs in
+    /// node's charged bucket, and count the leaves erased. The work runs in
     /// batches of whole leaves, each batch one atomic write; a failure keeps
     /// the batches already applied and a later call resumes after them. The
-    /// range's leaves remain (see [`PrunedRange`]). Idempotent: an
-    /// unknown or already erased `first_seq` is a no-op `Ok`. On a condemned
-    /// bucket, removes the bucket row once no live leaf and no unerased range
-    /// remains.
+    /// range's leaves remain (see [`PrunedRange`]); the range record goes
+    /// once every leaf is erased. Idempotent: an unknown or already erased
+    /// `first_seq` is a no-op `Ok`. On a condemned bucket, removes the
+    /// bucket's records once no live leaf and no unerased range remains.
     ///
     /// Callers are responsible for checking that liability has passed
     /// (canonical checkpoint past the range, the admin's deletion receipt
@@ -351,9 +352,10 @@ pub trait StorageBackend: Send + Sync {
     /// range and mark the bucket condemned. The second half is the caller
     /// (the GC) invoking [`erase_pruned_range`](Self::erase_pruned_range)
     /// once liability has passed — on a condemned bucket that also removes
-    /// the bucket row itself. Idempotent; `Ok` if the bucket is already
-    /// condemned or already gone. A condemned bucket rejects `store_node` and
-    /// `commit` with [`Error::BucketCondemned`].
+    /// the bucket's records. Idempotent; `Ok` if the bucket is already
+    /// condemned or already gone. On a condemned bucket with nothing left to
+    /// erase it resumes a removal that stopped part way. A condemned bucket
+    /// rejects `store_node` and `commit` with [`Error::BucketCondemned`].
     fn condemn_bucket(&self, bucket_id: BucketId) -> Result<(), Error>;
 
     /// Get MMR proof for a leaf.

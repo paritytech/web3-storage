@@ -209,6 +209,9 @@ impl GcCoordinator {
                     }
                 }
             }
+        } else {
+            // Resumes a removal that stopped part way; a no-op otherwise.
+            self.state.storage.condemn_bucket(bucket_id)?;
         }
 
         // Erasure pass over the stash. A range may be erased once liability
