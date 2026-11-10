@@ -598,6 +598,7 @@ fn result_to_string(result: &CheckpointResult) -> String {
             format!("ProvidersUnreachable({})", providers.len())
         }
         CheckpointResult::NoProviders => "NoProviders".to_string(),
+        CheckpointResult::UpToDate => "UpToDate".to_string(),
         CheckpointResult::TransactionFailed { error } => {
             format!("TransactionFailed({error})")
         }
@@ -778,5 +779,10 @@ mod tests {
 
         assert_eq!(state.health_histories.len(), 1);
         assert_eq!(state.metrics.total_attempts, 10);
+    }
+
+    #[test]
+    fn up_to_date_persists_under_its_own_name() {
+        assert_eq!(result_to_string(&CheckpointResult::UpToDate), "UpToDate");
     }
 }
