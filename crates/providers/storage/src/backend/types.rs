@@ -29,7 +29,7 @@ use storage_primitives::{hash_children, MmrLeaf, DEFAULT_CHUNK_SIZE};
 /// Bump it whenever a change alters what [`ChunkTreeNode`] or [`BucketState`]
 /// encode to, so a build fails on a database in another format instead of
 /// misreading its bytes.
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 
 /// One pruned leaf range. Erasure deletes the range's nodes but keeps its
 /// leaves: a commitment signed before the prune also covers later leaves the
@@ -43,8 +43,16 @@ pub struct PrunedRange {
     pub leaves: Vec<MmrLeaf>,
     /// The start_seq this prune advanced the bucket to.
     pub new_start_seq: u64,
-    /// Whether the range's nodes were deleted.
-    pub erased: bool,
+    /// How many leaves from the start of `leaves` have had their nodes
+    /// deleted.
+    pub erased_leaves: u64,
+}
+
+impl PrunedRange {
+    /// Whether every leaf's nodes were deleted.
+    pub fn is_erased(&self) -> bool {
+        self.erased_leaves == self.leaves.len() as u64
+    }
 }
 
 /// An admin-signed deletion authorization: the durable evidence for the
@@ -78,7 +86,7 @@ pub struct BucketState {
     pub node_count: u64,
     /// Quota agreed on-chain for this bucket.
     pub max_bytes: u64,
-    /// Pruned leaf ranges, oldest first; the ones not `erased` are the
+    /// Pruned leaf ranges, oldest first; the ones not erased are the
     /// pending-erasure queue.
     pub pruned: Vec<PrunedRange>,
     /// Admin-signed deletion receipts keyed by `new_start_seq` (one per
@@ -267,7 +275,7 @@ mod tests {
                         total_size: 222,
                     }],
                     new_start_seq: 4,
-                    erased: true,
+                    erased_leaves: 1,
                 },
                 concat!(
                     // first_seq: u64 = 3
@@ -280,8 +288,8 @@ mod tests {
                     "de00000000000000",
                     // new_start_seq: u64 = 4
                     "0400000000000000",
-                    // erased: bool = true
-                    "01",
+                    // erased_leaves: u64 = 1
+                    "0100000000000000",
                 ),
             );
         }
