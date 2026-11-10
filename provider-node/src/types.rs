@@ -229,6 +229,8 @@ pub struct DeleteResponse {
 /// Request to store an admin-signed deletion authorization for a prune.
 /// The signature is a SCALE-encoded `MultiSignature` over
 /// `CommitmentPayload(bucket_id, Commitment { mmr_root, new_start_seq, 0 })`.
+/// `admin` must be the account that signed the request, and the signature must
+/// verify against it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteConfirmRequest {
     pub bucket_id: BucketId,

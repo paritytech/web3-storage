@@ -2,7 +2,7 @@
 
 //! Integration tests for the challenge responder.
 
-use super::{alice_account, test_state, test_state_with_data, wait_for};
+use super::{alice_account, signed_receipt, test_state, test_state_with_data, wait_for};
 use provider_storage::ChunkTreeNode;
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
@@ -247,17 +247,7 @@ async fn erased_leaves_are_defended_with_the_deletion_receipt() {
     let post_root = state.storage.delete_before(1, 1).unwrap().mmr_root;
     state
         .storage
-        .attach_deletion_receipt(
-            1,
-            provider_storage::DeletionReceipt {
-                mmr_root: post_root,
-                new_start_seq: 1,
-                admin: sp_core::crypto::AccountId32::new([7u8; 32]),
-                signature: sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from(
-                    [0u8; 64],
-                )),
-            },
-        )
+        .attach_deletion_receipt(1, signed_receipt(1, post_root, 1))
         .unwrap();
     state.storage.erase_pruned_range(1, 0).unwrap();
 
@@ -321,17 +311,7 @@ async fn live_leaf_of_an_erased_commitment_is_answered() {
     let post_root = state.storage.delete_before(1, 1).unwrap().mmr_root;
     state
         .storage
-        .attach_deletion_receipt(
-            1,
-            provider_storage::DeletionReceipt {
-                mmr_root: post_root,
-                new_start_seq: 1,
-                admin: sp_core::crypto::AccountId32::new([7u8; 32]),
-                signature: sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from(
-                    [0u8; 64],
-                )),
-            },
-        )
+        .attach_deletion_receipt(1, signed_receipt(1, post_root, 1))
         .unwrap();
     state.storage.erase_pruned_range(1, 0).unwrap();
 

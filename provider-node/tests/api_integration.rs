@@ -203,6 +203,78 @@ common::backend_tests! {
     }
 }
 
+/// Upload `data` as a leaf chunk of bucket 1 and return its hash.
+async fn upload_chunk(server: &TestServer, data: &[u8]) -> (H256, reqwest::Response) {
+    let hash = storage_primitives::hash_leaf(data);
+    let response = server
+        .client
+        .put(server.url("/node"))
+        .json(&json!({
+            "bucket_id": 1,
+            "hash": format!("{hash:#x}"),
+            "data": BASE64.encode(data),
+            "children": null
+        }))
+        .send()
+        .await
+        .unwrap();
+    (hash, response)
+}
+
+#[tokio::test]
+async fn upload_and_commit_on_condemned_bucket_return_gone() {
+    let mut storage = None;
+    let server = TestServer::start(StorageBackendKind::RocksDb, |deps| {
+        storage = Some(deps.storage.clone());
+        ProviderState::with_seed(deps, common::PROVIDER_SEED).expect("//Alice is a valid SURI")
+    })
+    .await;
+    let storage = storage.unwrap();
+
+    let (stored, response) = upload_chunk(&server, b"stored before condemnation").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (late, response) = upload_chunk(&server, b"stored, committed too late").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({ "bucket_id": 1, "data_roots": [format!("{stored:#x}")] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    storage.condemn_bucket(1).unwrap();
+    let leaf_count = |server: &TestServer| {
+        let request = server.client.get(server.url("/commitment?bucket_id=1"));
+        async move {
+            let body: Value = request.send().await.unwrap().json().await.unwrap();
+            body["leaf_count"].clone()
+        }
+    };
+    let before = leaf_count(&server).await;
+
+    let (_, response) = upload_chunk(&server, b"uploaded after condemnation").await;
+    assert_eq!(response.status(), StatusCode::GONE);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "bucket_condemned");
+    assert_eq!(body["details"]["bucket_id"], 1);
+
+    let response = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({ "bucket_id": 1, "data_roots": [format!("{late:#x}")] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::GONE);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "bucket_condemned");
+    assert_eq!(body["details"]["bucket_id"], 1);
+
+    assert_eq!(leaf_count(&server).await, before);
+}
+
 common::backend_tests! {
     async fn test_commit_and_get_commitment(backend) {
         let server = TestServer::new(backend).await;
@@ -1454,7 +1526,9 @@ impl storage_provider_node::GcChainClient for StubGcChain {
             ));
         }
         Ok(storage_provider_node::CanonicalBucketState {
+            block_number: 1,
             exists: true,
+            next_bucket_id: u64::MAX,
             frozen_start_seq: self.frozen.then_some(0),
             canonical_start_seq: None,
         })
@@ -1480,6 +1554,84 @@ impl storage_provider_node::GcChainClient for StubGcChain {
 fn valid_sig_hex() -> String {
     let sig: sp_runtime::MultiSignature = sp_core::sr25519::Signature::from([0u8; 64]).into();
     array_bytes::bytes2hex("0x", codec::Encode::encode(&sig))
+}
+
+/// `/delete/confirm` body for `new_start_seq` with `admin`'s real signature
+/// over the deletion payload of `bucket_id`.
+fn receipt_body(
+    admin: &sr25519::Pair,
+    bucket_id: u64,
+    mmr_root: &str,
+    new_start_seq: u64,
+) -> Value {
+    let root = H256::from_slice(&array_bytes::hex2bytes(mmr_root).unwrap());
+    let payload = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root: root,
+            start_seq: new_start_seq,
+            leaf_count: 0,
+        },
+    );
+    let signature: sp_runtime::MultiSignature = admin.sign(&payload.encode()).into();
+    json!({
+        "bucket_id": bucket_id,
+        "mmr_root": mmr_root,
+        "new_start_seq": new_start_seq,
+        "admin": array_bytes::bytes2hex("0x", admin.public().0),
+        "signature": array_bytes::bytes2hex("0x", signature.encode()),
+    })
+}
+
+/// `receipt_body` for the prune `prune_one_chunk` made.
+fn signed_confirm_body(admin: &sr25519::Pair, mmr_root: &str) -> Value {
+    receipt_body(admin, 1, mmr_root, 1)
+}
+
+async fn confirm_deletion(server: &TestServer, body: &Value) -> reqwest::Response {
+    server
+        .client
+        .post(server.url("/delete/confirm"))
+        .json(body)
+        .send()
+        .await
+        .unwrap()
+}
+
+/// Upload and commit one chunk to bucket 1, prune it, and return the
+/// post-prune MMR root.
+async fn prune_one_chunk(server: &TestServer) -> String {
+    let data = b"chunk-to-confirm-deletion";
+    let hash = storage_primitives::hash_leaf(data);
+    let hash_hex = format!("{hash:#x}");
+    server
+        .client
+        .put(server.url("/node"))
+        .json(&json!({
+            "bucket_id": 1,
+            "hash": hash_hex,
+            "data": BASE64.encode(data),
+            "children": null,
+        }))
+        .send()
+        .await
+        .unwrap();
+    server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+        .send()
+        .await
+        .unwrap();
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .json(&json!({ "bucket_id": 1, "new_start_seq": 1 }))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    body["mmr_root"].as_str().unwrap().to_string()
 }
 
 common::backend_tests! {
@@ -1523,61 +1675,79 @@ common::backend_tests! {
         assert_eq!(body["error"], "chain_state_unavailable");
     }
 
-    async fn test_delete_confirm_stores_receipt(backend) {
+    async fn test_delete_confirm_stores_a_signed_receipt(backend) {
         let server = TestServer::new(backend).await;
+        let mmr_root = prune_one_chunk(&server).await;
 
-        // Upload + commit one chunk, then prune it.
-        let data = b"chunk-to-confirm-deletion";
-        let hash = storage_primitives::hash_leaf(data);
-        let hash_hex = format!("{hash:#x}");
-        server
-            .client
-            .put(server.url("/node"))
-            .json(&json!({
-                "bucket_id": 1,
-                "hash": hash_hex,
-                "data": BASE64.encode(data),
-                "children": null,
-            }))
-            .send()
-            .await
-            .unwrap();
-        server
-            .client
-            .post(server.url("/commit"))
-            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
-            .send()
-            .await
-            .unwrap();
-        let resp = server
-            .client
-            .post(server.url("/delete"))
-            .json(&json!({ "bucket_id": 1, "new_start_seq": 1 }))
-            .send()
-            .await
-            .unwrap();
-        let body: Value = resp.json().await.unwrap();
-        let mmr_root = body["mmr_root"].as_str().unwrap().to_string();
+        let body = signed_confirm_body(&common::test_member_pair(), &mmr_root);
+        let resp = confirm_deletion(&server, &body).await;
 
-        // Store the admin's deletion authorization for the prune. The node
-        // parses it into a typed receipt (whether the admin really signed
-        // it is adjudicated on-chain at defense time).
-        let resp = server
-            .client
-            .post(server.url("/delete/confirm"))
-            .json(&json!({
-                "bucket_id": 1,
-                "mmr_root": mmr_root,
-                "new_start_seq": 1,
-                "admin": array_bytes::bytes2hex("0x", &[7u8; 32][..]),
-                "signature": valid_sig_hex(),
-            }))
-            .send()
-            .await
-            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["stored"], true);
+    }
+
+    async fn test_delete_confirm_rejects_a_forged_receipt(backend) {
+        let server = TestServer::new(backend).await;
+        let mmr_root = prune_one_chunk(&server).await;
+        let admin = common::test_member_pair();
+
+        // Right admin, but the signature does not verify.
+        let mut forged = signed_confirm_body(&admin, &mmr_root);
+        forged["signature"] = json!(valid_sig_hex());
+        let resp = confirm_deletion(&server, &forged).await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_signature");
+
+        // Nothing was stored: a correctly signed receipt still attaches.
+        let resp = confirm_deletion(&server, &signed_confirm_body(&admin, &mmr_root)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    async fn test_delete_confirm_rejects_a_receipt_for_another_admin(backend) {
+        let server = TestServer::new(backend).await;
+        let mmr_root = prune_one_chunk(&server).await;
+        // Validly signed, but by an account other than the request signer.
+        let other = sr25519::Pair::from_seed(&[9u8; 32]);
+
+        let resp = confirm_deletion(&server, &signed_confirm_body(&other, &mmr_root)).await;
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "not_authorized");
+    }
+
+    async fn test_delete_confirm_rejects_a_signature_scheme_the_admin_cannot_have(backend) {
+        let server = TestServer::new(backend).await;
+        let mmr_root = prune_one_chunk(&server).await;
+        let mut body = signed_confirm_body(&common::test_member_pair(), &mmr_root);
+        let ecdsa: sp_runtime::MultiSignature =
+            sp_core::ecdsa::Signature::from_raw([1u8; 65]).into();
+        body["signature"] = json!(array_bytes::bytes2hex("0x", Encode::encode(&ecdsa)));
+
+        let resp = confirm_deletion(&server, &body).await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_signature");
+    }
+
+    async fn test_delete_confirm_rejects_a_forged_replacement(backend) {
+        let server = TestServer::new(backend).await;
+        let mmr_root = prune_one_chunk(&server).await;
+        let admin = common::test_member_pair();
+        let resp = confirm_deletion(&server, &signed_confirm_body(&admin, &mmr_root)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let mut forged = signed_confirm_body(&admin, &mmr_root);
+        forged["signature"] = json!(valid_sig_hex());
+        let resp = confirm_deletion(&server, &forged).await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_signature");
     }
 
     async fn test_delete_confirm_rejects_undecodable_signature(backend) {
@@ -1605,19 +1775,13 @@ common::backend_tests! {
     async fn test_delete_confirm_rejects_unknown_range(backend) {
         let server = TestServer::new(backend).await;
         // No prune happened: nothing to confirm.
-        let resp = server
-            .client
-            .post(server.url("/delete/confirm"))
-            .json(&json!({
-                "bucket_id": 1,
-                "mmr_root": array_bytes::bytes2hex("0x", &[0u8; 32][..]),
-                "new_start_seq": 5,
-                "admin": array_bytes::bytes2hex("0x", &[7u8; 32][..]),
-                "signature": valid_sig_hex(),
-            }))
-            .send()
-            .await
-            .unwrap();
+        let body = receipt_body(
+            &common::test_member_pair(),
+            1,
+            &array_bytes::bytes2hex("0x", &[0u8; 32][..]),
+            5,
+        );
+        let resp = confirm_deletion(&server, &body).await;
         // Bucket 1 does not even exist locally yet.
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }

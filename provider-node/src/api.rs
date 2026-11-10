@@ -146,7 +146,7 @@ async fn check_role(
     method: &str,
     bucket_id: u64,
     required: RequiredRole,
-) -> Result<(), Error> {
+) -> Result<Option<sp_core::crypto::AccountId32>, Error> {
     state
         .auth
         .require_role(auth_header(headers), method, bucket_id, required)
@@ -566,12 +566,18 @@ async fn delete_data(
 /// what allows the GC to physically erase the pruned range: any later
 /// `challenge_offchain` citing an old commitment over the erased leaves is
 /// answered with the receipt instead of the bytes.
+///
+/// `admin` must be the account that signed the request, and `signature` must
+/// verify against it over that payload. Otherwise the node rejects the
+/// receipt (403 `not_authorized`, 400 `invalid_signature`), because the pallet
+/// would reject it at defense time and slash the provider. The pallet also
+/// checks that `admin` is still a bucket admin at defense time.
 async fn confirm_deletion(
     State(state): State<Arc<ProviderState>>,
     headers: axum::http::HeaderMap,
     Json(request): Json<DeleteConfirmRequest>,
 ) -> Result<Json<DeleteConfirmResponse>, Error> {
-    check_role(
+    let caller = check_role(
         &state,
         &headers,
         "POST",
@@ -614,6 +620,11 @@ async fn confirm_deletion(
     .ok()
     .and_then(|b| sp_runtime::MultiSignature::decode(&mut b.as_slice()).ok())
     .ok_or(Error::InvalidSignature)?;
+    if caller.as_ref() != Some(&admin) {
+        return Err(Error::NotAuthorized(
+            "the receipt's admin must be the account that signed the request".to_string(),
+        ));
+    }
 
     let bucket_id = request.bucket_id;
     let receipt = provider_storage::DeletionReceipt {

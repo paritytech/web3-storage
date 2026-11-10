@@ -26,6 +26,33 @@ pub fn alice_account() -> AccountId32 {
     AccountId32::from_str(ALICE_SS58).unwrap()
 }
 
+/// A deletion receipt for `bucket_id` that an admin key signed over the
+/// deletion commitment, the way the pallet's `Deleted` defense verifies it.
+pub fn signed_receipt(
+    bucket_id: storage_primitives::BucketId,
+    mmr_root: sp_core::H256,
+    new_start_seq: u64,
+) -> provider_storage::DeletionReceipt {
+    use codec::Encode;
+    use sp_core::Pair;
+
+    let admin = sp_core::sr25519::Pair::from_seed(&[7u8; 32]);
+    let payload = storage_primitives::CommitmentPayload::new(
+        bucket_id,
+        storage_primitives::Commitment {
+            mmr_root,
+            start_seq: new_start_seq,
+            leaf_count: 0,
+        },
+    );
+    provider_storage::DeletionReceipt {
+        mmr_root,
+        new_start_seq,
+        admin: admin.public().0.into(),
+        signature: admin.sign(&payload.encode()).into(),
+    }
+}
+
 /// Standard test dependencies around the given backend: an empty static
 /// membership set.
 pub fn test_deps(storage: Arc<dyn StorageBackend>) -> ProviderDeps {

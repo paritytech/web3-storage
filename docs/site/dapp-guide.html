@@ -107,6 +107,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   <li>
     <h3>Checkpoint</h3>
     <p>Get a signature from each primary with <code>GET /checkpoint-signature</code>, then submit <code>checkpoint(bucket_id, commitment, signatures)</code> as a writer or admin, with at least <code>min_providers</code> primary signatures. Anyone can add more signatures to the current snapshot later with <code>extend_checkpoint</code>.</p>
+    <p>A new checkpoint never moves the bucket back: <code>start_seq</code> never decreases. With the same <code>start_seq</code>, its end (<code>start_seq + leaf_count</code>) must be past the current end. After a deletion moves <code>start_seq</code> forward, the end must not be before the current end. On a frozen bucket <code>start_seq</code> stays at <code>frozen_start_seq</code>. Otherwise <code>checkpoint</code> fails with <code>SnapshotNotForward</code> or <code>SnapshotViolatesFrozen</code>. The chain compares ranges only: it does not check that the new MMR extends the old one.</p>
     <p>Checkpoints are optional and can be infrequent. Without one, <code>challenge_checkpoint</code> is not available and providers must keep every state they signed.</p>
     <p class="see">Diagram: <a href="08-write-commit-checkpoint.html">08 Upload, commit, checkpoint</a></p>
   </li>

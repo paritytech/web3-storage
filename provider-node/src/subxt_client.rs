@@ -581,6 +581,20 @@ impl GcChainClient for SubxtChainClient {
             .unvalidated();
 
         let at = self.at_current_block().await?;
+        let block_number = at.block_number();
+        let next_bucket_id = at
+            .storage()
+            .fetch(
+                storage_subxt::api::storage()
+                    .storage_provider()
+                    .next_bucket_id()
+                    .unvalidated(),
+                (),
+            )
+            .await
+            .map_err(|e| ChainClientError::query("next bucket id", e))?
+            .decode()
+            .map_err(|e| ChainClientError::decode("next bucket id", e))?;
 
         let Some(value) = at
             .storage()
@@ -590,7 +604,11 @@ impl GcChainClient for SubxtChainClient {
         else {
             // Authoritative "no bucket row" — distinct from a fetch failure,
             // which propagates as Err (the GC fails closed on it).
-            return Ok(CanonicalBucketState::default());
+            return Ok(CanonicalBucketState {
+                block_number,
+                next_bucket_id,
+                ..CanonicalBucketState::default()
+            });
         };
 
         let bucket = value
@@ -598,7 +616,9 @@ impl GcChainClient for SubxtChainClient {
             .map_err(|e| ChainClientError::decode("bucket", e))?;
 
         Ok(CanonicalBucketState {
+            block_number,
             exists: true,
+            next_bucket_id,
             frozen_start_seq: bucket.frozen_start_seq,
             canonical_start_seq: bucket.snapshot.map(|s| s.commitment.start_seq),
         })

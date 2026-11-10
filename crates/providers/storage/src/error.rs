@@ -65,6 +65,19 @@ pub enum Error {
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
 
+    /// The bucket is being torn down on this provider: its agreement ended or
+    /// the bucket was deleted. The provider accepts no more nodes or commits
+    /// for it. Upload to a provider that holds an agreement for the bucket.
+    #[error("Bucket {0} is condemned")]
+    BucketCondemned(u64),
+
+    /// The deletion receipt's signature is not a valid signature by its
+    /// `admin` over the deletion commitment of the bucket. The admin must sign
+    /// `CommitmentPayload(bucket_id, Commitment { mmr_root, start_seq:
+    /// new_start_seq, leaf_count: 0 })`.
+    #[error("Invalid deletion receipt for bucket {0}")]
+    InvalidDeletionReceipt(u64),
+
     #[error("Root not found: {0:?}")]
     RootNotFound(H256),
 
