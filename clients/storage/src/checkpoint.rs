@@ -239,6 +239,27 @@ pub struct CommitmentCollection {
     pub disagreeing_providers: Vec<(AccountId32, H256)>,
     /// Providers that couldn't be reached.
     pub unreachable_providers: Vec<AccountId32>,
+    /// The bucket's on-chain snapshot when the responses were collected.
+    pub snapshot: Option<Commitment>,
+}
+
+impl CommitmentCollection {
+    /// The majority commitment.
+    pub fn commitment(&self) -> Commitment {
+        Commitment {
+            mmr_root: self.mmr_root,
+            start_seq: self.start_seq,
+            leaf_count: self.leaf_count,
+        }
+    }
+
+    /// Whether the chain accepts the majority commitment as a new snapshot.
+    /// `false` when it covers no leaf beyond the current snapshot.
+    pub fn advances_snapshot(&self) -> bool {
+        self.snapshot
+            .as_ref()
+            .is_none_or(|snapshot| self.commitment().moves_forward_from(snapshot))
+    }
 }
 
 // ============================================================================
@@ -435,9 +456,7 @@ impl CheckpointMetrics {
                 // These providers didn't respond
                 self.providers_queried += providers.len() as u64;
             }
-            CheckpointResult::NoProviders => {
-                // No providers configured
-            }
+            CheckpointResult::NoProviders | CheckpointResult::UpToDate => {}
             CheckpointResult::TransactionFailed { .. } => {
                 self.transaction_failures += 1;
             }
@@ -489,6 +508,10 @@ pub enum CheckpointResult {
     },
     /// No providers found for this bucket.
     NoProviders,
+    /// The providers' commitment covers no leaf beyond the on-chain snapshot,
+    /// so the chain would reject it with `SnapshotNotForward`. Nothing was
+    /// submitted.
+    UpToDate,
     /// Transaction submission failed.
     TransactionFailed {
         /// Error message.
@@ -852,7 +875,7 @@ impl CheckpointManager {
             .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to read chain state: {e}")))?;
-        let floor = Self::snapshot_floor(&at, bucket_id).await?;
+        let snapshot = Self::snapshot(&at, bucket_id).await?;
 
         // Query all providers in parallel
         let provider_commitment_futures: Vec<_> = providers
@@ -877,7 +900,7 @@ impl CheckpointManager {
                 continue;
             };
 
-            if Self::commitment_within_floor(bucket_id, &account, &commitment, floor) {
+            if Self::commitment_within_floor(bucket_id, &account, &commitment, snapshot.as_ref()) {
                 commitments_by_root
                     .entry(commitment.mmr_root)
                     .or_default()
@@ -927,15 +950,15 @@ impl CheckpointManager {
             agreeing_providers: agreeing.iter().map(|(id, _)| id.clone()).collect(),
             disagreeing_providers: disagreeing,
             unreachable_providers: unreachable,
+            snapshot,
         })
     }
 
-    /// The committed range already on chain, if any: a checkpoint must never
-    /// move backwards from it.
-    async fn snapshot_floor<C>(
+    /// The bucket's on-chain snapshot, if any.
+    async fn snapshot<C>(
         at: &subxt::client::ClientAtBlock<subxt::PolkadotConfig, C>,
         bucket_id: BucketId,
-    ) -> Result<Option<(u64, u64)>, ClientError>
+    ) -> Result<Option<Commitment>, ClientError>
     where
         C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
     {
@@ -945,11 +968,13 @@ impl CheckpointManager {
 
         Ok(bucket
             .snapshot
-            .map(|s| (s.commitment.start_seq, s.commitment.leaf_count)))
+            .map(|s| convert::to_sp_commitment(&s.commitment)))
     }
 
     /// Whether a provider response may take part in a checkpoint: `false`
-    /// (with a warning) when its range sits behind the on-chain snapshot.
+    /// (with a warning) when its range sits behind the on-chain snapshot. A
+    /// response with the snapshot's range is usable: it makes the result
+    /// `UpToDate`, not a failure.
     ///
     /// Root and signature arrived already typed — an undecodable value fails
     /// the provider's HTTP round at deserialization — so this floor check is
@@ -958,30 +983,30 @@ impl CheckpointManager {
         bucket_id: BucketId,
         account: &AccountId32,
         commitment: &CommitmentResponse,
-        floor: Option<(u64, u64)>,
+        snapshot: Option<&Commitment>,
     ) -> bool {
-        // A shrinking range would narrow what the provider can be challenged
-        // over — never accept it, whatever the majority says. The range is
-        // `[start_seq, start_seq + leaf_count)` (design: "Canonical range");
-        // delete only ever moves `start_seq` forward, so `leaf_count` legitimately
-        // *drops* on every delete and is not itself a floor - the invariant that
-        // must hold is that neither end of the range moves backwards.
-        if let Some((floor_start_seq, floor_leaf_count)) = floor {
-            let floor_end = floor_start_seq.saturating_add(floor_leaf_count);
-            let commitment_end = commitment.start_seq.saturating_add(commitment.leaf_count);
-            if commitment.start_seq < floor_start_seq || commitment_end < floor_end {
-                tracing::warn!(
-                    "Bucket {bucket_id}: provider {account} reported range (start_seq={}, \
-                     leaf_count={}) behind the on-chain snapshot (start_seq={floor_start_seq}, \
-                     leaf_count={floor_leaf_count})",
-                    commitment.start_seq,
-                    commitment.leaf_count
-                );
-                return false;
-            }
+        let Some(snapshot) = snapshot else {
+            return true;
+        };
+        let reported = Commitment {
+            mmr_root: commitment.mmr_root,
+            start_seq: commitment.start_seq,
+            leaf_count: commitment.leaf_count,
+        };
+        let same_range =
+            reported.start_seq == snapshot.start_seq && reported.leaf_count == snapshot.leaf_count;
+        if reported.moves_forward_from(snapshot) || same_range {
+            return true;
         }
-
-        true
+        tracing::warn!(
+            "Bucket {bucket_id}: provider {account} reported range (start_seq={}, \
+             leaf_count={}) behind the on-chain snapshot (start_seq={}, leaf_count={})",
+            reported.start_seq,
+            reported.leaf_count,
+            snapshot.start_seq,
+            snapshot.leaf_count
+        );
+        false
     }
 
     /// Query a single provider for their commitment with health tracking.
@@ -1123,6 +1148,10 @@ impl CheckpointManager {
             };
         }
 
+        if !collection.advances_snapshot() {
+            return CheckpointResult::UpToDate;
+        }
+
         // Submit on-chain
         match self.submit_commitment_onchain(&collection).await {
             Ok(block_hash) => CheckpointResult::Submitted {
@@ -1148,11 +1177,7 @@ impl CheckpointManager {
     ) -> Result<H256, ClientError> {
         let tx = extrinsics::checkpoint(
             collection.bucket_id,
-            Commitment {
-                mmr_root: collection.mmr_root,
-                start_seq: collection.start_seq,
-                leaf_count: collection.leaf_count,
-            },
+            collection.commitment(),
             &collection.signatures,
         );
 
@@ -1527,7 +1552,7 @@ impl CheckpointManager {
         status.last_result = Some(result.clone());
 
         match &result {
-            CheckpointResult::Submitted { .. } => {
+            CheckpointResult::Submitted { .. } | CheckpointResult::UpToDate => {
                 status.dirty = false;
                 status.consecutive_failures = 0;
             }
@@ -1956,6 +1981,7 @@ mod tests {
             agreeing_providers: vec![],
             disagreeing_providers: vec![],
             unreachable_providers: vec![],
+            snapshot: None,
         };
 
         let cloned = collection.clone();
@@ -1971,14 +1997,60 @@ mod tests {
         sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([9u8; 64]))
     }
 
+    fn snapshot(start_seq: u64, leaf_count: u64) -> Commitment {
+        Commitment {
+            mmr_root: H256::from([3u8; 32]),
+            start_seq,
+            leaf_count,
+        }
+    }
+
+    fn collection(
+        start_seq: u64,
+        leaf_count: u64,
+        snapshot: Option<Commitment>,
+    ) -> CommitmentCollection {
+        CommitmentCollection {
+            bucket_id: 1,
+            mmr_root: test_mmr_root(),
+            start_seq,
+            leaf_count,
+            signatures: vec![],
+            agreeing_providers: vec![],
+            disagreeing_providers: vec![],
+            unreachable_providers: vec![],
+            snapshot,
+        }
+    }
+
+    #[test]
+    fn advances_snapshot_follows_the_chain_rule() {
+        // The chain rejects a checkpoint that does not move the bucket
+        // forward (`SnapshotNotForward`); submitting one only pays a fee.
+        assert!(collection(5, 10, None).advances_snapshot());
+        assert!(collection(5, 11, Some(snapshot(5, 10))).advances_snapshot());
+        assert!(collection(8, 7, Some(snapshot(5, 10))).advances_snapshot());
+        assert!(!collection(5, 10, Some(snapshot(5, 10))).advances_snapshot());
+        assert!(!collection(5, 9, Some(snapshot(5, 10))).advances_snapshot());
+    }
+
     #[test]
     fn commitment_within_floor_accepts_matching_response() {
         let account = AccountId32::new([1u8; 32]);
         let response = CommitmentResponse::new(1, test_mmr_root(), 5, 10, valid_signature());
 
         assert!(
-            CheckpointManager::commitment_within_floor(1, &account, &response, Some((5, 10))),
+            CheckpointManager::commitment_within_floor(
+                1,
+                &account,
+                &response,
+                Some(&snapshot(5, 10))
+            ),
             "a well-formed response must be accepted"
+        );
+        assert!(
+            CheckpointManager::commitment_within_floor(1, &account, &response, None),
+            "without a snapshot there is nothing to be behind"
         );
         // The response itself is what consensus carries forward, so pin the
         // fields it is grouped and submitted by.
@@ -1995,7 +2067,12 @@ mod tests {
         // data disappeared with no compensating delete. Must be refused.
         let shrunk_end = CommitmentResponse::new(1, test_mmr_root(), 5, 9, valid_signature());
         assert!(
-            !CheckpointManager::commitment_within_floor(1, &account, &shrunk_end, Some((5, 10))),
+            !CheckpointManager::commitment_within_floor(
+                1,
+                &account,
+                &shrunk_end,
+                Some(&snapshot(5, 10))
+            ),
             "a range end behind the on-chain snapshot must be refused"
         );
 
@@ -2004,7 +2081,7 @@ mod tests {
             1,
             &account,
             &rewound_start,
-            Some((5, 10))
+            Some(&snapshot(5, 10))
         ));
     }
 
@@ -2018,7 +2095,12 @@ mod tests {
         let post_delete = CommitmentResponse::new(1, test_mmr_root(), 8, 7, valid_signature());
 
         assert!(
-            CheckpointManager::commitment_within_floor(1, &account, &post_delete, Some((5, 10))),
+            CheckpointManager::commitment_within_floor(
+                1,
+                &account,
+                &post_delete,
+                Some(&snapshot(5, 10))
+            ),
             "a post-delete range with an unchanged end must be accepted"
         );
     }
@@ -2178,6 +2260,17 @@ mod tests {
         assert_eq!(metrics.successful_submissions, 1);
         assert_eq!(metrics.providers_responded, 2);
         assert_eq!(metrics.success_rate(), 1.0);
+    }
+
+    #[test]
+    fn up_to_date_is_neither_a_submission_nor_a_failure() {
+        let mut metrics = CheckpointMetrics::default();
+        metrics.record_attempt(&CheckpointResult::UpToDate, 10);
+        assert_eq!(metrics.total_attempts, 1);
+        assert_eq!(metrics.successful_submissions, 0);
+        assert_eq!(metrics.transaction_failures, 0);
+        assert_eq!(metrics.insufficient_consensus_count, 0);
+        assert_eq!(metrics.unreachable_failures, 0);
     }
 
     #[test]
