@@ -126,6 +126,14 @@ pub struct EraseOutcome {
     pub bytes_freed: u64,
 }
 
+/// Garbage collector state a backend persists across restarts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GarbageCollectorConfiguration {
+    /// Highest finalized block number the garbage collector has read chain
+    /// state at; 0 if none.
+    pub last_scanned_block: u64,
+}
+
 /// Storage engine interface. Callers hold an `Arc<dyn StorageBackend>` rather
 /// than a concrete engine.
 pub trait StorageBackend: Send + Sync {
@@ -330,6 +338,16 @@ pub trait StorageBackend: Send + Sync {
 
     /// Whether the bucket was condemned (deleted on-chain / agreement gone).
     fn is_condemned(&self, bucket_id: BucketId) -> Result<bool, Error>;
+
+    /// The stored garbage collector configuration; every field is its
+    /// default when nothing was stored. Persists across restarts.
+    fn garbage_collector_configuration(&self) -> Result<GarbageCollectorConfiguration, Error>;
+
+    /// Replace the stored garbage collector configuration.
+    fn set_garbage_collector_configuration(
+        &self,
+        configuration: &GarbageCollectorConfiguration,
+    ) -> Result<(), Error>;
 
     /// Physically erase one stashed range: decrement refcounts along each
     /// leaf's tree, delete zero-ref nodes, credit `used_bytes` back to each

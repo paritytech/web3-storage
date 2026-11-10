@@ -10,7 +10,8 @@
 use super::types::FORMAT_VERSION;
 use super::{
     canonical_size, BucketInfo, BucketState, ChunkTreeNode, CommitOutcome, DeletionReceipt,
-    EraseOutcome, PrunedRange, PrunedRangeInfo, StorageBackend, StorageStats,
+    EraseOutcome, GarbageCollectorConfiguration, PrunedRange, PrunedRangeInfo, StorageBackend,
+    StorageStats,
 };
 use crate::error::Error;
 use codec::{DecodeAll, Encode};
@@ -44,8 +45,10 @@ const CF_PRUNED_RANGES: &str = "pruned_ranges";
 /// Admin deletion receipts, keyed by [`seq_key`] with the receipt's
 /// `new_start_seq`. Value: SCALE(`DeletionReceipt`).
 const CF_DELETION_RECEIPTS: &str = "deletion_receipts";
+/// Settings and progress of the garbage collector, one key per value.
+const CF_GC_CONFIGURATION: &str = "garbage_collector_configuration";
 /// Every column family this engine opens.
-const COLUMN_FAMILIES: [&str; 8] = [
+const COLUMN_FAMILIES: [&str; 9] = [
     CF_NODES,
     CF_BUCKETS,
     CF_ROOT_TO_BUCKET,
@@ -54,6 +57,7 @@ const COLUMN_FAMILIES: [&str; 8] = [
     CF_LEAVES,
     CF_PRUNED_RANGES,
     CF_DELETION_RECEIPTS,
+    CF_GC_CONFIGURATION,
 ];
 
 mod refcounts;
@@ -62,6 +66,10 @@ use refcounts::{decode_refcount, encode_refcount};
 
 /// RocksDB key for the persisted format version.
 const KEY_FORMAT_VERSION: &[u8] = b"format_version";
+
+/// Key in [`CF_GC_CONFIGURATION`]: the highest finalized block number the
+/// garbage collector has read chain state at.
+const KEY_LAST_SCANNED_BLOCK: &[u8] = b"last_scanned_block";
 
 /// How long a writer waits for another writer on the same bucket before
 /// failing with [`Error::BucketBusy`]. A `commit` holds the bucket for the
@@ -175,6 +183,13 @@ fn bucket_write_error(bucket_id: BucketId, error: rocksdb::Error) -> Error {
         ErrorKind::TimedOut | ErrorKind::Busy => Error::BucketBusy(bucket_id),
         _ => Error::RocksDb(error),
     }
+}
+
+fn decode_last_scanned_block(raw: &[u8]) -> Result<u64, Error> {
+    let bytes = raw
+        .try_into()
+        .map_err(|_| Error::IncompatibleFormat("corrupt last_scanned_block value".to_string()))?;
+    Ok(u64::from_le_bytes(bytes))
 }
 
 impl DiskStorage {
@@ -855,6 +870,36 @@ impl DiskStorage {
             .is_some_and(|bucket| bucket.condemned))
     }
 
+    /// The stored garbage collector configuration; every field is its
+    /// default when nothing was stored.
+    pub fn garbage_collector_configuration(&self) -> Result<GarbageCollectorConfiguration, Error> {
+        let cf = self
+            .db
+            .cf_handle(CF_GC_CONFIGURATION)
+            .ok_or(Error::ColumnFamilyMissing(CF_GC_CONFIGURATION))?;
+        let last_scanned_block = self
+            .db
+            .get_cf(&cf, KEY_LAST_SCANNED_BLOCK)?
+            .map_or(Ok(0), |raw| decode_last_scanned_block(&raw))?;
+        Ok(GarbageCollectorConfiguration { last_scanned_block })
+    }
+
+    /// Replace the stored garbage collector configuration.
+    pub fn set_garbage_collector_configuration(
+        &self,
+        configuration: &GarbageCollectorConfiguration,
+    ) -> Result<(), Error> {
+        let cf = self
+            .db
+            .cf_handle(CF_GC_CONFIGURATION)
+            .ok_or(Error::ColumnFamilyMissing(CF_GC_CONFIGURATION))?;
+        Ok(self.db.put_cf(
+            &cf,
+            KEY_LAST_SCANNED_BLOCK,
+            configuration.last_scanned_block.to_le_bytes(),
+        )?)
+    }
+
     /// Store an admin-signed deletion receipt for a pruned range (matched
     /// by `new_start_seq`); replaces a previous receipt for the same range.
     /// A receipt whose signature does not verify is rejected with
@@ -1401,6 +1446,17 @@ impl StorageBackend for DiskStorage {
         self.is_condemned(bucket_id)
     }
 
+    fn garbage_collector_configuration(&self) -> Result<GarbageCollectorConfiguration, Error> {
+        self.garbage_collector_configuration()
+    }
+
+    fn set_garbage_collector_configuration(
+        &self,
+        configuration: &GarbageCollectorConfiguration,
+    ) -> Result<(), Error> {
+        self.set_garbage_collector_configuration(configuration)
+    }
+
     fn erase_pruned_range(
         &self,
         bucket_id: BucketId,
@@ -1530,6 +1586,15 @@ mod tests {
         fn is_condemned(&self, _: BucketId) -> Result<bool, Error> {
             unreachable!("read-only")
         }
+        fn garbage_collector_configuration(&self) -> Result<GarbageCollectorConfiguration, Error> {
+            unreachable!("read-only")
+        }
+        fn set_garbage_collector_configuration(
+            &self,
+            _: &GarbageCollectorConfiguration,
+        ) -> Result<(), Error> {
+            unreachable!("read-only")
+        }
         fn erase_pruned_range(&self, _: BucketId, _: u64) -> Result<EraseOutcome, Error> {
             unreachable!("read-only")
         }
@@ -1595,7 +1660,8 @@ mod tests {
                 "metadata",
                 "leaves",
                 "pruned_ranges",
-                "deletion_receipts"
+                "deletion_receipts",
+                "garbage_collector_configuration"
             ],
             "column-family names locate every record on disk",
         );
@@ -2071,6 +2137,92 @@ mod tests {
             DiskStorage::new(dir.path()),
             Err(Error::IncompatibleFormat(_))
         ));
+    }
+
+    #[test]
+    fn the_garbage_collector_configuration_starts_at_its_default() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+
+        assert_eq!(
+            storage.garbage_collector_configuration().unwrap(),
+            GarbageCollectorConfiguration::default()
+        );
+    }
+
+    #[test]
+    fn setting_the_garbage_collector_configuration_replaces_it() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+
+        for block in [5, 9, 3] {
+            let configuration = GarbageCollectorConfiguration {
+                last_scanned_block: block,
+            };
+            storage
+                .set_garbage_collector_configuration(&configuration)
+                .unwrap();
+            assert_eq!(
+                storage.garbage_collector_configuration().unwrap(),
+                configuration
+            );
+        }
+    }
+
+    #[test]
+    fn the_last_scanned_block_is_stored_in_the_garbage_collector_column_family() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage
+            .set_garbage_collector_configuration(&GarbageCollectorConfiguration {
+                last_scanned_block: 7,
+            })
+            .unwrap();
+
+        let cf = storage.db.cf_handle(CF_GC_CONFIGURATION).unwrap();
+        let raw = storage
+            .db
+            .get_cf(&cf, KEY_LAST_SCANNED_BLOCK)
+            .unwrap()
+            .expect("the block must be stored under last_scanned_block");
+        assert_eq!(raw, 7u64.to_le_bytes());
+        assert_eq!(CF_GC_CONFIGURATION, "garbage_collector_configuration");
+        assert_eq!(KEY_LAST_SCANNED_BLOCK, b"last_scanned_block");
+    }
+
+    #[test]
+    fn a_corrupt_last_scanned_block_is_an_incompatible_format_error() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let cf = storage.db.cf_handle(CF_GC_CONFIGURATION).unwrap();
+        storage
+            .db
+            .put_cf(&cf, KEY_LAST_SCANNED_BLOCK, [1u8, 2, 3])
+            .unwrap();
+
+        assert!(matches!(
+            storage.garbage_collector_configuration(),
+            Err(Error::IncompatibleFormat(_))
+        ));
+    }
+
+    #[test]
+    fn the_garbage_collector_configuration_remains_after_reopening_the_database() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let configuration = GarbageCollectorConfiguration {
+            last_scanned_block: 42,
+        };
+        storage
+            .set_garbage_collector_configuration(&configuration)
+            .unwrap();
+        drop(storage);
+
+        let reopened = DiskStorage::new(dir.path()).unwrap();
+        assert_eq!(
+            reopened.garbage_collector_configuration().unwrap(),
+            configuration
+        );
     }
 
     /// Roots built by the provider equal the values the primitives and the

@@ -14,17 +14,28 @@
 //!   with the durable `Deleted` defense instead of the erased bytes;
 //! - **no pending challenges** against this provider on the bucket.
 //!
-//! The coordinator is stateless: the stash persisted in the storage backend
-//! is the work queue, and every decision re-reads chain truth (fail closed —
-//! an unreadable chain skips the bucket until the next pass). Events drive
-//! targeted reconciles; a safety-net interval and the follower's
+//! The stash persisted in the storage backend is the work queue, and every
+//! decision re-reads chain truth (fail closed — an unreadable chain skips the
+//! bucket until the next pass). A chain read is also refused when it is older
+//! than one already made: the storage backend keeps the highest finalized
+//! block read (`last_scanned_block`), and a bucket row missing for an id at or
+//! above `NextBucketId` means the read predates the bucket. A condemned bucket
+//! is erased only by a pass that reads a newer block than the pass that first
+//! saw its obligation gone. The block number check does not detect a
+//! different chain: on a chain below `last_scanned_block` the GC skips every
+//! bucket until that height is reached.
+//!
+//! Events drive targeted reconciles; a safety-net interval and the follower's
 //! `Resubscribed` bootstrap rescue anything missed, including the one-shot
 //! `BucketDeleted` (whose chain row is gone afterwards, detected as "local
 //! bucket with no chain row").
 
 use crate::{Error, ProviderState};
+use parking_lot::Mutex;
 use provider_events::{BlockEvent, BlockEventRx};
+use provider_storage::GarbageCollectorConfiguration;
 use provider_types::ChainClientError;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
@@ -33,8 +44,12 @@ use tokio::sync::broadcast;
 /// Chain truth about one bucket, as the GC needs it.
 #[derive(Clone, Debug, Default)]
 pub struct CanonicalBucketState {
+    /// Finalized block number the bucket row was read at.
+    pub block_number: u64,
     /// Whether the bucket row is present on chain.
     pub exists: bool,
+    /// `NextBucketId` at the same block: every bucket id below it was created.
+    pub next_bucket_id: u64,
     /// `Bucket::frozen_start_seq` — deletion floor for frozen buckets.
     pub frozen_start_seq: Option<u64>,
     /// `snapshot.commitment.start_seq`; `None` = no snapshot yet.
@@ -95,6 +110,9 @@ pub struct GcCoordinator {
     config: GcCoordinatorConfig,
     state: Arc<ProviderState>,
     chain: Arc<dyn GcChainClient>,
+    /// For each condemned bucket, the block of the first pass that saw its
+    /// obligation gone.
+    obligation_gone_at: Mutex<HashMap<BucketId, u64>>,
 }
 
 impl GcCoordinator {
@@ -108,6 +126,7 @@ impl GcCoordinator {
             config,
             state,
             chain,
+            obligation_gone_at: Mutex::new(HashMap::new()),
         }
     }
 
@@ -175,6 +194,38 @@ impl GcCoordinator {
 
     async fn try_reconcile(&self, bucket_id: BucketId) -> Result<(), Error> {
         let chain = self.chain.fetch_canonical_bucket(bucket_id).await?;
+
+        let last_scanned_block = self
+            .state
+            .storage
+            .garbage_collector_configuration()?
+            .last_scanned_block;
+        if chain.block_number < last_scanned_block {
+            tracing::warn!(
+                bucket_id,
+                block = chain.block_number,
+                last_scanned_block,
+                "GC: chain state is older than one already read, skipping bucket"
+            );
+            return Ok(());
+        }
+        if !chain.exists && bucket_id >= chain.next_bucket_id {
+            tracing::warn!(
+                bucket_id,
+                block = chain.block_number,
+                next_bucket_id = chain.next_bucket_id,
+                "GC: bucket was not created yet at the read block, skipping bucket"
+            );
+            return Ok(());
+        }
+        if chain.block_number > last_scanned_block {
+            self.state.storage.set_garbage_collector_configuration(
+                &GarbageCollectorConfiguration {
+                    last_scanned_block: chain.block_number,
+                },
+            )?;
+        }
+
         let agreement_max = if chain.exists {
             self.chain.fetch_agreement_max_bytes(bucket_id).await?
         } else {
@@ -183,6 +234,9 @@ impl GcCoordinator {
 
         // Obligation ends when the bucket row or our agreement row is gone.
         let obligation_gone = !chain.exists || agreement_max.is_none();
+        if !obligation_gone {
+            self.obligation_gone_at.lock().remove(&bucket_id);
+        }
 
         if !self.state.storage.is_condemned(bucket_id)? {
             if obligation_gone {
@@ -232,12 +286,17 @@ impl GcCoordinator {
             return Ok(());
         }
         let condemned = self.state.storage.is_condemned(bucket_id)?;
+        let obligation_gone_confirmed = condemned && obligation_gone && {
+            let mut gone_at = self.obligation_gone_at.lock();
+            let first_block = *gone_at.entry(bucket_id).or_insert(chain.block_number);
+            chain.block_number > first_block
+        };
         // Lazily fetched once per pass, only when a range is otherwise ripe.
         let mut pending_challenges: Option<bool> = None;
 
         for range in ranges {
             let liability_ended = if condemned {
-                obligation_gone
+                obligation_gone_confirmed
             } else {
                 chain
                     .canonical_start_seq
@@ -273,6 +332,9 @@ impl GcCoordinator {
                 bytes_freed = outcome.bytes_freed,
                 "GC: pruned range physically erased"
             );
+        }
+        if condemned && self.state.storage.get_bucket(bucket_id)?.is_none() {
+            self.obligation_gone_at.lock().remove(&bucket_id);
         }
         Ok(())
     }

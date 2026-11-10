@@ -8,10 +8,11 @@
 
 use parking_lot::Mutex;
 use provider_events::EVENT_CHANNEL_CAPACITY;
-use provider_storage::ChunkTreeNode;
+use provider_storage::{ChunkTreeNode, GarbageCollectorConfiguration};
 use provider_types::ChainClientError;
 use sp_core::H256;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{hash_leaf, BucketId};
@@ -25,6 +26,11 @@ struct MockGcChainClient {
     buckets: Mutex<HashMap<BucketId, CanonicalBucketState>>,
     agreements: Mutex<HashMap<BucketId, u64>>,
     pending: Mutex<HashSet<BucketId>>,
+    /// Block the next read reports; advances by `block_step` after each read.
+    block_number: AtomicU64,
+    block_step: AtomicU64,
+    next_bucket_id: AtomicU64,
+    reads: AtomicU64,
 }
 
 impl MockGcChainClient {
@@ -33,7 +39,30 @@ impl MockGcChainClient {
             buckets: Mutex::new(HashMap::new()),
             agreements: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashSet::new()),
+            block_number: AtomicU64::new(1),
+            block_step: AtomicU64::new(1),
+            next_bucket_id: AtomicU64::new(u64::MAX),
+            reads: AtomicU64::new(0),
         }
+    }
+
+    /// Report `block` on every read from now on.
+    fn freeze_at(&self, block: u64) {
+        self.block_number.store(block, Ordering::Relaxed);
+        self.block_step.store(0, Ordering::Relaxed);
+    }
+
+    fn set_next_bucket_id(&self, next_bucket_id: u64) {
+        self.next_bucket_id.store(next_bucket_id, Ordering::Relaxed);
+    }
+
+    /// Wait until the GC has read chain state at least `n` more times.
+    async fn wait_for_reads(&self, n: u64) -> bool {
+        let target = self.reads.load(Ordering::Relaxed) + n;
+        wait_for(5, 25, || async {
+            self.reads.load(Ordering::Relaxed) >= target
+        })
+        .await
     }
 
     fn with_bucket(self, bucket_id: BucketId, canonical_start_seq: Option<u64>) -> Self {
@@ -41,8 +70,8 @@ impl MockGcChainClient {
             bucket_id,
             CanonicalBucketState {
                 exists: true,
-                frozen_start_seq: None,
                 canonical_start_seq,
+                ..CanonicalBucketState::default()
             },
         );
         self
@@ -65,12 +94,20 @@ impl GcChainClient for MockGcChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<CanonicalBucketState, ChainClientError> {
-        Ok(self
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        let bucket = self
             .buckets
             .lock()
             .get(&bucket_id)
             .cloned()
-            .unwrap_or_default())
+            .unwrap_or_default();
+        Ok(CanonicalBucketState {
+            block_number: self
+                .block_number
+                .fetch_add(self.block_step.load(Ordering::Relaxed), Ordering::Relaxed),
+            next_bucket_id: self.next_bucket_id.load(Ordering::Relaxed),
+            ..bucket
+        })
     }
 
     async fn fetch_agreement_max_bytes(
@@ -318,6 +355,223 @@ async fn ended_agreement_condemns_bucket_and_rejects_writes_until_erased() {
     for hash in hashes {
         assert!(state.storage.get_node(&hash).unwrap().is_none());
     }
+    handle.stop();
+}
+
+fn last_scanned_block(state: &Arc<ProviderState>) -> u64 {
+    state
+        .storage
+        .garbage_collector_configuration()
+        .unwrap()
+        .last_scanned_block
+}
+
+fn set_last_scanned_block(state: &Arc<ProviderState>, block: u64) {
+    state
+        .storage
+        .set_garbage_collector_configuration(&GarbageCollectorConfiguration {
+            last_scanned_block: block,
+        })
+        .unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn chain_state_older_than_one_already_read_does_not_condemn_the_bucket() {
+    let (state, _dir) = test_state();
+    let hashes = seed_bucket(&state, 1, 2);
+    set_last_scanned_block(&state, 100);
+
+    // An RPC node still at block 50 knows no bucket and no agreement.
+    let mock = Arc::new(MockGcChainClient::new());
+    mock.freeze_at(50);
+    let (handle, _tx, mock) = start_gc_shared(state.clone(), mock);
+
+    assert!(mock.wait_for_reads(2).await, "the GC should run passes");
+    assert!(!state.storage.is_condemned(1).unwrap());
+    for hash in &hashes {
+        assert!(state.storage.get_node(hash).unwrap().is_some());
+    }
+    let data = vec![9u8; 8];
+    state
+        .storage
+        .store_node(1, hash_leaf(&data), ChunkTreeNode::Chunk(data))
+        .expect("the bucket still accepts writes");
+    assert_eq!(
+        last_scanned_block(&state),
+        100,
+        "a read at an older block must not lower the stored block"
+    );
+    handle.stop();
+}
+
+#[tokio::test]
+async fn chain_state_read_before_a_restart_still_protects_the_bucket() {
+    let (state, _dir) = test_state();
+    let hashes = seed_bucket(&state, 1, 2);
+
+    let live = Arc::new(
+        MockGcChainClient::new()
+            .with_bucket(1, Some(0))
+            .with_agreement(1, u64::MAX),
+    );
+    live.freeze_at(100);
+    let (handle, _tx, _live) = start_gc_shared(state.clone(), live);
+    assert!(
+        wait_for(5, 25, || async { last_scanned_block(&state) == 100 }).await,
+        "a pass at block 100 should store it as the last scanned block"
+    );
+    handle.stop();
+
+    // A new coordinator over the same storage reads from a node at block 50.
+    let behind = Arc::new(MockGcChainClient::new());
+    behind.freeze_at(50);
+    let (handle, _tx, behind) = start_gc_shared(state.clone(), behind);
+
+    assert!(
+        behind.wait_for_reads(2).await,
+        "the new coordinator should run passes"
+    );
+    assert!(!state.storage.is_condemned(1).unwrap());
+    for hash in &hashes {
+        assert!(state.storage.get_node(hash).unwrap().is_some());
+    }
+    assert_eq!(last_scanned_block(&state), 100);
+    handle.stop();
+}
+
+#[tokio::test(start_paused = true)]
+async fn bucket_the_chain_had_not_created_yet_is_not_condemned() {
+    let (state, _dir) = test_state();
+    let hashes = seed_bucket(&state, 1, 2);
+
+    // No bucket row at block 10, and `NextBucketId` is 1: bucket 1 does not
+    // exist yet at that block, which is not the same as deleted.
+    let mock = Arc::new(MockGcChainClient::new());
+    mock.freeze_at(10);
+    mock.set_next_bucket_id(1);
+    let (handle, _tx, mock) = start_gc_shared(state.clone(), mock);
+
+    assert!(mock.wait_for_reads(2).await, "the GC should run passes");
+    assert!(!state.storage.is_condemned(1).unwrap());
+    for hash in &hashes {
+        assert!(state.storage.get_node(hash).unwrap().is_some());
+    }
+    handle.stop();
+}
+
+#[tokio::test(start_paused = true)]
+async fn chain_state_older_than_one_already_read_does_not_erase_a_pruned_range() {
+    let (state, _dir) = test_state();
+    let hashes = seed_bucket(&state, 1, 2);
+    prune_with_receipt(&state, 1, 1);
+    set_last_scanned_block(&state, 100);
+
+    // Everything an erasure needs is present, but the read is at block 50.
+    let mock = Arc::new(
+        MockGcChainClient::new()
+            .with_bucket(1, Some(1))
+            .with_agreement(1, u64::MAX),
+    );
+    mock.freeze_at(50);
+    let (handle, _tx, mock) = start_gc_shared(state.clone(), mock);
+
+    assert!(mock.wait_for_reads(2).await, "the GC should run passes");
+    assert_eq!(state.storage.pruned_ranges(1).unwrap().len(), 1);
+    assert!(state.storage.get_node(&hashes[0]).unwrap().is_some());
+    handle.stop();
+}
+
+#[tokio::test]
+async fn condemned_bucket_is_erased_only_after_a_newer_block_confirms_it() {
+    let (state, _dir) = test_state();
+    let hashes = seed_bucket(&state, 1, 2);
+
+    // The chain has no bucket 1 at block 10 (and `NextBucketId` says it was
+    // created, so the bucket was deleted).
+    let mock = Arc::new(MockGcChainClient::new());
+    mock.freeze_at(10);
+    let (handle, _tx, mock) = start_gc_shared(state.clone(), mock);
+
+    assert!(
+        wait_for(5, 25, || async { state.storage.is_condemned(1).unwrap() }).await,
+        "the bucket is condemned at block 10"
+    );
+    assert!(
+        mock.wait_for_reads(2).await,
+        "the GC should run more passes"
+    );
+    assert!(
+        state.storage.is_condemned(1).unwrap(),
+        "the bucket stays on disk, condemned, while only block 10 has been read"
+    );
+    for hash in &hashes {
+        assert!(state.storage.get_node(hash).unwrap().is_some());
+    }
+
+    mock.freeze_at(11);
+    assert!(
+        wait_for(5, 25, || async {
+            state.storage.get_bucket(1).unwrap().is_none()
+        })
+        .await,
+        "a read at block 11 that still shows the bucket gone erases it"
+    );
+    for hash in hashes {
+        assert!(state.storage.get_node(&hash).unwrap().is_none());
+    }
+    handle.stop();
+}
+
+#[tokio::test]
+async fn obligation_that_reappears_resets_the_erase_confirmation() {
+    let (state, _dir) = test_state();
+    let hashes = seed_bucket(&state, 1, 2);
+
+    let mock = Arc::new(MockGcChainClient::new());
+    mock.freeze_at(10);
+    let (handle, _tx, mock) = start_gc_shared(state.clone(), mock);
+    assert!(
+        wait_for(5, 25, || async { state.storage.is_condemned(1).unwrap() }).await,
+        "the bucket is condemned at block 10"
+    );
+
+    // The bucket and agreement are back at block 11, then gone again at 20.
+    mock.buckets.lock().insert(
+        1,
+        CanonicalBucketState {
+            exists: true,
+            canonical_start_seq: Some(0),
+            ..CanonicalBucketState::default()
+        },
+    );
+    mock.agreements.lock().insert(1, u64::MAX);
+    mock.freeze_at(11);
+    assert!(
+        wait_for(5, 25, || async { last_scanned_block(&state) == 11 }).await,
+        "the GC should read block 11"
+    );
+    mock.buckets.lock().clear();
+    mock.agreements.lock().clear();
+    mock.freeze_at(20);
+    assert!(
+        wait_for(5, 25, || async { last_scanned_block(&state) == 20 }).await,
+        "the GC should read block 20"
+    );
+    for hash in &hashes {
+        assert!(
+            state.storage.get_node(hash).unwrap().is_some(),
+            "the first read at block 20 must not erase: the obligation was present at 11"
+        );
+    }
+
+    mock.freeze_at(21);
+    assert!(
+        wait_for(5, 25, || async {
+            state.storage.get_bucket(1).unwrap().is_none()
+        })
+        .await,
+        "a second read at block 21 confirms the obligation is gone"
+    );
     handle.stop();
 }
 

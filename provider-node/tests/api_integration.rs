@@ -1526,7 +1526,9 @@ impl storage_provider_node::GcChainClient for StubGcChain {
             ));
         }
         Ok(storage_provider_node::CanonicalBucketState {
+            block_number: 1,
             exists: true,
+            next_bucket_id: u64::MAX,
             frozen_start_seq: self.frozen.then_some(0),
             canonical_start_seq: None,
         })
