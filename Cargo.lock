@@ -7098,6 +7098,7 @@ dependencies = [
  "parity-scale-codec",
  "rocksdb",
  "sp-core",
+ "sp-runtime",
  "storage-primitives",
  "tempfile",
  "thiserror 2.0.18",

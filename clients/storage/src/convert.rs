@@ -83,6 +83,15 @@ pub fn commitment(c: &storage_primitives::Commitment) -> rt::Commitment {
     }
 }
 
+/// Generated twin → [`storage_primitives::Commitment`].
+pub fn to_sp_commitment(c: &rt::Commitment) -> storage_primitives::Commitment {
+    storage_primitives::Commitment {
+        mmr_root: c.mmr_root,
+        start_seq: c.start_seq,
+        leaf_count: c.leaf_count,
+    }
+}
+
 /// [`storage_primitives::ChunkLocation`] → generated twin.
 pub fn chunk_location(t: &storage_primitives::ChunkLocation) -> rt::ChunkLocation {
     rt::ChunkLocation {
@@ -255,5 +264,15 @@ mod tests {
         assert_eq!(rp.sync_balance, 70);
         assert_eq!(rp.min_sync_interval, 80);
         assert_eq!(rp.sync_price, 90, "sync_price must survive the conversion");
+    }
+
+    #[test]
+    fn commitment_round_trips() {
+        let original = storage_primitives::Commitment {
+            mmr_root: sp_core::H256::repeat_byte(0x5c),
+            start_seq: 7,
+            leaf_count: 3,
+        };
+        assert_eq!(to_sp_commitment(&commitment(&original)), original);
     }
 }
