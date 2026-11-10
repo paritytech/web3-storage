@@ -17,6 +17,8 @@ import {
   parseMultiaddrToUrl,
   getBucketVisibility as getBucketVisibilityQuery,
   setBucketVisibility as setBucketVisibilityTx,
+  fetchBucketUsage,
+  type BucketUsage,
   type ChainSigner,
   type Keypair,
   type NegotiateRequest,
@@ -43,7 +45,7 @@ export type Signer = ChainSigner["signer"];
 // Re-export the SDK negotiate primitives + types the create-drive components
 // (NewDriveDialog, ProviderPickerPanel) and the state layer import from here.
 export { buildSignedTermsArgs, negotiateTerms };
-export type { NegotiateRequest, SignedTerms, Visibility };
+export type { BucketUsage, NegotiateRequest, SignedTerms, Visibility };
 
 /** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
 export const parseMultiaddrToHttp = parseMultiaddrToUrl;
@@ -75,11 +77,13 @@ export class DriveClient {
   private signer: Signer | null = null;
   private signerAddress: string | null = null;
   private keypair: Keypair | null = null;
+  private owner: ChainSigner | null = null;
   private w3s: Web3Storage | null = null;
 
   private rebuild(): void {
     if (!this.api) {
       this.w3s = null;
+      this.owner = null;
       return;
     }
     let chainSigner: ChainSigner | null = null;
@@ -91,6 +95,7 @@ export class DriveClient {
         keypair: this.keypair ?? undefined,
       };
     }
+    this.owner = chainSigner;
     this.w3s = new Web3Storage({ api: this.api, signer: chainSigner });
   }
 
@@ -245,6 +250,11 @@ export class DriveClient {
 
   getDrive(bucketId: bigint): Promise<DriveInfo | null> {
     return this.requireW3s().getBucket(bucketId);
+  }
+
+  /** Physical usage vs paid quota, read from the drive's provider node. */
+  async getDriveUsage(bucketId: bigint): Promise<BucketUsage> {
+    return fetchBucketUsage(await this.getProviderUrl(bucketId), bucketId, this.owner ?? undefined);
   }
 
   // ── FS HTTP operations ────────────────────────────────────────────────────

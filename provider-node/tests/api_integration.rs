@@ -1110,6 +1110,38 @@ common::backend_tests! {
     }
 }
 
+common::backend_tests! {
+    async fn test_usage_endpoint(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
+
+        let resp = server
+            .client
+            .get(server.url("/usage?bucket_id=1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["bucket_id"], 1);
+        // upload_and_commit stores one 25-byte chunk; a bucket created by an
+        // upload has the unlimited quota until the GC syncs the agreement.
+        assert_eq!(body["used_bytes"], 25);
+        assert_eq!(body["max_bytes"], u64::MAX);
+
+        let resp = server
+            .client
+            .get(server.url("/usage?bucket_id=2"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "bucket_not_found");
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Chunk proof endpoint
 // ─────────────────────────────────────────────────────────────────────────────

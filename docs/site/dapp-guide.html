@@ -146,7 +146,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   </li>
   <li>
     <h3>Delete data or freeze</h3>
-    <p>An admin deletes old leaves with <code>POST /delete</code> and a <code>new_start_seq</code>; the provider returns a new commitment. <code>freeze_bucket</code> makes the bucket append-only. Freezing cannot be undone. To remove a bucket, end its agreements, then an admin calls <code>delete_bucket</code>. It fails while an agreement exists or a challenge on the bucket is open, and releases the bucket's storage deposits.</p>
+    <p>An admin deletes old leaves with <code>POST /delete</code> and a <code>new_start_seq</code>; the provider returns a new commitment for the <code>checkpoint</code> call. The provider keeps the pruned leaves until three conditions hold: a canonical checkpoint has passed the pruned range, the admin's signed deletion authorization is stored with <code>POST /delete/confirm</code>, and no challenge is pending. It then erases the bytes, and the bucket's <code>used_bytes</code> goes down, which frees quota. Deletion never refunds money. <code>freeze_bucket</code> pins <code>start_seq</code>, so the bucket becomes append-only. Freezing cannot be undone. To remove a bucket, end its agreements, then an admin calls <code>delete_bucket</code>. It fails while an agreement exists or a challenge on the bucket is open, and releases the bucket's storage deposits.</p>
   </li>
 </ol>
 </section>
@@ -207,10 +207,12 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
     <tr><td><code>POST /commit</code></td><td>Writer</td><td>Append <code>data_roots</code> to the MMR; returns a signed commitment</td></tr>
     <tr><td><code>GET /checkpoint-signature</code></td><td>Reader on a private bucket</td><td>Signature for the <code>checkpoint</code> call</td></tr>
     <tr><td><code>GET /commitment</code></td><td>Reader on a private bucket</td><td>Signed commitment for <code>challenge_offchain</code></td></tr>
+    <tr><td><code>GET /usage</code></td><td>Reader on a private bucket</td><td><code>used_bytes</code> against the agreement's <code>max_bytes</code></td></tr>
     <tr><td><code>GET /read</code>, <code>GET /node</code></td><td>— (the hash or <code>data_root</code> is the key)</td><td>Read chunks</td></tr>
     <tr><td><code>GET /mmr_proof</code></td><td>Reader on a private bucket</td><td>Proof that a <code>data_root</code> is in a committed root</td></tr>
     <tr><td><code>GET /chunk_proof</code></td><td>— (the <code>data_root</code> is the key)</td><td>Proof that a chunk is in a <code>data_root</code></td></tr>
     <tr><td><code>POST /delete</code></td><td>Admin</td><td>Delete leaves before <code>new_start_seq</code></td></tr>
+    <tr><td><code>POST /delete/confirm</code></td><td>Admin</td><td>Store the admin's signed deletion authorization</td></tr>
     <tr><td><code>GET /health</code>, <code>GET /info</code></td><td>—</td><td>Status</td></tr>
   </tbody>
 </table>

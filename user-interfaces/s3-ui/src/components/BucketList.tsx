@@ -9,7 +9,8 @@ import {
   ContextMenuContent,
   ContextMenuItem,
 } from "@/components/ui/context-menu";
-import { useBuckets, useSelectedBucket, selectBucket } from "@/state";
+import { useBuckets, useBucketUsage, useSelectedBucket, selectBucket } from "@/state";
+import { formatBytes } from "@web3-storage/format";
 import type { BucketInfo } from "@/lib/s3-client";
 import NewBucketDialog from "./NewBucketDialog";
 import ManageAccessDialog from "./ManageAccessDialog";
@@ -47,6 +48,7 @@ function providerTitle(providers: BucketInfo["providerInfo"]): string {
 
 export default function BucketList() {
   const buckets = useBuckets();
+  const usage = useBucketUsage();
   const selected = useSelectedBucket();
   const [showNewBucket, setShowNewBucket] = useState(false);
   const [accessBucket, setAccessBucket] = useState<BucketInfo | null>(null);
@@ -82,6 +84,37 @@ export default function BucketList() {
                   <Archive className={`h-4 w-4 flex-shrink-0 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
                   <div className="flex-1 min-w-0">
                     <p className="truncate">Bucket #{bucket.bucketId.toString()}</p>
+                    {(() => {
+                      const u = usage.get(bucket.bucketId.toString());
+                      if (!u) return null;
+                      if (!u.quotaSynced) {
+                        return (
+                          <p
+                            className="text-xs text-muted-foreground"
+                            data-testid={`bucket-list-usage-${bucket.bucketId}`}
+                          >
+                            {formatBytes(u.usedBytes)} used
+                          </p>
+                        );
+                      }
+                      const pct =
+                        u.maxBytes > 0n
+                          ? Math.min(Number((u.usedBytes * 100n) / u.maxBytes), 100)
+                          : 0;
+                      return (
+                        <div data-testid={`bucket-list-usage-${bucket.bucketId}`}>
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(u.usedBytes)} of {formatBytes(u.maxBytes)} used
+                          </p>
+                          <div className="mt-0.5 h-1 w-full rounded bg-muted">
+                            <div
+                              className="h-1 rounded bg-primary"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {(() => {
                       const p = providerParts(bucket.providerInfo);
                       return (

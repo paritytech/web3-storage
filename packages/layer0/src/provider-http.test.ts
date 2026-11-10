@@ -22,6 +22,7 @@ import {
   commitDataRoots,
   downloadChunk,
   downloadNode,
+  fetchBucketUsage,
   fetchChallengeProof,
   getCommitment,
   getMmrProof,
@@ -489,5 +490,43 @@ describe("fetchChallengeProof", () => {
     await expect(fetchChallengeProof(api, PROVIDER, challengeId)).rejects.toThrow(
       "the provider node is older than this client",
     );
+  });
+});
+
+const U64_MAX = "18446744073709551615";
+
+describe("fetchBucketUsage", () => {
+  it("reads GET /usage for the bucket and detects a synced quota", async () => {
+    const fetchMock = stubFetch(() => ({ bucket_id: 7, used_bytes: 4096, max_bytes: 10485760 }));
+    const usage = await fetchBucketUsage("http://provider", 7n);
+    expect(new URL(fetchMock.mock.calls[0][0] as string).pathname).toBe("/usage");
+    expect(new URL(fetchMock.mock.calls[0][0] as string).searchParams.get("bucket_id")).toBe("7");
+    expect(usage.usedBytes).toBe(4096n);
+    expect(usage.maxBytes).toBe(10485760n);
+    expect(usage.quotaSynced).toBe(true);
+  });
+
+  it("treats the u64::MAX sentinel as quota-not-synced", async () => {
+    // JSON.parse turns u64::MAX into an imprecise float; the helper must
+    // still classify it as the unlimited sentinel.
+    stubFetch(() => ({ bucket_id: 1, used_bytes: 0, max_bytes: JSON.parse(U64_MAX) }));
+    const usage = await fetchBucketUsage("http://provider", 1);
+    expect(usage.quotaSynced).toBe(false);
+    expect(usage.usedBytes).toBe(0n);
+  });
+
+  it("signs the request when a signer is given", async () => {
+    const fetchMock = stubFetch(() => ({ bucket_id: 1, used_bytes: 0, max_bytes: 10 }));
+    await fetchBucketUsage("http://provider", 1n, makeSigner("//Alice"));
+    const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers.Authorization).toBeTruthy();
+  });
+
+  it("throws when the provider does not know the bucket", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "bucket_not_found" }), { status: 404 })),
+    );
+    await expect(fetchBucketUsage("http://provider", 9n)).rejects.toThrow("bucket_not_found");
   });
 });

@@ -90,6 +90,10 @@ pub struct BucketInfo {
     pub start_seq: u64,
     /// Number of leaves in the MMR
     pub leaf_count: u64,
+    /// Bytes of node data charged against the quota.
+    pub used_bytes: u64,
+    /// Quota agreed on-chain for this bucket; `u64::MAX` until synced.
+    pub max_bytes: u64,
 }
 
 /// Totals across every bucket a backend holds.

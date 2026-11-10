@@ -16,6 +16,7 @@ import {
   MatchingProviders,
   QueryMatchingProvidersParams,
   type AvailableProvider,
+  type BucketUsage,
   type DriveInfo,
   type FsEntry,
   type SignedTerms,
@@ -129,7 +130,11 @@ selectedDrive$.subscribe((d) => {
 // Hooks
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Per-drive usage read from each drive's provider (keyed by bucket id string). */
+const driveUsage$ = new BehaviorSubject<Map<string, BucketUsage>>(new Map());
+
 export const [useDrives] = bind(drives$, []);
+export const [useDriveUsage] = bind(driveUsage$, new Map<string, BucketUsage>());
 export const [useSelectedDrive] = bind(selectedDrive$, null);
 export const [useCurrentPath] = bind(currentPath$, "/");
 export const [useEntries] = bind(entries$, []);
@@ -143,12 +148,27 @@ export const [useCreations] = bind(creations$, []);
 // Drive CRUD
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Fetch per-drive usage from each provider; failures leave a drive absent. */
+async function refreshDriveUsage(list: DriveInfo[]): Promise<void> {
+  const results = await Promise.allSettled(
+    list.map(async (d) => [d.bucketId.toString(), await client.getDriveUsage(d.bucketId)] as const),
+  );
+  const usage = new Map<string, BucketUsage>();
+  for (const result of results) {
+    if (result.status === "fulfilled") usage.set(result.value[0], result.value[1]);
+  }
+  driveUsage$.next(usage);
+}
+
 export async function refreshDrives(): Promise<void> {
   if (!client.hasApi() || !client.hasSigner()) return;
   loading$.next(true);
   try {
     const list = await client.listDrives();
     drives$.next(list);
+    // Provider-side usage is a can-fail enrichment: fire and forget so an
+    // unreachable provider never blocks or fails the drive list itself.
+    void refreshDriveUsage(list);
 
     // Reconcile selected drive with refreshed list
     const sel = selectedDrive$.getValue();

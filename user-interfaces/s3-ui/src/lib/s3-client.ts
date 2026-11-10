@@ -27,6 +27,8 @@ import {
   setBucketVisibility as setBucketVisibilityTx,
   submitTx,
   toSs58,
+  fetchBucketUsage,
+  type BucketUsage,
   type ChainSigner,
   type Keypair,
   type NegotiateRequest,
@@ -53,7 +55,15 @@ export type Signer = ChainSigner["signer"];
 // Re-export the SDK negotiate primitives + types the create-bucket components
 // (NewBucketDialog, ProviderPickerPanel) and the state layer import from here.
 export { buildSignedTermsArgs, negotiateTerms };
-export type { BucketInfo, BucketMember, MemberRole, NegotiateRequest, SignedTerms, Visibility };
+export type {
+  BucketInfo,
+  BucketMember,
+  BucketUsage,
+  MemberRole,
+  NegotiateRequest,
+  SignedTerms,
+  Visibility,
+};
 
 /** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
 export const parseMultiaddrToHttp = parseMultiaddrToUrl;
@@ -220,6 +230,11 @@ export class S3Client {
   /** Every bucket the signer is a member of (`StorageProvider.MemberBuckets`). */
   async listBuckets(): Promise<BucketInfo[]> {
     return this.requireW3s().listBuckets();
+  }
+
+  /** Physical usage vs paid quota, read from the bucket's provider node. */
+  async getBucketUsage(bucketId: bigint): Promise<BucketUsage> {
+    return fetchBucketUsage(await this.getProviderUrl(bucketId), bucketId, this.owner ?? undefined);
   }
 
   // ── S3 Object operations (the bucket's own tree, via the SDK's Objects) ────
