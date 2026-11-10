@@ -8,7 +8,7 @@
 
 use parking_lot::Mutex;
 use provider_events::EVENT_CHANNEL_CAPACITY;
-use provider_storage::{ChunkTreeNode, DeletionReceipt};
+use provider_storage::ChunkTreeNode;
 use provider_types::ChainClientError;
 use sp_core::H256;
 use std::collections::{HashMap, HashSet};
@@ -19,7 +19,7 @@ use storage_provider_node::{
     CanonicalBucketState, GcChainClient, GcCoordinator, GcCoordinatorConfig, ProviderState,
 };
 
-use super::{test_state, wait_for};
+use super::{signed_receipt, test_state, wait_for};
 
 struct MockGcChainClient {
     buckets: Mutex<HashMap<BucketId, CanonicalBucketState>>,
@@ -103,7 +103,7 @@ fn seed_bucket(state: &Arc<ProviderState>, bucket_id: BucketId, n: u8) -> Vec<H2
 }
 
 /// Prune to `new_start_seq` and attach an admin deletion receipt for it
-/// (the backend stores receipts opaquely; validity is the pallet's concern).
+/// signed by the test admin.
 fn prune_with_receipt(state: &Arc<ProviderState>, bucket_id: BucketId, new_start_seq: u64) {
     let mmr_root = state
         .storage
@@ -114,14 +114,7 @@ fn prune_with_receipt(state: &Arc<ProviderState>, bucket_id: BucketId, new_start
         .storage
         .attach_deletion_receipt(
             bucket_id,
-            DeletionReceipt {
-                mmr_root,
-                new_start_seq,
-                admin: sp_core::crypto::AccountId32::new([7u8; 32]),
-                signature: sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from(
-                    [0u8; 64],
-                )),
-            },
+            signed_receipt(bucket_id, mmr_root, new_start_seq),
         )
         .unwrap();
 }

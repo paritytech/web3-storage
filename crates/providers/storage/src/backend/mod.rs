@@ -303,7 +303,9 @@ pub trait StorageBackend: Send + Sync {
 
     /// Store an admin-signed deletion receipt for a stashed range (matched
     /// by `new_start_seq`). Replaces a previous receipt for the same range.
-    /// A condemned bucket rejects it with [`Error::BucketCondemned`].
+    /// A condemned bucket rejects it with [`Error::BucketCondemned`], and a
+    /// receipt whose signature does not verify with
+    /// [`Error::InvalidDeletionReceipt`].
     fn attach_deletion_receipt(
         &self,
         bucket_id: BucketId,

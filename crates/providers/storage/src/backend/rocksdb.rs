@@ -857,11 +857,16 @@ impl DiskStorage {
 
     /// Store an admin-signed deletion receipt for a pruned range (matched
     /// by `new_start_seq`); replaces a previous receipt for the same range.
+    /// A receipt whose signature does not verify is rejected with
+    /// [`Error::InvalidDeletionReceipt`].
     pub fn attach_deletion_receipt(
         &self,
         bucket_id: BucketId,
         receipt: DeletionReceipt,
     ) -> Result<(), Error> {
+        if !receipt.verifies(bucket_id) {
+            return Err(Error::InvalidDeletionReceipt(bucket_id));
+        }
         let txn = self.transaction();
         let bucket = self
             .bucket_for_update(&txn, bucket_id)?
@@ -1447,6 +1452,7 @@ mod tests {
     use super::*;
     use crate::backend::{build_merkle_tree, MAX_TREE_DEPTH};
     use rocksdb::DB;
+    use sp_core::Pair as _;
     use std::sync::atomic::{AtomicU64, Ordering};
     use storage_primitives::{hash_leaf, verify_merkle_proof};
     use tempfile::TempDir;
@@ -1691,11 +1697,7 @@ mod tests {
             "000000000000000001000000000000000000000000000000"
         );
 
-        let receipt = receipt_for(1);
-        let receipt = DeletionReceipt {
-            mmr_root,
-            ..receipt
-        };
+        let receipt = signed_receipt(bucket_id, mmr_root, 1, &admin_pair());
         storage
             .attach_deletion_receipt(bucket_id, receipt.clone())
             .unwrap();
@@ -2851,14 +2853,7 @@ mod tests {
             storage
                 .attach_deletion_receipt(
                     BUCKET,
-                    DeletionReceipt {
-                        mmr_root,
-                        new_start_seq: total_leaves,
-                        admin: sp_core::crypto::AccountId32::new([7u8; 32]),
-                        signature: sp_runtime::MultiSignature::Sr25519(
-                            sp_core::sr25519::Signature::from([0u8; 64]),
-                        ),
-                    },
+                    signed_receipt(BUCKET, mmr_root, total_leaves, &admin_pair()),
                 )
                 .unwrap();
             storage
@@ -2958,23 +2953,145 @@ mod tests {
         let storage = DiskStorage::new(dir.path()).unwrap();
         stash_leaves(&storage, 3, 2);
 
-        storage.attach_deletion_receipt(1, receipt_for(2)).unwrap();
+        let receipt = receipt_for(2);
+        storage.attach_deletion_receipt(1, receipt.clone()).unwrap();
 
         assert_eq!(
             raw(&storage, CF_DELETION_RECEIPTS, &seq_key(1, 2)),
-            Some(receipt_for(2).encode())
+            Some(receipt.encode())
         );
     }
 
-    fn receipt_for(new_start_seq: u64) -> DeletionReceipt {
+    fn admin_pair() -> sp_core::sr25519::Pair {
+        sp_core::sr25519::Pair::from_seed(&[7u8; 32])
+    }
+
+    /// A receipt for `bucket_id` that `signer` signed over the deletion
+    /// commitment, the way the pallet's `Deleted` defense verifies it.
+    fn signed_receipt(
+        bucket_id: BucketId,
+        mmr_root: H256,
+        new_start_seq: u64,
+        signer: &sp_core::sr25519::Pair,
+    ) -> DeletionReceipt {
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id,
+            Commitment {
+                mmr_root,
+                start_seq: new_start_seq,
+                leaf_count: 0,
+            },
+        );
         DeletionReceipt {
-            mmr_root: H256::repeat_byte(1),
+            mmr_root,
             new_start_seq,
-            admin: sp_core::crypto::AccountId32::new([7u8; 32]),
+            admin: signer.public().0.into(),
+            signature: signer.sign(&payload.encode()).into(),
+        }
+    }
+
+    /// A receipt for bucket 1 signed by the test admin.
+    fn receipt_for(new_start_seq: u64) -> DeletionReceipt {
+        signed_receipt(1, H256::repeat_byte(1), new_start_seq, &admin_pair())
+    }
+
+    fn forged_receipt(new_start_seq: u64) -> DeletionReceipt {
+        DeletionReceipt {
             signature: sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from(
                 [0u8; 64],
             )),
+            ..receipt_for(new_start_seq)
         }
+    }
+
+    #[test]
+    fn a_forged_receipt_is_rejected_and_not_stored() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        stash_leaves(&storage, 3, 2);
+
+        let err = storage
+            .attach_deletion_receipt(1, forged_receipt(2))
+            .unwrap_err();
+
+        assert!(
+            matches!(err, Error::InvalidDeletionReceipt(1)),
+            "got {err:?}"
+        );
+        assert_eq!(raw(&storage, CF_DELETION_RECEIPTS, &seq_key(1, 2)), None);
+        assert!(!storage.pruned_ranges(1).unwrap()[0].has_receipt);
+    }
+
+    #[test]
+    fn a_receipt_signed_by_another_key_is_rejected() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        stash_leaves(&storage, 3, 2);
+        let other = sp_core::sr25519::Pair::from_seed(&[8u8; 32]);
+        let receipt = DeletionReceipt {
+            admin: admin_pair().public().0.into(),
+            ..signed_receipt(1, H256::repeat_byte(1), 2, &other)
+        };
+
+        let err = storage.attach_deletion_receipt(1, receipt).unwrap_err();
+
+        assert!(
+            matches!(err, Error::InvalidDeletionReceipt(1)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_receipt_signed_for_another_bucket_or_range_is_rejected() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        stash_leaves(&storage, 3, 2);
+        let admin = admin_pair();
+        let root = H256::repeat_byte(1);
+
+        // Signed for bucket 2.
+        let other_bucket = signed_receipt(2, root, 2, &admin);
+        // Signed for new_start_seq 1, claims 2.
+        let other_range = DeletionReceipt {
+            new_start_seq: 2,
+            ..signed_receipt(1, root, 1, &admin)
+        };
+        // Signed over another root.
+        let other_root = DeletionReceipt {
+            mmr_root: H256::repeat_byte(9),
+            ..signed_receipt(1, root, 2, &admin)
+        };
+
+        for receipt in [other_bucket, other_range, other_root] {
+            let err = storage.attach_deletion_receipt(1, receipt).unwrap_err();
+            assert!(
+                matches!(err, Error::InvalidDeletionReceipt(1)),
+                "got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_forged_replacement_keeps_the_stored_receipt() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        stash_leaves(&storage, 3, 2);
+        let receipt = receipt_for(2);
+        storage.attach_deletion_receipt(1, receipt.clone()).unwrap();
+        storage.erase_pruned_range(1, 0).unwrap();
+
+        let err = storage
+            .attach_deletion_receipt(1, forged_receipt(2))
+            .unwrap_err();
+
+        assert!(
+            matches!(err, Error::InvalidDeletionReceipt(1)),
+            "got {err:?}"
+        );
+        assert_eq!(
+            storage.deletion_receipt_covering(1, 1).unwrap(),
+            Some(receipt)
+        );
     }
 
     #[test]
@@ -3001,8 +3118,7 @@ mod tests {
         storage.attach_deletion_receipt(1, receipt_for(2)).unwrap();
         storage.erase_pruned_range(1, 0).unwrap();
 
-        let mut replacement = receipt_for(2);
-        replacement.mmr_root = H256::repeat_byte(2);
+        let replacement = signed_receipt(1, H256::repeat_byte(2), 2, &admin_pair());
         storage
             .attach_deletion_receipt(1, replacement.clone())
             .unwrap();

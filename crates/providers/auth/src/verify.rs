@@ -188,13 +188,16 @@ impl Authenticator {
     /// account, which passes any Reader check (see
     /// [`Self::with_provider_account`]). A bucket whose visibility cannot be
     /// established gates like `Private`.
+    ///
+    /// Returns the account that signed the request, or `None` when the request
+    /// was served without a signature (the Reader cases above).
     pub async fn require_role(
         &self,
         auth_header: Option<&str>,
         method: &str,
         bucket_id: BucketId,
         required: RequiredRole,
-    ) -> Result<(), AuthError> {
+    ) -> Result<Option<AccountId32>, AuthError> {
         // One lookup serves both gates; its failure only matters once the
         // request has proven it needs a role.
         let access = self.membership.lookup(bucket_id).await;
@@ -203,7 +206,7 @@ impl Authenticator {
                 entry.access.visibility == Visibility::Public || entry.serves_as_replica
             })
         {
-            return Ok(());
+            return Ok(None);
         }
 
         let header = auth_header.ok_or(AuthError::AuthRequired)?;
@@ -212,7 +215,7 @@ impl Authenticator {
         // Checked before the membership lookup result is consulted, so
         // operator reads keep working through a chain outage.
         if required == RequiredRole::Reader && self.provider_account.as_ref() == Some(&account) {
-            return Ok(());
+            return Ok(Some(account));
         }
 
         let role = access?
@@ -223,7 +226,7 @@ impl Authenticator {
             return Err(AuthError::InsufficientRole);
         }
 
-        Ok(())
+        Ok(Some(account))
     }
 }
 
@@ -440,7 +443,53 @@ mod tests {
         assert!(matches!(anonymous_read, Err(AuthError::AuthRequired)));
     }
 
-    async fn require_role_for(granted: Role, required: RequiredRole) -> Result<(), AuthError> {
+    #[tokio::test]
+    async fn require_role_returns_the_account_that_signed_the_request() {
+        let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let alice_account = AccountId32::new(alice.public().0);
+        let auth = authenticator(vec![(alice_account.clone(), Role::Admin).into()]);
+        let header = make_auth_header(&alice, "POST", 1, current_timestamp());
+
+        let account = auth
+            .require_role(Some(&header), "POST", 1, RequiredRole::Admin)
+            .await;
+
+        assert_eq!(account.unwrap(), Some(alice_account));
+    }
+
+    #[tokio::test]
+    async fn require_role_returns_the_provider_account_for_a_provider_read() {
+        let provider = sr25519::Pair::from_string("//Provider", None).unwrap();
+        let provider_account = AccountId32::new(provider.public().0);
+        let auth = Authenticator::new(StaticMembershipResolver::private(vec![]))
+            .with_provider_account(provider_account.clone());
+        let header = make_auth_header(&provider, "GET", 1, current_timestamp());
+
+        let account = auth
+            .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .await;
+
+        assert_eq!(account.unwrap(), Some(provider_account));
+    }
+
+    #[tokio::test]
+    async fn require_role_returns_no_account_for_an_unsigned_public_read() {
+        let auth = Authenticator::new(StaticMembershipResolver::new(BucketAccess {
+            members: vec![],
+            visibility: Visibility::Public,
+        }));
+
+        let account = auth
+            .require_role(None, "GET", 1, RequiredRole::Reader)
+            .await;
+
+        assert_eq!(account.unwrap(), None);
+    }
+
+    async fn require_role_for(
+        granted: Role,
+        required: RequiredRole,
+    ) -> Result<Option<AccountId32>, AuthError> {
         let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
         let auth = authenticator(vec![(AccountId32::new(keypair.public().0), granted).into()]);
         let header = make_auth_header(&keypair, "PUT", 1, current_timestamp());

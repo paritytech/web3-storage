@@ -58,7 +58,8 @@ impl PrunedRange {
 
 /// An admin-signed deletion authorization: the durable evidence for the
 /// on-chain `Deleted` challenge defense. Kept after the bytes are erased —
-/// it is what makes the erasure permanently defensible.
+/// it is what makes the erasure permanently defensible. A backend stores only
+/// receipts whose signature [verifies](Self::verifies).
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct DeletionReceipt {
     /// The post-prune MMR root the admin signed.
@@ -69,6 +70,26 @@ pub struct DeletionReceipt {
     pub admin: sp_core::crypto::AccountId32,
     /// The admin's signature over the deletion `CommitmentPayload`.
     pub signature: sp_runtime::MultiSignature,
+}
+
+impl DeletionReceipt {
+    /// Whether `signature` is `admin`'s signature over the deletion commitment
+    /// of `bucket_id`, verified against the `admin` account bytes. The pallet's
+    /// `Deleted` defense does the same unless `admin` is a registered provider,
+    /// in which case it verifies against the provider's registered key.
+    pub fn verifies(&self, bucket_id: storage_primitives::BucketId) -> bool {
+        use sp_runtime::traits::Verify;
+
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id,
+            storage_primitives::Commitment {
+                mmr_root: self.mmr_root,
+                start_seq: self.new_start_seq,
+                leaf_count: 0,
+            },
+        );
+        self.signature.verify(&payload.encode()[..], &self.admin)
+    }
 }
 
 /// Per-bucket state a backend persists: the bucket's MMR summary and its

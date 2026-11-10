@@ -236,6 +236,13 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "bucket_id": id })),
                     },
                 ),
+                StorageError::InvalidDeletionReceipt(id) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_signature".to_string(),
+                        details: Some(serde_json::json!({ "bucket_id": id })),
+                    },
+                ),
                 StorageError::RootNotFound(root) => (
                     StatusCode::NOT_FOUND,
                     ErrorResponse {
@@ -619,6 +626,12 @@ mod tests {
         assert_eq!(
             status_of(Error::from(provider_storage::Error::BucketCondemned(1))),
             StatusCode::GONE
+        );
+        assert_eq!(
+            status_of(Error::from(
+                provider_storage::Error::InvalidDeletionReceipt(1)
+            )),
+            StatusCode::BAD_REQUEST
         );
         assert_eq!(
             status_of(Error::ChainStateUnavailable("x".into())),
