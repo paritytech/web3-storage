@@ -11,7 +11,7 @@ use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use storage_primitives::{BucketId, Role, Visibility};
+use storage_primitives::{BucketId, Commitment, Role, Visibility};
 
 /// A bucket member and the role they hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,6 +187,15 @@ pub trait MembershipResolver: Send + Sync {
     ) -> Result<Option<OwnAgreement>, MembershipError> {
         Ok(None)
     }
+
+    /// The commitment of the bucket's on-chain snapshot, or `None` if the
+    /// bucket has no snapshot (or does not exist). Defaults to `None`.
+    async fn fetch_snapshot_commitment(
+        &self,
+        _bucket_id: BucketId,
+    ) -> Result<Option<Commitment>, MembershipError> {
+        Ok(None)
+    }
 }
 
 /// So a boxed resolver still satisfies the `impl MembershipResolver` bound.
@@ -202,6 +211,13 @@ impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
     ) -> Result<Option<OwnAgreement>, MembershipError> {
         (**self).fetch_own_agreement(bucket_id).await
     }
+
+    async fn fetch_snapshot_commitment(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<Commitment>, MembershipError> {
+        (**self).fetch_snapshot_commitment(bucket_id).await
+    }
 }
 
 /// A [`MembershipResolver`] that returns the same fixed answers for every
@@ -213,6 +229,8 @@ pub struct StaticMembershipResolver {
     pub access: BucketAccess,
     /// Returned by `fetch_own_agreement` for every bucket.
     pub own_agreement: Option<OwnAgreement>,
+    /// Returned by `fetch_snapshot_commitment` for every bucket.
+    pub snapshot_commitment: Option<Commitment>,
 }
 
 #[cfg(any(test, feature = "test-helpers"))]
@@ -225,6 +243,7 @@ impl StaticMembershipResolver {
                 replica: false,
                 max_bytes: u64::MAX,
             }),
+            snapshot_commitment: None,
         }
     }
 
@@ -233,12 +252,18 @@ impl StaticMembershipResolver {
         Self::new(BucketAccess::private(members))
     }
 
+    /// Resolve every bucket with this snapshot commitment.
+    pub fn with_snapshot_commitment(mut self, commitment: Commitment) -> Self {
+        self.snapshot_commitment = Some(commitment);
+        self
+    }
+    
     /// Resolve every bucket with these primary provider accounts.
     pub fn with_primary_providers(mut self, primary_providers: Vec<AccountId32>) -> Self {
         self.access.members.primary_providers = primary_providers;
         self
     }
-
+    
     /// Resolve every bucket as replica-held by this node.
     pub fn with_serves_as_replica(mut self) -> Self {
         self.own_agreement = Some(OwnAgreement {
@@ -276,6 +301,13 @@ impl MembershipResolver for StaticMembershipResolver {
         _bucket_id: BucketId,
     ) -> Result<Option<OwnAgreement>, MembershipError> {
         Ok(self.own_agreement)
+    }
+
+    async fn fetch_snapshot_commitment(
+        &self,
+        _bucket_id: BucketId,
+    ) -> Result<Option<Commitment>, MembershipError> {
+        Ok(self.snapshot_commitment)
     }
 }
 
@@ -494,6 +526,15 @@ impl MembershipCache {
         bucket_id: BucketId,
     ) -> Result<Option<OwnAgreement>, MembershipError> {
         self.resolver.fetch_own_agreement(bucket_id).await
+    }
+
+    /// The commitment of the bucket's on-chain snapshot, read from the
+    /// resolver directly, bypassing the cache.
+    pub(crate) async fn fetch_snapshot_commitment(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<Commitment>, MembershipError> {
+        self.resolver.fetch_snapshot_commitment(bucket_id).await
     }
 
     /// The bucket's cached access entry, resolved on a miss or once stale.

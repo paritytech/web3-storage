@@ -10,9 +10,10 @@ use provider_auth::{
 use provider_events::{BlockEvent, BlockEventRx};
 use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, Commitment};
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;
 use storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api::AgreementResponse as BucketAgreement;
+use storage_subxt::api::runtime_types::storage_primitives::Commitment as RuntimeCommitment;
 use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::broadcast::error::TryRecvError;
@@ -161,6 +162,50 @@ impl MembershipResolver for ChainMembershipResolver {
             replica: matches!(agreement.role, ProviderRole::Replica { .. }),
             max_bytes: agreement.max_bytes,
         }))
+    }
+
+    /// The commitment of the bucket's latest checkpoint, read at the current
+    /// block.
+    async fn fetch_snapshot_commitment(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<Commitment>, MembershipError> {
+        let api = self.api()?;
+
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .buckets()
+            .unvalidated();
+
+        let at = api
+            .at_current_block()
+            .await
+            .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
+        let result = at
+            .storage()
+            .try_fetch(storage_address, (bucket_id,))
+            .await
+            .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
+
+        let Some(bucket_value) = result else {
+            return Ok(None);
+        };
+        let bucket = bucket_value.decode().map_err(|e| MembershipError::Decode {
+            bucket_id,
+            reason: e.to_string(),
+        })?;
+
+        Ok(bucket
+            .snapshot
+            .map(|snapshot| commitment_from_runtime(snapshot.commitment)))
+    }
+}
+
+fn commitment_from_runtime(commitment: RuntimeCommitment) -> Commitment {
+    Commitment {
+        mmr_root: sp_core::H256::from(commitment.mmr_root.0),
+        start_seq: commitment.start_seq,
+        leaf_count: commitment.leaf_count,
     }
 }
 
@@ -312,6 +357,23 @@ mod tests {
                 member(3, RuntimeRole::Reader),
             ]),
             expected
+        );
+    }
+
+    #[test]
+    fn commitment_from_runtime_copies_every_field() {
+        let commitment = commitment_from_runtime(RuntimeCommitment {
+            mmr_root: subxt::utils::H256([9u8; 32]),
+            start_seq: 4,
+            leaf_count: 7,
+        });
+        assert_eq!(
+            commitment,
+            Commitment {
+                mmr_root: sp_core::H256::repeat_byte(9),
+                start_seq: 4,
+                leaf_count: 7,
+            }
         );
     }
 

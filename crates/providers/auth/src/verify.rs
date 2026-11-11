@@ -10,7 +10,7 @@ use crate::membership::{
 };
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::Duration;
-use storage_primitives::{BucketId, Visibility};
+use storage_primitives::{BucketId, Commitment, Visibility};
 
 /// Wrap a payload the way Polkadot message-signing surfaces do before signing:
 /// `<Bytes>` ++ payload ++ `</Bytes>`. Browser extensions (`signRaw`) and PAPI's
@@ -254,6 +254,16 @@ impl Authenticator {
     ) -> Result<Option<OwnAgreement>, AuthError> {
         Ok(self.membership.fetch_own_agreement(bucket_id).await?)
     }
+
+    /// The commitment of `bucket_id`'s on-chain snapshot, or `None` if it has
+    /// no snapshot, read from the chain without the membership cache. Fails
+    /// when the chain cannot be reached.
+    pub async fn snapshot_commitment(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<Commitment>, AuthError> {
+        Ok(self.membership.fetch_snapshot_commitment(bucket_id).await?)
+    }
 }
 
 #[cfg(test)]
@@ -383,6 +393,54 @@ mod tests {
         let without =
             Authenticator::new(StaticMembershipResolver::private(vec![]).without_agreement());
         assert_eq!(without.own_agreement(1).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn snapshot_commitment_reports_the_resolved_commitment() {
+        let commitment = Commitment {
+            mmr_root: sp_core::H256::repeat_byte(5),
+            start_seq: 0,
+            leaf_count: 3,
+        };
+        let with_snapshot = Authenticator::new(
+            StaticMembershipResolver::private(vec![]).with_snapshot_commitment(commitment),
+        );
+        assert_eq!(
+            with_snapshot.snapshot_commitment(1).await.unwrap(),
+            Some(commitment)
+        );
+
+        let without = Authenticator::new(StaticMembershipResolver::private(vec![]));
+        assert_eq!(without.snapshot_commitment(1).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn snapshot_commitment_is_read_from_the_resolver_on_every_call() {
+        struct Counting(Arc<AtomicUsize>);
+
+        #[async_trait::async_trait]
+        impl MembershipResolver for Counting {
+            async fn fetch_access(
+                &self,
+                _bucket_id: BucketId,
+            ) -> Result<BucketAccess, MembershipError> {
+                Ok(BucketAccess::private(vec![]))
+            }
+
+            async fn fetch_snapshot_commitment(
+                &self,
+                _bucket_id: BucketId,
+            ) -> Result<Option<Commitment>, MembershipError> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(None)
+            }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let auth = Authenticator::new(Counting(calls.clone()));
+        auth.snapshot_commitment(1).await.unwrap();
+        auth.snapshot_commitment(1).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
