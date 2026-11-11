@@ -249,7 +249,9 @@ mod tests {
     use super::*;
     use crate::error::MembershipError;
     use crate::http_auth::build_auth_header;
-    use crate::membership::{BucketAccess, Member, MembershipResolver, StaticMembershipResolver};
+    use crate::membership::{
+        BucketAccess, BucketMembership, Member, MembershipResolver, StaticMembershipResolver,
+    };
     use crate::test_support::FlakyResolver;
     use sp_core::Pair;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -375,7 +377,10 @@ mod tests {
     async fn public_bucket_serves_reads_without_auth_but_still_gates_writes() {
         let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
         let auth = Authenticator::new(StaticMembershipResolver::new(BucketAccess {
-            members: vec![(AccountId32::new(alice.public().0), Role::Reader).into()],
+            members: BucketMembership {
+                members: vec![(AccountId32::new(alice.public().0), Role::Reader).into()],
+                ..Default::default()
+            },
             visibility: Visibility::Public,
         }));
 

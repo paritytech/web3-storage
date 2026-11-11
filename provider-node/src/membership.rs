@@ -4,7 +4,7 @@
 
 use crate::chain_connection::{self, ChainWatch};
 use provider_auth::{
-    BucketAccess, Invalidation, Member, MembershipError, MembershipInvalidations,
+    BucketAccess, BucketMembership, Invalidation, Member, MembershipError, MembershipInvalidations,
     MembershipResolver, OwnAgreement,
 };
 use provider_events::{BlockEvent, BlockEventRx};
@@ -12,6 +12,7 @@ use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;
+use storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api::AgreementResponse as BucketAgreement;
 use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::broadcast::error::TryRecvError;
@@ -86,8 +87,29 @@ impl MembershipResolver for ChainMembershipResolver {
             tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
         }
 
-        Ok(BucketAccess {
+        let agreements = at
+            .runtime_apis()
+            .call(
+                storage_subxt::api::runtime_apis()
+                    .storage_provider_api()
+                    .bucket_agreements(bucket_id)
+                    .unvalidated(),
+            )
+            .await
+            .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
+
+        let mut membership = BucketMembership {
             members,
+            primary_providers: primary_provider_accounts(bucket.primary_providers.0),
+            replica_providers: replica_provider_accounts(agreements),
+            own_node_role: None,
+        };
+        membership.own_node_role = self
+            .provider_account
+            .as_ref()
+            .and_then(|own| membership.node_role_of(own));
+        Ok(BucketAccess {
+            members: membership,
             visibility: bucket.visibility.into(),
         })
     }
@@ -146,6 +168,23 @@ fn member_roles(members: Vec<RuntimeMember>) -> Vec<Member> {
     members
         .into_iter()
         .map(|m| (AccountId32::new(m.account.0), m.role.into()).into())
+        .collect()
+}
+
+fn primary_provider_accounts(providers: Vec<subxt::utils::AccountId32>) -> Vec<AccountId32> {
+    providers
+        .into_iter()
+        .map(|account| AccountId32::new(account.0))
+        .collect()
+}
+
+/// The accounts with a `Replica` role among a bucket's agreements.
+fn replica_provider_accounts(agreements: Vec<BucketAgreement>) -> Vec<AccountId32> {
+    agreements
+        .into_iter()
+        .filter(|agreement| matches!(agreement.role, ProviderRole::Replica { .. }))
+        .filter_map(|agreement| <[u8; 32]>::try_from(agreement.provider).ok())
+        .map(AccountId32::new)
         .collect()
 }
 
@@ -273,6 +312,53 @@ mod tests {
                 member(3, RuntimeRole::Reader),
             ]),
             expected
+        );
+    }
+
+    #[test]
+    fn primary_provider_accounts_converts_accounts() {
+        assert_eq!(
+            primary_provider_accounts(vec![
+                subxt::utils::AccountId32([1u8; 32]),
+                subxt::utils::AccountId32([2u8; 32]),
+            ]),
+            vec![AccountId32::new([1u8; 32]), AccountId32::new([2u8; 32])]
+        );
+    }
+
+    #[test]
+    fn replica_provider_accounts_keeps_only_replica_agreements() {
+        let agreement = |byte: u8, role: ProviderRole<u128, u32>| BucketAgreement {
+            bucket_id: 1,
+            owner: vec![0; 32],
+            provider: vec![byte; 32],
+            max_bytes: 0,
+            payment_locked: 0,
+            price_per_byte: 0,
+            expires_at: 0,
+            extensions_blocked: false,
+            role,
+            started_at: 0,
+        };
+        let replica = |byte: u8| {
+            agreement(
+                byte,
+                ProviderRole::Replica {
+                    sync_balance: 0,
+                    sync_price: 0,
+                    min_sync_interval: 0,
+                    last_sync: None,
+                },
+            )
+        };
+
+        assert_eq!(
+            replica_provider_accounts(vec![
+                agreement(1, ProviderRole::Primary),
+                replica(2),
+                replica(3),
+            ]),
+            vec![AccountId32::new([2u8; 32]), AccountId32::new([3u8; 32])]
         );
     }
 
