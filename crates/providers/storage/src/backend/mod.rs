@@ -378,20 +378,13 @@ pub trait StorageBackend: Send + Sync {
     /// rejects `store_node` and `commit` with [`Error::BucketCondemned`].
     fn condemn_bucket(&self, bucket_id: BucketId) -> Result<(), Error>;
 
-    /// Get MMR proof for a leaf.
-    fn get_mmr_proof(
-        &self,
-        bucket_id: BucketId,
-        leaf_index: u64,
-    ) -> Result<storage_primitives::MmrProof, Error>;
-
-    /// Rebuild the MMR proof for the exact commitment a challenge cites.
+    /// Build the MMR proof of leaf `leaf_index`, counted from
+    /// `commitment.start_seq`, in the MMR of `commitment`.
     ///
-    /// A challenge references a signed commitment's `(mmr_root, start_seq,
-    /// leaf_count)` and a `leaf_index` relative to that `start_seq` — not the
-    /// bucket's current state, which may have moved on through later commits
-    /// or prunes. The proof must therefore be generated against the cited MMR
-    /// state, reconstructed from that exact prefix of the leaf history.
+    /// The bucket's current state may have moved past `commitment` through
+    /// later commits or prunes, so the proof is built from the commitment's
+    /// range of the leaf history, and the rebuilt root must equal
+    /// `commitment.mmr_root`.
     fn get_mmr_proof_for_commitment(
         &self,
         bucket_id: BucketId,

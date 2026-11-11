@@ -1265,49 +1265,121 @@ common::backend_tests! {
 // MMR peaks and subtree
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// The signed commitment from a `/commit` response.
+fn commitment_of(commit: &Value) -> Commitment {
+    Commitment {
+        mmr_root: commit["mmr_root"].as_str().unwrap().parse().unwrap(),
+        start_seq: commit["start_seq"].as_u64().unwrap(),
+        leaf_count: commit["leaf_count"].as_u64().unwrap(),
+    }
+}
+
+/// `/mmr_proof` query for `leaf_index` in `commitment`.
+fn mmr_proof_url(server: &TestServer, leaf_index: u64, commitment: &Commitment) -> String {
+    server.url(&format!(
+        "/mmr_proof?bucket_id=1&leaf_index={leaf_index}&mmr_root={:#x}&start_seq={}&leaf_count={}",
+        commitment.mmr_root, commitment.start_seq, commitment.leaf_count
+    ))
+}
+
 common::backend_tests! {
     async fn test_mmr_proof_endpoint(backend) {
         let server = TestServer::new(backend).await;
         upload_and_commit(&server, 1).await;
         let (_, commit) = upload_and_commit(&server, 1).await;
+        let commitment = commitment_of(&commit);
 
         let resp = server
             .client
-            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=1"))
+            .get(mmr_proof_url(&server, 1, &commitment))
             .send()
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let proof: storage_primitives::MmrProof = resp.json().await.unwrap();
-
-        let h256 = |v: &Value| v.as_str().unwrap().parse::<H256>().unwrap();
         assert!(!proof.items.is_empty());
-        let commitment = storage_primitives::Commitment {
-            mmr_root: h256(&commit["mmr_root"]),
-            start_seq: commit["start_seq"].as_u64().unwrap(),
-            leaf_count: commit["leaf_count"].as_u64().unwrap(),
-        };
         assert!(storage_primitives::verify_mmr_proof(proof, 1, &commitment));
     }
 }
 
 common::backend_tests! {
-    async fn test_mmr_proof_leaf_index_out_of_range(backend) {
+    async fn test_mmr_proof_for_an_older_commitment(backend) {
         let server = TestServer::new(backend).await;
-        upload_and_commit(&server, 1).await; // stores a single leaf at index 0
+        let (_, first) = upload_and_commit(&server, 1).await;
+        let older = commitment_of(&first);
+        // A later commit moves the bucket's MMR past the older commitment.
+        upload_and_commit(&server, 1).await;
 
         let resp = server
             .client
-            .get(server.url("/mmr_proof?bucket_id=1&leaf_index=1"))
+            .get(mmr_proof_url(&server, 0, &older))
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::OK);
+        let proof: storage_primitives::MmrProof = resp.json().await.unwrap();
+        assert!(storage_primitives::verify_mmr_proof(proof, 0, &older));
+    }
+}
 
-        let body: Value = resp.json().await.unwrap();
-        assert_eq!(body["error"], "not_found");
-        assert_eq!(body["details"]["bucket_id"], 1);
-        assert_eq!(body["details"]["leaf_index"], 1);
+common::backend_tests! {
+    async fn test_mmr_proof_rejects_a_missing_or_malformed_commitment(backend) {
+        let server = TestServer::new(backend).await;
+        upload_and_commit(&server, 1).await;
+
+        for query in [
+            "bucket_id=1&leaf_index=0",
+            "bucket_id=1&leaf_index=0&start_seq=0&leaf_count=1",
+            "bucket_id=1&leaf_index=0&mmr_root=0xzz&start_seq=0&leaf_count=1",
+        ] {
+            let resp = server
+                .client
+                .get(server.url(&format!("/mmr_proof?{query}")))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{query}");
+        }
+    }
+}
+
+common::backend_tests! {
+    async fn test_mmr_proof_for_a_commitment_the_node_cannot_rebuild(backend) {
+        let server = TestServer::new(backend).await;
+        let (_, commit) = upload_and_commit(&server, 1).await;
+        let commitment = commitment_of(&commit);
+
+        let wrong_root = Commitment {
+            mmr_root: H256::repeat_byte(0x11),
+            ..commitment
+        };
+        let past_local_leaves = Commitment {
+            leaf_count: commitment.leaf_count + 1,
+            ..commitment
+        };
+        // (leaf_index, commitment, error code): a wrong root, a range past
+        // the local leaves, and a leaf_index outside the commitment.
+        for (leaf_index, unknown, error) in [
+            (0, wrong_root, "commitment_not_reproducible"),
+            (0, past_local_leaves, "leaves_not_held"),
+            (commitment.leaf_count, commitment, "commitment_not_reproducible"),
+        ] {
+            let resp = server
+                .client
+                .get(mmr_proof_url(&server, leaf_index, &unknown))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+            let body: Value = resp.json().await.unwrap();
+            assert_eq!(body["error"], error);
+            if error == "leaves_not_held" {
+                assert_eq!(
+                    body["details"]["local_end"],
+                    commitment.start_seq + commitment.leaf_count
+                );
+            }
+        }
     }
 }
 

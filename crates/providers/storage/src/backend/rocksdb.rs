@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use storage_primitives::{
-    mmr::{self, MmrLeaf, MmrProof},
+    mmr::{self, MmrLeaf},
     BucketId, Commitment, DEFAULT_CHUNK_SIZE,
 };
 
@@ -420,6 +420,7 @@ impl DiskStorage {
     }
 
     /// The retained leaves of `bucket`, oldest first.
+    #[cfg(test)]
     fn retained_leaves(
         &self,
         bucket_id: BucketId,
@@ -1277,19 +1278,6 @@ impl DiskStorage {
         })
     }
 
-    /// Get MMR proof for a leaf.
-    pub fn get_mmr_proof(
-        &self,
-        bucket_id: BucketId,
-        leaf_index: u64,
-    ) -> Result<storage_primitives::MmrProof, Error> {
-        let bucket = self
-            .get_bucket(bucket_id)?
-            .ok_or(Error::BucketNotFound(bucket_id))?;
-        let leaves = self.retained_leaves(bucket_id, &bucket)?;
-        Ok(leaf_proof(bucket_id, &leaves, leaf_index)?.1)
-    }
-
     /// See [`StorageBackend::get_mmr_proof_for_commitment`]. The cited
     /// window is read from the leaf store, which holds the pruned leaves
     /// as well as the retained ones.
@@ -1303,11 +1291,14 @@ impl DiskStorage {
             .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        if leaf_index >= commitment.leaf_count {
-            return Err(Error::CommitmentNotReproducible(format!(
+        let outside = || {
+            Error::CommitmentNotReproducible(format!(
                 "leaf_{leaf_index} outside commitment ({} leaves)",
                 commitment.leaf_count
-            )));
+            ))
+        };
+        if leaf_index >= commitment.leaf_count {
+            return Err(outside());
         }
 
         let window = read_leaves(
@@ -1340,7 +1331,7 @@ impl DiskStorage {
             });
         }
 
-        let (root, proof) = leaf_proof(bucket_id, &window, leaf_index)?;
+        let (root, proof) = mmr::proof(&window, leaf_index)?.ok_or_else(outside)?;
         // The rebuilt window must reproduce the cited root; a mismatch means
         // the local history diverged from what was signed, and any proof from
         // it would fail on-chain verification anyway.
@@ -1469,14 +1460,6 @@ impl StorageBackend for DiskStorage {
         self.condemn_bucket(bucket_id)
     }
 
-    fn get_mmr_proof(
-        &self,
-        bucket_id: BucketId,
-        leaf_index: u64,
-    ) -> Result<storage_primitives::MmrProof, Error> {
-        self.get_mmr_proof(bucket_id, leaf_index)
-    }
-
     fn get_mmr_proof_for_commitment(
         &self,
         bucket_id: BucketId,
@@ -1491,18 +1474,6 @@ impl StorageBackend for DiskStorage {
     }
 }
 
-/// Root of the MMR over `leaves` and the proof for the leaf at `leaf_index`.
-fn leaf_proof(
-    bucket_id: BucketId,
-    leaves: &[MmrLeaf],
-    leaf_index: u64,
-) -> Result<(H256, MmrProof), Error> {
-    mmr::proof(leaves, leaf_index)?.ok_or(Error::LeafNotFound {
-        bucket_id,
-        leaf_index,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1510,7 +1481,7 @@ mod tests {
     use rocksdb::DB;
     use sp_core::Pair as _;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use storage_primitives::{hash_leaf, verify_merkle_proof};
+    use storage_primitives::{hash_leaf, verify_merkle_proof, MmrProof};
     use tempfile::TempDir;
 
     /// Open the database at `path` directly, bypassing `DiskStorage::new` and
@@ -1599,9 +1570,6 @@ mod tests {
             unreachable!("read-only")
         }
         fn condemn_bucket(&self, _: BucketId) -> Result<(), Error> {
-            unreachable!("read-only")
-        }
-        fn get_mmr_proof(&self, _: BucketId, _: u64) -> Result<MmrProof, Error> {
             unreachable!("read-only")
         }
         fn get_mmr_proof_for_commitment(
@@ -2331,7 +2299,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
 
-        let err = storage.get_mmr_proof(42, 0).unwrap_err();
+        let err = storage
+            .get_mmr_proof_for_commitment(42, &Commitment::default(), 0)
+            .unwrap_err();
         assert!(matches!(err, Error::BucketNotFound(42)));
     }
 
@@ -2345,7 +2315,9 @@ mod tests {
 
         corrupt(&storage, CF_BUCKETS, &BUCKET.to_le_bytes());
 
-        let err = storage.get_mmr_proof(BUCKET, 0).unwrap_err();
+        let err = storage
+            .get_mmr_proof_for_commitment(BUCKET, &Commitment::default(), 0)
+            .unwrap_err();
         assert!(
             matches!(err, Error::Serialization(_)),
             "expected Serialization, got {err:?}"
@@ -2410,24 +2382,6 @@ mod tests {
             matches!(err, Error::NodeNotFound(_)),
             "expected NodeNotFound, got {err:?}"
         );
-    }
-
-    #[test]
-    fn proof_for_a_missing_leaf_is_leaf_not_found() {
-        let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
-        bucket_with_leaves(&storage, 1, 0);
-        bucket_with_leaves(&storage, 2, 4);
-
-        assert!(matches!(
-            storage.get_mmr_proof(1, 0),
-            Err(Error::LeafNotFound { .. })
-        ));
-        assert!(matches!(
-            storage.get_mmr_proof(2, 4),
-            Err(Error::LeafNotFound { .. })
-        ));
-        assert!(storage.get_mmr_proof(2, 3).is_ok());
     }
 
     #[test]

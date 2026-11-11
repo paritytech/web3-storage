@@ -31,9 +31,9 @@ impl ChallengeProofSource for StorageProofSource {
         self.0
             .get_mmr_proof_for_commitment(bucket_id, commitment, leaf_index)
             .map_err(|e| match e {
-                Error::BucketNotFound(_)
-                | Error::LeafNotFound { .. }
-                | Error::LeavesNotHeld { .. } => ChallengeError::ProofDataMissing { target },
+                Error::BucketNotFound(_) | Error::LeavesNotHeld { .. } => {
+                    ChallengeError::ProofDataMissing { target }
+                }
                 e => ChallengeError::Storage {
                     reason: e.to_string(),
                 },

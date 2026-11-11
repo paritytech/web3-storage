@@ -53,20 +53,20 @@ export default function ChallengeDialog({ open, onOpenChange, providers }: Chall
     }
   }, [providers, selectedProvider]);
 
-  // Fetch chunk count when leaf index changes
+  // Fetch chunk count when the leaf index or the checkpoint changes
   useEffect(() => {
     setChunkCount(null);
-    if (bucketId === null || !isLeafValid) return;
+    if (bucketId === null || info === null || !isLeafValid) return;
     let cancelled = false;
     const client = getS3Client();
     client
-      .getLeafChunkCount(bucketId, leafVal)
+      .getLeafChunkCount(bucketId, info, leafVal)
       .then((count) => {
         if (!cancelled) setChunkCount(count);
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [bucketId, leafIndex, isLeafValid]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [bucketId, info, leafIndex, isLeafValid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const randomizeLeaf = () => {
     if (leafCount <= 0n) return;

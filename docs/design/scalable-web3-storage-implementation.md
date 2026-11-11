@@ -2115,8 +2115,8 @@ Three Reader-level exemptions, all resolved from the same cached lookup:
   account passes any Reader check. Provider accounts are never bucket
   members, and the operator can read the node's disk anyway; this is what
   lets the provider's own tooling (e.g. the dashboard building a challenge
-  response) fetch `/mmr_proof` on a private bucket. It never grants Writer
-  or Admin.
+  response) fetch `/mmr_proof` with the challenge's commitment on a private
+  bucket. It never grants Writer or Admin.
 
 **Hash-keyed reads are capability reads.** `GET /node`, `GET /read`,
 `GET /chunk_proof` and `POST /fetch_nodes` are keyed by a blake2-256 hash or
@@ -2389,15 +2389,37 @@ for the checkpoint workflow, where the signature goes into the
 
 Get MMR Proof
 ─────────────
-GET /mmr_proof?bucket_id=0x...&leaf_index=5
+GET /mmr_proof?bucket_id=0x...&leaf_index=5&mmr_root=0x...&start_seq=0&leaf_count=42
 Authorization: Web3Storage <...>       # Reader; the provider's own account
                                        # also passes (operator self-auth)
+
+The proof is for the leaf at `leaf_index` (counted from `start_seq`) in the
+MMR of the commitment `(mmr_root, start_seq, leaf_count)`, rebuilt from the
+node's leaf history. All three parameters are required: the bucket's current
+MMR changes with every commit or prune, so a proof against it does not
+verify against a commitment the client read earlier. A challenge response
+passes the challenge's `commitment`, which `respond_to_challenge` verifies
+against. A reader passes the commitment it got from `GET /commitment` or the
+on-chain checkpoint. The client verifies the proof against that commitment
+before it uses the proof.
 
 Response:
 {
   "leaf": { "leaf_version": 1, "data_root": "0x...", "data_size": 2097152, "total_size": 52428800 },
   "items": ["0x...", ...]
 }
+
+Response (400 Bad Request):
+  // a missing parameter, or an mmr_root that is not 32 bytes of hex
+
+Response (404 Not Found):
+{ "error": "bucket_not_found" }
+{ "error": "leaves_not_held", "details": { "start_seq": 0, "leaf_count": 42,
+  "local_start_seq": 10, "local_end": 50 } }
+  // the commitment cites leaves the node does not hold: leaves it has
+  // already deleted, or a range past its local leaves
+{ "error": "commitment_not_reproducible", "details": { "reason": "..." } }
+  // leaf_index >= leaf_count, or the rebuilt root differs from mmr_root
 
 Get Chunk Proof
 ───────────────
