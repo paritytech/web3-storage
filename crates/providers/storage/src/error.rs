@@ -3,6 +3,7 @@
 //! Error types for the storage engine.
 
 use sp_core::H256;
+use storage_primitives::Commitment;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -74,6 +75,16 @@ pub enum Error {
     /// Deduplication lets a few stored nodes span such a tree.
     #[error("Content tree exceeds {max_nodes} nodes")]
     TreeTooLarge { max_nodes: u64 },
+
+    /// The commit would give the bucket a different MMR root or leaf count
+    /// than the commitment the caller expected. Nothing was committed.
+    #[error(
+        "Commit does not reach the expected commitment: expected {expected:?}, got {actual:?}"
+    )]
+    CommitMismatch {
+        expected: Commitment,
+        actual: Commitment,
+    },
 
     #[error("Invalid hash: expected {expected:?}, got {actual:?}")]
     InvalidHash { expected: H256, actual: H256 },
