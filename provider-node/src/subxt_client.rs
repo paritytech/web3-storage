@@ -377,7 +377,6 @@ impl SubxtChainClient {
                     return;
                 }
             };
-        // `unvalidated`: see the `storage-subxt` crate docs.
         let storage_query = storage_subxt::api::storage()
             .storage_provider()
             .providers()
@@ -534,7 +533,6 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<BucketSnapshot, ChainClientError> {
-        // `unvalidated`: see the `storage-subxt` crate docs.
         let storage_address = storage_subxt::api::storage()
             .storage_provider()
             .buckets()
@@ -558,7 +556,6 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<Vec<String>, ChainClientError> {
-        // `unvalidated`: see the `storage-subxt` crate docs.
         let buckets = storage_subxt::api::storage()
             .storage_provider()
             .buckets()
@@ -655,7 +652,6 @@ pub(crate) async fn fetch_current_anchor_block<C>(
 where
     C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
 {
-    // `unvalidated`: see the `storage-subxt` crate docs.
     at.runtime_apis()
         .call(
             storage_subxt::api::runtime_apis()
@@ -876,7 +872,6 @@ impl ChallengeChainClient for SubxtChainClient {
     ) -> Result<Option<DetectedChallenge>, ChallengeError> {
         let our_bytes: [u8; 32] = self.signer.public_key().0;
 
-        // `unvalidated`: see the `storage-subxt` crate docs.
         let storage_address = storage_subxt::api::storage()
             .storage_provider()
             .challenges()
