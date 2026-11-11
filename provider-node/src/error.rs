@@ -374,6 +374,15 @@ impl IntoResponse for Error {
                     details: None,
                 },
             ),
+            Error::Auth(AuthError::NotPrimary) => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "not_primary".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "provider node does not accept write bucket requests."
+                    })),
+                },
+            ),
             // Transient and worth retrying, unlike a decode failure.
             Error::Auth(err @ AuthError::MembershipLookup(MembershipError::Unavailable(_))) => (
                 StatusCode::SERVICE_UNAVAILABLE,

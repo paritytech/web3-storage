@@ -14,7 +14,7 @@ use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use common::{current_timestamp, make_auth_header, test_member_pair};
 use provider_auth::{Authenticator, BucketAccess, MembershipResolver, StaticMembershipResolver};
-use provider_storage::temp_rocksdb;
+use provider_storage::{temp_rocksdb, ChunkTreeNode, StorageBackend};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
@@ -31,6 +31,8 @@ type AccountId32 = sp_core::crypto::AccountId32;
 struct AuthTestServer {
     addr: std::net::SocketAddr,
     client: Client,
+    /// The server's storage, for seeding data the way replica sync does.
+    storage: Arc<dyn StorageBackend>,
     /// This server's scratch directory; dropped with the server.
     _dir: tempfile::TempDir,
 }
@@ -66,7 +68,7 @@ impl AuthTestServer {
         // The 300s skew keeps the default the `*_expired_timestamp` tests assume.
         let (storage, dir) = temp_rocksdb();
         let deps = ProviderDeps {
-            storage,
+            storage: storage.clone(),
             auth: Arc::new(authenticator),
         };
         let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");
@@ -77,6 +79,7 @@ impl AuthTestServer {
         Self {
             addr,
             client: Client::new(),
+            storage,
             _dir: dir,
         }
     }
@@ -586,7 +589,7 @@ async fn replica_served_private_bucket_reads_anonymously() {
         .with_serves_as_replica(),
     )
     .await;
-    upload_and_commit(&server, &alice, b"l0-gate-test-data").await;
+    seed_bucket_1(&server, b"l0-gate-test-data");
 
     let resp = server
         .client
@@ -599,4 +602,83 @@ async fn replica_served_private_bucket_reads_anonymously() {
         StatusCode::OK,
         "a replica serves private-bucket reads to anyone"
     );
+}
+
+/// Store `data` as a node of bucket 1 and commit it directly in storage.
+fn seed_bucket_1(server: &AuthTestServer, data: &[u8]) {
+    let hash = storage_primitives::hash_leaf(data);
+    server.storage.init_bucket(1, u64::MAX).unwrap();
+    server
+        .storage
+        .store_node(1, hash, ChunkTreeNode::Chunk(data.to_vec()))
+        .unwrap();
+    server.storage.commit(1, vec![hash]).unwrap();
+}
+
+/// A server whose node holds every bucket as a replica, with Alice as `role`.
+async fn replica_server(role: Role) -> AuthTestServer {
+    AuthTestServer::with_resolver(
+        StaticMembershipResolver::private(vec![(
+            AccountId32::new(test_member_pair().public().0),
+            role,
+        )
+            .into()])
+        .with_serves_as_replica(),
+    )
+    .await
+}
+
+/// The response is a 403 `not_primary`.
+async fn assert_not_primary(resp: reqwest::Response) {
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "not_primary");
+}
+
+/// A bucket writer cannot push a node to, or commit on, a node that holds
+/// the bucket as a replica.
+#[tokio::test]
+async fn replica_rejects_node_upload_and_commit() {
+    let alice = test_member_pair();
+    let server = replica_server(Role::Writer).await;
+    let data = b"pushed to a replica";
+
+    let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+    assert_not_primary(put_node(&server, Some(header), data).await).await;
+
+    let header = make_auth_header(&alice, "POST", 1, current_timestamp());
+    let hash_hex = format!("{:#x}", storage_primitives::hash_leaf(data));
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+        .send()
+        .await
+        .unwrap();
+    assert_not_primary(resp).await;
+
+    assert!(
+        server.storage.get_bucket(1).unwrap().is_none(),
+        "a rejected write must not create the bucket"
+    );
+}
+
+/// A bucket admin cannot prune a bucket on a node that holds it as a replica.
+#[tokio::test]
+async fn replica_rejects_delete() {
+    let alice = test_member_pair();
+    let server = replica_server(Role::Admin).await;
+    seed_bucket_1(&server, b"replicated data");
+
+    let header = make_auth_header(&alice, "POST", 1, current_timestamp());
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0 }))
+        .send()
+        .await
+        .unwrap();
+    assert_not_primary(resp).await;
 }
