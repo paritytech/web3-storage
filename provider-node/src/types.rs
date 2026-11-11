@@ -177,11 +177,16 @@ pub struct CheckpointSignatureResponse {
 // Proof Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Query for MMR proof.
+/// Query for `GET /mmr_proof`: the leaf at `leaf_index`, counted from
+/// `start_seq`, in the MMR of the commitment `(mmr_root, start_seq,
+/// leaf_count)`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MmrProofQuery {
     pub bucket_id: BucketId,
     pub leaf_index: u64,
+    pub mmr_root: H256,
+    pub start_seq: u64,
+    pub leaf_count: u64,
 }
 
 /// Query for chunk proof.
