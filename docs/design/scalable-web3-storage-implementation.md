@@ -125,8 +125,10 @@ signs a checkpoint while the old one is still bound.
    funding and interval) off-chain and signs them
 2. Anyone calls `add_replica_provider` with the signed terms on an
    existing bucket → `StorageAgreement` created with `ProviderRole::Replica`
-3. Replica syncs data autonomously from primaries, other replicas, or any data
-   holder willing to push it (everything is content-addressed and self-verifying)
+3. Replica syncs data autonomously from primaries or other replicas.
+   A primary provider of the bucket may also push data to it.
+   A replica accepts pushed data only when it matches a root the chain committed.
+   A replica takes no client writes or commits, and never signs a commitment
 4. Replica calls `confirm_replica_sync` on-chain → receives per-sync payment, becomes challengeable
 
 **Binding contract:**
@@ -180,7 +182,7 @@ See "Provider-to-Provider Fetch" in the design doc's Future Directions.
 
 **Liability**: A provider is only liable for MMR states they acknowledged (signed). Challenges against the canonical checkpoint only work for providers listed in the snapshot's provider bitfield.
 
-**Replica providers** sync autonomously from primaries or other replicas. They confirm sync on-chain and are liable for the roots they've confirmed.
+**Replica providers** sync autonomously from primaries or other replicas, or receive a push from a primary provider of the bucket. They confirm sync on-chain and are liable for the roots they've confirmed.
 
 ---
 

@@ -257,13 +257,13 @@ impl StaticMembershipResolver {
         self.snapshot_commitment = Some(commitment);
         self
     }
-    
+
     /// Resolve every bucket with these primary provider accounts.
     pub fn with_primary_providers(mut self, primary_providers: Vec<AccountId32>) -> Self {
         self.access.members.primary_providers = primary_providers;
         self
     }
-    
+
     /// Resolve every bucket as replica-held by this node.
     pub fn with_serves_as_replica(mut self) -> Self {
         self.own_agreement = Some(OwnAgreement {

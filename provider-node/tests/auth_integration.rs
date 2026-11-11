@@ -687,3 +687,41 @@ async fn replica_rejects_delete() {
         .unwrap();
     assert_not_primary(resp).await;
 }
+
+/// A primary provider may push nodes to a replica, but `POST /commit` on a
+/// replica is rejected for everyone, including a primary provider.
+#[tokio::test]
+async fn replica_rejects_commit_from_a_primary_provider() {
+    let primary = sr25519::Pair::from_string("//Charlie", None).unwrap();
+    let server = AuthTestServer::with_resolver(
+        StaticMembershipResolver::private(vec![])
+            .with_primary_providers(vec![AccountId32::new(primary.public().0)])
+            .with_serves_as_replica(),
+    )
+    .await;
+    let data = b"pushed by the primary";
+
+    let header = make_auth_header(&primary, "PUT", 1, current_timestamp());
+    assert_eq!(
+        put_node(&server, Some(header), data).await.status(),
+        StatusCode::OK
+    );
+
+    let header = make_auth_header(&primary, "POST", 1, current_timestamp());
+    let hash_hex = format!("{:#x}", storage_primitives::hash_leaf(data));
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+        .send()
+        .await
+        .unwrap();
+    assert_not_primary(resp).await;
+
+    let bucket = server.storage.get_bucket(1).unwrap().unwrap();
+    assert_eq!(
+        bucket.leaf_count, 0,
+        "a rejected commit must not change the bucket"
+    );
+}
