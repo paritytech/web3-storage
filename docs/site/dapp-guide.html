@@ -39,7 +39,7 @@
 <section id="guarantees">
 <h2>What you can rely on</h2>
 <ul>
-  <li><strong>After commit</strong>: the provider returns a signature over the new bucket state (MMR root) that includes your data. With this signature you can challenge the provider on-chain (<code>challenge_offchain</code>). You get this guarantee without a transaction.</li>
+  <li><strong>After commit</strong>: the provider returns a signature over the new bucket state (MMR root) that includes your data. With this signature you can challenge the provider on-chain (<code>challenge_offchain</code>). You get this guarantee without a transaction. A checkpoint to a different root voids shorter off-chain commitments for the leaves it covers: a primary challenged on such a commitment answers with <code>Superseded</code>, whether or not it signed the checkpoint.</li>
   <li><strong>After checkpoint</strong>: the MMR root is on-chain. Anyone can challenge the providers that signed it (on a private bucket: members and primary-agreement owners), and the commitment remains in chain history if you lose the signature.</li>
   <li><strong>Stake</strong>: a provider that does not answer a challenge by the deadline loses its entire stake, which covers all of its agreements. An invalid answer is rejected and the challenge stays open.</li>
   <li><strong>Duration</strong>: agreements bind both sides until expiry. The provider cannot leave early. You cannot cancel and reclaim the payment.</li>
@@ -107,6 +107,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   <li>
     <h3>Checkpoint</h3>
     <p>Get a signature from each primary with <code>GET /checkpoint-signature</code>, then submit <code>checkpoint(bucket_id, commitment, signatures)</code> as a writer or admin, with at least <code>min_providers</code> primary signatures. Anyone can add more signatures to the current snapshot later with <code>extend_checkpoint</code>.</p>
+    <p>A new checkpoint never moves the bucket back: <code>start_seq</code> never decreases. With the same <code>start_seq</code>, its end (<code>start_seq + leaf_count</code>) must be past the current end. After a deletion moves <code>start_seq</code> forward, the end must not be before the current end. On a frozen bucket <code>start_seq</code> stays at <code>frozen_start_seq</code>. Otherwise <code>checkpoint</code> fails with <code>SnapshotNotForward</code> or <code>SnapshotViolatesFrozen</code>. The chain compares ranges only: it does not check that the new MMR extends the old one.</p>
     <p>Checkpoints are optional and can be infrequent. Without one, <code>challenge_checkpoint</code> is not available and providers must keep every state they signed.</p>
     <p class="see">Diagram: <a href="08-write-commit-checkpoint.html">08 Upload, commit, checkpoint</a></p>
   </li>
@@ -124,7 +125,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
       <li><code>challenge_replica</code>: against the commitment a replica confirmed on-chain, current or historical.</li>
     </ul>
     <p>A challenge names one leaf of a commitment (<code>target.leaf_index</code>, <code>chunk_index</code>). The leaf must exist: <code>leaf_index</code> below the commitment's <code>leaf_count</code>, else <code>LeafNotInCommitment</code> at creation. The response must prove that leaf; a proof for another leaf is <code>InvalidProof</code>.</p>
-    <p>You lock a deposit that covers the provider's response cost. The provider has <code>ChallengeTimeout</code> (48 hours) to respond. If it does not, anyone can call <code>resolve_expired_challenge</code> (free on success) to slash it. An invalid response is rejected and the challenge stays open. See <a href="#costs">Costs</a> for who pays.</p>
+    <p>You lock a deposit that covers the provider's response cost. The provider has <code>ChallengeTimeout</code> (48 hours) to respond. If it does not, anyone can call <code>resolve_expired_challenge</code> (free on success) to slash it. An invalid response is rejected and the challenge stays open. <code>Superseded</code> and <code>Deleted</code> are defenses for primary providers only; a replica answers with <code>Proof</code> or <code>ChunkOutOfRange</code>. See <a href="#costs">Costs</a> for who pays.</p>
     <p class="see">Diagrams: <a href="12-challenge-protocol.html">12 Challenge protocol</a>, <a href="13-challenge-sequence.html">13 Challenge, response and slash</a></p>
   </li>
   <li>
@@ -207,7 +208,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
     <tr><td><code>GET /checkpoint-signature</code></td><td>Reader on a private bucket</td><td>Signature for the <code>checkpoint</code> call</td></tr>
     <tr><td><code>GET /commitment</code></td><td>Reader on a private bucket</td><td>Signed commitment for <code>challenge_offchain</code></td></tr>
     <tr><td><code>GET /read</code>, <code>GET /node</code></td><td>— (the hash or <code>data_root</code> is the key)</td><td>Read chunks</td></tr>
-    <tr><td><code>GET /mmr_proof</code></td><td>Reader on a private bucket</td><td>Proof that a <code>data_root</code> is in a committed root</td></tr>
+    <tr><td><code>GET /mmr_proof</code></td><td>Reader on a private bucket</td><td>Proof that a leaf is in the MMR of the commitment given by <code>mmr_root</code>, <code>start_seq</code> and <code>leaf_count</code> (all required)</td></tr>
     <tr><td><code>GET /chunk_proof</code></td><td>— (the <code>data_root</code> is the key)</td><td>Proof that a chunk is in a <code>data_root</code></td></tr>
     <tr><td><code>POST /delete</code></td><td>Admin</td><td>Delete leaves before <code>new_start_seq</code></td></tr>
     <tr><td><code>GET /health</code>, <code>GET /info</code></td><td>—</td><td>Status</td></tr>
@@ -228,7 +229,7 @@ Signed message: "web3storage:&lt;METHOD&gt;:&lt;bucket_id&gt;:&lt;unix_timestamp
 <ul>
   <li><a href="https://github.com/paritytech/web3-storage/blob/dev/packages/sdk/README.md">TypeScript: <code>@web3-storage/sdk</code></a>, built on <code>polkadot-api</code>. Transaction semantics and read options are in its README.</li>
   <li><a href="https://github.com/paritytech/web3-storage/blob/dev/clients/storage/README.md">Rust: storage client</a> for the flow on this page.</li>
-  <li><a href="https://github.com/paritytech/web3-storage/blob/dev/clients/file-system/README.md">Rust: file-system client</a> and <a href="https://github.com/paritytech/web3-storage/blob/dev/clients/s3/README.md">S3 client</a>, which add drives, directories and objects on top of buckets.</li>
+  <li><a href="https://github.com/paritytech/web3-storage/blob/dev/clients/storage-formats/README.md">Rust: file system and S3 client</a>, which adds drives, directories and objects on top of buckets.</li>
 </ul>
 <p>For a short TypeScript example with the <code>Web3Storage</code> facade, see "Entry points" in the <a href="https://github.com/paritytech/web3-storage/blob/dev/packages/sdk/README.md#entry-points">SDK README</a>.</p>
 <p>To run a local chain and provider, follow the <a href="https://github.com/paritytech/web3-storage/blob/dev/docs/getting-started/FILE_SYSTEM_QUICKSTART.md">quick start</a>.</p>

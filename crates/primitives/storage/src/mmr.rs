@@ -10,8 +10,8 @@ use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 #[cfg(feature = "std")]
 use mmr_lib::util::{MemMMR, MemStore};
 use polkadot_ckb_merkle_mountain_range::{self as mmr_lib, Merge};
+use primitive_types::H256;
 use scale_info::TypeInfo;
-use sp_core::H256;
 
 /// Error of the MMR library.
 pub use mmr_lib::Error;

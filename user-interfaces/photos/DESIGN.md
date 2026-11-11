@@ -4,7 +4,7 @@
 
 Photos is a normal photo app backed by Web3 Storage. A custom Solidity contract
 (`Photos.sol`) creates a Layer 0 bucket through the storage-provider precompile (`IWeb3Storage`),
-and the app stores a Layer 1 file system in that bucket through the SDK's `FileSystemClient`,
+and the app stores a Layer 1 file system in that bucket through the SDK's file tree (`FsTree`),
 walking a signed-in user through:
 
 1. **No library** — the user hasn't set up storage yet; let them create one *with a provider they
@@ -21,7 +21,7 @@ as the on-chain control plane.
 | Decision | Choice | Rationale |
 | --- | --- | --- |
 | Transport / signing | **Substrate-native only** (Polkadot extension + dev accounts) | Off-chain provider auth keeps working; no extra infra. |
-| Storage layer | **Layer 0 bucket + the SDK's Layer 1 `FileSystemClient`** | Directories give us **albums for free**, and the SDK's `FileSystemClient` is reusable. |
+| Storage layer | **Layer 0 bucket + the SDK's file tree (`FsTree`)** | Directories give us **albums for free**, and the SDK's `FsTree` is reusable. |
 | Contract calls | **PAPI `Revive` dispatchables** (`call`, `instantiate_with_code`), **viem for ABI only** | The CI-verified [`sc-coverage.ts`](../../examples/papi/sc-coverage.ts) / [`sc-team-drive.ts`](../../examples/papi/sc-team-drive.ts) pattern. |
 | EVM JSON-RPC / MetaMask | **Out of scope** | Runtime is eth-rpc-ready (`runtimes/web3-storage-local/src/revive.rs`), so a MetaMask UX is a clean future follow-up. |
 | Architecture | **Custom `Photos` contract, one contract-administered bucket per user** | The contract creates the bucket via the **storage-provider precompile** (`IWeb3Storage`, `0x…09010000`), is its admin, and anchors the album-tree root on-chain — a job the chain itself does not do. |
@@ -31,7 +31,7 @@ as the on-chain control plane.
 
 ### Why the file-system client (and where the contract fits)
 
-The SDK's `FileSystemClient` gives a real **directory tree** per bucket, so albums and folders come
+The SDK's `FsTree` gives a real **directory tree** per bucket, so albums and folders come
 for free instead of being hand-rolled into a manifest. `create_bucket_with_primary` takes an
 explicit `(provider, terms, signature)`, so the user **chooses** the provider.
 
@@ -51,7 +51,7 @@ content-addressed by blake2-256.
 ```
 Photos UI (React · dev-account/extension wallet · viem for ABI)
    │  PAPI: Revive.call (writes) · ReviveApi.call (unsigned reads)
-   │  HTTP: Layer 0 routes via FileSystemClient (albums, photos, thumbnails) — direct, bypasses the contract
+   │  HTTP: Layer 0 routes via FsTree (albums, photos, thumbnails) — direct, bypasses the contract
    ▼
 Photos.sol (PolkaVM)            per user: { bucketId, rootCid }
    │  CALL 0x…09010000 (storage-provider precompile, IWeb3Storage)
@@ -159,15 +159,14 @@ v1 (per-user refunds = a follow-up; acceptable for a prototype).
 
 ## Albums, blobs & the root anchor
 
-Layer 1 gives a real directory tree per bucket. The SDK's `FileSystemClient`
-(`@web3-storage/sdk/fs`) stores it in the bucket itself: file content, `FileManifest` and
+The SDK's `FsTree` (`Web3Storage.drive` in `@web3-storage/sdk`) keeps a directory tree per bucket
+and stores it in the bucket itself: file content, `FileManifest` and
 `DirectoryNode` blobs go up through the provider's Layer 0 routes (`PUT /node`, `POST /commit`),
-and the bucket's last MMR leaf points at the root directory. The client finds the root through
+and the bucket's last MMR leaf points at the root directory. The tree finds the root through
 `GET /commitment` and `GET /mmr_proof`, which need `Reader` on the private library bucket, and
 reads blobs by hash through `GET /read` and `GET /node`, which need no signature. The user's
-wallet signs the writes and the root lookup. The app calls the provider only through
-`FileSystemClient` methods such as `createDirectory`, `listDirectory`, `uploadFile`, and
-`downloadFile`.
+wallet signs the writes and the root lookup. The app calls the provider only through `FsTree`
+methods such as `mkdir`, `list`, `putFile`, and `getFile`.
 
 - **Albums**: directories. v1 ships one level of folders (`/Beach`, `/Family`); the same model
   nests for sub-albums later.
@@ -249,7 +248,7 @@ Implications:
 ## Front-end app
 
 This app matches the React 19 + Vite + Tailwind + PAPI stack and the shared packages
-(`@web3-storage/{network-config,network-picker,papi}`) and the SDK's `FileSystemClient`.
+(`@web3-storage/{network-config,network-picker,papi}`) and the SDK's `FsTree`.
 
 | Concern | Choice |
 | --- | --- |
@@ -258,7 +257,7 @@ This app matches the React 19 + Vite + Tailwind + PAPI stack and the shared pack
 | New dep | `viem` (ABI encode/decode only) |
 | Reads | `ReviveApi.call` dry-run + viem `decodeFunctionResult` (unsigned) |
 | Writes | `Revive.call` / `Revive.instantiate_with_code` via PAPI `createAndSubmit` |
-| FS ops | the SDK's `FileSystemClient` over the provider's Layer 0 routes |
+| FS ops | the SDK's `FsTree` over the provider's Layer 0 routes |
 | Base | `GITHUB_PAGES` base `/web3-storage/photos/` |
 
 ### Screens (single-page, state-driven)
@@ -329,7 +328,7 @@ source, build, and deploy — lives **inside the app**, so Photos is self-contai
   recompute the root locally → `setRoot` → re-list and assert the locally-recomputed root equals
   the on-chain anchor → `PUT` an edited photo (COW) → `setRoot` → assert library state, ownership, and the
   Writer grant. Add as a **TypeScript** flow in the app — `scripts/photos-flow.ts` (run via `tsx`)
-  — reusing the same app-local TS helpers (`Photos.json` ABI, negotiate, `FileSystemClient` FS ops) the
+  — reusing the same app-local TS helpers (`Photos.json` ABI, negotiate, `FsTree` FS ops) the
   UI uses, plus a `just photos flow` recipe.
 - **UI e2e** (Playwright + `@web3-storage/test-helpers`): the two states + create album + upload +
   edit + download.
@@ -357,7 +356,7 @@ provider's signed `price_per_byte` (`NativeToEthRatio = 10^6`).
 
 ### M2 — Albums + blobs + thumbnails + root anchor (headless)
 
-Use the SDK's `FileSystemClient`:
+Use the SDK's `FsTree`:
 `mkdir` an album → `PUT` a real multi-MB photo + a placeholder thumbnail blob (real canvas
 downscaling is browser-only; it lands in M6). Implement the **client-side root**: the deterministic
 blake2-256 Merkle over sorted `(path, data_root, size)` entries (`metadataMerkleRoot` in

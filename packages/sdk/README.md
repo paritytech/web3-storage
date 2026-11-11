@@ -12,30 +12,31 @@ packages/
   layer0/   @web3-storage/layer0   the chain binding: typed PAPI wrappers per
                                    pallet, signers, tx submission, watchValue
                                    waits, provider-node HTTP, ./revive
-  layer1/   @web3-storage/layer1   the storage interfaces: FileSystemClient
-                                   (drives) and S3Client (buckets/objects),
-                                   both on plain Layer 0 buckets
+  storage-formats/ @web3-storage/storage-formats
+                                   a file system and S3-style objects stored
+                                   in a bucket: the on-bucket format, FsTree
+                                   and Objects; needs a provider URL and a
+                                   signer, no chain
   sdk/      @web3-storage/sdk      this package: re-exports all three and
-                                   hosts the Web3Storage facade
+                                   hosts the Web3Storage class
 ```
 
-Dependency direction is strictly `layer1 → layer0 → core`; nothing points
-back up.
+Dependency direction is strictly `sdk → storage-formats → layer0 → core`;
+nothing points back up.
 
 ## Entry points
 
-- `@web3-storage/sdk` — everything: flat layer-0 functions, layer-1 clients,
-  core primitives, and the facade:
+- `@web3-storage/sdk` — everything: flat layer-0 functions, the file
+  system, core primitives, and the `Web3Storage` class:
 
   ```ts
   const w3s = await Web3Storage.connect("ws://127.0.0.1:2222", { signer: makeSigner("//Alice") });
-  const { bucketId } = await w3s.fs.createDrive({ maxCapacity: 1n << 20n, storagePeriod: 100 });
-  await w3s.fs.waitForProvider(bucketId);
-  await w3s.fs.uploadFile(bucketId, "/hello.txt", new TextEncoder().encode("hi"));
+  const { bucketId } = await w3s.createBucket({ maxCapacity: 1n << 20n, duration: 100 });
+  await w3s.waitForProvider(bucketId);
+  const drive = await w3s.drive(bucketId);
+  await drive.putFile("/hello.txt", new TextEncoder().encode("hi"));
   ```
 
-- `@web3-storage/sdk/fs` / `@web3-storage/sdk/s3` — the layer-1 clients
-  directly.
 - `@web3-storage/sdk/revive` — `pallet_revive` helpers (deploy/call PolkaVM
   contracts). Separate so `viem` stays out of consumers that never touch
   contracts.
@@ -63,7 +64,7 @@ Canonical rules, established by the E2E suite's finalization fixes
   subscribe and therefore has no missed-event window.
 
 Every pallet wrapper accepts a trailing `SubmitOpts` so apps can override the
-test-suite defaults: the layer-1 clients pass `retryStale: 0` (a user-visible
+test-suite defaults: `Web3Storage` passes `retryStale: 0` (a user-visible
 retry is the right UX, not an automatic one) and `onStatus: null` unless the
 app supplies a listener. `submitTx` streams `created`/`in-pool`/`best`/
 `finalized` phases with a `final` flag; the default console listener prints
@@ -95,15 +96,21 @@ data to it) and `endAgreement` (old provider leaves).
 
 ## File systems and S3 buckets
 
-`FileSystemClient` and `S3Client` keep their data in the Layer 0 bucket
-itself and use only the provider's Layer 0 routes (`PUT /node`,
-`POST /commit`, `GET /node`, `GET /read`, `GET /commitment`,
-`GET /mmr_proof`). The format code exists in one module,
-`packages/layer1/src/tree.ts`:
+`FsTree` (`Web3Storage.drive`) and `Objects` (`Web3Storage.objects`) keep
+their data in the Layer 0 bucket itself and use only the provider's Layer 0
+routes (`PUT /node`, `POST /commit`, `GET /node`, `GET /read`,
+`GET /commitment`, `GET /mmr_proof`). The format, the tree and the S3 view
+are the Rust crate `clients/storage-formats`, compiled to wasm;
+`packages/storage-formats` loads it and implements its blob store over the
+provider's HTTP API. `pnpm install` builds the wasm into
+`packages/storage-formats/pkg` and needs rustup and `wasm-bindgen-cli` at the
+version in `Cargo.lock`. Rebuild it after a change to the crate with
+`pnpm --filter @web3-storage/storage-formats build:wasm`.
 
-- Directories and files are SCALE-encoded `DirectoryNode` and
-  `FileManifest` blobs (`clients/file-system/src/format.rs`). A blob's CID is
-  its `data_root` (`computeDataRoot`).
+- Directories and files are `DirectoryNode` and `FileManifest` blobs
+  (`clients/storage-formats/src/format.rs`): a 5-byte header (magic `W3FS`
+  and format version) and the SCALE encoding. A blob's CID is its
+  `data_root` (`computeDataRoot`).
 - The root directory's CID is the bucket's last MMR leaf. A bucket with no
   leaves is an empty drive.
 - A write uploads the new content, its manifest and each rewritten
@@ -115,18 +122,17 @@ Rules for callers:
 
 - **One writer at a time.** Two clients that write the same bucket
   concurrently can lose one change: the last commit wins.
-- **Only these clients write the bucket.** A raw Layer 0 commit becomes the
+- **Only `FsTree` writes the bucket.** A raw Layer 0 commit becomes the
   last leaf, and the tree no longer loads (`FileSystemError` with code
-  `NotAFileSystem`).
+  `NotAFileSystemBucket`).
 - **An Admin prefix delete** (`/delete` with a new `start_seq`) can remove
   blobs that the current tree still references.
 - **Reads are unauthenticated.** Anyone who knows a CID can read the blob
   (#383/#396). Encrypt confidential data on the client.
-- **Times are in milliseconds.** `FileSystemClient` and `S3Client` return
-  `mtime` and `lastModified` in milliseconds since the epoch. The stored
-  format (`DirectoryEntry.mtime`) and the Rust clients use seconds, so the
-  values are multiples of 1000.
-- **`S3Client.listObjects` pages** contain at most 1000 entries (`maxKeys`
+- **Times.** `FsTree` returns `mtime` in seconds, as stored
+  (`DirectoryEntry.mtime`). `Objects` returns `lastModified` in milliseconds
+  since the epoch, as S3 does, so the values are multiples of 1000.
+- **`Objects.listObjects` pages** contain at most 1000 entries (`maxKeys`
   is clamped to 1-1000), and each page reads the tree again. Use
   `listAllObjects` to get every key from one read.
 
@@ -135,9 +141,9 @@ Rules for callers:
 | Path | Verified? | How |
 | --- | --- | --- |
 | `downloadChunk` | **Yes, throws `CidMismatchError`** | the requested hash is the node's hash |
-| `readBlob` / `fs.downloadByCid` with a size | **Yes, throws `BlobVerificationError`** | every chunk is checked against the blob's Merkle tree |
-| `readBlob` / `fs.downloadByCid` without a size | **Yes, throws `BlobVerificationError`** | every node is checked against its hash (a chunk as a leaf, an internal node over its children), and the chunks must rebuild the root |
-| `fs.downloadFile`, `s3.getObject` | **Yes** | the path resolves through CID-checked directory and manifest blobs from the root CID |
+| `readBlob` with a size | **Yes, throws `BlobVerificationError`** | every chunk is checked against the blob's Merkle tree |
+| `readBlob` without a size | **Yes, throws `BlobVerificationError`** | every node is checked against its hash (a chunk as a leaf, an internal node over its children), and the chunks must rebuild the root |
+| `FsTree.getFile`, `Objects.getObject` | **Yes** | the path resolves through CID-checked directory and manifest blobs from the root CID |
 
 The root CID comes from the provider's last MMR leaf, checked against the
 provider's MMR root with `verifyMmrProof`. That MMR root is the provider's

@@ -7,21 +7,22 @@
  * checks and JSON shapes as `crates/providers/http/src/api.rs`. Signatures are not
  * verified; a write and a Reader-gated read (`GET /commitment`, `GET
  * /mmr_proof`) only need an `Authorization` header, as on a private bucket.
- * Test-only: not exported from the package.
+ * Exported for tests as `@web3-storage/layer0/testing`, not from the package
+ * root.
  */
 
 import {
   bagPeaks,
   bytesToBase64,
-  computeCid,
   DEFAULT_CHUNK_SIZE,
   hashChildren,
+  hashLeaf,
   hexToBytes,
   LEAF_VERSION,
+  mmrLeafHash,
   nodeHash,
   parseNode,
   toHex,
-  u64le,
 } from "@web3-storage/core";
 
 interface StoredNode {
@@ -47,12 +48,12 @@ function json(status: number, body: unknown): Response {
 }
 
 function leafHash(leaf: Leaf): Uint8Array {
-  const bytes = new Uint8Array(49);
-  bytes[0] = LEAF_VERSION;
-  bytes.set(hexToBytes(leaf.dataRoot), 1);
-  bytes.set(u64le(leaf.dataSize), 33);
-  bytes.set(u64le(leaf.totalSize), 41);
-  return computeCid(bytes);
+  return mmrLeafHash({
+    leafVersion: LEAF_VERSION,
+    dataRoot: hexToBytes(leaf.dataRoot),
+    dataSize: leaf.dataSize,
+    totalSize: leaf.totalSize,
+  });
 }
 
 /** Levels of the Merkle tree over `leaves`, bottom-up; an odd last node moves up unchanged. */
@@ -122,7 +123,7 @@ export class FakeProvider {
       case "GET /commitment":
         return authed ? this.commitment(query.bucket_id) : json(401, { error: "unauthorized" });
       case "GET /mmr_proof":
-        return authed ? this.mmrProof(query.bucket_id, Number(query.leaf_index)) : json(401, { error: "unauthorized" });
+        return authed ? this.mmrProof(query) : json(401, { error: "unauthorized" });
       default:
         return json(404, { error: `no route ${route}` });
     }
@@ -234,7 +235,7 @@ export class FakeProvider {
         idx >>= 1;
       }
       const data = this.nodes.get(hashes[i])!.data;
-      chunks.push({ hash: toHex(computeCid(data)), data: bytesToBase64(data), proof });
+      chunks.push({ hash: toHex(hashLeaf(data)), data: bytesToBase64(data), proof });
     }
     return json(200, { chunks });
   }
@@ -251,11 +252,19 @@ export class FakeProvider {
     });
   }
 
-  private mmrProof(bucketId: string, leafIndex: number): Response {
-    const leaves = this.buckets.get(bucketId);
-    if (!leaves) return json(404, { error: "bucket_not_found" });
+  private mmrProof(query: Record<string, string>): Response {
+    const { bucket_id, leaf_index, mmr_root, start_seq, leaf_count } = query;
+    if (!(leaf_index && mmr_root && start_seq && leaf_count)) return json(400, { error: "invalid_query" });
+    const held = this.buckets.get(bucket_id);
+    if (!held) return json(404, { error: "bucket_not_found" });
+    const start = Number(start_seq);
+    const end = start + Number(leaf_count);
+    if (end > held.length) return json(404, { error: "leaves_not_held" });
+    const leaves = held.slice(start, end);
+    const leafIndex = Number(leaf_index);
     const leaf = leaves[leafIndex];
-    if (!leaf) return json(404, { error: "not_found" });
+    if (!leaf || toHex(this.mmrRoot(leaves)) !== mmr_root.toLowerCase())
+      return json(404, { error: "commitment_not_reproducible" });
     const peaks = mmrPeaks(leaves.map(leafHash));
     const peakIndex = peaks.findIndex((p) => leafIndex >= p.start && leafIndex < p.start + p.size);
     const peakRoots = peaks.map((p) => p.levels[p.levels.length - 1][0]);

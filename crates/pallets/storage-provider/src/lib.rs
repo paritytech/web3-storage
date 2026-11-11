@@ -376,10 +376,10 @@ pub mod pallet {
     /// Number of unresolved challenges outstanding against a specific
     /// `(bucket, provider)` pair. Maintained in lockstep with
     /// [`PendingChallenges`] and gates that bucket's agreement teardown
-    /// (`end_agreement`, `claim_expired_agreement`) and bucket removal
-    /// (`delete_bucket`). An entry exists only
-    /// while the count is positive, so a bucket with no entry under its
-    /// prefix has no open challenge.
+    /// (`end_agreement`, `claim_expired_agreement`, `remove_slashed`) and
+    /// bucket removal (`delete_bucket`). An entry exists only while the count
+    /// is positive, so a bucket with no entry under its prefix has no open
+    /// challenge.
     #[pallet::storage]
     pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
         _,
@@ -812,6 +812,7 @@ pub mod pallet {
             mmr_proof: MmrProof,
         },
         /// Data was deleted - show newer commitment without this seq.
+        /// Primary providers only; a replica gets `InvalidDeletionClaim`.
         Deleted {
             /// Root of the newer commitment that no longer holds the
             /// challenged sequence.
@@ -825,6 +826,7 @@ pub mod pallet {
             admin_signature: sp_runtime::MultiSignature,
         },
         /// Challenged state has been superseded by canonical.
+        /// Primary providers only; a replica gets `InvalidSupersededClaim`.
         Superseded,
     }
 
@@ -1277,11 +1279,13 @@ pub mod pallet {
         /// unknown, or a `ChunkOutOfRange` response names a chunk the leaf has.
         /// The challenge stays open; respond again before the deadline.
         InvalidProof,
-        /// `new_start_seq` does not cover the challenged leaf, or the admin
-        /// signature does not verify. The challenge stays open.
+        /// `new_start_seq` does not cover the challenged leaf, the admin
+        /// signature does not verify, or the responder is a replica
+        /// (`Deleted` is a primary-only defense). The challenge stays open.
         InvalidDeletionClaim,
         /// No canonical snapshot replaces the challenged root and covers the
-        /// challenged leaf. The challenge stays open.
+        /// challenged leaf, or the responder is a replica (`Superseded` is a
+        /// primary-only defense). The challenge stays open.
         InvalidSupersededClaim,
         /// The provider did not sign the bucket's current snapshot, so there
         /// is no on-chain commitment to challenge; use `challenge_offchain`
@@ -1312,6 +1316,12 @@ pub mod pallet {
         /// A frozen bucket only accepts checkpoints that keep its
         /// `frozen_start_seq`.
         SnapshotViolatesFrozen,
+        /// The checkpoint moves the bucket backwards. Its start is before the
+        /// current start, or, with the same start, its end is not past the
+        /// current end, or, with a later start, its end is before the current
+        /// end. Submit a commitment that covers new or deleted leaves; to add
+        /// signers to the current commitment, use `extend_checkpoint`.
+        SnapshotNotForward,
         /// Fewer distinct primary providers signed than the bucket's
         /// `min_providers`, or none. A repeated signature counts once.
         InsufficientSignatures,
@@ -1923,6 +1933,9 @@ pub mod pallet {
         /// to its depositor, and removes the provider from the bucket. The
         /// provider's own deposit is on its provider record and is released
         /// by `complete_deregister`; slashing takes the stake only.
+        /// Fails with `AgreementHasPendingChallenge` while a challenge against
+        /// this provider on this bucket is open: the agreement remains until
+        /// every challenge on it resolves.
         #[pallet::call_index(15)]
         #[pallet::weight(T::WeightInfo::remove_slashed())]
         pub fn remove_slashed(
@@ -1938,6 +1951,14 @@ pub mod pallet {
             ensure!(
                 provider_info.stake.is_zero(),
                 Error::<T>::ProviderNotSlashed
+            );
+
+            // Answering a challenge reads the agreement (the responder's role
+            // decides which defenses it may use), so the agreement remains
+            // until every challenge on it resolves.
+            ensure!(
+                PendingChallengesByBucket::<T>::get(bucket_id, &provider) == 0,
+                Error::<T>::AgreementHasPendingChallenge
             );
 
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
@@ -2411,6 +2432,11 @@ pub mod pallet {
         /// `min_providers` distinct primary providers, and at least one; a
         /// repeated signature counts once. A frozen bucket only accepts
         /// commitments that keep its `frozen_start_seq`.
+        ///
+        /// A checkpoint never moves the bucket backwards. With the same start
+        /// as the current snapshot, its end must be past the current end. A
+        /// deletion moves the start forward and keeps the end, so with a later
+        /// start the end must not be before the current end.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
         pub fn checkpoint(
@@ -2438,6 +2464,13 @@ pub mod pallet {
                     ensure!(
                         commitment.start_seq == frozen_start,
                         Error::<T>::SnapshotViolatesFrozen
+                    );
+                }
+
+                if let Some(current) = bucket.snapshot.as_ref() {
+                    ensure!(
+                        commitment.moves_forward_from(&current.commitment),
+                        Error::<T>::SnapshotNotForward
                     );
                 }
 
@@ -2706,7 +2739,9 @@ pub mod pallet {
         /// Challenged provider only. Answer before the deadline with a chunk
         /// proof, a proof that the leaf has no chunk at the challenged index, a
         /// proof that the data was legitimately deleted, or a note that the
-        /// challenged state has been superseded.
+        /// challenged state has been superseded (`Deleted` and `Superseded`:
+        /// primary providers only; a replica is liable for exactly the root
+        /// it confirmed).
         ///
         /// A valid response settles the deposit between challenger and
         /// provider. An invalid one is rejected (`InvalidProof`,
@@ -2779,6 +2814,11 @@ pub mod pallet {
                 } => {
                     Self::ensure_admin(&admin, &bucket)?;
 
+                    ensure!(
+                        Self::responder_is_primary(&challenge),
+                        Error::<T>::InvalidDeletionClaim
+                    );
+
                     let challenged_seq = challenge
                         .commitment
                         .start_seq
@@ -2806,6 +2846,11 @@ pub mod pallet {
                     );
                 }
                 ChallengeResponse::Superseded => {
+                    ensure!(
+                        Self::responder_is_primary(&challenge),
+                        Error::<T>::InvalidSupersededClaim
+                    );
+
                     // Valid only when a newer canonical snapshot replaced the
                     // challenged root and still covers the challenged seq. A
                     // root equal to the canonical one means the data is live

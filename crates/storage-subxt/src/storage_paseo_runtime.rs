@@ -3446,9 +3446,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                74u8, 131u8, 150u8, 38u8, 187u8, 245u8, 177u8, 167u8, 58u8, 10u8, 109u8, 57u8,
-                138u8, 138u8, 188u8, 68u8, 167u8, 74u8, 176u8, 177u8, 26u8, 148u8, 207u8, 85u8,
-                16u8, 35u8, 128u8, 69u8, 82u8, 225u8, 73u8, 147u8,
+                243u8, 225u8, 8u8, 187u8, 138u8, 16u8, 221u8, 31u8, 30u8, 151u8, 218u8, 173u8,
+                161u8, 11u8, 219u8, 80u8, 30u8, 109u8, 34u8, 18u8, 102u8, 130u8, 231u8, 29u8,
+                110u8, 13u8, 144u8, 25u8, 178u8, 138u8, 198u8, 7u8,
             ]
     }
     pub mod system {
@@ -15768,6 +15768,9 @@ pub mod api {
             #[doc = "to its depositor, and removes the provider from the bucket. The"]
             #[doc = "provider's own deposit is on its provider record and is released"]
             #[doc = "by `complete_deregister`; slashing takes the stake only."]
+            #[doc = "Fails with `AgreementHasPendingChallenge` while a challenge against"]
+            #[doc = "this provider on this bucket is open: the agreement remains until"]
+            #[doc = "every challenge on it resolves."]
             pub struct RemoveSlashed {
                 pub bucket_id: remove_slashed::BucketId,
                 pub provider: remove_slashed::Provider,
@@ -16045,6 +16048,11 @@ pub mod api {
             #[doc = "`min_providers` distinct primary providers, and at least one; a"]
             #[doc = "repeated signature counts once. A frozen bucket only accepts"]
             #[doc = "commitments that keep its `frozen_start_seq`."]
+            #[doc = ""]
+            #[doc = "A checkpoint never moves the bucket backwards. With the same start"]
+            #[doc = "as the current snapshot, its end must be past the current end. A"]
+            #[doc = "deletion moves the start forward and keeps the end, so with a later"]
+            #[doc = "start the end must not be before the current end."]
             pub struct Checkpoint {
                 pub bucket_id: checkpoint::BucketId,
                 pub commitment: checkpoint::Commitment,
@@ -16230,7 +16238,9 @@ pub mod api {
             #[doc = "Challenged provider only. Answer before the deadline with a chunk"]
             #[doc = "proof, a proof that the leaf has no chunk at the challenged index, a"]
             #[doc = "proof that the data was legitimately deleted, or a note that the"]
-            #[doc = "challenged state has been superseded."]
+            #[doc = "challenged state has been superseded (`Deleted` and `Superseded`:"]
+            #[doc = "primary providers only; a replica is liable for exactly the root"]
+            #[doc = "it confirmed)."]
             #[doc = ""]
             #[doc = "A valid response settles the deposit between challenger and"]
             #[doc = "provider. An invalid one is rejected (`InvalidProof`,"]
@@ -16818,6 +16828,9 @@ pub mod api {
                     #[doc = "to its depositor, and removes the provider from the bucket. The"]
                     #[doc = "provider's own deposit is on its provider record and is released"]
                     #[doc = "by `complete_deregister`; slashing takes the stake only."]
+                    #[doc = "Fails with `AgreementHasPendingChallenge` while a challenge against"]
+                    #[doc = "this provider on this bucket is open: the agreement remains until"]
+                    #[doc = "every challenge on it resolves."]
                     pub fn remove_slashed(
                         &self,
                         bucket_id: super::remove_slashed::BucketId,
@@ -17040,6 +17053,11 @@ pub mod api {
                     #[doc = "`min_providers` distinct primary providers, and at least one; a"]
                     #[doc = "repeated signature counts once. A frozen bucket only accepts"]
                     #[doc = "commitments that keep its `frozen_start_seq`."]
+                    #[doc = ""]
+                    #[doc = "A checkpoint never moves the bucket backwards. With the same start"]
+                    #[doc = "as the current snapshot, its end must be past the current end. A"]
+                    #[doc = "deletion moves the start forward and keeps the end, so with a later"]
+                    #[doc = "start the end must not be before the current end."]
                     pub fn checkpoint(
                         &self,
                         bucket_id: super::checkpoint::BucketId,
@@ -17182,7 +17200,9 @@ pub mod api {
                     #[doc = "Challenged provider only. Answer before the deadline with a chunk"]
                     #[doc = "proof, a proof that the leaf has no chunk at the challenged index, a"]
                     #[doc = "proof that the data was legitimately deleted, or a note that the"]
-                    #[doc = "challenged state has been superseded."]
+                    #[doc = "challenged state has been superseded (`Deleted` and `Superseded`:"]
+                    #[doc = "primary providers only; a replica is liable for exactly the root"]
+                    #[doc = "it confirmed)."]
                     #[doc = ""]
                     #[doc = "A valid response settles the deposit between challenger and"]
                     #[doc = "provider. An invalid one is rejected (`InvalidProof`,"]
@@ -18409,10 +18429,10 @@ pub mod api {
                 #[doc = " Number of unresolved challenges outstanding against a specific"]
                 #[doc = " `(bucket, provider)` pair. Maintained in lockstep with"]
                 #[doc = " [`PendingChallenges`] and gates that bucket's agreement teardown"]
-                #[doc = " (`end_agreement`, `claim_expired_agreement`) and bucket removal"]
-                #[doc = " (`delete_bucket`). An entry exists only"]
-                #[doc = " while the count is positive, so a bucket with no entry under its"]
-                #[doc = " prefix has no open challenge."]
+                #[doc = " (`end_agreement`, `claim_expired_agreement`, `remove_slashed`) and"]
+                #[doc = " bucket removal (`delete_bucket`). An entry exists only while the count"]
+                #[doc = " is positive, so a bucket with no entry under its prefix has no open"]
+                #[doc = " challenge."]
                 pub fn pending_challenges_by_bucket(
                     &self,
                 ) -> ::subxt::storage::StaticAddress<
@@ -20200,9 +20220,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            191u8, 4u8, 102u8, 110u8, 200u8, 40u8, 49u8, 157u8, 116u8, 225u8, 59u8,
-                            64u8, 19u8, 106u8, 76u8, 129u8, 155u8, 76u8, 133u8, 26u8, 241u8, 3u8,
-                            116u8, 81u8, 152u8, 121u8, 215u8, 246u8, 170u8, 43u8, 165u8, 5u8,
+                            63u8, 180u8, 254u8, 53u8, 142u8, 204u8, 117u8, 56u8, 53u8, 80u8, 79u8,
+                            160u8, 95u8, 126u8, 115u8, 33u8, 84u8, 206u8, 111u8, 141u8, 129u8,
+                            11u8, 129u8, 7u8, 207u8, 139u8, 139u8, 101u8, 185u8, 181u8, 14u8,
+                            111u8,
                         ],
                     )
                 }
@@ -24820,6 +24841,9 @@ pub mod api {
                     #[doc = "to its depositor, and removes the provider from the bucket. The"]
                     #[doc = "provider's own deposit is on its provider record and is released"]
                     #[doc = "by `complete_deregister`; slashing takes the stake only."]
+                    #[doc = "Fails with `AgreementHasPendingChallenge` while a challenge against"]
+                    #[doc = "this provider on this bucket is open: the agreement remains until"]
+                    #[doc = "every challenge on it resolves."]
                     remove_slashed {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
@@ -24927,6 +24951,11 @@ pub mod api {
                     #[doc = "`min_providers` distinct primary providers, and at least one; a"]
                     #[doc = "repeated signature counts once. A frozen bucket only accepts"]
                     #[doc = "commitments that keep its `frozen_start_seq`."]
+                    #[doc = ""]
+                    #[doc = "A checkpoint never moves the bucket backwards. With the same start"]
+                    #[doc = "as the current snapshot, its end must be past the current end. A"]
+                    #[doc = "deletion moves the start forward and keeps the end, so with a later"]
+                    #[doc = "start the end must not be before the current end."]
                     checkpoint {
                         bucket_id: ::core::primitive::u64,
                         commitment: runtime_types::storage_primitives::Commitment,
@@ -24990,7 +25019,9 @@ pub mod api {
                     #[doc = "Challenged provider only. Answer before the deadline with a chunk"]
                     #[doc = "proof, a proof that the leaf has no chunk at the challenged index, a"]
                     #[doc = "proof that the data was legitimately deleted, or a note that the"]
-                    #[doc = "challenged state has been superseded."]
+                    #[doc = "challenged state has been superseded (`Deleted` and `Superseded`:"]
+                    #[doc = "primary providers only; a replica is liable for exactly the root"]
+                    #[doc = "it confirmed)."]
                     #[doc = ""]
                     #[doc = "A valid response settles the deposit between challenger and"]
                     #[doc = "provider. An invalid one is rejected (`InvalidProof`,"]
@@ -25285,12 +25316,14 @@ pub mod api {
                     #[doc = "The challenge stays open; respond again before the deadline."]
                     InvalidProof,
                     #[codec(index = 51)]
-                    #[doc = "`new_start_seq` does not cover the challenged leaf, or the admin"]
-                    #[doc = "signature does not verify. The challenge stays open."]
+                    #[doc = "`new_start_seq` does not cover the challenged leaf, the admin"]
+                    #[doc = "signature does not verify, or the responder is a replica"]
+                    #[doc = "(`Deleted` is a primary-only defense). The challenge stays open."]
                     InvalidDeletionClaim,
                     #[codec(index = 52)]
                     #[doc = "No canonical snapshot replaces the challenged root and covers the"]
-                    #[doc = "challenged leaf. The challenge stays open."]
+                    #[doc = "challenged leaf, or the responder is a replica (`Superseded` is a"]
+                    #[doc = "primary-only defense). The challenge stays open."]
                     InvalidSupersededClaim,
                     #[codec(index = 53)]
                     #[doc = "The provider did not sign the bucket's current snapshot, so there"]
@@ -25328,64 +25361,71 @@ pub mod api {
                     #[doc = "`frozen_start_seq`."]
                     SnapshotViolatesFrozen,
                     #[codec(index = 61)]
+                    #[doc = "The checkpoint moves the bucket backwards. Its start is before the"]
+                    #[doc = "current start, or, with the same start, its end is not past the"]
+                    #[doc = "current end, or, with a later start, its end is before the current"]
+                    #[doc = "end. Submit a commitment that covers new or deleted leaves; to add"]
+                    #[doc = "signers to the current commitment, use `extend_checkpoint`."]
+                    SnapshotNotForward,
+                    #[codec(index = 62)]
                     #[doc = "Fewer distinct primary providers signed than the bucket's"]
                     #[doc = "`min_providers`, or none. A repeated signature counts once."]
                     InsufficientSignatures,
-                    #[codec(index = 62)]
+                    #[codec(index = 63)]
                     #[doc = "A balance or counter computation overflowed."]
                     ArithmeticOverflow,
-                    #[codec(index = 63)]
+                    #[codec(index = 64)]
                     #[doc = "The public key is not 32 bytes (sr25519/ed25519) or 33 bytes"]
                     #[doc = "(compressed ecdsa), or does not match the signature's scheme."]
                     InvalidPublicKey,
-                    #[codec(index = 64)]
+                    #[codec(index = 65)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 65)]
+                    #[codec(index = 66)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 66)]
+                    #[codec(index = 67)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 67)]
+                    #[codec(index = 68)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 68)]
+                    #[codec(index = 69)]
                     #[doc = "The terms' nonce does not match the owner's next expected"]
                     #[doc = "[`AgreementNonces`] value. Read the current value and request a"]
                     #[doc = "new quote with it."]
                     NonceMismatch,
-                    #[codec(index = 69)]
+                    #[codec(index = 70)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 70)]
+                    #[codec(index = 71)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 71)]
+                    #[codec(index = 72)]
                     #[doc = "Replica terms present in a signed quote redeemed as a primary"]
                     #[doc = "agreement. Negotiate the quote without `replica_params`, or"]
                     #[doc = "redeem it with `add_replica_provider`."]
                     UnexpectedReplicaTerms,
-                    #[codec(index = 72)]
+                    #[codec(index = 73)]
                     #[doc = "The terms' `bucket` does not name the bucket the call targets:"]
                     #[doc = "`New` is redeemable only by the calls that create a bucket, and"]
                     #[doc = "`Existing(id)` only against bucket `id`."]
                     TermsBucketMismatch,
-                    #[codec(index = 73)]
+                    #[codec(index = 74)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
-                    #[codec(index = 74)]
+                    #[codec(index = 75)]
                     #[doc = "The terms' `max_bytes` is below the provider's `min_agreement_bytes`."]
                     #[doc = "Negotiate a quote with at least that many bytes."]
                     MaxBytesBelowMinimum,
-                    #[codec(index = 75)]
+                    #[codec(index = 76)]
                     #[doc = "A challenge against a provider on this bucket is still open."]
                     #[doc = "Resolve it with `respond_to_challenge` or"]
                     #[doc = "`resolve_expired_challenge`, then retry."]
                     BucketHasPendingChallenge,
-                    #[codec(index = 76)]
+                    #[codec(index = 77)]
                     #[doc = "The bucket still has a storage agreement. End or claim every"]
                     #[doc = "agreement before deleting the bucket."]
                     BucketNotEmpty,

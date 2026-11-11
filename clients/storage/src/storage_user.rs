@@ -236,10 +236,10 @@ impl StorageUserClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Provider returned error: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /read",
+                status: response.status().as_u16(),
+            });
         }
 
         let read_response: ReadResponse = response.json().await?;
@@ -317,10 +317,10 @@ impl StorageUserClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Node not found or error: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /node",
+                status: response.status().as_u16(),
+            });
         }
 
         let node_response: NodeResponse = response
@@ -397,10 +397,10 @@ impl StorageUserClient {
         let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Commit failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "POST /commit",
+                status: response.status().as_u16(),
+            });
         }
 
         response
@@ -427,10 +427,10 @@ impl StorageUserClient {
         let response = self.sign(req, "GET", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Checkpoint signature request failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /checkpoint-signature",
+                status: response.status().as_u16(),
+            });
         }
 
         response
@@ -560,10 +560,10 @@ impl StorageUserClient {
         let response = self.sign(req, "PUT", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Upload failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "PUT /node",
+                status: response.status().as_u16(),
+            });
         }
 
         Ok(hash)
@@ -614,7 +614,10 @@ impl StorageUserClient {
     pub async fn get_commitment(&self, bucket_id: BucketId) -> ClientResult<CommitmentResponse> {
         self.get_commitment_if_exists(bucket_id)
             .await?
-            .ok_or_else(|| ClientError::Api("Commitment request failed: 404 Not Found".into()))
+            .ok_or(ClientError::HttpStatus {
+                request: "GET /commitment",
+                status: 404,
+            })
     }
 
     /// Like [`Self::get_commitment`], but returns `None` when the provider
@@ -637,9 +640,10 @@ impl StorageUserClient {
             return Ok(None);
         }
         if !status.is_success() {
-            return Err(ClientError::Api(format!(
-                "Commitment request failed: {status}"
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /commitment",
+                status: status.as_u16(),
+            });
         }
         response
             .json()
@@ -648,12 +652,14 @@ impl StorageUserClient {
             .map_err(|e| ClientError::Serialization(e.to_string()))
     }
 
-    /// Get the MMR proof of the leaf at `leaf_index` of the bucket's current
-    /// MMR (`GET /mmr_proof`). The proof is not verified here: check it with
-    /// [`storage_primitives::verify_mmr_proof`] against a trusted MMR root.
+    /// Get the MMR proof of the leaf at `leaf_index`, counted from
+    /// `commitment.start_seq`, in the MMR of `commitment` (`GET /mmr_proof`).
+    /// The proof is not verified here: check it with
+    /// [`storage_primitives::verify_mmr_proof`] against `commitment`.
     pub async fn get_mmr_proof(
         &self,
         bucket_id: BucketId,
+        commitment: &storage_primitives::Commitment,
         leaf_index: u64,
     ) -> ClientResult<storage_primitives::MmrProof> {
         let provider_url = self.base.get_provider_url()?;
@@ -664,14 +670,17 @@ impl StorageUserClient {
             .query(&[
                 ("bucket_id", bucket_id.to_string()),
                 ("leaf_index", leaf_index.to_string()),
+                ("mmr_root", format!("{:#x}", commitment.mmr_root)),
+                ("start_seq", commitment.start_seq.to_string()),
+                ("leaf_count", commitment.leaf_count.to_string()),
             ]);
         let response = self.sign(req, "GET", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "MMR proof request failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "GET /mmr_proof",
+                status: response.status().as_u16(),
+            });
         }
         response
             .json()
@@ -698,10 +707,10 @@ impl StorageUserClient {
         let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
-            return Err(ClientError::Api(format!(
-                "Exists check failed: {}",
-                response.status()
-            )));
+            return Err(ClientError::HttpStatus {
+                request: "POST /exists",
+                status: response.status().as_u16(),
+            });
         }
         response
             .json()
@@ -873,6 +882,15 @@ pub struct CommitmentResponse {
 }
 
 impl CommitmentResponse {
+    /// The `(mmr_root, start_seq, leaf_count)` the provider signed.
+    pub fn commitment(&self) -> storage_primitives::Commitment {
+        storage_primitives::Commitment {
+            mmr_root: self.mmr_root,
+            start_seq: self.start_seq,
+            leaf_count: self.leaf_count,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn new(
         bucket_id: BucketId,
