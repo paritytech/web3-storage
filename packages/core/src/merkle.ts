@@ -1,22 +1,44 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Byte-exact TypeScript port of the provider's drive metadata Merkle root and
-// per-file data root, so a client can compute the on-chain integrity anchor
-// itself and verify a drive without trusting the provider.
+// TypeScript port of the Merkle functions the primitives use, so a client can
+// compute and check CIDs itself without trusting the provider.
 //
 // Mirrors, byte for byte:
-//   - `crates/providers/storage/src/index/fs.rs`     → `metadata_merkle_root`
-//   - `crates/providers/storage/src/backend/mod.rs`  → `build_padded_merkle_tree`
-//   - `crates/primitives/storage/src/lib.rs`         → `blake2_256`, `hash_children`, `DEFAULT_CHUNK_SIZE`
+//   - `crates/primitives/storage/src/merkle.rs`      → `merkle_root`, `merkle_tree`, `verify_merkle_proof`
+//   - `crates/primitives/storage/src/lib.rs`         → `hash_leaf`, `hash_children`, `DEFAULT_CHUNK_SIZE`
+//   - `crates/primitives/storage/src/mmr.rs`         → `bag_peaks`, `verify_mmr_proof`, `LEAF_VERSION`,
+//                                                       `MmrLeaf::chunk_count`
 //
-// This is the multi-chunk Merkle DAG walk that `verify.ts` documents as the
-// missing "Rust-client parity" piece. Pure functions, no I/O — browser-safe.
+// `metadataMerkleRoot` has no Rust counterpart; the photos app anchors its
+// result on-chain.
+//
+// Pure functions, no I/O, browser-safe.
 
-import { computeCid, DEFAULT_CHUNK_SIZE } from "./verify.js";
+import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
+
+import { bytesEq, compareBytes, concatBytes } from "./bytes.js";
+
+/**
+ * Mirror of DEFAULT_CHUNK_SIZE in crates/primitives/storage/src/lib.rs: the
+ * chunk size of leaf version 1 (see {@link leafChunkSize}).
+ */
+export const DEFAULT_CHUNK_SIZE = 256 * 1024;
+
+/** Prefix of an internal node preimage; leaves use a different prefix. */
+const NODE_PREFIX = 0x01;
+
+/** Prefix of a Merkle leaf preimage; internal nodes use a different prefix. */
+const LEAF_PREFIX = 0x00;
+
+/** Prefix of an MMR peak-bagging preimage. */
+const PEAK_PREFIX = 0x02;
+
+/** `u64::MAX / 2`: `verify_mmr_proof` rejects every proof for a larger MMR. */
+const MAX_MMR_LEAVES = (1n << 63n) - 1n;
 
 /** One drive entry as it contributes to the metadata Merkle tree. */
 export interface MerkleEntry {
-  /** Absolute path, exactly as the provider keys it (e.g. `/Beach/photo.jpg`). */
+  /** Absolute path (e.g. `/Beach/photo.jpg`). */
   path: string;
   /** 32-byte content root (zero-filled for directories). */
   dataRoot: Uint8Array;
@@ -24,57 +46,246 @@ export interface MerkleEntry {
   size: bigint;
 }
 
-/** Hash an internal node: `blake2_256(left[32] ++ right[32])`. */
+/** Hash an internal node: `blake2_256(0x01 ++ left[32] ++ right[32])`. */
 export function hashChildren(left: Uint8Array, right: Uint8Array): Uint8Array {
-  return computeCid(concatBytes(left, right));
+  return blake2b256(concatBytes(Uint8Array.of(NODE_PREFIX), left, right));
 }
 
 /**
- * Balanced Merkle root over `leaves`, padded to the next power of two with
- * 32-byte zero hashes. Empty → 32 zero bytes; a single leaf → that leaf verbatim.
- * Identical to the provider's `build_padded_merkle_tree` / the tail of
- * `metadata_merkle_root`.
+ * Hash a Merkle leaf: `blake2b-256(0x00 ++ data)`.
+ * The prefix keeps the bytes of an internal node
+ * from hashing to the same value as a leaf.
  */
-export function paddedMerkleRoot(leaves: Uint8Array[]): Uint8Array {
-  if (leaves.length === 0) return new Uint8Array(32);
+export function hashLeaf(data: Uint8Array): Uint8Array {
+  const preimage = new Uint8Array(1 + data.length);
+  preimage[0] = LEAF_PREFIX;
+  preimage.set(data, 1);
+  return blake2b256(preimage);
+}
+
+/**
+ * Combine MMR peaks into the MMR root. Peaks fold from right to left with
+ * `blake2b-256(0x02 ++ peak ++ rest)`; one peak is the root itself and no
+ * peaks give 32 zero bytes.
+ */
+export function bagPeaks(peaks: Uint8Array[]): Uint8Array {
+  if (peaks.length === 0) return new Uint8Array(32);
+  return peaks.reduceRight((rest, peak) => blake2b256(concatBytes(Uint8Array.of(PEAK_PREFIX), peak, rest)));
+}
+
+/**
+ * Merkle root over `leaves`; an odd last node of a level moves up unchanged.
+ * Empty → 32 zero bytes; a single leaf → a copy of that leaf.
+ */
+export function merkleRoot(leaves: Uint8Array[]): Uint8Array {
+  return merkleTree(leaves).root;
+}
+
+/** Internal node of a Merkle tree: `hash = hashChildren(left, right)`. */
+export interface MerkleNode {
+  hash: Uint8Array;
+  left: Uint8Array;
+  right: Uint8Array;
+}
+
+/**
+ * Root and internal nodes of the Merkle tree over `leaves`, mirroring
+ * `storage_primitives::merkle_tree`. `nodes` is bottom-up, level by level,
+ * left to right; a provider stores each one with data `left ++ right` and
+ * children `[left, right]`. No leaves → zero root; one leaf → a copy of that
+ * leaf, no nodes. Equal subtrees appear once per position, so a hash can repeat.
+ */
+export function merkleTree(leaves: Uint8Array[]): { root: Uint8Array; nodes: MerkleNode[] } {
+  if (leaves.length === 0) return { root: new Uint8Array(32), nodes: [] };
   // Copy so the returned root never aliases the caller's input leaf buffer.
-  if (leaves.length === 1) return leaves[0].slice();
+  if (leaves.length === 1) return { root: leaves[0].slice(), nodes: [] };
 
   let level = leaves.slice();
-  const paddedLen = nextPowerOfTwo(level.length);
-  while (level.length < paddedLen) level.push(new Uint8Array(32));
-
+  const nodes: MerkleNode[] = [];
   while (level.length > 1) {
     const next: Uint8Array[] = [];
     for (let i = 0; i < level.length; i += 2) {
-      next.push(hashChildren(level[i], level[i + 1]));
+      // An odd last node moves up unchanged.
+      if (i + 1 === level.length) {
+        next.push(level[i]);
+        continue;
+      }
+      const hash = hashChildren(level[i], level[i + 1]);
+      nodes.push({ hash, left: level[i], right: level[i + 1] });
+      next.push(hash);
     }
     level = next;
   }
-  return level[0];
+  return { root: level[0], nodes };
 }
 
 /**
- * A file's `data_root`: chunk the bytes at `DEFAULT_CHUNK_SIZE`, blake2-256 each
- * chunk, then `paddedMerkleRoot` over the chunk hashes. An empty file hashes a
- * single empty chunk; a single chunk yields its own hash. Mirrors `fs_put_file`.
+ * Split bytes into `DEFAULT_CHUNK_SIZE` chunks. Empty input has no chunks.
+ * The chunks are views into `bytes`.
+ */
+export function splitChunks(bytes: Uint8Array): Uint8Array[] {
+  const chunks: Uint8Array[] = [];
+  for (let off = 0; off < bytes.length; off += DEFAULT_CHUNK_SIZE) {
+    chunks.push(bytes.subarray(off, Math.min(off + DEFAULT_CHUNK_SIZE, bytes.length)));
+  }
+  return chunks;
+}
+
+/** Mirror of `LEAF_VERSION` in `crates/primitives/storage/src/mmr.rs`. */
+export const LEAF_VERSION = 1;
+
+/**
+ * Chunk size of MMR leaf version `version`, or undefined for an unknown
+ * version. Mirrors `MmrLeaf::chunk_size`.
+ */
+export function leafChunkSize(version: number): number | undefined {
+  switch (version) {
+    case 1:
+      return DEFAULT_CHUNK_SIZE;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Number of chunks under a committed MMR leaf: every chunk has the chunk size
+ * of the leaf's `leaf_version` except the last, which has 1 to chunk size
+ * bytes. Empty data has no chunks. Mirrors `MmrLeaf::chunk_count`. Throws for
+ * an unknown version.
+ */
+export function leafChunkCount(leaf: { leaf_version: number; data_size: number | bigint }): number {
+  const chunkSize = leafChunkSize(leaf.leaf_version);
+  if (chunkSize === undefined) {
+    throw new Error(`unknown MMR leaf version ${leaf.leaf_version}`);
+  }
+  return chunkCount(leaf.data_size, chunkSize);
+}
+
+/**
+ * Number of chunks (tree leaves) of data with `dataSize` bytes, at
+ * `chunkSize` bytes per chunk; empty data has none.
+ */
+export function chunkCount(dataSize: bigint | number, chunkSize: number = DEFAULT_CHUNK_SIZE): number {
+  const size = BigInt(dataSize);
+  const step = BigInt(chunkSize);
+  return Number((size + step - 1n) / step);
+}
+
+/**
+ * A blob's `data_root`, which is also its CID: chunk the bytes at
+ * `DEFAULT_CHUNK_SIZE`, leaf-hash each chunk, then `merkleRoot` over the chunk
+ * hashes. A single chunk yields its own hash. Empty data has no chunk tree, so
+ * it throws. Mirrors `StorageUserClient::upload` with the default chunking.
  */
 export function computeDataRoot(bytes: Uint8Array): Uint8Array {
-  const chunkHashes: Uint8Array[] = [];
-  if (bytes.length === 0) {
-    chunkHashes.push(computeCid(new Uint8Array(0)));
-  } else {
-    for (let off = 0; off < bytes.length; off += DEFAULT_CHUNK_SIZE) {
-      chunkHashes.push(computeCid(bytes.subarray(off, Math.min(off + DEFAULT_CHUNK_SIZE, bytes.length))));
+  if (bytes.length === 0) throw new Error("empty data has no chunk tree");
+  return merkleRoot(splitChunks(bytes).map(hashLeaf));
+}
+
+/**
+ * Check a chunk proof from `GET /read` (the siblings of
+ * `storage_primitives::build_merkle_proofs`) against `dataRoot`, like
+ * `storage_primitives::verify_merkle_proof`. The path bits come from `index`.
+ * `chunks` is the blob's chunk count; it fixes the expected sibling count, so
+ * a proof for a different tree shape fails.
+ */
+export function verifyChunkProof(
+  chunkHash: Uint8Array,
+  index: number,
+  siblings: Uint8Array[],
+  dataRoot: Uint8Array,
+  chunks: number,
+): boolean {
+  if (index < 0 || index >= chunks) return false;
+  let current = chunkHash;
+  let idx = index;
+  let width = chunks;
+  let used = 0;
+  while (width > 1) {
+    // An odd last node moves up without a sibling.
+    if (idx !== width - 1 || width % 2 === 0) {
+      if (used === siblings.length) return false;
+      const sibling = siblings[used++];
+      current = idx % 2 === 1 ? hashChildren(sibling, current) : hashChildren(current, sibling);
     }
+    idx = Math.floor(idx / 2);
+    width = Math.ceil(width / 2);
   }
-  return paddedMerkleRoot(chunkHashes);
+  return used === siblings.length && bytesEq(current, dataRoot);
+}
+
+/** `MmrLeaf` of `storage_primitives`. */
+export interface MmrLeaf {
+  /** Leaf format version, see {@link LEAF_VERSION}. */
+  leafVersion: number;
+  dataRoot: Uint8Array;
+  dataSize: bigint;
+  totalSize: bigint;
+}
+
+/** `MmrProof` of `storage_primitives`. */
+export interface MmrProof {
+  leaf: MmrLeaf;
+  /**
+   * The peaks left of the leaf's peak (left to right), the siblings from the
+   * leaf up to its peak, then one hash of the bagged peaks to its right.
+   */
+  items: Uint8Array[];
+}
+
+/**
+ * Port of `storage_primitives::verify_mmr_proof`: the proof is for leaf
+ * `leafIndex` of an MMR with `leafCount` leaves, has the item count that
+ * shape requires, and the leaf hashes up to `mmrRoot`. A proof for another
+ * leaf of the same MMR fails, and so does every proof for more than
+ * `u64::MAX / 2` leaves.
+ */
+export function verifyMmrProof(proof: MmrProof, leafIndex: bigint, mmrRoot: Uint8Array, leafCount: bigint): boolean {
+  if (leafIndex < 0n || leafIndex >= leafCount || leafCount > MAX_MMR_LEAVES) return false;
+
+  // The leaf's peak, its index within that peak's subtree, and the subtree height.
+  let remaining = leafCount;
+  let offset = 0n;
+  let peakIndex = 0;
+  let height = 0;
+  for (;;) {
+    height = remaining.toString(2).length - 1;
+    const subtreeLeaves = 1n << BigInt(height);
+    if (leafIndex < offset + subtreeLeaves) break;
+    offset += subtreeLeaves;
+    remaining -= subtreeLeaves;
+    peakIndex++;
+  }
+  const localIndex = leafIndex - offset;
+  const hasRightPeaks = remaining > 1n << BigInt(height);
+  if (proof.items.length !== peakIndex + height + (hasRightPeaks ? 1 : 0)) return false;
+
+  let current = mmrLeafHash(proof.leaf);
+  for (let k = 0; k < height; k++) {
+    const sibling = proof.items[peakIndex + k];
+    const isRight = ((localIndex >> BigInt(k)) & 1n) === 1n;
+    current = isRight ? hashChildren(sibling, current) : hashChildren(current, sibling);
+  }
+  // The bagged right peaks count as one peak: bagging folds from the right.
+  const peaks = [...proof.items.slice(0, peakIndex), current, ...proof.items.slice(peakIndex + height)];
+  return bytesEq(bagPeaks(peaks), mmrRoot);
+}
+
+/**
+ * Hash of an MMR leaf: the leaf hash of `leaf_version ++ data_root ++
+ * u64_le(data_size) ++ u64_le(total_size)`, as `MmrLeaf::hash` in
+ * crates/primitives/storage.
+ */
+export function mmrLeafHash(leaf: MmrLeaf): Uint8Array {
+  return hashLeaf(
+    concatBytes(new Uint8Array([leaf.leafVersion]), leaf.dataRoot, u64le(leaf.dataSize), u64le(leaf.totalSize)),
+  );
 }
 
 /**
  * The drive's metadata Merkle root: one leaf per entry over
  * `utf8(path) ++ data_root[32] ++ u64_le(size)`, entries ordered by UTF-8 byte
- * value (matching Rust's `BTreeMap<String>`), folded by `paddedMerkleRoot`.
+ * value, folded by `merkleRoot`.
  * Empty drive → 32 zero bytes.
  */
 export function metadataMerkleRoot(entries: MerkleEntry[]): Uint8Array {
@@ -83,8 +294,8 @@ export function metadataMerkleRoot(entries: MerkleEntry[]): Uint8Array {
     .map((e) => ({ pathBytes: encoder.encode(e.path), dataRoot: e.dataRoot, size: e.size }))
     .sort((a, b) => compareBytes(a.pathBytes, b.pathBytes));
 
-  const leaves = prepared.map((e) => computeCid(concatBytes(e.pathBytes, e.dataRoot, u64le(e.size))));
-  return paddedMerkleRoot(leaves);
+  const leaves = prepared.map((e) => hashLeaf(concatBytes(e.pathBytes, e.dataRoot, u64le(e.size))));
+  return merkleRoot(leaves);
 }
 
 /** Encode a `u64` as 8 little-endian bytes (`codec::Encode` for a plain `u64`). */
@@ -94,29 +305,3 @@ export function u64le(value: bigint): Uint8Array {
   return out;
 }
 
-function nextPowerOfTwo(n: number): number {
-  let p = 1;
-  while (p < n) p <<= 1;
-  return p;
-}
-
-function concatBytes(...arrays: Uint8Array[]): Uint8Array {
-  let total = 0;
-  for (const a of arrays) total += a.length;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const a of arrays) {
-    out.set(a, off);
-    off += a.length;
-  }
-  return out;
-}
-
-/** Lexicographic comparison of two byte arrays (Rust `[u8]`/`str` ordering). */
-function compareBytes(a: Uint8Array, b: Uint8Array): number {
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) {
-    if (a[i] !== b[i]) return a[i] - b[i];
-  }
-  return a.length - b.length;
-}

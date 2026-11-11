@@ -26,7 +26,7 @@ pub fn to_sp_account(a: &subxt::utils::AccountId32) -> sp_runtime::AccountId32 {
 /// Render a chain-side account as the `0x…` hex string the SDK's public
 /// structs carry.
 pub fn account_hex(a: &subxt::utils::AccountId32) -> String {
-    format!("0x{}", hex::encode(a.0))
+    array_bytes::bytes2hex("0x", a.0)
 }
 
 /// Decode an account carried by a runtime-API response, where accounts arrive
@@ -83,6 +83,15 @@ pub fn commitment(c: &storage_primitives::Commitment) -> rt::Commitment {
     }
 }
 
+/// Generated twin → [`storage_primitives::Commitment`].
+pub fn to_sp_commitment(c: &rt::Commitment) -> storage_primitives::Commitment {
+    storage_primitives::Commitment {
+        mmr_root: c.mmr_root,
+        start_seq: c.start_seq,
+        leaf_count: c.leaf_count,
+    }
+}
+
 /// [`storage_primitives::ChunkLocation`] → generated twin.
 pub fn chunk_location(t: &storage_primitives::ChunkLocation) -> rt::ChunkLocation {
     rt::ChunkLocation {
@@ -131,24 +140,16 @@ pub fn challenge_id(deadline: u32, index: u16) -> rt::ChallengeId<u32> {
     rt::ChallengeId { deadline, index }
 }
 
-/// [`storage_primitives::MerkleProof`] → generated twin.
-pub fn merkle_proof(p: &storage_primitives::MerkleProof) -> rt::MerkleProof {
-    rt::MerkleProof {
-        siblings: p.siblings.clone(),
-        path: p.path.clone(),
-    }
-}
-
 /// [`storage_primitives::MmrProof`] → generated twin.
-pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::MmrProof {
-    rt::MmrProof {
-        peaks: p.peaks.clone(),
-        leaf: rt::MmrLeaf {
+pub fn mmr_proof(p: &storage_primitives::MmrProof) -> rt::mmr::MmrProof {
+    rt::mmr::MmrProof {
+        leaf: rt::mmr::MmrLeaf {
+            leaf_version: p.leaf.leaf_version,
             data_root: p.leaf.data_root,
             data_size: p.leaf.data_size,
             total_size: p.leaf.total_size,
         },
-        leaf_proof: merkle_proof(&p.leaf_proof),
+        items: p.items.clone(),
     }
 }
 
@@ -263,5 +264,15 @@ mod tests {
         assert_eq!(rp.sync_balance, 70);
         assert_eq!(rp.min_sync_interval, 80);
         assert_eq!(rp.sync_price, 90, "sync_price must survive the conversion");
+    }
+
+    #[test]
+    fn commitment_round_trips() {
+        let original = storage_primitives::Commitment {
+            mmr_root: sp_core::H256::repeat_byte(0x5c),
+            start_seq: 7,
+            leaf_count: 3,
+        };
+        assert_eq!(to_sp_commitment(&commitment(&original)), original);
     }
 }

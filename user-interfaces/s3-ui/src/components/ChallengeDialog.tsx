@@ -23,6 +23,12 @@ interface ChallengeDialogProps {
   providers: string[];
 }
 
+function chunkIndexHint(chunkCount: number | null): string {
+  if (chunkCount === null) return "Index of the chunk within the leaf.";
+  if (chunkCount === 0) return "This leaf is empty and has no chunks.";
+  return `This leaf has ${chunkCount} chunk${chunkCount !== 1 ? "s" : ""} (valid: 0 to ${chunkCount - 1}).`;
+}
+
 export default function ChallengeDialog({ open, onOpenChange, providers }: ChallengeDialogProps) {
   const selectedBucket = useSelectedBucket();
   const info = useCheckpointInfo();
@@ -33,7 +39,7 @@ export default function ChallengeDialog({ open, onOpenChange, providers }: Chall
   const [chunkCount, setChunkCount] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const bucketId = selectedBucket?.layer0BucketId ?? null;
+  const bucketId = selectedBucket?.bucketId ?? null;
   const leafCount = info?.leafCount ?? 0n;
   const maxLeaf = leafCount > 0n ? leafCount - 1n : 0n;
 
@@ -47,20 +53,20 @@ export default function ChallengeDialog({ open, onOpenChange, providers }: Chall
     }
   }, [providers, selectedProvider]);
 
-  // Fetch chunk count when leaf index changes
+  // Fetch chunk count when the leaf index or the checkpoint changes
   useEffect(() => {
     setChunkCount(null);
-    if (bucketId === null || !isLeafValid) return;
+    if (bucketId === null || info === null || !isLeafValid) return;
     let cancelled = false;
     const client = getS3Client();
     client
-      .getLeafChunkCount(bucketId, leafVal)
+      .getLeafChunkCount(bucketId, info, leafVal)
       .then((count) => {
         if (!cancelled) setChunkCount(count);
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [bucketId, leafIndex, isLeafValid]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [bucketId, info, leafIndex, isLeafValid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const randomizeLeaf = () => {
     if (leafCount <= 0n) return;
@@ -171,15 +177,13 @@ export default function ChallengeDialog({ open, onOpenChange, providers }: Chall
               data-testid="challenge-chunk-index"
               type="number"
               min="0"
-              max={chunkCount !== null ? (chunkCount - 1).toString() : undefined}
+              max={chunkCount ? (chunkCount - 1).toString() : undefined}
               value={chunkIndex}
               onChange={(e) => setChunkIndex(e.target.value)}
               placeholder="0"
             />
             <p className="text-xs text-muted-foreground">
-              {chunkCount !== null
-                ? `This leaf has ${chunkCount} chunk${chunkCount !== 1 ? "s" : ""} (valid: 0 to ${chunkCount - 1}).`
-                : "Index of the chunk within the leaf."}
+              {chunkIndexHint(chunkCount)}
             </p>
           </div>
 

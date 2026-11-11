@@ -21,35 +21,29 @@ export LC_ALL=C
 # crate, never --workspace.
 COV_PACKAGES=(
 	pallet-storage-provider
-	pallet-drive-registry
-	pallet-s3-registry
 	storage-provider-node
 	provider-coordinator
-	provider-http
 	provider-negotiation
 	provider-auth
 	provider-replica
 	provider-storage
 	provider-challenge
 	provider-types
+	storage-formats
 )
 
 # Not measured, with the reason per crate.
 COV_SKIP_PACKAGES=(
 	storage-client # chain-bound SDK; integration tests self-skip without a live chain
-	file-system-client # chain-bound layer-1 SDK
-	s3-client # chain-bound layer-1 SDK
+	client-test-support # dev-only helpers for the client crates' tests; excluded by COV_IGNORE
 	storage-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
-	file-system-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
-	s3-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
 	provider-events # pure types; no tests of its own
 	storage-parachain-runtime # exercised out of process (zombienet e2e)
 	storage-paseo-runtime # exercised out of process (zombienet e2e)
 	pallet-storage-provider-precompile # exercised out of process (`just sc-demo`)
-	pallet-drive-registry-precompile # exercised out of process (`just sc-demo`)
-	pallet-s3-registry-precompile # exercised out of process (`just sc-demo`)
 	storage-subxt # static codegen runtime bindings
 	storage-indexers # chain-bound streams; needs a live chain to exercise
+	storage-cli # operator CLI; stress-test paths need a live chain + provider
 )
 
 # Fail when the two lists and the workspace members drift apart: every member
@@ -80,10 +74,10 @@ verify_classification() {
 # suites (crates/providers/replica/tests/, provider-node tests/coordinators/).
 # Groups: toolchain/vendored; generated code + test scaffolding; primitives
 # crates (linked in, own tests
-# not run here); chain-access layer (needs a live chain); client SDK crates
-# (in provider-node's dep graph until #277, never executed here); binary entry
-# points.
-COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/[^/]+/src/|clients/[^/]+/tests/|src/main\.rs|src/cli\.rs|src/command\.rs)'
+# not run here); chain-access layer (needs a live chain); the skipped client
+# crates storage-client and client-test-support, which the storage-formats
+# tests link and run only in part; binary entry points.
+COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/(storage|test-support)/src/|clients/[^/]+/tests/|src/main\.rs|src/cli\.rs|src/command\.rs)'
 
 REPO_ROOT="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}"
 cd "$REPO_ROOT"

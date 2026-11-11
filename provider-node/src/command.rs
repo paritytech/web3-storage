@@ -7,16 +7,17 @@ use crate::{
     chain_follower::SubxtChainFollower,
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, DEFAULT_PROVIDER_ID},
+    create_router,
     membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponderHandle, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, StorageProofSource,
+    ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
+    ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
 };
 use clap::Parser;
 use provider_auth::Authenticator;
 use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
-use provider_http::{create_router, ProviderDeps, ProviderState};
+use sp_core::crypto::{AccountId32, Ss58Codec};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -28,9 +29,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                "storage_provider_node=debug,provider_http=debug,tower_http=debug".into()
-            }),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "storage_provider_node=debug,tower_http=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -61,11 +61,27 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Storage backend: {backend}");
     let storage = backend.build()?;
 
+    // The provider identity, resolved once: the sr25519 submission account
+    // derived from the seed (whatever the signing scheme), else --provider-id.
+    let seed = cli.key.load_seed()?;
+    let provider_id = match &seed {
+        Some(seed) => ProviderState::provider_id_from_seed(seed)?,
+        None => cli
+            .key
+            .provider_id
+            .clone()
+            .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_string()),
+    };
+
     // Membership-based auth over the chain's bucket member sets, resolved
     // through the shared watch connection. Subscribed here rather than after
     // the chain-state coordinator starts, so the cache cannot miss the
     // bootstrap `Resubscribed` the coordinator broadcasts on first connect.
-    let resolver = ChainMembershipResolver::new(chain_rx.clone());
+    // The node's account serves the resolver's replica lookups and the
+    // authenticator's operator self-auth. Both stay off when the provider id
+    // is not an SS58 account (the placeholder default).
+    let provider_account = AccountId32::from_ss58check(&provider_id).ok();
+    let resolver = ChainMembershipResolver::new(chain_rx.clone(), provider_account.clone());
     // Incoherent, not unsafe - warn rather than clamp an explicit choice.
     if cli.auth.auth_max_stale <= cli.auth.auth_cache_ttl {
         tracing::warn!(
@@ -75,14 +91,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             cli.auth.auth_cache_ttl
         );
     }
-    let auth = Arc::new(
-        Authenticator::new(resolver)
-            .with_ttl(Duration::from_secs(cli.auth.auth_cache_ttl))
-            .with_max_skew(Duration::from_secs(cli.auth.auth_max_skew))
-            .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
-            .with_max_entries(cli.auth.auth_cache_max_entries)
-            .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe())),
-    );
+    let mut authenticator = Authenticator::new(resolver)
+        .with_ttl(Duration::from_secs(cli.auth.auth_cache_ttl))
+        .with_max_skew(Duration::from_secs(cli.auth.auth_max_skew))
+        .with_max_stale(Duration::from_secs(cli.auth.auth_max_stale))
+        .with_max_entries(cli.auth.auth_cache_max_entries)
+        .with_invalidations(BlockEventInvalidations::new(events_tx.subscribe()));
+    if let Some(account) = provider_account {
+        authenticator = authenticator.with_provider_account(account);
+    }
+    let auth = Arc::new(authenticator);
     tracing::info!(
         "Auth: membership cache_ttl={}s, max_stale={}s, max_skew={}s, max_entries={}",
         cli.auth.auth_cache_ttl,
@@ -94,7 +112,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let deps = ProviderDeps { storage, auth };
 
     // Resolve provider identity
-    let seed = cli.key.load_seed()?;
     let state = match &seed {
         Some(seed) => {
             let state = ProviderState::with_seed_scheme(deps, seed, cli.key.key_scheme)?;
@@ -106,16 +123,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             state
         }
         None => {
-            let provider_id = cli
-                .key
-                .provider_id
-                .clone()
-                .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_string());
             tracing::warn!(
                 "No --keyfile set, using --provider-id without signing: {}",
                 provider_id
             );
-
             ProviderState::with_provider_id(deps, provider_id)
         }
     }
@@ -301,7 +312,7 @@ async fn start_challenge_responder(
 
     let responder = ChallengeResponder::new(
         config,
-        Arc::new(StorageProofSource::new(state.storage.clone())),
+        state.challenge_proof_source(),
         Box::new(chain_client),
     );
 

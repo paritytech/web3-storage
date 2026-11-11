@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * @web3-storage/sdk — umbrella over the #123 package layout. Everything
- * consumers used before the split keeps resolving from here; the physical
- * core/layer0/layer1 boundaries are an implementation detail.
- *
- * pallet_revive helpers stay on the ./revive subpath (viem isolation);
- * layer-1 clients are also importable directly via ./fs and ./s3.
+ * @web3-storage/sdk: umbrella over @web3-storage/core, layer0 and
+ * file-system, plus the Web3Storage class. pallet_revive helpers stay on the
+ * ./revive subpath, so consumers that never touch contracts do not load viem.
  */
 
 export * from "@web3-storage/layer0";
-export * from "@web3-storage/layer1";
+export * from "@web3-storage/storage-formats";
 
 // core's chain-free primitives that layer0 doesn't already re-export.
 export {
@@ -23,14 +20,27 @@ export {
   base64ToBytes,
   signProviderRequest,
   computeCid,
+  hashLeaf,
   verifyCid,
   CidMismatchError,
   DEFAULT_CHUNK_SIZE,
   computeDataRoot,
   metadataMerkleRoot,
-  paddedMerkleRoot,
+  merkleRoot,
+  leafChunkCount,
+  leafChunkSize,
+  LEAF_VERSION,
   hashChildren,
+  merkleTree,
+  bagPeaks,
+  splitChunks,
+  verifyChunkProof,
+  verifyMmrProof,
+  createLimiter,
   u64le,
+  type MerkleNode,
+  type MmrLeaf,
+  type MmrProof,
   type HttpFetchOpts,
   type MerkleEntry,
   type BucketTargetWire,
@@ -39,4 +49,4 @@ export {
   type ProviderRequestSigner,
 } from "@web3-storage/core";
 
-export { Web3Storage, type Web3StorageOptions } from "./web3-storage.js";
+export { Web3Storage, type CreateBucketOptions, type Web3StorageOptions } from "./web3-storage.js";

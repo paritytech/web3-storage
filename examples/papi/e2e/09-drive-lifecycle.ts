@@ -5,7 +5,11 @@
  *
  * Accounts: //Alice (provider), //Bob (owner), //Ferdie (member)
  *
- * Tests: create, share, unshare, delete drives.
+ * Tests: a drive on a plain Layer 0 bucket through `Web3Storage`: create,
+ * file and directory ops, add/change/remove members, and failure cases. The
+ * chain stores no drive name or drive record: a drive is its bucket id. The
+ * directory tree is stored in the bucket and read and written through the
+ * provider's Layer 0 routes only.
  *
  * Usage: node e2e/09-drive-lifecycle.js [chain_ws] [provider_url]
  */
@@ -13,42 +17,28 @@
 import assert from "node:assert";
 import { Enum } from "polkadot-api";
 import {
-  createDrive,
-  deleteDrive,
   ensureProviderRegistered,
   makeSigner,
-  READ_OPTS,
   sameAddress,
-  shareDrive,
-  unshareDrive,
-  type ChainSigner,
-  type ParachainApi,
+  type FsTree,
 } from "@web3-storage/sdk";
-import { ensureSoleAcceptingProvider, printBucketMembers } from "../support.js";
-import { getFree, negotiateSigned, runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
-
-/**
- * Create a drive: negotiate provider-signed terms, then redeem them via
- * `create_drive`, which opens the underlying bucket + primary agreement
- * atomically. Returns `{ driveId, bucketId }`.
- */
-async function createDriveWithStorage(
-  api: ParachainApi,
-  providerUrl: string,
-  owner: ChainSigner,
-  provider: ChainSigner,
-  name: string,
-  { maxBytes, duration }: { maxBytes: bigint; duration: number }
-) {
-  const signed = await negotiateSigned(api, providerUrl, owner, provider, {
-    maxBytes,
-    duration,
-  });
-  return createDrive(api, owner, name, provider, signed);
-}
+import { ensureSoleAcceptingProvider } from "../support.js";
+import {
+  eventually,
+  eventuallyRejects,
+  INSUFFICIENT_ROLE,
+  readText,
+  runSuite,
+  setupChain,
+  storageFor,
+  submitTxExpectFailure,
+} from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
+
+const enc = (s: string) => new TextEncoder().encode(s);
+const dec = (b: Uint8Array) => new TextDecoder().decode(b);
 
 async function main() {
   const provider = makeSigner("//Alice");
@@ -59,7 +49,21 @@ async function main() {
   await ensureProviderRegistered(api, provider, PROVIDER_URL);
   const restore = await ensureSoleAcceptingProvider(api, provider);
 
-  let driveId: bigint, bucketId: bigint;
+  const ownerStorage = storageFor(api, owner, PROVIDER_URL);
+  const memberStorage = storageFor(api, member, PROVIDER_URL);
+  const createOpts = {
+    maxCapacity: 1_048_576n,
+    duration: 100,
+    provider: { address: provider.address, url: PROVIDER_URL },
+  };
+
+  let bucketId: bigint;
+  /** The drive as the owner and as the member, opened by 9.1. */
+  let ownerDrive: FsTree;
+  let memberDrive: FsTree;
+
+  const roleOf = async (account: string) =>
+    (await ownerStorage.getBucket(bucketId))?.members.find((m) => sameAddress(m.account, account))?.role;
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
@@ -68,139 +72,147 @@ async function main() {
   tests.push({
     name: "9.1 Create drive",
     fn: async () => {
-      const maxCapacity = 1_048_576n;
-      const storagePeriod = 100;
-      const result = await createDriveWithStorage(
-        api,
-        PROVIDER_URL,
-        owner,
-        provider,
-        `e2e-drive-${Date.now()}`,
-        { maxBytes: maxCapacity, duration: storagePeriod }
-      );
-      driveId = result.driveId;
+      const result = await ownerStorage.createBucket(createOpts);
       bucketId = result.bucketId;
-      assert.ok(driveId !== undefined, "drive_id should be returned");
-      assert.ok(bucketId !== undefined, "bucket_id should be returned");
-      // The underlying bucket's primary provider is the one we negotiated with.
-      const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
-      assert.ok(
-        bucket.primary_providers.some((p: string) => sameAddress(p, provider.address)),
-        "Negotiated provider should be the bucket's primary"
-      );
+      ownerDrive = await ownerStorage.drive(bucketId);
+      memberDrive = await memberStorage.drive(bucketId);
+      assert.ok(sameAddress(result.provider, provider.address), "provider should be Alice");
 
-      // Verify storage.
-      const drive = await api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
-      assert.ok(drive, "Drive should exist in storage");
-      const userDrives = await api.query.DriveRegistry.UserDrives.getValue(owner.address, READ_OPTS);
+      const info = await ownerStorage.getBucket(bucketId);
+      assert.ok(info, "getBucket should find the new bucket");
       assert.ok(
-        userDrives.some((id: bigint) => id === driveId),
-        "Owner's UserDrives should contain drive"
+        info.providerInfo.some((p) => sameAddress(p.account, provider.address)),
+        "negotiated provider should be the bucket's primary"
       );
-      const driveForBucket = await api.query.DriveRegistry.BucketToDrive.getValue(
-        bucketId,
-        READ_OPTS
-      );
-      assert.strictEqual(driveForBucket, driveId, "BucketToDrive should map back");
-    },
-  });
+      assert.strictEqual(info.visibility, "Private", "drives default to Private");
+      assert.strictEqual(await roleOf(owner.address), "Admin", "creator should be Admin");
 
-  tests.push({
-    name: "9.2 Share drive (Writer)",
-    fn: async () => {
-      const event = await shareDrive(api, owner, driveId, member, "Writer");
-      assert.ok(event, "Should get DriveShared event");
-      const members = await printBucketMembers(api, bucketId, "after share Writer");
+      const drives = await ownerStorage.listBuckets();
       assert.ok(
-        members.some((m: { account: string }) => sameAddress(m.account, member.address)),
-        "Member should appear in underlying bucket"
+        drives.some((d) => d.bucketId === bucketId),
+        "listBuckets should include the new drive"
       );
     },
   });
 
   tests.push({
-    name: "9.3 Share drive (Reader) — change role",
+    name: "9.2 Upload and download a file",
     fn: async () => {
-      const event = await shareDrive(api, owner, driveId, member, "Reader");
-      assert.ok(event, "Should get DriveShared event");
-      const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
-      const m = bucket.members.find((m: { account: string }) =>
-        sameAddress(m.account, member.address)
-      )!;
-      assert.strictEqual(m.role.type, "Reader", "Member should now be Reader");
+      const up = await ownerDrive.putFile("/hello.txt", enc("hello drive"), { contentType: "text/plain" });
+      assert.strictEqual(up.size, "hello drive".length);
+      assert.strictEqual(await ownerDrive.rootCid(), up.rootCid, "the drive root should be the upload's new root");
+      const file = await ownerDrive.getFile("/hello.txt");
+      assert.strictEqual(dec(file.bytes), "hello drive");
+      assert.ok(file.contentType.startsWith("text/plain"), `content type: ${file.contentType}`);
     },
   });
 
   tests.push({
-    name: "9.4 Unshare drive",
+    name: "9.3 Create a directory and list it",
     fn: async () => {
-      const event = await unshareDrive(api, owner, driveId, member);
-      assert.ok(event, "Should get DriveUnshared event");
-      const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
+      await ownerDrive.mkdir("/docs");
+      await ownerDrive.putFile("/docs/notes.txt", enc("notes"));
+      const root = await ownerDrive.list("/");
       assert.ok(
-        !bucket.members.some((m: { account: string }) => sameAddress(m.account, member.address)),
-        "Member should be gone from bucket"
+        root.some((e) => e.name === "docs" && e.entryType === "directory"),
+        "root should list the docs directory"
+      );
+      assert.ok(
+        root.some((e) => e.name === "hello.txt" && e.entryType === "file"),
+        "root should list hello.txt"
+      );
+      const docs = await ownerDrive.list("/docs");
+      assert.ok(docs.some((e) => e.name === "notes.txt"), "docs should list notes.txt");
+    },
+  });
+
+  tests.push({
+    name: "9.4 Add member (Writer)",
+    fn: async () => {
+      await ownerStorage.setMember(bucketId, member.address, "Writer");
+      assert.strictEqual(await roleOf(member.address), "Writer");
+      const memberDrives = await memberStorage.listBuckets();
+      assert.ok(
+        memberDrives.some((d) => d.bucketId === bucketId),
+        "listBuckets for the member should include the shared drive"
+      );
+      await eventually(
+        async () => memberDrive.putFile("/from-member.txt", enc("member write")),
+        "Writer upload"
+      );
+      assert.strictEqual(await readText(ownerDrive, "/from-member.txt"), "member write");
+    },
+  });
+
+  tests.push({
+    name: "9.5 Change member role (Reader)",
+    fn: async () => {
+      await ownerStorage.setMember(bucketId, member.address, "Reader");
+      assert.strictEqual(await roleOf(member.address), "Reader");
+      assert.strictEqual(await readText(memberDrive, "/hello.txt"), "hello drive");
+      await eventuallyRejects(
+        async () => memberDrive.putFile("/reader-write.txt", enc("nope")),
+        INSUFFICIENT_ROLE,
+        "Reader upload"
       );
     },
   });
 
   tests.push({
-    name: "9.5 Delete drive",
+    name: "9.6 Remove member",
     fn: async () => {
-      const ownerBefore = await getFree(api, owner);
-      const event = await deleteDrive(api, owner, driveId);
-      assert.ok(event, "Should get DriveDeleted event");
-      const ownerAfter = await getFree(api, owner);
-      // Owner should get a refund (balance increased, minus tx fees).
-      console.log("    owner free delta = %s", (ownerAfter - ownerBefore).toString());
-      const driveAfter = await api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
-      assert.strictEqual(driveAfter, undefined, "Drive should be gone after delete");
+      await ownerStorage.removeMember(bucketId, member.address);
+      assert.strictEqual(await roleOf(member.address), undefined, "member should be gone");
+      const memberDrives = await memberStorage.listBuckets();
+      assert.ok(
+        !memberDrives.some((d) => d.bucketId === bucketId),
+        "listBuckets for the removed member should not include the drive"
+      );
+      await eventuallyRejects(
+        async () => memberDrive.getFile("/hello.txt"),
+        INSUFFICIENT_ROLE,
+        "removed member read"
+      );
+      await eventuallyRejects(
+        async () => memberDrive.putFile("/removed-write.txt", enc("nope")),
+        INSUFFICIENT_ROLE,
+        "removed member upload"
+      );
+    },
+  });
+
+  tests.push({
+    name: "9.7 Delete a file",
+    fn: async () => {
+      await ownerDrive.delete("/from-member.txt");
+      const root = await ownerDrive.list("/");
+      assert.ok(!root.some((e) => e.name === "from-member.txt"), "deleted file should not be listed");
+      assert.ok(root.some((e) => e.name === "hello.txt"), "other files should remain");
     },
   });
 
   // ── Failure ───────────────────────────────────────────────────────────────
 
   tests.push({
-    name: "9.6 Non-owner shares drive",
+    name: "9.8 Non-admin adds a member",
     fn: async () => {
-      // Create a new drive for this test.
-      const maxCapacity = 1_048_576n;
-      const storagePeriod = 100;
-      const result = await createDriveWithStorage(
-        api,
-        PROVIDER_URL,
-        owner,
-        provider,
-        `e2e-drive-9b-${Date.now()}`,
-        { maxBytes: maxCapacity, duration: storagePeriod }
-      );
-      const tx = api.tx.DriveRegistry.share_drive({
-        drive_id: result.driveId,
-        member: owner.address,
+      const tx = api.tx.StorageProvider.set_member({
+        bucket_id: bucketId,
+        member: member.address,
         role: Enum("Writer"),
       });
-      // DriveRegistry.share_drive delegates the admin check to
-      // set_member_internal (ensure_admin → NotBucketAdmin) and lets Layer 0's
-      // error surface unchanged.
-      await submitTxExpectFailure(tx, member.signer, "NotBucketAdmin", "9.6");
+      await submitTxExpectFailure(tx, member.signer, "NotBucketAdmin", "9.8");
     },
   });
 
   tests.push({
-    name: "9.7 Non-owner deletes drive",
+    name: "9.9 Non-member cannot upload",
     fn: async () => {
-      const maxCapacity = 1_048_576n;
-      const storagePeriod = 100;
-      const result = await createDriveWithStorage(
-        api,
-        PROVIDER_URL,
-        owner,
-        provider,
-        `e2e-drive-9c-${Date.now()}`,
-        { maxBytes: maxCapacity, duration: storagePeriod }
+      await assert.rejects(
+        memberDrive.putFile("/intruder.txt", enc("nope")),
+        INSUFFICIENT_ROLE,
+        "a non-member upload should be refused"
       );
-      const tx = api.tx.DriveRegistry.delete_drive({ drive_id: result.driveId });
-      await submitTxExpectFailure(tx, member.signer, "NotDriveOwner", "9.7");
     },
   });
 

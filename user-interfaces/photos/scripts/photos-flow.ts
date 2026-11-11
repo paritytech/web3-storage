@@ -4,8 +4,8 @@
 //   M1 — deploy Photos → negotiate terms → createLibrary → assert.
 //   M2 — mkdir album → PUT photo + thumbnail → compute the metadata Merkle root
 //        client-side → setRoot → re-list, recompute from scratch, and assert it
-//        equals both the on-chain anchor and the provider's index_root; plus a
-//        tamper check. Mirrors `examples/papi/sc-team-drive.ts`.
+//        equals the on-chain anchor, and that the bucket's tree root is the one
+//        the last write produced; plus a tamper check. Mirrors `examples/papi/sc-team-drive.ts`.
 //   M3 — edit the photo copy-on-write: re-PUT edited bytes to the *same* path
 //        (a new content-addressed blob; the pre-edit blob lingers) → recompute
 //        + setRoot → download back and byte-compare → assert the anchor moved,
@@ -33,6 +33,7 @@ import {
   toHex,
   waitForChainReady,
   waitForNextBlock,
+  Web3Storage,
 } from "@web3-storage/sdk";
 import {
   callContract,
@@ -42,7 +43,6 @@ import {
   ensureAccountMapped,
   substrateToH160,
 } from "@web3-storage/sdk/revive";
-import { FileSystemClient } from "@web3-storage/sdk/fs";
 import { negotiatePrecompileTerms } from "./lib/contract.js";
 import { anchorRoot, loadArtifact, readLibraryOf } from "./lib/photos.js";
 import { enumerateEntries } from "../src/lib/fs-root.js";
@@ -58,7 +58,6 @@ const clientSeed = args[3] || "//Bob";
 const UNIT = 10n ** 12n;
 const MAX_BYTES = 1n << 20n; // 1 MiB quota
 const DURATION = 50; // blocks
-const LIBRARY_NAME = "my-photos";
 // Blocks to wait for the best-block view to catch up to a just-included setRoot.
 const ANCHOR_RETRY_BLOCKS = 5;
 
@@ -89,15 +88,15 @@ async function main() {
 
   const { abi, bin } = await loadArtifact();
   const { papi, api } = connect(chainWs);
-  // No signer → no auth headers (dev provider runs /fs auth disabled); providerUrl
-  // pinned so every /fs op hits this run's provider without a chain lookup.
-  const fs = new FileSystemClient({ api, providerUrl });
+  const provider = makeSigner(providerSeed);
+  const user = makeSigner(clientSeed);
+  // Writes sign the provider requests as the user (a Writer on the bucket);
+  // providerUrl is pinned so every request goes to this run's provider
+  // without a chain lookup.
+  const w3s = new Web3Storage({ api, providerUrl, signer: user });
   try {
     await waitForChainReady(api);
     await waitForNextBlock(papi);
-
-    const provider = makeSigner(providerSeed);
-    const user = makeSigner(clientSeed);
 
     // Precondition: provider registered + accepting. Read its locked price.
     const info: any = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
@@ -131,7 +130,6 @@ async function main() {
     const userAccount = toHex(user.publicKey); // bytes32 substrate AccountId32 → Writer grant
     const createData = encodeCall(abi, "createLibrary", [
       userAccount,
-      LIBRARY_NAME,
       toHex(provider.publicKey),
       signed.terms,
       signed.signature,
@@ -139,19 +137,21 @@ async function main() {
     const r = await callContract(api, user, deployed.addressBytes, createData, { value });
 
     // 3) Assert on events.
-    const driveCreated: any = requireOneEvent(r.events, api.event.DriveRegistry.DriveCreated, "DriveRegistry.DriveCreated");
-    const driveShared: any = requireOneEvent(r.events, api.event.DriveRegistry.DriveShared, "DriveRegistry.DriveShared");
-    const driveId: bigint = driveCreated.drive_id;
-    const bucketId: bigint = driveCreated.bucket_id;
-    console.log(`\n[3/3] driveId=${driveId}  bucketId=${bucketId}  owner=${driveCreated.owner}`);
+    const bucketCreated: any = requireOneEvent(r.events, api.event.StorageProvider.BucketCreated, "StorageProvider.BucketCreated");
+    const memberSet: any = requireOneEvent(r.events, api.event.StorageProvider.MemberSet, "StorageProvider.MemberSet");
+    const bucketId: bigint = bucketCreated.bucket_id;
+    const fs = await w3s.drive(bucketId);
+    console.log(`\n[3/3] bucketId=${bucketId}  admin=${bucketCreated.admin}`);
 
-    assert.ok(isSameAddress(driveCreated.owner, contractAccount.address), "drive owner is not the contract account");
-    assert.ok(isSameAddress(driveShared.member, user.address), "Writer grant member is not the user");
+    assert.ok(isSameAddress(bucketCreated.admin, contractAccount.address), "bucket admin is not the contract account");
+    assert.strictEqual(memberSet.bucket_id, bucketId, "Writer grant is on a different bucket");
+    assert.ok(isSameAddress(memberSet.member, user.address), "Writer grant member is not the user");
+    assert.strictEqual(memberSet.role?.type ?? memberSet.role, "Writer", "user role is not Writer");
 
     const contractLogs = decodeContractEmitted(r.events, api, deployed.address, abi);
     assert.ok(contractLogs.some((l) => l.eventName === "LibraryCreated"), "LibraryCreated event not emitted");
 
-    // Soft cross-check: the user shows up as a member on the underlying bucket.
+    // Soft cross-check: the user shows up as a member of the bucket.
     const bucket: any = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
     const member = bucket?.members?.find((m: any) => isSameAddress(m.account, user.address));
     console.log("  bucket member role for user:", member ? (member.role?.type ?? member.role) : "(not found)");
@@ -161,26 +161,32 @@ async function main() {
     const lib = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
     console.log("  libraryOf(user) [pre-anchor]:", lib);
     assert.ok(lib.exists, "libraryOf.exists is false");
-    assert.strictEqual(lib.driveId, driveId, "libraryOf.driveId mismatch");
+    assert.strictEqual(lib.bucketId, bucketId, "libraryOf.bucketId mismatch");
 
     // The client-maintained source of truth for the anchored metadata root:
     // updated on every mkdir/upload/edit below, so `index.root()` — never a
     // provider round-trip — is what we anchor and re-anchor. See `local-index.ts`.
     const index = new LocalIndex();
 
-    // Re-enumerate the drive for integrity, read the on-chain anchor back
+    // Re-enumerate the bucket for integrity, read the on-chain anchor back
     // (retrying while it lags the just-included setRoot, per `isStale`), and
-    // assert index root == on-chain rootCid == provider index_root. The
-    // enumeration only *verifies* the provider; the root comes from the index.
+    // assert index root == root recomputed from the enumeration == on-chain
+    // rootCid. The enumeration only *verifies* the provider; the root comes
+    // from the index. Also assert the bucket's file-system root (its last MMR
+    // leaf) is `treeRoot`, the root the last write returned. That root is a
+    // different value from the anchored metadata root: the contract anchors
+    // the flat metadata Merkle root, not the directory tree's CID.
     // Returns the fresh entries + reads for callers that need them.
     const verifyAnchor = async ({
       expectedEntries,
+      treeRoot,
       isStale,
     }: {
       expectedEntries?: { path: string; dataRoot: Uint8Array }[];
+      treeRoot: string;
       isStale: (rootCid: string) => boolean;
     }) => {
-      const fresh = await enumerateEntries(fs, bucketId);
+      const fresh = await enumerateEntries(fs);
       // Assert each uploaded file is served back byte-for-byte (the real
       // integrity check) — only the initial upload has bytes to cross-check.
       if (expectedEntries) {
@@ -197,13 +203,16 @@ async function main() {
         await waitForNextBlock(papi);
         anchored = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
       }
-      const idx = await fs.getIndexRoot(bucketId);
+      const fromListing = toHex(metadataMerkleRoot(fresh)).toLowerCase();
+      const fsRoot = (await fs.rootCid())?.toLowerCase();
       console.log(`  recomputed=${recomputed}`);
+      console.log(`  listing   =${fromListing}`);
       console.log(`  on-chain  =${anchored.rootCid.toLowerCase()}`);
-      console.log(`  index_root=${idx.indexRoot.toLowerCase()}`);
+      console.log(`  fs root   =${fsRoot}`);
       assert.strictEqual(recomputed, anchored.rootCid.toLowerCase(), "recomputed root != on-chain rootCid");
-      assert.strictEqual(recomputed, idx.indexRoot.toLowerCase(), "recomputed root != provider index_root");
-      return { fresh, recomputed, anchored, idx };
+      assert.strictEqual(recomputed, fromListing, "index root != root recomputed from the bucket listing");
+      assert.strictEqual(fsRoot, treeRoot.toLowerCase(), "bucket's file-system root != root returned by the last write");
+      return { fresh, recomputed, anchored };
     };
 
     // ── M2: albums + blobs + thumbnails + client-computed root anchor ──
@@ -213,7 +222,7 @@ async function main() {
     // each created directory in the index (its dir leaves in the root).
     console.log("\n[M2 1/5] mkdir album + thumbnail subtree…");
     for (const dir of ALBUM_DIRS) {
-      await fs.createDirectory(bucketId, dir);
+      await fs.mkdir(dir);
       index.setDir(dir);
     }
 
@@ -222,17 +231,12 @@ async function main() {
     console.log("\n[M2 2/5] PUT photo (multi-MB) + placeholder thumbnail…");
     const photoBytes = makeBytes(2 * 1024 * 1024 + 12_345, 0xc0ffee);
     const thumbBytes = makeBytes(4_096, 0xbeef);
-    const photoPut = await fs.uploadFile(bucketId, PHOTO, photoBytes, { contentType: "image/jpeg" });
-    const thumbPut = await fs.uploadFile(bucketId, THUMB, thumbBytes, { contentType: "image/jpeg" });
-    console.log(`  photo: data_root=${photoPut.dataRoot} size=${photoPut.size}`);
-    console.log(`  thumb: data_root=${thumbPut.dataRoot} size=${thumbPut.size}`);
+    const photoPut = await fs.putFile(PHOTO, photoBytes, { contentType: "image/jpeg" });
+    const thumbPut = await fs.putFile(THUMB, thumbBytes, { contentType: "image/jpeg" });
+    console.log(`  photo: data_root=${photoPut.contentRoot} size=${photoPut.size}`);
+    console.log(`  thumb: data_root=${thumbPut.contentRoot} size=${thumbPut.size}`);
 
-    // Per-file cross-check: the data_root we compute locally must match the
-    // provider's (proves our chunk-tree port matches the provider's). Record the
-    // locally verified leaves in the index — keyed on the byte length we saw.
-    if (!photoPut.dataRoot || !thumbPut.dataRoot) throw new Error("provider did not return a data_root for an upload");
-    assert.strictEqual(toHex(computeDataRoot(photoBytes)).toLowerCase(), photoPut.dataRoot.toLowerCase(), "local photo data_root != provider data_root");
-    assert.strictEqual(toHex(computeDataRoot(thumbBytes)).toLowerCase(), thumbPut.dataRoot.toLowerCase(), "local thumb data_root != provider data_root");
+    // Record the uploaded leaves in the index, keyed on the byte length we saw.
     index.setFile(PHOTO, computeDataRoot(photoBytes), BigInt(photoBytes.length));
     index.setFile(THUMB, computeDataRoot(thumbBytes), BigInt(thumbBytes.length));
 
@@ -245,7 +249,7 @@ async function main() {
       { path: PHOTO, bytes: photoBytes, dataRoot: computeDataRoot(photoBytes) },
       { path: THUMB, bytes: thumbBytes, dataRoot: computeDataRoot(thumbBytes) },
     ];
-    const listing = await fs.listDirectory(bucketId, "/", { recursive: true });
+    const listing = await fs.list("/", { recursive: true });
     const providerFilePaths = listing.filter((e) => e.entryType === "file").map((e) => e.path).sort();
     const providerDirPaths = listing.filter((e) => e.entryType !== "file").map((e) => e.path).sort();
     assert.deepStrictEqual(providerFilePaths, index.filePaths().sort(), "provider's file set != the client's uploaded set (hidden/extra/renamed files)");
@@ -255,15 +259,17 @@ async function main() {
     console.log(`  localRoot=${localRoot}`);
     await anchorRoot(api, user, deployed.addressBytes, localRoot, abi);
 
-    // [M2 4/5] Verify against the client anchor: enumerate the drive fresh
+    // [M2 4/5] Verify against the client anchor: enumerate the bucket fresh
     // (downloading + re-hashing every file), assert each uploaded file's served
     // content matches the client's data_root (the real integrity check), then
-    // recompute the root and assert it equals the on-chain anchor and (a sanity
-    // cross-check of the merkle port) the provider's index_root.
-    console.log("\n[M2 4/5] Re-enumerate + assert content + root == anchor + index_root…");
+    // recompute the root and assert it equals the on-chain anchor, and that the
+    // bucket's file-system root is the one the thumbnail upload (the last
+    // write) returned.
+    console.log("\n[M2 4/5] Re-enumerate + assert content + root == anchor + fs root…");
     // First anchor: the on-chain rootCid is still zero until setRoot lands.
     const { fresh, anchored } = await verifyAnchor({
       expectedEntries: uploaded,
+      treeRoot: thumbPut.rootCid,
       isStale: (rootCid) => /^0x0+$/.test(rootCid),
     });
 
@@ -281,18 +287,14 @@ async function main() {
     // Pre-edit snapshot to prove the edit's effect (and its limits).
     const rootBeforeEdit = anchored.rootCid.toLowerCase();
     const entriesBeforeEdit = index.entries().length;
-    const photoRootBeforeEdit = photoPut.dataRoot.toLowerCase();
 
     // [M3 1/4] Edit in place: re-PUT *different* bytes to the SAME path. Content-
     // addressed copy-on-write writes a new blob and repoints the path; the old
     // blob lingers (no GC). Real canvas crop/rotate is M6 — a fresh seed stands in.
     console.log("\n[M3 1/4] Edit photo in place (re-PUT same path)…");
     const editedBytes = makeBytes(2 * 1024 * 1024 + 6_789, 0xed17ed);
-    const editPut = await fs.uploadFile(bucketId, PHOTO, editedBytes, { contentType: "image/jpeg" });
-    console.log(`  edited photo: data_root=${editPut.dataRoot} size=${editPut.size}`);
-    if (!editPut.dataRoot) throw new Error("provider did not return a data_root for an upload");
-    assert.strictEqual(toHex(computeDataRoot(editedBytes)).toLowerCase(), editPut.dataRoot.toLowerCase(), "local edited data_root != provider data_root");
-    assert.notStrictEqual(editPut.dataRoot.toLowerCase(), photoRootBeforeEdit, "edited data_root unchanged — the COW write did not produce a new blob");
+    const editPut = await fs.putFile(PHOTO, editedBytes, { contentType: "image/jpeg" });
+    console.log(`  edited photo: data_root=${editPut.contentRoot} size=${editPut.size}`);
     // Replace the edited leaf in the index — same path, so the entry set size is
     // unchanged; only the leaf's data_root/size move.
     index.setFile(PHOTO, computeDataRoot(editedBytes), BigInt(editedBytes.length));
@@ -308,10 +310,12 @@ async function main() {
     await anchorRoot(api, user, deployed.addressBytes, editedRoot, abi);
 
     // [M3 3/4] Verify the new anchor: recompute from a fresh listing and assert
-    // it equals the on-chain rootCid (retrying for best-block lag) and index_root.
+    // it equals the on-chain rootCid (retrying for best-block lag), and that the
+    // bucket's file-system root is the one the edit returned.
     console.log("\n[M3 3/4] Re-read anchor + recompute + assert…");
     // Post-edit: wait while the on-chain rootCid still reads the pre-edit value.
     const { anchored: editAnchored } = await verifyAnchor({
+      treeRoot: editPut.rootCid,
       isStale: (rootCid) => rootCid === rootBeforeEdit,
     });
     assert.notStrictEqual(editAnchored.rootCid.toLowerCase(), rootBeforeEdit, "on-chain rootCid did not move after the edit");
@@ -319,20 +323,21 @@ async function main() {
     // [M3 4/4] Download the same path back: the bytes must be the edited blob,
     // proving the path was repointed (not the original, lingering blob).
     console.log("\n[M3 4/4] Download same path + byte-compare against edited bytes…");
-    const downloaded = await fs.downloadFile(bucketId, PHOTO);
+    const { bytes: downloaded } = await fs.getFile(PHOTO);
     assert.deepStrictEqual(downloaded, editedBytes, "downloaded photo bytes != edited bytes — path was not repointed to the edited blob");
     console.log(`  downloaded ${downloaded.length} bytes — matches edited photo ✓`);
 
     // Invariants that must survive an edit: the library still exists with the
-    // same driveId, the drive is still owned by the contract account, and the
+    // same bucketId, the contract account is still the bucket admin, and the
     // user still holds the Writer grant on the bucket. The edit touches data
     // only — never ownership or ACLs.
     assert.ok(editAnchored.exists, "libraryOf.exists became false after edit");
-    assert.strictEqual(editAnchored.driveId, driveId, "libraryOf.driveId changed after edit");
-    const driveAfterEdit: any = await api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
-    assert.ok(driveAfterEdit, "drive vanished from DriveRegistry after edit");
-    assert.ok(isSameAddress(driveAfterEdit.owner, contractAccount.address), "drive owner is no longer the contract account after edit");
+    assert.strictEqual(editAnchored.bucketId, bucketId, "libraryOf.bucketId changed after edit");
     const bucketAfterEdit: any = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
+    assert.ok(
+      bucketAfterEdit?.members?.some((m: any) => isSameAddress(m.account, contractAccount.address) && (m.role?.type ?? m.role) === "Admin"),
+      "contract account is no longer the bucket admin after edit",
+    );
     assert.ok(bucketAfterEdit?.members?.some((m: any) => isSameAddress(m.account, user.address)), "user lost the Writer grant after edit");
 
     // End state — the contract this flow deployed (an ephemeral instance,
@@ -340,7 +345,7 @@ async function main() {
     console.log(`\n📌 end state — contract ${deployed.address}  libraryOf(user).rootCid = ${editAnchored.rootCid}`);
     assert.ok(!/^0x0+$/.test(editAnchored.rootCid), "end-state rootCid is still zero — setRoot did not persist");
 
-    console.log("\n✅ Photos M1+M2+M3 flow completed — album + photo round-tripped, edited copy-on-write at the same path, client-computed root re-anchored, and verified against the on-chain anchor and index_root throughout.");
+    console.log("\n✅ Photos M1+M2+M3 flow completed — album + photo round-tripped, edited copy-on-write at the same path, client-computed root re-anchored, and verified against the on-chain anchor throughout.");
   } finally {
     papi.destroy();
   }

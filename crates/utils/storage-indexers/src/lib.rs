@@ -17,7 +17,4 @@ mod event_stream;
 
 pub use block_stream::BlockStream;
 pub use error::IndexerError;
-pub use event_stream::{
-    BlockEvent, EventFilter, EventStream, DRIVE_REGISTRY_PALLET, S3_REGISTRY_PALLET,
-    STORAGE_PALLETS, STORAGE_PROVIDER_PALLET,
-};
+pub use event_stream::{BlockEvent, EventFilter, EventStream, STORAGE_PROVIDER_PALLET};

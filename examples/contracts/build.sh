@@ -26,12 +26,12 @@ cd "$SCRIPT_DIR"
 # PolkaVM bytecode keyed by `<file>:<contract>`. Single artifact is easier
 # for the e2e driver to load than per-contract .bin / .abi pairs.
 #
-# All three .sol files are passed explicitly so the interfaces' ABIs land in
-# `combined.json` too — `sc-coverage.js` calls the precompiles directly using
-# those ABIs, without an intermediate contract.
+# `IWeb3Storage.sol` is passed explicitly so its ABI lands in `combined.json`
+# too: `sc-coverage.ts` calls the precompile directly with that ABI, without an
+# intermediate contract.
 resolc --combined-json abi,bin -O3 --overwrite -o "$BUILD_DIR" \
     StorageMarketplace.sol SharedTeamDrive.sol TokenGatedDrive.sol \
-    IWeb3Storage.sol IDriveRegistry.sol IS3Registry.sol
+    IWeb3Storage.sol
 
 echo "Built artifacts:"
 ls -1 "$BUILD_DIR" | sed 's/^/  /'

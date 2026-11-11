@@ -5,18 +5,14 @@ authors.workspace = true
 edition.workspace = true
 license = "Apache-2.0"
 repository.workspace = true
-description = "Storage engine for provider nodes: backends, MMR commitments, and drive/S3 indexes"
+description = "Storage engine for provider nodes: backends and MMR commitments"
 
 [dependencies]
-storage-primitives = { workspace = true, features = ["serde", "std"] }
+storage-primitives = { workspace = true, features = ["std"] }
 codec = { workspace = true, features = ["std"] }
-dashmap = { workspace = true }
-hex = { workspace = true, features = ["std"] }
-parking_lot = { workspace = true }
 rocksdb = { workspace = true }
-serde = { workspace = true, features = ["std"] }
-serde_json = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
 tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
@@ -25,4 +21,5 @@ tracing = { workspace = true, features = ["std"] }
 test-helpers = ["dep:tempfile"]
 
 [dev-dependencies]
+array-bytes = { workspace = true }
 tempfile = { workspace = true }

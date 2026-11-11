@@ -31,7 +31,7 @@ export async function loadArtifact(url: URL = ARTIFACT_URL): Promise<Artifact> {
 }
 
 export interface LibraryState {
-  driveId: bigint;
+  bucketId: bigint;
   rootCid: `0x${string}`;
   exists: boolean;
 }
@@ -66,11 +66,11 @@ export async function readLibraryOf(
     functionName: "libraryOf",
     data: asHex(res.result.value.data),
   }) as unknown as [bigint, `0x${string}`, boolean];
-  return { driveId: decoded[0], rootCid: decoded[1], exists: decoded[2] };
+  return { bucketId: decoded[0], rootCid: decoded[1], exists: decoded[2] };
 }
 
 /**
- * Anchor the drive's metadata Merkle root on-chain via `setRoot(rootCid)` — a
+ * Anchor the library bucket's metadata Merkle root on-chain via `setRoot(rootCid)` — a
  * signed write keyed by `signer`'s library. Asserts the contract's `RootUpdated`
  * event fired. `rootCid` is the client-computed root as `0x`-prefixed 32-byte hex.
  */

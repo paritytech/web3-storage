@@ -1,0 +1,148 @@
+/* Shared style for index.html and dapp-guide.html. Diagram pages carry their own. */
+:root {
+  --bg: #020617;
+  --text: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  --panel: rgba(15, 23, 42, 0.6);
+  --panel-border: #1e293b;
+  --panel-hover: rgba(15, 23, 42, 0.95);
+  --accent: #34d399;
+  --accent-2: #22d3ee;
+  --warn: #fbbf24;
+  --code-bg: rgba(15, 23, 42, 0.9);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f8fafc;
+    --text: #0f172a;
+    --text-muted: #475569;
+    --text-dim: #64748b;
+    --panel: #ffffff;
+    --panel-border: #e2e8f0;
+    --panel-hover: #ffffff;
+    --accent: #059669;
+    --accent-2: #0e7490;
+    --warn: #b45309;
+    --code-bg: #f1f5f9;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f8fafc;
+  --text: #0f172a;
+  --text-muted: #475569;
+  --text-dim: #64748b;
+  --panel: #ffffff;
+  --panel-border: #e2e8f0;
+  --panel-hover: #ffffff;
+  --accent: #059669;
+  --accent-2: #0e7490;
+  --warn: #b45309;
+  --code-bg: #f1f5f9;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.6;
+}
+main { max-width: 1120px; margin: 0 auto; padding: 40px 16px 72px; }
+a { color: var(--accent-2); }
+header.top { border-bottom: 1px solid var(--panel-border); padding-bottom: 24px; margin-bottom: 8px; }
+.crumb { font-size: 13px; margin: 0 0 12px; }
+.crumb a { color: var(--text-muted); text-decoration: none; }
+.crumb a:hover { color: var(--text); }
+h1 { font-size: 30px; line-height: 1.25; margin: 0 0 10px; letter-spacing: -0.01em; }
+.lede { color: var(--text-muted); margin: 0; max-width: 72ch; font-size: 16px; }
+h2.group {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--text-dim); margin: 40px 0 14px; font-weight: 600;
+}
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+pre {
+  background: var(--code-bg); border: 1px solid var(--panel-border); border-radius: 8px;
+  padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.5;
+}
+pre code { background: none; padding: 0; font-size: inherit; overflow-wrap: normal; }
+
+/* Audience split on the landing page */
+.audiences { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-top: 28px; }
+.audience {
+  border: 1px solid var(--panel-border); border-radius: 12px; background: var(--panel);
+  padding: 20px; text-decoration: none; color: inherit; display: flex; flex-direction: column; gap: 6px;
+}
+.audience:hover { border-color: var(--accent); background: var(--panel-hover); }
+.audience h2 { margin: 0; font-size: 18px; }
+.audience p { margin: 0; color: var(--text-muted); font-size: 14px; }
+.audience .go { color: var(--accent); font-size: 13px; font-weight: 600; margin-top: 4px; }
+
+/* Diagram cards */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.card {
+  display: flex; flex-direction: column; gap: 8px;
+  border: 1px solid var(--panel-border); border-radius: 12px;
+  background: var(--panel); padding: 18px 18px 16px;
+  text-decoration: none; color: inherit;
+}
+.card:hover { background: var(--panel-hover); border-color: var(--accent); }
+.card .head { display: flex; align-items: baseline; gap: 10px; }
+.num { font-size: 12px; color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 600; }
+.kind {
+  margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-dim); border: 1px solid var(--panel-border); border-radius: 4px; padding: 1px 6px;
+}
+.card h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.card p { margin: 0; font-size: 14px; color: var(--text-muted); }
+.card .src { font-size: 12px; color: var(--text-dim); }
+
+/* Guide layout */
+.guide { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 40px; margin-top: 32px; }
+.toc { position: sticky; top: 24px; align-self: start; font-size: 13px; }
+.toc p { margin: 0 0 8px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; font-weight: 600; }
+.toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.toc a { color: var(--text-muted); text-decoration: none; }
+.toc a:hover { color: var(--text); }
+article { max-width: 76ch; }
+article section { margin-bottom: 44px; scroll-margin-top: 16px; }
+article h2 { font-size: 22px; margin: 0 0 12px; }
+article h3 { font-size: 16px; margin: 24px 0 8px; }
+article p, article li { color: var(--text); font-size: 15px; }
+article ul, article ol { padding-left: 22px; }
+article li { margin-bottom: 4px; }
+.muted { color: var(--text-muted); }
+.see { font-size: 13px; color: var(--text-muted); margin-top: 10px; }
+.table-wrap { overflow-x: auto; margin: 12px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--panel-border); vertical-align: top; }
+th { color: var(--text-muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+.note {
+  border: 1px solid var(--panel-border); border-left: 3px solid var(--warn);
+  background: var(--panel); border-radius: 6px; padding: 10px 14px; margin: 14px 0; font-size: 14px;
+}
+.note p { margin: 0; font-size: 14px; }
+.steps { counter-reset: step; list-style: none; padding-left: 0; }
+.steps > li { counter-increment: step; position: relative; padding-left: 40px; margin-bottom: 18px; }
+.steps > li::before {
+  content: counter(step); position: absolute; left: 0; top: 1px;
+  width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--accent);
+  color: var(--accent); font-size: 13px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+}
+.steps h3 { margin: 0 0 4px; }
+.steps p { margin: 4px 0; }
+
+footer { margin-top: 48px; border-top: 1px solid var(--panel-border); padding-top: 20px; font-size: 13px; color: var(--text-dim); }
+footer p { margin: 4px 0; }
+
+@media (max-width: 820px) {
+  .guide { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .toc { position: static; border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px 14px; background: var(--panel); }
+  h1 { font-size: 25px; }
+}

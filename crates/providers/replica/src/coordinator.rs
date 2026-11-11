@@ -61,8 +61,10 @@ pub struct SyncDuty {
     pub target_mmr_root: H256,
     /// Target leaf count.
     pub target_leaf_count: u64,
-    /// Primary provider endpoints to sync from.
-    pub primary_endpoints: Vec<String>,
+    /// Provider endpoints to sync from, in try order: primaries first, then
+    /// the bucket's other replicas (see the `replica_sync` module docs for
+    /// why replicas are a source at all).
+    pub source_endpoints: Vec<String>,
     /// Available sync balance for this agreement.
     pub sync_balance: u128,
     /// Price per sync operation.
@@ -94,13 +96,16 @@ pub enum SyncResult {
         bucket_id: BucketId,
         blocks_remaining: u64,
     },
-    /// All primary providers unavailable.
-    PrimaryUnavailable {
+    /// Every sync source (primaries, then other replicas) failed or refused.
+    SourcesUnavailable {
         bucket_id: BucketId,
         tried: Vec<String>,
     },
     /// Local state doesn't match expected root after sync.
     VerificationFailed { bucket_id: BucketId, reason: String },
+    /// Reading the local bucket failed: the storage backend, not the sync,
+    /// is the problem.
+    StorageFailed { bucket_id: BucketId, reason: String },
     /// Failed to submit confirm_replica_sync transaction.
     SubmissionFailed { bucket_id: BucketId, error: String },
     /// Already synced to this root.
@@ -181,6 +186,13 @@ pub trait ReplicaSyncChainClient: Send + Sync {
         bucket_id: BucketId,
     ) -> Result<Vec<String>, ChainClientError>;
 
+    /// Fetch the HTTP endpoints of the bucket's *other* replica providers
+    /// (excluding this node).
+    async fn fetch_replica_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError>;
+
     /// Submit a confirm_replica_sync extrinsic carrying the replica's
     /// signed roots attestation — the pallet verifies it against the
     /// registered `public_key`.
@@ -219,6 +231,13 @@ impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
         bucket_id: BucketId,
     ) -> Result<Vec<String>, ChainClientError> {
         self.as_ref().fetch_primary_endpoints(bucket_id).await
+    }
+
+    async fn fetch_replica_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError> {
+        self.as_ref().fetch_replica_endpoints(bucket_id).await
     }
 
     async fn submit_sync_confirmation(
@@ -364,7 +383,7 @@ impl ReplicaSyncCoordinator {
                 our_account.as_ref().is_none_or(|me| me == provider)
             }
             BlockEvent::BucketCheckpointed { bucket_id } => {
-                self.storage.get_bucket(*bucket_id).is_some()
+                self.storage.get_bucket(*bucket_id).ok().flatten().is_some()
             }
             _ => false,
         }
@@ -431,7 +450,7 @@ impl ReplicaSyncCoordinator {
                                 running: running.load(Ordering::SeqCst),
                                 paused,
                                 active_syncs: self.active_syncs.len(),
-                                tracked_buckets: self.get_tracked_buckets(),
+                                tracked_buckets: self.storage.bucket_ids(),
                             };
                             let _ = response_tx.send(status);
                         }
@@ -500,9 +519,9 @@ impl ReplicaSyncCoordinator {
                     }
 
                     tracing::info!(
-                        "Starting sync for bucket {} (target root: 0x{})",
+                        "Starting sync for bucket {} (target root: {:#x})",
                         duty.bucket_id,
-                        hex::encode(duty.target_mmr_root.as_bytes())
+                        duty.target_mmr_root
                     );
 
                     let result = self.sync_and_confirm(&duty).await;
@@ -522,27 +541,13 @@ impl ReplicaSyncCoordinator {
         self.active_syncs.retain(|_, handle| !handle.is_finished());
     }
 
-    /// Get list of bucket IDs we're tracking as replica.
-    fn get_tracked_buckets(&self) -> Vec<BucketId> {
-        self.storage
-            .list_buckets()
-            .into_iter()
-            .map(|b| b.bucket_id)
-            .collect()
-    }
-
     /// Get replica duties for buckets where this provider is a replica.
     pub async fn get_active_replica_duties(&self) -> Result<Vec<SyncDuty>, Error> {
         let mut duties = Vec::new();
 
         let anchor_block = self.chain_client.get_current_block().await?;
 
-        let local_buckets: Vec<u64> = self
-            .storage
-            .list_buckets()
-            .into_iter()
-            .map(|b| b.bucket_id)
-            .collect();
+        let local_buckets: Vec<u64> = self.storage.bucket_ids();
 
         let agreements = self
             .chain_client
@@ -582,22 +587,19 @@ impl ReplicaSyncCoordinator {
                 continue;
             }
 
-            if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id) {
+            if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id)? {
                 if bucket.mmr_root == snapshot.mmr_root {
                     continue;
                 }
             }
 
-            let primary_endpoints = self
-                .chain_client
-                .fetch_primary_endpoints(agreement.bucket_id)
-                .await?;
+            let source_endpoints = self.fetch_source_endpoints(agreement.bucket_id).await?;
 
             duties.push(SyncDuty {
                 bucket_id: agreement.bucket_id,
                 target_mmr_root: snapshot.mmr_root,
                 target_leaf_count: snapshot.leaf_count,
-                primary_endpoints,
+                source_endpoints,
                 sync_balance: agreement.sync_balance,
                 sync_price: agreement.sync_price,
                 min_sync_interval: agreement.min_sync_interval,
@@ -608,17 +610,37 @@ impl ReplicaSyncCoordinator {
         Ok(duties)
     }
 
+    /// Endpoints to sync from, in try order: primaries first (most current),
+    /// then the bucket's other replicas. A failure to list replicas only
+    /// shrinks the fallback set, so it degrades to primaries-only.
+    async fn fetch_source_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+        let mut sources = self.chain_client.fetch_primary_endpoints(bucket_id).await?;
+        match self.chain_client.fetch_replica_endpoints(bucket_id).await {
+            Ok(replicas) => {
+                for url in replicas {
+                    if !sources.contains(&url) {
+                        sources.push(url);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to fetch replica endpoints for bucket {bucket_id}: {e}")
+            }
+        }
+        Ok(sources)
+    }
+
     /// Get sync duty for a specific bucket.
     async fn get_sync_duty(&self, bucket_id: BucketId) -> Result<Option<SyncDuty>, Error> {
         let snapshot = self.chain_client.fetch_bucket_snapshot(bucket_id).await?;
 
-        let primary_endpoints = self.chain_client.fetch_primary_endpoints(bucket_id).await?;
+        let source_endpoints = self.fetch_source_endpoints(bucket_id).await?;
 
         Ok(Some(SyncDuty {
             bucket_id,
             target_mmr_root: snapshot.mmr_root,
             target_leaf_count: snapshot.leaf_count,
-            primary_endpoints,
+            source_endpoints,
             sync_balance: u128::MAX,
             sync_price: 0,
             min_sync_interval: 0,
@@ -628,8 +650,17 @@ impl ReplicaSyncCoordinator {
 
     /// Perform sync and submit confirmation.
     pub async fn sync_and_confirm(&self, duty: &SyncDuty) -> SyncResult {
+        let storage_failed = |e: provider_storage::Error| SyncResult::StorageFailed {
+            bucket_id: duty.bucket_id,
+            reason: e.to_string(),
+        };
+
         // Check if we already have this root
-        if let Some(bucket) = self.storage.get_bucket(duty.bucket_id) {
+        let local_bucket = match self.storage.get_bucket(duty.bucket_id) {
+            Ok(bucket) => bucket,
+            Err(e) => return storage_failed(e),
+        };
+        if let Some(bucket) = local_bucket {
             if bucket.mmr_root == duty.target_mmr_root {
                 return SyncResult::AlreadySynced {
                     bucket_id: duty.bucket_id,
@@ -654,31 +685,31 @@ impl ReplicaSyncCoordinator {
             };
         }
 
-        // Try syncing from each primary
+        // Try syncing from each source
         let mut tried_endpoints = Vec::new();
         let mut sync_success = false;
 
-        for endpoint in &duty.primary_endpoints {
+        for endpoint in &duty.source_endpoints {
             tried_endpoints.push(endpoint.clone());
 
-            match self.sync_from_primary(duty, endpoint).await {
+            match self.sync_from_source(duty, endpoint).await {
                 Ok(synced_root) => {
                     if synced_root == duty.target_mmr_root {
                         sync_success = true;
                         tracing::info!(
-                            "Successfully synced bucket {} from {}: root = 0x{}",
+                            "Successfully synced bucket {} from {}: root = {:#x}",
                             duty.bucket_id,
                             endpoint,
-                            hex::encode(synced_root.as_bytes())
+                            synced_root
                         );
                         break;
                     } else {
                         tracing::warn!(
-                            "Sync mismatch for bucket {} from {}: expected 0x{}, got 0x{}",
+                            "Sync mismatch for bucket {} from {}: expected {:#x}, got {:#x}",
                             duty.bucket_id,
                             endpoint,
-                            hex::encode(duty.target_mmr_root.as_bytes()),
-                            hex::encode(synced_root.as_bytes())
+                            duty.target_mmr_root,
+                            synced_root
                         );
                     }
                 }
@@ -694,7 +725,7 @@ impl ReplicaSyncCoordinator {
         }
 
         if !sync_success {
-            return SyncResult::PrimaryUnavailable {
+            return SyncResult::SourcesUnavailable {
                 bucket_id: duty.bucket_id,
                 tried: tried_endpoints,
             };
@@ -702,8 +733,9 @@ impl ReplicaSyncCoordinator {
 
         // Verify final state
         let local_bucket = match self.storage.get_bucket(duty.bucket_id) {
-            Some(b) => b,
-            None => {
+            Ok(Some(b)) => b,
+            Err(e) => return storage_failed(e),
+            Ok(None) => {
                 return SyncResult::VerificationFailed {
                     bucket_id: duty.bucket_id,
                     reason: "Bucket not found after sync".to_string(),
@@ -715,9 +747,8 @@ impl ReplicaSyncCoordinator {
             return SyncResult::VerificationFailed {
                 bucket_id: duty.bucket_id,
                 reason: format!(
-                    "Root mismatch: expected 0x{}, got 0x{}",
-                    hex::encode(duty.target_mmr_root.as_bytes()),
-                    hex::encode(local_bucket.mmr_root.as_bytes())
+                    "Root mismatch: expected {:#x}, got {:#x}",
+                    duty.target_mmr_root, local_bucket.mmr_root
                 ),
             };
         }
@@ -773,10 +804,10 @@ impl ReplicaSyncCoordinator {
         }
     }
 
-    /// Sync data from a primary provider using top-down traversal.
-    async fn sync_from_primary(&self, duty: &SyncDuty, primary_url: &str) -> Result<H256, Error> {
+    /// Sync data from a source provider using top-down traversal.
+    async fn sync_from_source(&self, duty: &SyncDuty, source_url: &str) -> Result<H256, Error> {
         self.replica_sync
-            .sync_from_primary(duty.bucket_id, primary_url)
+            .sync_from_source(duty.bucket_id, source_url)
             .await
     }
 }

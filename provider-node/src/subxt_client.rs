@@ -11,7 +11,10 @@
 //! connection).
 
 use crate::chain_connection::{self, ChainWatch};
-use crate::challenge_responder::{ChallengeChainClient, ChallengeError, DetectedChallenge};
+use crate::challenge_responder::{
+    ChallengeChainClient, ChallengeError, ChallengeResponse, DetectedChallenge,
+};
+use crate::Error;
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
 use sp_core::crypto::Ss58Codec;
@@ -20,13 +23,14 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ChallengeResponse as RuntimeChallengeResponse;
 use storage_subxt::api::runtime_types::sp_runtime::MultiSignature as RuntimeMultiSignature;
 use storage_subxt::api::runtime_types::storage_primitives::{
-    ChallengeId as RuntimeChallengeId, MerkleProof as RuntimeMerkleProof,
-    MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof,
+    mmr::{MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof},
+    ChallengeId as RuntimeChallengeId, ChunkLocation as RuntimeChunkLocation,
+    Commitment as RuntimeCommitment,
 };
 use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};
 
@@ -84,7 +88,7 @@ pub struct SubxtChainClient {
 /// Turning the configured seed into a keypair is all [`SubxtChainClient::new`]
 /// can fail at, and it happens once at startup: `command.rs` logs it and runs
 /// without a chain client. It never reaches a request, so it is deliberately
-/// not an HTTP error.
+/// not one of the HTTP [`Error`] variants.
 #[derive(Debug, thiserror::Error)]
 pub enum SignerSetupError {
     /// The `--keyfile` contents are not a valid seed URI.
@@ -118,8 +122,8 @@ impl SubxtChainClient {
 
     /// The current live connection, or an error while the chain has never
     /// been reached yet.
-    fn api(&self) -> Result<subxt::OnlineClient<subxt::PolkadotConfig>, chain_connection::Error> {
-        chain_connection::current_api(&self.chain_rx)
+    fn api(&self) -> Result<subxt::OnlineClient<subxt::PolkadotConfig>, Error> {
+        chain_connection::current_api(&self.chain_rx).map_err(Into::into)
     }
 
     /// The block handle every chain read starts from: the live connection,
@@ -445,6 +449,40 @@ impl SubxtChainClient {
             Err(e) => tracing::error!("Multiaddr update tx failed: {}", e),
         }
     }
+
+    /// Resolve each provider account to its HTTP endpoint via the on-chain
+    /// `Providers` multiaddr. Accounts without a registration or multiaddr
+    /// are skipped.
+    async fn endpoints_for_accounts(
+        &self,
+        accounts: Vec<subxt::utils::AccountId32>,
+    ) -> Result<Vec<String>, ChainClientError> {
+        if accounts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let at = self.at_current_block().await?;
+        let mut endpoints = Vec::new();
+        for account in accounts {
+            let providers = storage_subxt::api::storage()
+                .storage_provider()
+                .providers()
+                .unvalidated();
+            let Some(value) = at
+                .storage()
+                .try_fetch(providers, (account,))
+                .await
+                .map_err(|e| ChainClientError::query("provider", e))?
+            else {
+                continue;
+            };
+            let provider = value
+                .decode()
+                .map_err(|e| ChainClientError::decode("provider", e))?;
+            endpoints.extend(provider_endpoint(&provider));
+        }
+
+        Ok(endpoints)
+    }
 }
 
 #[async_trait::async_trait]
@@ -536,27 +574,40 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             .transpose()
             .map_err(|e| ChainClientError::decode("bucket", e))?;
 
-        let mut endpoints = Vec::new();
-        for primary in primary_providers(bucket) {
-            let providers = storage_subxt::api::storage()
-                .storage_provider()
-                .providers()
-                .unvalidated();
-            let Some(value) = at
-                .storage()
-                .try_fetch(providers, (primary,))
-                .await
-                .map_err(|e| ChainClientError::query("provider", e))?
-            else {
-                continue;
-            };
-            let provider = value
-                .decode()
-                .map_err(|e| ChainClientError::decode("provider", e))?;
-            endpoints.extend(provider_endpoint(&provider));
-        }
+        self.endpoints_for_accounts(primary_providers(bucket)).await
+    }
 
-        Ok(endpoints)
+    async fn fetch_replica_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError> {
+        use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
+
+        let provider_account = self.signer.public_key().0.to_vec();
+
+        let payload = storage_subxt::api::runtime_apis()
+            .storage_provider_api()
+            .bucket_agreements(bucket_id)
+            .unvalidated();
+
+        let agreements = self
+            .at_current_block()
+            .await?
+            .runtime_apis()
+            .call(payload)
+            .await
+            .map_err(|e| ChainClientError::query("bucket agreements", e))?;
+
+        let accounts: Vec<subxt::utils::AccountId32> = agreements
+            .into_iter()
+            .filter(|agreement| matches!(agreement.role, ProviderRole::Replica { .. }))
+            .map(|agreement| agreement.provider)
+            .filter(|provider| provider != &provider_account)
+            .filter_map(|provider| <[u8; 32]>::try_from(provider).ok())
+            .map(subxt::utils::AccountId32)
+            .collect();
+
+        self.endpoints_for_accounts(accounts).await
     }
 
     async fn submit_sync_confirmation(
@@ -628,6 +679,33 @@ fn to_runtime_hash(hash: H256) -> subxt::utils::H256 {
     subxt::utils::H256(hash.0)
 }
 
+fn to_runtime_mmr_proof(mmr_proof: storage_primitives::MmrProof) -> RuntimeMmrProof {
+    RuntimeMmrProof {
+        leaf: RuntimeMmrLeaf {
+            leaf_version: mmr_proof.leaf.leaf_version,
+            data_root: to_runtime_hash(mmr_proof.leaf.data_root),
+            data_size: mmr_proof.leaf.data_size,
+            total_size: mmr_proof.leaf.total_size,
+        },
+        items: mmr_proof.items.into_iter().map(to_runtime_hash).collect(),
+    }
+}
+
+fn commitment(commitment: RuntimeCommitment) -> Commitment {
+    Commitment {
+        mmr_root: H256::from(commitment.mmr_root.0),
+        start_seq: commitment.start_seq,
+        leaf_count: commitment.leaf_count,
+    }
+}
+
+fn chunk_location(target: RuntimeChunkLocation) -> ChunkLocation {
+    ChunkLocation {
+        leaf_index: target.leaf_index,
+        chunk_index: target.chunk_index,
+    }
+}
+
 /// Convert a `MultiSignature` into the generated type, preserving the scheme
 /// tag the pallet verifies against the registered key.
 fn to_runtime_signature(signature: &sp_runtime::MultiSignature) -> RuntimeMultiSignature {
@@ -637,13 +715,6 @@ fn to_runtime_signature(signature: &sp_runtime::MultiSignature) -> RuntimeMultiS
         MS::Sr25519(s) => RuntimeMultiSignature::Sr25519(s.0),
         MS::Ecdsa(s) => RuntimeMultiSignature::Ecdsa(s.0),
         MS::Eth(s) => RuntimeMultiSignature::Eth(s.0),
-    }
-}
-
-fn to_runtime_merkle_proof(proof: storage_primitives::MerkleProof) -> RuntimeMerkleProof {
-    RuntimeMerkleProof {
-        siblings: proof.siblings.into_iter().map(to_runtime_hash).collect(),
-        path: proof.path,
     }
 }
 
@@ -663,11 +734,8 @@ fn detected_challenge(
         bucket_id: challenge.bucket_id,
         deadline,
         index,
-        mmr_root: H256::from(challenge.mmr_root.0),
-        start_seq: challenge.start_seq,
-        leaf_index: challenge.target.leaf_index,
-        chunk_index: challenge.target.chunk_index,
-        challenger: sp_core::crypto::AccountId32::from(challenge.challenger.0).to_ss58check(),
+        commitment: commitment(challenge.commitment),
+        target: chunk_location(challenge.target),
     })
 }
 
@@ -753,36 +821,15 @@ fn replica_agreement_info(agreement: AgreementFromRuntimeApi) -> Option<ReplicaA
 type ChallengeFromRuntimeApi =
     storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api::ChallengeResponse;
 
-/// Map a `provider_challenges` entry into a `DetectedChallenge`.
-///
-/// Unlike the storage-map shape this response is already flat (no nested
-/// `target`) and carries accounts as SCALE-encoded bytes, so it needs its own
-/// mapping. No provider check here: the runtime API filtered on-chain.
+/// Map a `provider_challenges` entry into a `DetectedChallenge`. No provider
+/// check here: the runtime API filtered on-chain.
 fn detected_from_response(challenge: ChallengeFromRuntimeApi) -> DetectedChallenge {
-    // An unreadable challenger only costs us a diagnostic field, so it must not
-    // discard the challenge — failing to respond is what gets us slashed.
-    let challenger = match <[u8; 32]>::try_from(challenge.challenger.as_slice()) {
-        Ok(bytes) => sp_core::crypto::AccountId32::from(bytes).to_ss58check(),
-        Err(_) => {
-            tracing::warn!(
-                "Challenge {}/{} carried a {}-byte challenger account, expected 32",
-                challenge.deadline,
-                challenge.index,
-                challenge.challenger.len()
-            );
-            String::new()
-        }
-    };
-
     DetectedChallenge {
         bucket_id: challenge.bucket_id,
         deadline: challenge.deadline,
         index: challenge.index,
-        mmr_root: H256::from(challenge.mmr_root.0),
-        start_seq: challenge.start_seq,
-        leaf_index: challenge.leaf_index,
-        chunk_index: challenge.chunk_index,
-        challenger,
+        commitment: commitment(challenge.commitment),
+        target: chunk_location(challenge.target),
     }
 }
 
@@ -801,16 +848,16 @@ impl ChallengeChainClient for SubxtChainClient {
             .unvalidated();
 
         let challenges = self
-            .api()
-            .map_err(|e| ChallengeError::Chain(e.to_string()))?
             .at_current_block()
             .await
-            .map_err(|e| ChallengeError::Chain(format!("Failed to get storage: {e}")))?
+            .map_err(|e| ChallengeError::Chain {
+                reason: e.to_string(),
+            })?
             .runtime_apis()
             .call(payload)
             .await
-            .map_err(|e| {
-                ChallengeError::Chain(format!("provider_challenges runtime API call failed: {e}"))
+            .map_err(|e| ChallengeError::Chain {
+                reason: format!("provider_challenges runtime API call failed: {e}"),
             })?;
 
         Ok(challenges.into_iter().map(detected_from_response).collect())
@@ -835,25 +882,26 @@ impl ChallengeChainClient for SubxtChainClient {
             .challenges()
             .unvalidated();
         let at = self
-            .api()
-            .map_err(|e| ChallengeError::Chain(e.to_string()))?
             .at_current_block()
             .await
-            .map_err(|e| ChallengeError::Chain(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| ChallengeError::Chain {
+                reason: e.to_string(),
+            })?;
 
         let Some(value) = at
             .storage()
             .try_fetch(storage_address, (deadline, index))
             .await
-            .map_err(|e| ChallengeError::Chain(format!("Failed to fetch challenge: {e}")))?
+            .map_err(|e| ChallengeError::Chain {
+                reason: format!("Failed to fetch challenge: {e}"),
+            })?
         else {
             return Ok(None);
         };
 
-        let challenge = value.decode().map_err(|e| {
-            ChallengeError::Chain(format!(
-                "Failed to decode challenge at {deadline}/{index}: {e}"
-            ))
+        // The chain answered, but the value it returned couldn't be decoded.
+        let challenge = value.decode().map_err(|e| ChallengeError::Chain {
+            reason: format!("Failed to decode challenge at {deadline}/{index}: {e}"),
         })?;
 
         Ok(detected_challenge(deadline, index, challenge, &our_bytes))
@@ -862,24 +910,24 @@ impl ChallengeChainClient for SubxtChainClient {
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
-        chunk_data: Vec<u8>,
-        mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: storage_primitives::MerkleProof,
+        response: ChallengeResponse,
     ) -> Result<H256, ChallengeError> {
         let (deadline, index) = challenge_id;
-
-        let response = RuntimeChallengeResponse::Proof {
-            chunk_data: BoundedVec(chunk_data),
-            mmr_proof: RuntimeMmrProof {
-                peaks: mmr_proof.peaks.into_iter().map(to_runtime_hash).collect(),
-                leaf: RuntimeMmrLeaf {
-                    data_root: to_runtime_hash(mmr_proof.leaf.data_root),
-                    data_size: mmr_proof.leaf.data_size,
-                    total_size: mmr_proof.leaf.total_size,
-                },
-                leaf_proof: to_runtime_merkle_proof(mmr_proof.leaf_proof),
+        let response = match response {
+            ChallengeResponse::Proof {
+                chunk_data,
+                mmr_proof,
+                chunk_proof,
+            } => RuntimeChallengeResponse::Proof {
+                chunk_data: BoundedVec(chunk_data),
+                mmr_proof: to_runtime_mmr_proof(mmr_proof),
+                chunk_proof: chunk_proof.into_iter().map(to_runtime_hash).collect(),
             },
-            chunk_proof: to_runtime_merkle_proof(chunk_proof),
+            ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
+                RuntimeChallengeResponse::ChunkOutOfRange {
+                    mmr_proof: to_runtime_mmr_proof(mmr_proof),
+                }
+            }
         };
 
         let tx = storage_subxt::api::tx()
@@ -891,7 +939,9 @@ impl ChallengeChainClient for SubxtChainClient {
         let block_hash = self
             .submit_and_finalize(&tx, "respond_to_challenge")
             .await
-            .map_err(|e| ChallengeError::Chain(e.to_string()))?;
+            .map_err(|e| ChallengeError::Chain {
+                reason: e.to_string(),
+            })?;
 
         Ok(block_hash.unwrap_or_default())
     }
@@ -900,7 +950,9 @@ impl ChallengeChainClient for SubxtChainClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use storage_subxt::api::runtime_types::storage_primitives::ChunkLocation;
+    use storage_subxt::api::runtime_types::storage_primitives::{
+        ChunkLocation as RuntimeChunkLocation, Commitment as RuntimeCommitment,
+    };
 
     const OURS: [u8; 32] = [9u8; 32];
 
@@ -914,14 +966,18 @@ mod tests {
             bucket_id: 42,
             provider: subxt::utils::AccountId32(provider),
             challenger: subxt::utils::AccountId32([2u8; 32]),
-            mmr_root: subxt::utils::H256([3u8; 32]),
-            start_seq: 100,
-            target: ChunkLocation {
+            commitment: RuntimeCommitment {
+                mmr_root: subxt::utils::H256([3u8; 32]),
+                start_seq: 100,
+                leaf_count: 9,
+            },
+            target: RuntimeChunkLocation {
                 leaf_index: 7,
                 chunk_index: 5,
             },
             deposit: 1_000_000_000_000,
             authorized: false,
+            created_at: 1,
         }
     }
 
@@ -933,16 +989,13 @@ mod tests {
         assert_eq!(detected.bucket_id, 42);
         assert_eq!(detected.deadline, 11);
         assert_eq!(detected.index, 3);
-        assert_eq!(detected.mmr_root.0, [3u8; 32]);
-        assert_eq!(detected.start_seq, 100);
+        assert_eq!(detected.commitment.mmr_root.0, [3u8; 32]);
+        assert_eq!(detected.commitment.leaf_count, 9);
+        assert_eq!(detected.commitment.start_seq, 100);
         // Both come from the nested `target: ChunkLocation`, and they are
         // deliberately different values so a swapped mapping is caught.
-        assert_eq!(detected.leaf_index, 7);
-        assert_eq!(detected.chunk_index, 5);
-        assert_eq!(
-            detected.challenger,
-            sp_core::crypto::AccountId32::from([2u8; 32]).to_ss58check()
-        );
+        assert_eq!(detected.target.leaf_index, 7);
+        assert_eq!(detected.target.chunk_index, 5);
     }
 
     #[test]
@@ -953,17 +1006,21 @@ mod tests {
         );
     }
 
-    /// Build a `provider_challenges` response entry with the given challenger
-    /// bytes, so the account-decoding path can be exercised both ways.
-    fn runtime_api_challenge(challenger: Vec<u8>) -> ChallengeFromRuntimeApi {
+    /// Build a `provider_challenges` response entry.
+    fn runtime_api_challenge() -> ChallengeFromRuntimeApi {
         ChallengeFromRuntimeApi {
             bucket_id: 42,
             provider: OURS.to_vec(),
-            challenger,
-            mmr_root: subxt::utils::H256([3u8; 32]),
-            start_seq: 100,
-            leaf_index: 7,
-            chunk_index: 5,
+            challenger: [2u8; 32].to_vec(),
+            commitment: RuntimeCommitment {
+                mmr_root: subxt::utils::H256([3u8; 32]),
+                start_seq: 100,
+                leaf_count: 9,
+            },
+            target: RuntimeChunkLocation {
+                leaf_index: 7,
+                chunk_index: 5,
+            },
             deadline: 11,
             index: 3,
             deposit: 1_000_000_000_000,
@@ -973,32 +1030,16 @@ mod tests {
 
     #[test]
     fn maps_runtime_api_challenge() {
-        let detected = detected_from_response(runtime_api_challenge([2u8; 32].to_vec()));
+        let detected = detected_from_response(runtime_api_challenge());
 
         assert_eq!(detected.bucket_id, 42);
         assert_eq!(detected.deadline, 11);
         assert_eq!(detected.index, 3);
-        assert_eq!(detected.mmr_root.0, [3u8; 32]);
-        assert_eq!(detected.start_seq, 100);
-        // Flat on this shape, unlike the nested `target` on the storage value.
-        assert_eq!(detected.leaf_index, 7);
-        assert_eq!(detected.chunk_index, 5);
-        assert_eq!(
-            detected.challenger,
-            sp_core::crypto::AccountId32::from([2u8; 32]).to_ss58check()
-        );
-    }
-
-    #[test]
-    fn malformed_challenger_does_not_discard_the_challenge() {
-        let detected = detected_from_response(runtime_api_challenge(vec![7u8; 8]));
-
-        // Only the diagnostic field degrades; the challenge still has to be
-        // answered, since not answering is what gets the provider slashed.
-        assert!(detected.challenger.is_empty());
-        assert_eq!(detected.bucket_id, 42);
-        assert_eq!(detected.leaf_index, 7);
-        assert_eq!(detected.chunk_index, 5);
+        assert_eq!(detected.commitment.mmr_root.0, [3u8; 32]);
+        assert_eq!(detected.commitment.leaf_count, 9);
+        assert_eq!(detected.commitment.start_seq, 100);
+        assert_eq!(detected.target.leaf_index, 7);
+        assert_eq!(detected.target.chunk_index, 5);
     }
 
     /// Build an agreement response carrying `role`.

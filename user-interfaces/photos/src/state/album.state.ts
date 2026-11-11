@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
 // Album State — the M6 "State B" interaction layer. Once a library exists, this
-// drives the provider's `/fs` API (the browser port of the M2/M3 headless flow):
+// drives the library bucket's file system through the SDK's file tree
+// (the browser port of the M2/M3 headless flow):
 // list/create albums (directories), upload photos with a client-generated
 // thumbnail, render a grid from those thumbnails, and open a photo full-res. Every
 // mutation refreshes its listing immediately and then schedules a background
 // re-anchor (`scheduleReanchor`): a single-flight, coalescing worker recomputes the
-// drive's metadata Merkle root locally and anchors it on-chain via `setRoot`
+// bucket's metadata Merkle root locally and anchors it on-chain via `setRoot`
 // (copy-on-write; the root moves each time) without blocking further interaction.
 //
 // Mirrors `library.state.ts` conventions: raw `BehaviorSubject`s, `bind` hooks,
@@ -20,9 +21,9 @@ import type { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { fromHex, type ParachainApi } from '@web3-storage/papi'
 import { requireApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
-import { getFsClient, resolveBucketId } from '@/lib/fs-client'
+import { getDrive, setFsSigner } from '@/lib/fs-client'
 import { recomputeRoot } from '@/lib/fs-root'
-import { computeDataRoot, toHex } from '@web3-storage/sdk'
+import { FileSystemError, hexToBytes, toHex } from '@web3-storage/sdk'
 import { LocalIndex } from '@/lib/local-index'
 import { loadIndex, saveIndex } from '@/lib/index-store'
 import { getParachainWs } from '@/state/network.state'
@@ -105,15 +106,14 @@ export const [useEditorOpen] = bind(editorOpen$, false)
 let api: ParachainApi | null = null
 let signer: InjectedPolkadotAccount['txCreator'] | null = null
 let contractBytes: Uint8Array | null = null
-let currentDriveId: bigint | null = null
 
 /**
- * Client-maintained drive index — the source of truth for the anchored metadata
+ * Client-maintained bucket index — the source of truth for the anchored metadata
  * root, updated on every upload/edit/delete. `indexAuthoritative` is true once the
- * index is known to fully describe the tree (a freshly-created drive, a persisted
+ * index is known to fully describe the tree (a freshly-created bucket, a persisted
  * snapshot that matched the on-chain anchor, or a completed provider recompute); it
- * then anchors from `index.root()` with no downloads. `indexKey` is the per-drive
- * IndexedDB key (`${parachainWs}:${driveId}`) the index persists under.
+ * then anchors from `index.root()` with no downloads. `indexKey` is the per-bucket
+ * IndexedDB key (`${parachainWs}:${bucketId}`) the index persists under.
  */
 let index = new LocalIndex()
 let indexAuthoritative = false
@@ -122,7 +122,7 @@ let indexKey: string | null = null
  * Live grid thumbnail object URLs keyed by thumb path. Reused across grid reloads
  * so a single-photo mutation doesn't re-download the whole album; an entry is
  * revoked when its path leaves the grid (`replaceGrid`), when its content is
- * rewritten (`putVerified`), or when the library resets.
+ * rewritten (`storeFile`), or when the library resets.
  */
 const gridThumbUrls = new Map<string, string>()
 /** Called after a successful `setRoot` so the page can re-read the on-chain anchor. */
@@ -137,13 +137,12 @@ let anchorRunning = false
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Bind the album layer to a library: resolve its `/fs` context from chain state
- * and load its albums. Safe to call repeatedly; re-resolves only when the drive
- * changes. `onAnchored` is invoked after each successful `setRoot` so the page
+ * Bind the album layer to a library's bucket and load its albums. Safe to call
+ * repeatedly; resets the session only when the bucket changes. `onAnchored` is invoked after each successful `setRoot` so the page
  * can refresh the on-chain anchor it displays.
  */
 export async function initLibrary(
-  driveId: bigint,
+  bucketId: bigint,
   contract: ResolvedContract,
   account: InjectedPolkadotAccount,
   rootCid: `0x${string}`,
@@ -151,22 +150,21 @@ export async function initLibrary(
 ): Promise<void> {
   api = requireApi()
   signer = account.txCreator
+  setFsSigner({ signer: account.txCreator, address: account.address, publicKey: account.txCreator.publicKey })
   contractBytes = fromHex(contract.address)
   anchoredCallback = onAnchored
 
-  if (currentDriveId === driveId && bucketId$.getValue() !== null) {
-    // Same drive — keep caches/selection, just refresh listings.
+  if (bucketId$.getValue() === bucketId) {
+    // Same bucket — keep caches/selection, just refresh listings.
     await loadAlbums()
     return
   }
 
   resetSession()
-  currentDriveId = driveId
   libraryError$.next(undefined)
+  bucketId$.next(bucketId)
   try {
-    const bucketId = await resolveBucketId(driveId)
-    bucketId$.next(bucketId)
-    await loadPersistedIndex(driveId, rootCid)
+    await loadPersistedIndex(bucketId, rootCid)
     await loadAlbums()
   } catch (err) {
     libraryError$.next(err instanceof Error ? err.message : 'Could not reach the storage provider.')
@@ -174,15 +172,15 @@ export async function initLibrary(
 }
 
 /**
- * Seed the in-memory index for `driveId` from its persisted snapshot, trusting it
+ * Seed the in-memory index for `bucketId` from its persisted snapshot, trusting it
  * only if its root still matches the on-chain anchor. A match ⇒ authoritative:
  * future roots anchor from `index.root()` with no downloads. A miss or mismatch
- * (cold cache, a freshly-created drive with no snapshot, or a drive mutated
+ * (cold cache, a freshly-created bucket with no snapshot, or a bucket changed
  * elsewhere) ⇒ start empty and fall back to a provider recompute on the next
  * anchor, which repopulates the index and persists it for subsequent reloads.
  */
-async function loadPersistedIndex(driveId: bigint, rootCid: `0x${string}`): Promise<void> {
-  indexKey = `${getParachainWs()}:${driveId}`
+async function loadPersistedIndex(bucketId: bigint, rootCid: `0x${string}`): Promise<void> {
+  indexKey = `${getParachainWs()}:${bucketId}`
   const persisted = await loadIndex(indexKey)
   if (persisted && toHex(persisted.root()).toLowerCase() === rootCid.toLowerCase()) {
     index = persisted
@@ -198,7 +196,8 @@ export async function loadAlbums(): Promise<void> {
   const bucketId = bucketId$.getValue()
   if (bucketId === null) return
   try {
-    const listing = await getFsClient().listDirectory(bucketId, '/')
+    const drive = await getDrive(bucketId)
+    const listing = await drive.list('/')
     const names = listing
       .filter((e) => e.entryType === 'directory' && !e.name.startsWith('.'))
       .map((e) => e.name)
@@ -237,23 +236,24 @@ export async function loadGrid(): Promise<void> {
 
   gridLoading$.next(true)
   try {
-    const files = (await getFsClient().listDirectory(bucketId, `/${album}`)).filter((e) => e.entryType === 'file')
+    const drive = await getDrive(bucketId)
+    const files = (await drive.list(`/${album}`)).filter((e) => e.entryType === 'file')
     const items: GridItem[] = await Promise.all(
       files.map(async (f): Promise<GridItem> => {
         const thumbPath = `${THUMBS_ROOT}/${album}/${f.name}`
         // Reuse an already-loaded thumbnail; only download ones we haven't cached
-        // (new/changed paths — `putVerified` evicts a thumb path when rewritten).
+        // (new/changed paths — `storeFile` evicts a thumb path when rewritten).
         let thumbUrl = gridThumbUrls.get(thumbPath)
         if (!thumbUrl) {
           try {
-            const bytes = await getFsClient().downloadFile(bucketId, thumbPath)
+            const { bytes } = await drive.getFile(thumbPath)
             thumbUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/jpeg' }))
             gridThumbUrls.set(thumbPath, thumbUrl)
           } catch {
             // No thumbnail (e.g. uploaded outside the app) — the grid shows a fallback.
           }
         }
-        return { name: f.name, path: `/${album}/${f.name}`, thumbPath, thumbUrl, size: f.size }
+        return { name: f.name, path: `/${album}/${f.name}`, thumbPath, thumbUrl, size: Number(f.size) }
       }),
     )
     replaceGrid(items)
@@ -318,11 +318,11 @@ export async function uploadPhotos(files: File[]): Promise<void> {
 
     const uploadOne = async (file: File): Promise<void> => {
       const bytes = new Uint8Array(await file.arrayBuffer())
-      await putVerified(bucketId, `/${album}/${file.name}`, bytes, file.type || 'application/octet-stream')
+      await storeFile(bucketId, `/${album}/${file.name}`, bytes, file.type || 'application/octet-stream')
       uploaded++
       try {
         const thumb = await makeThumbnail(file)
-        await putVerified(bucketId, `${THUMBS_ROOT}/${album}/${file.name}`, thumb.bytes, thumb.contentType)
+        await storeFile(bucketId, `${THUMBS_ROOT}/${album}/${file.name}`, thumb.bytes, thumb.contentType)
       } catch {
         // Thumbnail generation failed (unsupported/corrupt image) — keep the full
         // photo; the grid will fall back for this one.
@@ -367,7 +367,8 @@ export async function openPhoto(item: GridItem): Promise<void> {
   if (bucketId === null) return
   lightboxLoading$.next(true)
   try {
-    const bytes = await getFsClient().downloadFile(bucketId, item.path)
+    const drive = await getDrive(bucketId)
+    const { bytes } = await drive.getFile(item.path)
     revokeLightbox()
     const url = URL.createObjectURL(new Blob([bytes as BlobPart]))
     lightbox$.next({ name: item.name, url, item })
@@ -410,11 +411,11 @@ export async function saveEdit(editedBytes: Uint8Array, contentType: string): Pr
   const { path, thumbPath } = photo.item
   libraryError$.next(undefined)
   try {
-    await putVerified(bucketId, path, editedBytes, contentType)
+    await storeFile(bucketId, path, editedBytes, contentType)
 
     try {
       const thumb = await makeThumbnail(new Blob([editedBytes as BlobPart], { type: contentType }))
-      await putVerified(bucketId, thumbPath, thumb.bytes, thumb.contentType)
+      await storeFile(bucketId, thumbPath, thumb.bytes, thumb.contentType)
     } catch {
       // Thumbnail regeneration failed — keep the edited full photo; the grid falls back.
     }
@@ -430,11 +431,10 @@ export async function saveEdit(editedBytes: Uint8Array, contentType: string): Pr
 }
 
 /**
- * Rename a photo within its album, keeping it content-addressed. The provider has
- * no move op, so this copies the bytes to the new path (photo + thumbnail) and
- * deletes the old one — re-PUTting identical bytes yields the same `data_root`, so
- * no content is duplicated. Refreshes the grid and schedules a background re-anchor.
- * `rawName` is the full new filename (the caller preserves the extension).
+ * Rename a photo and its thumbnail within the album with tree renames, which
+ * move the directory entries without copying bytes. Refreshes the grid and
+ * schedules a background re-anchor. `rawName` is the full new filename (the
+ * caller preserves the extension).
  */
 export async function renamePhoto(item: GridItem, rawName: string): Promise<void> {
   const bucketId = bucketId$.getValue()
@@ -456,41 +456,26 @@ export async function renamePhoto(item: GridItem, rawName: string): Promise<void
   const newThumbPath = `${THUMBS_ROOT}/${album}/${name}`
   libraryError$.next(undefined)
   try {
-    // Copy first; only delete the old path once the new one is safely in place.
-    const photo = await getFsClient().downloadFileWithType(bucketId, item.path)
-    await putVerified(bucketId, newPath, photo.bytes, photo.contentType)
+    // A rename moves the directory entry; the photo's bytes are not copied.
+    const drive = await getDrive(bucketId)
+    await drive.rename(item.path, newPath)
+    moveIndexed(item.path, newPath)
     try {
-      const thumb = await getFsClient().downloadFileWithType(bucketId, item.thumbPath)
-      await putVerified(bucketId, newThumbPath, thumb.bytes, thumb.contentType)
-    } catch {
+      await drive.rename(item.thumbPath, newThumbPath)
+      moveIndexed(item.thumbPath, newThumbPath)
+    } catch (err) {
       // No thumbnail to carry over (e.g. uploaded outside the app) — skip it.
+      if (!(err instanceof FileSystemError && err.code === 'PathNotFound')) throw err
     }
-
-    // Retire the old paths. Couple each index removal to its delete succeeding so
-    // the index never claims a path the provider still serves; always refresh and
-    // re-anchor so the new copy is reflected even when the old delete fails.
-    const photoRetired = await getFsClient().deleteFile(bucketId, item.path).then(
-      () => true,
-      () => false,
-    )
-    if (photoRetired) index.remove(item.path)
-    await getFsClient().deleteFile(bucketId, item.thumbPath).then(
-      () => index.remove(item.thumbPath),
-      () => {},
-    )
-
     await loadGrid()
     scheduleReanchor()
-    if (!photoRetired) {
-      libraryError$.next('Renamed, but the original copy could not be removed — you may see a duplicate.')
-    }
   } catch (err) {
     libraryError$.next(err instanceof Error ? err.message : 'Could not rename the photo.')
   }
 }
 
 /**
- * Delete a photo (and its thumbnail) from the album. Removes the FS index entries;
+ * Delete a photo (and its thumbnail) from the album. Removes their directory entries;
  * the underlying blobs linger in the MMR (no GC), matching the app's copy-on-write
  * model. Refreshes the grid and schedules a background re-anchor.
  */
@@ -500,8 +485,9 @@ export async function deletePhoto(item: GridItem): Promise<void> {
 
   libraryError$.next(undefined)
   try {
-    await getFsClient().deleteFile(bucketId, item.path)
-    await getFsClient().deleteFile(bucketId, item.thumbPath).catch(() => {})
+    const drive = await getDrive(bucketId)
+    await drive.delete(item.path)
+    await drive.delete(item.thumbPath).catch(() => {})
     index.remove(item.path)
     index.remove(item.thumbPath)
 
@@ -512,9 +498,9 @@ export async function deletePhoto(item: GridItem): Promise<void> {
   }
 }
 
-/** Tear down the album layer (on wallet/network/drive change). */
+/** Tear down the album layer (on wallet/network/bucket change). */
 export function resetLibrary(): void {
-  currentDriveId = null
+  setFsSigner(null)
   bucketId$.next(null)
   resetSession()
 }
@@ -564,7 +550,7 @@ async function runAnchorWorker(): Promise<void> {
 /** Recompute the metadata root from the live tree and anchor it via `setRoot`. */
 async function runReanchor(): Promise<void> {
   // Snapshot the session up front: a background anchor can outlive a library/account
-  // switch that reassigns these module-level vars, and it must sign for the drive it
+  // switch that reassigns these module-level vars, and it must sign for the bucket it
   // started on (not whatever is selected by the time the slow recompute finishes).
   const bucketId = bucketId$.getValue()
   const sessionApi = api
@@ -584,7 +570,7 @@ async function runReanchor(): Promise<void> {
     if (sessionAuthoritative) {
       root = sessionIndex.root()
     } else {
-      root = await recomputeRoot(getFsClient(), bucketId, sessionIndex)
+      root = await recomputeRoot(await getDrive(bucketId), sessionIndex)
       if (index === sessionIndex) indexAuthoritative = true
     }
     anchorStatus$.next({ stage: 'anchoring' })
@@ -603,14 +589,18 @@ async function runReanchor(): Promise<void> {
   }
 }
 
-/** PUT a blob, assert the provider's `data_root` matches our local computation, and record it in the index. */
-async function putVerified(bucketId: bigint, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
-  const res = await getFsClient().uploadFile(bucketId, path, bytes, { contentType })
-  const localRoot = computeDataRoot(bytes)
-  if (!res.dataRoot || rootToBytes32(localRoot).toLowerCase() !== res.dataRoot.toLowerCase()) {
-    throw new Error(`Provider stored ${path} with a different content root than computed locally.`)
-  }
-  index.setFile(path, localRoot, BigInt(bytes.length))
+/** Move the index entry of a renamed file. */
+function moveIndexed(from: string, to: string): void {
+  const cached = index.getFile(from)
+  index.remove(from)
+  if (cached) index.setFile(to, cached.dataRoot, cached.size)
+}
+
+/** Store a file and record its content root in the index. */
+async function storeFile(bucketId: bigint, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
+  const drive = await getDrive(bucketId)
+  const res = await drive.putFile(path, bytes, { contentType })
+  index.setFile(path, hexToBytes(res.contentRoot), BigInt(bytes.length))
   // A rewritten thumbnail must not keep being served from its stale cached URL.
   if (path.startsWith(`${THUMBS_ROOT}/`)) {
     const stale = gridThumbUrls.get(path)
@@ -626,9 +616,9 @@ async function ensureDir(bucketId: bigint, path: string): Promise<void> {
   const slash = path.lastIndexOf('/')
   const parent = slash <= 0 ? '/' : path.slice(0, slash)
   const name = path.slice(slash + 1)
-  const client = getFsClient()
-  const siblings = await client.listDirectory(bucketId, parent)
-  if (!siblings.some((e) => e.entryType === 'directory' && e.name === name)) await client.createDirectory(bucketId, path)
+  const drive = await getDrive(bucketId)
+  const siblings = await drive.list(parent)
+  if (!siblings.some((e) => e.entryType === 'directory' && e.name === name)) await drive.mkdir(path)
   index.setDir(path)
 }
 
