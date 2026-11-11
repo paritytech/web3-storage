@@ -243,18 +243,6 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "max_nodes": max_nodes })),
                     },
                 ),
-                StorageError::CommitMismatch { expected, actual } => (
-                    StatusCode::CONFLICT,
-                    ErrorResponse {
-                        error: "root_mismatch".to_string(),
-                        details: Some(serde_json::json!({
-                            "expected_mmr_root": expected.mmr_root,
-                            "expected_leaf_count": expected.leaf_count,
-                            "actual_mmr_root": actual.mmr_root,
-                            "actual_leaf_count": actual.leaf_count,
-                        })),
-                    },
-                ),
                 StorageError::CommitmentNotReproducible(reason) => (
                     StatusCode::NOT_FOUND,
                     ErrorResponse {
@@ -610,13 +598,6 @@ mod tests {
                 max: 0
             })),
             StatusCode::INSUFFICIENT_STORAGE
-        );
-        assert_eq!(
-            status_of(Error::from(provider_storage::Error::CommitMismatch {
-                expected: Default::default(),
-                actual: Default::default(),
-            })),
-            StatusCode::CONFLICT
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::InvalidStartSeq {

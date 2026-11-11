@@ -169,16 +169,6 @@ pub trait StorageBackend: Send + Sync {
     /// Commit data roots to the bucket's MMR.
     fn commit(&self, bucket_id: BucketId, data_roots: Vec<H256>) -> Result<CommitOutcome, Error>;
 
-    /// Like [`Self::commit`], but applies only when the bucket's MMR then has
-    /// the root and leaf count of `expected`. Otherwise it changes nothing and
-    /// fails with [`Error::CommitMismatch`].
-    fn commit_matching(
-        &self,
-        bucket_id: BucketId,
-        data_roots: Vec<H256>,
-        expected: &Commitment,
-    ) -> Result<CommitOutcome, Error>;
-
     /// Node budget for one content-tree traversal; see [`MAX_TREE_WALK_VISITS`].
     fn max_tree_walk_visits(&self) -> u64 {
         MAX_TREE_WALK_VISITS

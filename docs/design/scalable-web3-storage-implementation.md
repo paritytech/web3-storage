@@ -127,7 +127,7 @@ signs a checkpoint while the old one is still bound.
    existing bucket → `StorageAgreement` created with `ProviderRole::Replica`
 3. Replica syncs data autonomously from primaries or other replicas.
    A primary provider of the bucket may also push data to it.
-   A replica accepts pushed data only when it matches a root the chain committed.
+   A replica accepts pushed data only from a primary provider of the bucket.
    A replica takes no client writes or commits, and never signs a commitment
 4. Replica calls `confirm_replica_sync` on-chain → receives per-sync payment, becomes challengeable
 

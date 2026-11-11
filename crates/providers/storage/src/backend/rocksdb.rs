@@ -471,17 +471,7 @@ impl DiskStorage {
         data_roots: Vec<H256>,
     ) -> Result<CommitOutcome, Error> {
         let walk = self.walk_commit_roots(data_roots)?;
-        self.apply_commit(bucket_id, walk, None)
-    }
-
-    pub fn commit_matching(
-        &self,
-        bucket_id: BucketId,
-        data_roots: Vec<H256>,
-        expected: &Commitment,
-    ) -> Result<CommitOutcome, Error> {
-        let walk = self.walk_commit_roots(data_roots)?;
-        self.apply_commit(bucket_id, walk, Some(expected))
+        self.apply_commit(bucket_id, walk)
     }
 
     /// Check the trees under `data_roots` outside any transaction.
@@ -518,12 +508,7 @@ impl DiskStorage {
 
     /// Append the walked roots as leaves and add their refcounts in one
     /// transaction.
-    fn apply_commit(
-        &self,
-        bucket_id: BucketId,
-        walk: CommitWalk,
-        expected: Option<&Commitment>,
-    ) -> Result<CommitOutcome, Error> {
+    fn apply_commit(&self, bucket_id: BucketId, walk: CommitWalk) -> Result<CommitOutcome, Error> {
         let CommitWalk {
             data_roots,
             data_sizes,
@@ -559,15 +544,6 @@ impl DiskStorage {
         }
 
         bucket.mmr_root = mmr::root(&bucket.leaves)?;
-
-        if let Some(expected) = expected {
-            if bucket.mmr_root != expected.mmr_root || bucket.leaf_count() != expected.leaf_count {
-                return Err(Error::CommitMismatch {
-                    expected: *expected,
-                    actual: commitment_of(&bucket),
-                });
-            }
-        }
 
         let cf_refcounts = self
             .db
@@ -1062,15 +1038,6 @@ impl StorageBackend for DiskStorage {
         self.commit(bucket_id, data_roots)
     }
 
-    fn commit_matching(
-        &self,
-        bucket_id: BucketId,
-        data_roots: Vec<H256>,
-        expected: &Commitment,
-    ) -> Result<CommitOutcome, Error> {
-        self.commit_matching(bucket_id, data_roots, expected)
-    }
-
     fn delete_before(&self, bucket_id: BucketId, new_start_seq: u64) -> Result<Commitment, Error> {
         self.delete_before(bucket_id, new_start_seq)
     }
@@ -1187,14 +1154,6 @@ mod tests {
             unreachable!("read-only")
         }
         fn commit(&self, _: BucketId, _: Vec<H256>) -> Result<CommitOutcome, Error> {
-            unreachable!("read-only")
-        }
-        fn commit_matching(
-            &self,
-            _: BucketId,
-            _: Vec<H256>,
-            _: &Commitment,
-        ) -> Result<CommitOutcome, Error> {
             unreachable!("read-only")
         }
         fn delete_before(&self, _: BucketId, _: u64) -> Result<Commitment, Error> {
@@ -2060,65 +2019,6 @@ mod tests {
 
     const FULL_CHUNK: u64 = DEFAULT_CHUNK_SIZE as u64;
 
-    /// The commitment a plain commit of `byte`'s chunk reaches in a scratch
-    /// database.
-    fn commitment_after_committing_chunk(byte: u8) -> Commitment {
-        let (scratch, _dir) = storage_with_bucket(COMMIT_QUOTA);
-        let chunk = store_chunk(&scratch, byte);
-        let outcome = scratch.commit(BUCKET, vec![chunk]).unwrap();
-        Commitment {
-            mmr_root: outcome.mmr_root,
-            start_seq: outcome.start_seq,
-            leaf_count: outcome.leaf_count,
-        }
-    }
-
-    #[test]
-    fn commit_matching_applies_when_the_commitment_matches() {
-        let expected = commitment_after_committing_chunk(1);
-        let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
-        let chunk = store_chunk(&storage, 1);
-
-        let outcome = storage
-            .commit_matching(BUCKET, vec![chunk], &expected)
-            .unwrap();
-
-        assert_eq!(outcome.mmr_root, expected.mmr_root);
-        let bucket = storage.get_bucket(BUCKET).unwrap().unwrap();
-        assert_eq!(bucket.mmr_root, expected.mmr_root);
-        assert_eq!(bucket.leaves.len() as u64, expected.leaf_count);
-    }
-
-    #[test]
-    fn commit_matching_changes_nothing_when_the_root_or_leaf_count_differs() {
-        let right = commitment_after_committing_chunk(1);
-        let wrong_root = Commitment {
-            mmr_root: commitment_after_committing_chunk(2).mmr_root,
-            ..right
-        };
-        let wrong_count = Commitment {
-            leaf_count: right.leaf_count + 1,
-            ..right
-        };
-
-        for expected in [wrong_root, wrong_count] {
-            let (storage, _dir) = storage_with_bucket(COMMIT_QUOTA);
-            let chunk = store_chunk(&storage, 1);
-            let refcount_before = storage.refcount_entry(&chunk).unwrap();
-
-            let result = storage.commit_matching(BUCKET, vec![chunk], &expected);
-
-            assert!(
-                matches!(result, Err(Error::CommitMismatch { .. })),
-                "got {result:?}"
-            );
-            let bucket = storage.get_bucket(BUCKET).unwrap().unwrap();
-            assert_eq!(bucket.mmr_root, H256::zero());
-            assert!(bucket.leaves.is_empty());
-            assert_eq!(storage.refcount_entry(&chunk).unwrap(), refcount_before);
-        }
-    }
-
     #[test]
     fn commit_increments_refcounts() {
         let (storage, _dir) = storage_with_bucket(u64::MAX);
@@ -2279,7 +2179,7 @@ mod tests {
         let walk = storage.walk_commit_roots(vec![hash]).unwrap();
         let erased = storage.erase_pruned_range(1, 0).unwrap();
         assert_eq!(erased.nodes_deleted, 1);
-        let result = storage.apply_commit(1, walk, None);
+        let result = storage.apply_commit(1, walk);
 
         assert!(matches!(result, Err(Error::NodeNotFound(h)) if h == hash));
         let after = storage.get_bucket(1).unwrap().unwrap();
