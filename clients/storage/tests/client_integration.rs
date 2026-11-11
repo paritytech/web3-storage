@@ -699,22 +699,16 @@ async fn test_mmr_proof_of_last_leaf_verifies_against_commitment() {
         .unwrap();
     client.commit(1, vec![first, second]).await.unwrap();
 
-    let commitment = client.get_commitment_if_exists(1).await.unwrap().unwrap();
-    assert_eq!(commitment.leaf_count, 2);
-    let proof = client
-        .get_mmr_proof(1, commitment.leaf_count - 1)
+    let commitment = client
+        .get_commitment_if_exists(1)
         .await
-        .unwrap();
+        .unwrap()
+        .unwrap()
+        .commitment();
+    assert_eq!(commitment.leaf_count, 2);
+    let proof = client.get_mmr_proof(1, &commitment, 1).await.unwrap();
     assert_eq!(proof.leaf.data_root, second);
-    assert!(storage_primitives::verify_mmr_proof(
-        proof,
-        commitment.leaf_count - 1,
-        &storage_primitives::Commitment {
-            mmr_root: commitment.mmr_root,
-            start_seq: 0,
-            leaf_count: commitment.leaf_count,
-        }
-    ));
+    assert!(storage_primitives::verify_mmr_proof(proof, 1, &commitment));
 }
 
 // ============================================================================

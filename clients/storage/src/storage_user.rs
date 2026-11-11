@@ -652,12 +652,14 @@ impl StorageUserClient {
             .map_err(|e| ClientError::Serialization(e.to_string()))
     }
 
-    /// Get the MMR proof of the leaf at `leaf_index` of the bucket's current
-    /// MMR (`GET /mmr_proof`). The proof is not verified here: check it with
-    /// [`storage_primitives::verify_mmr_proof`] against a trusted MMR root.
+    /// Get the MMR proof of the leaf at `leaf_index`, counted from
+    /// `commitment.start_seq`, in the MMR of `commitment` (`GET /mmr_proof`).
+    /// The proof is not verified here: check it with
+    /// [`storage_primitives::verify_mmr_proof`] against `commitment`.
     pub async fn get_mmr_proof(
         &self,
         bucket_id: BucketId,
+        commitment: &storage_primitives::Commitment,
         leaf_index: u64,
     ) -> ClientResult<storage_primitives::MmrProof> {
         let provider_url = self.base.get_provider_url()?;
@@ -668,6 +670,9 @@ impl StorageUserClient {
             .query(&[
                 ("bucket_id", bucket_id.to_string()),
                 ("leaf_index", leaf_index.to_string()),
+                ("mmr_root", format!("{:#x}", commitment.mmr_root)),
+                ("start_seq", commitment.start_seq.to_string()),
+                ("leaf_count", commitment.leaf_count.to_string()),
             ]);
         let response = self.sign(req, "GET", bucket_id).send().await?;
 
@@ -877,6 +882,15 @@ pub struct CommitmentResponse {
 }
 
 impl CommitmentResponse {
+    /// The `(mmr_root, start_seq, leaf_count)` the provider signed.
+    pub fn commitment(&self) -> storage_primitives::Commitment {
+        storage_primitives::Commitment {
+            mmr_root: self.mmr_root,
+            start_seq: self.start_seq,
+            leaf_count: self.leaf_count,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn new(
         bucket_id: BucketId,
