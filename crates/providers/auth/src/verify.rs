@@ -5,7 +5,8 @@
 use crate::error::AuthError;
 use crate::http_auth::auth_message;
 use crate::membership::{
-    MembershipCache, MembershipInvalidations, MembershipResolver, OwnAgreement, RequiredRole,
+    MembershipCache, MembershipInvalidations, MembershipResolver, NodeRole, OwnAgreement,
+    RequiredRole,
 };
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::Duration;
@@ -180,8 +181,10 @@ impl Authenticator {
 
     /// Checks that a request may access `bucket_id` with role `required`.
     ///
-    /// - Writer/Admin on a bucket this node serves as a replica: fails with
+    /// - Writer on a bucket this node serves as a replica: passes for a signed
+    ///   request from a primary provider of the bucket, otherwise fails with
     ///   [`AuthError::NotPrimary`].
+    /// - Admin on a replica bucket: fails with [`AuthError::NotPrimary`].
     /// - Reader on a `Public` bucket or a replica bucket: passes without
     ///   authentication (replicas serve everyone, per the design's
     ///   anti-censorship rule).
@@ -199,11 +202,20 @@ impl Authenticator {
         // One lookup serves both gates; its failure only matters once the
         // request has proven it needs a role.
         let access = self.membership.lookup(bucket_id).await;
-        // A replica takes data by sync only, so no client may write to it.
-        if required != RequiredRole::Reader
-            && access.as_ref().is_ok_and(|entry| entry.serves_as_replica)
-        {
-            return Err(AuthError::NotPrimary);
+        // A replica takes data by sync or by a push from a primary provider
+        // of the bucket, so no one else may write to it.
+        if required != RequiredRole::Reader {
+            if let Ok(entry) = &access {
+                if entry.serves_as_replica {
+                    if let (RequiredRole::Writer, Some(header)) = (required, auth_header) {
+                        let account = verify_signature(header, method, bucket_id, self.max_skew)?;
+                        if entry.access.members.node_role_of(&account) == Some(NodeRole::Primary) {
+                            return Ok(());
+                        }
+                    }
+                    return Err(AuthError::NotPrimary);
+                }
+            }
         }
         if required == RequiredRole::Reader
             && access.as_ref().is_ok_and(|entry| {
@@ -441,6 +453,45 @@ mod tests {
                 "{role:?} as {required:?}: got {signed:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn replica_bucket_accepts_writer_requests_from_a_primary_provider() {
+        let primary = sr25519::Pair::from_string("//Charlie", None).unwrap();
+        let auth = Authenticator::new(
+            StaticMembershipResolver::private(vec![])
+                .with_primary_providers(vec![AccountId32::new(primary.public().0)])
+                .with_serves_as_replica(),
+        );
+        let header = make_auth_header(&primary, "PUT", 1, current_timestamp());
+
+        let write = auth
+            .require_role(Some(&header), "PUT", 1, RequiredRole::Writer)
+            .await;
+        assert!(write.is_ok(), "got {write:?}");
+    }
+
+    #[tokio::test]
+    async fn replica_bucket_rejects_a_primary_provider_as_admin_and_other_accounts_as_writer() {
+        let primary = sr25519::Pair::from_string("//Charlie", None).unwrap();
+        let stranger = sr25519::Pair::from_string("//Dave", None).unwrap();
+        let auth = Authenticator::new(
+            StaticMembershipResolver::private(vec![])
+                .with_primary_providers(vec![AccountId32::new(primary.public().0)])
+                .with_serves_as_replica(),
+        );
+
+        let header = make_auth_header(&primary, "POST", 1, current_timestamp());
+        let admin = auth
+            .require_role(Some(&header), "POST", 1, RequiredRole::Admin)
+            .await;
+        assert!(matches!(admin, Err(AuthError::NotPrimary)), "got {admin:?}");
+
+        let header = make_auth_header(&stranger, "PUT", 1, current_timestamp());
+        let write = auth
+            .require_role(Some(&header), "PUT", 1, RequiredRole::Writer)
+            .await;
+        assert!(matches!(write, Err(AuthError::NotPrimary)), "got {write:?}");
     }
 
     #[tokio::test]
