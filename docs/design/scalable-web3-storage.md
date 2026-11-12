@@ -484,12 +484,8 @@ The obvious rule—reject a replica agreement unless a sync source exists (bucke
 public, or a replica already there)—is deliberately absent, for three reasons:
 
 1. **The chain cannot see the sources.** Chunks self-verify against the
-   committed MMR root, so any data holder can seed a replica by sync (an
-   ex-replica, a stranger who fetched while public), and a primary provider of
-   the bucket can push to it.
-   On-chain agreements are a poor proxy: the rule would reject fulfillable
-   agreements and admit doomed ones (the one listed replica may be dead, or
-   expire tomorrow).
+   committed MMR root, so any data holder can seed a replica, by sync or by
+   push—the client itself, an ex-replica, a stranger who fetched while public.
 2. **It would help the censor.** Private bucket, last replica agreement
    expires: new replicas forbidden forever—by the chain itself.
 3. **Fulfillability is the funder's business.** The client pays, submits the

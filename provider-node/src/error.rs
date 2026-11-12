@@ -379,7 +379,7 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "not_primary".to_string(),
                     details: Some(serde_json::json!({
-                        "message": "provider node does not accept write bucket requests."
+                        "message": "this node serves this bucket as a replica and rejects writes to it."
                     })),
                 },
             ),
