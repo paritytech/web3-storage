@@ -64,6 +64,8 @@ pub struct DeletionReceipt {
 pub struct BucketState {
     /// Root of the MMR over `leaves`.
     pub mmr_root: H256,
+    /// Peaks of the MMR over `leaves`, left to right. `mmr_root` is their bag.
+    pub peaks: Vec<H256>,
     /// Sequence number of `leaves[0]`; advances as `delete_before` prunes.
     pub start_seq: u64,
     /// MMR leaves still retained, oldest first.
@@ -90,6 +92,7 @@ impl BucketState {
     pub fn new(max_bytes: u64) -> Self {
         Self {
             mmr_root: H256::zero(),
+            peaks: Vec::new(),
             start_seq: 0,
             leaves: Vec::new(),
             used_bytes: 0,
@@ -206,6 +209,7 @@ mod tests {
             assert_golden(
                 BucketState {
                     mmr_root: H256::repeat_byte(0xab),
+                    peaks: vec![H256::repeat_byte(0xef)],
                     start_seq: 7,
                     leaves: vec![MmrLeaf {
                         leaf_version: LEAF_VERSION,
@@ -223,6 +227,9 @@ mod tests {
                 concat!(
                     // mmr_root: H256 (0xab * 32)
                     "abababababababababababababababababababababababababababababababab",
+                    // peaks: Vec<H256>, compact length 1, then the peak (0xef * 32)
+                    "04",
+                    "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
                     // start_seq: u64 = 7 (little-endian)
                     "0700000000000000",
                     // leaves: Vec<MmrLeaf>, compact length 1

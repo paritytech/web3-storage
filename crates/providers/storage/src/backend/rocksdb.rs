@@ -53,7 +53,7 @@ const KEY_FORMAT_VERSION: &[u8] = b"format_version";
 
 /// How long a writer waits for another writer on the same bucket before
 /// failing with [`Error::BucketBusy`]. A `commit` holds the bucket for the
-/// MMR rebuild only, so a longer wait means a stuck writer, and the caller
+/// MMR append only, so a longer wait means a stuck writer, and the caller
 /// can retry.
 const BUCKET_LOCK_TIMEOUT_MS: i64 = 30_000;
 
@@ -574,10 +574,11 @@ impl DiskStorage {
                 data_size,
                 total_size,
             };
+            mmr::append(&mut bucket.peaks, bucket.leaves.len() as u64, &leaf);
             bucket.leaves.push(leaf);
         }
 
-        bucket.mmr_root = mmr::root(&bucket.leaves)?;
+        bucket.mmr_root = mmr::bag_peaks(&bucket.peaks);
 
         let cf_refcounts = self
             .db
@@ -655,7 +656,7 @@ impl DiskStorage {
             });
             bucket.start_seq = new_start_seq;
 
-            bucket.mmr_root = mmr::root(&bucket.leaves)?;
+            (bucket.mmr_root, bucket.peaks) = mmr::peaks(&bucket.leaves)?;
 
             self.put_bucket(&txn, bucket_id, &bucket)?;
             txn.commit()?;
@@ -771,7 +772,7 @@ impl DiskStorage {
                 new_start_seq,
             });
             bucket.start_seq = new_start_seq;
-            bucket.mmr_root = mmr::root(&bucket.leaves)?;
+            (bucket.mmr_root, bucket.peaks) = mmr::peaks(&bucket.leaves)?;
         }
         bucket.condemned = true;
 
@@ -1015,7 +1016,7 @@ impl DiskStorage {
             .get_bucket(bucket_id)?
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        Ok(mmr::peaks(&bucket.leaves)?)
+        Ok((bucket.mmr_root, bucket.peaks))
     }
 }
 
@@ -1279,9 +1280,11 @@ mod tests {
             .expect("bucket must be stored under the little-endian bucket_id key");
         assert_eq!(
             array_bytes::bytes2hex("", &raw),
-            // BucketState::new(1_000): zero root, no leaves, no nodes, max_bytes = 1_000,
-            // then empty pruned stash, empty receipts map, condemned = false
+            // BucketState::new(1_000): zero root, no peaks, no leaves, no nodes,
+            // max_bytes = 1_000, then empty pruned stash, empty receipts map,
+            // condemned = false
             "0000000000000000000000000000000000000000000000000000000000000000\
+             00\
              0000000000000000\
              00\
              0000000000000000\
@@ -2291,6 +2294,76 @@ mod tests {
         for (leaf, size) in leaves.iter().zip(sizes) {
             assert_eq!(storage.refcount_entry(leaf).unwrap(), Some((1, 1, size)));
         }
+    }
+
+    /// The live leaves of `BUCKET`, and the peaks and root a rebuild gives.
+    fn rebuilt_peaks(storage: &DiskStorage) -> (Vec<MmrLeaf>, H256, Vec<H256>) {
+        let bucket = storage.get_bucket(BUCKET).unwrap().unwrap();
+        let (root, peaks) = mmr::peaks(&bucket.leaves).unwrap();
+        (bucket.leaves, root, peaks)
+    }
+
+    #[test]
+    fn commit_keeps_the_stored_peaks_equal_to_a_rebuild() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let roots: Vec<H256> = (1..=8)
+            .map(|b| store_chunk_of_len(&storage, b, 10))
+            .collect();
+
+        let mut committed = 0;
+        for batch in [1, 2, 5] {
+            storage
+                .commit(BUCKET, roots[committed..committed + batch].to_vec())
+                .unwrap();
+            committed += batch;
+            let (leaves, root, peaks) = rebuilt_peaks(&storage);
+            let bucket = storage.get_bucket(BUCKET).unwrap().unwrap();
+            assert_eq!(leaves.len(), committed);
+            assert_eq!(bucket.peaks, peaks, "{committed} leaves");
+            assert_eq!(bucket.mmr_root, root, "{committed} leaves");
+        }
+    }
+
+    #[test]
+    fn prune_and_condemn_keep_the_stored_peaks_equal_to_a_rebuild() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let roots: Vec<H256> = (1..=5)
+            .map(|b| store_chunk_of_len(&storage, b, 10))
+            .collect();
+        storage.commit(BUCKET, roots).unwrap();
+
+        storage.delete_before(BUCKET, 2).unwrap();
+        let (leaves, root, peaks) = rebuilt_peaks(&storage);
+        let bucket = storage.get_bucket(BUCKET).unwrap().unwrap();
+        assert_eq!(leaves.len(), 3);
+        assert_eq!(bucket.peaks, peaks);
+        assert_eq!(bucket.mmr_root, root);
+
+        storage.condemn_bucket(BUCKET).unwrap();
+        let bucket = storage.get_bucket(BUCKET).unwrap().unwrap();
+        assert!(bucket.peaks.is_empty());
+        assert_eq!(bucket.mmr_root, H256::zero());
+    }
+
+    #[test]
+    fn get_mmr_peaks_returns_the_stored_peaks() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let root = store_chunk_of_len(&storage, 1, 10);
+        storage.commit(BUCKET, vec![root]).unwrap();
+
+        // A row whose peaks differ from what its leaves rebuild to shows
+        // that the read does not rebuild.
+        let mut bucket = storage.get_bucket(BUCKET).unwrap().unwrap();
+        bucket.peaks = vec![H256::repeat_byte(7), H256::repeat_byte(9)];
+        bucket.mmr_root = H256::repeat_byte(8);
+        let txn = storage.transaction();
+        storage.put_bucket(&txn, BUCKET, &bucket).unwrap();
+        txn.commit().unwrap();
+
+        assert_eq!(
+            storage.get_mmr_peaks(BUCKET).unwrap(),
+            (bucket.mmr_root, bucket.peaks)
+        );
     }
 
     #[test]
