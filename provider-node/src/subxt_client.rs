@@ -422,7 +422,7 @@ impl SubxtChainClient {
         };
         let current = String::from_utf8_lossy(&provider.multiaddr.0).to_string();
 
-        if !needs_multiaddr_update(&provider, &expected_multiaddr) {
+        if provider.multiaddr.0 == expected_multiaddr.as_bytes() {
             tracing::info!(
                 "On-chain multiaddr matches advertised address: {}",
                 expected_multiaddr
@@ -449,9 +449,8 @@ impl SubxtChainClient {
         }
     }
 
-    /// Resolve each provider account to its HTTP endpoint via the on-chain
-    /// `Providers` multiaddr. Accounts without a registration or multiaddr
-    /// are skipped.
+    /// Resolve each account to its HTTP endpoint from its on-chain multiaddr.
+    /// Skips accounts with no registration or an empty multiaddr.
     async fn endpoints_for_accounts(
         &self,
         accounts: Vec<subxt::utils::AccountId32>,
@@ -481,6 +480,27 @@ impl SubxtChainClient {
         }
 
         Ok(endpoints)
+    }
+
+    /// The `StorageProvider::Buckets` entry for `bucket_id`, or `None` when the
+    /// bucket does not exist.
+    async fn fetch_bucket(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<OnChainBucket>, ChainClientError> {
+        let buckets = storage_subxt::api::storage()
+            .storage_provider()
+            .buckets()
+            .unvalidated();
+        self.at_current_block()
+            .await?
+            .storage()
+            .try_fetch(buckets, (bucket_id,))
+            .await
+            .map_err(|e| ChainClientError::query("bucket", e))?
+            .map(|value| value.decode())
+            .transpose()
+            .map_err(|e| ChainClientError::decode("bucket", e))
     }
 }
 
@@ -533,45 +553,19 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<BucketSnapshot, ChainClientError> {
-        let storage_address = storage_subxt::api::storage()
-            .storage_provider()
-            .buckets()
-            .unvalidated();
-
-        let bucket = self
-            .at_current_block()
-            .await?
-            .storage()
-            .try_fetch(storage_address, (bucket_id,))
-            .await
-            .map_err(|e| ChainClientError::query("bucket", e))?
-            .map(|value| value.decode())
-            .transpose()
-            .map_err(|e| ChainClientError::decode("bucket", e))?;
-
-        Ok(bucket_snapshot(bucket))
+        Ok(bucket_snapshot(self.fetch_bucket(bucket_id).await?))
     }
 
     async fn fetch_primary_endpoints(
         &self,
         bucket_id: BucketId,
     ) -> Result<Vec<String>, ChainClientError> {
-        let buckets = storage_subxt::api::storage()
-            .storage_provider()
-            .buckets()
-            .unvalidated();
-        let at = self.at_current_block().await?;
-
-        let bucket = at
-            .storage()
-            .try_fetch(buckets, (bucket_id,))
-            .await
-            .map_err(|e| ChainClientError::query("bucket", e))?
-            .map(|value| value.decode())
-            .transpose()
-            .map_err(|e| ChainClientError::decode("bucket", e))?;
-
-        self.endpoints_for_accounts(primary_providers(bucket)).await
+        let primaries = self
+            .fetch_bucket(bucket_id)
+            .await?
+            .map(|bucket| bucket.primary_providers.0)
+            .unwrap_or_default();
+        self.endpoints_for_accounts(primaries).await
     }
 
     async fn fetch_replica_endpoints(
@@ -702,8 +696,8 @@ fn chunk_location(target: RuntimeChunkLocation) -> ChunkLocation {
     }
 }
 
-/// Convert a `MultiSignature` into the generated type, preserving the scheme
-/// tag the pallet verifies against the registered key.
+/// Convert a `MultiSignature` into the generated runtime type. Keeps the
+/// signature scheme, which the pallet checks against the registered key.
 fn to_runtime_signature(signature: &sp_runtime::MultiSignature) -> RuntimeMultiSignature {
     use sp_runtime::MultiSignature as MS;
     match signature {
@@ -735,11 +729,11 @@ fn detected_challenge(
     })
 }
 
-/// The generated `Bucket` value held in `StorageProvider::Buckets`.
+/// Generated type of a `StorageProvider::Buckets` value.
 type OnChainBucket = storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket;
 
 /// Latest checkpoint of a bucket, or the zero snapshot when the bucket does
-/// not exist or has not been checkpointed yet.
+/// not exist or has no checkpoint.
 fn bucket_snapshot(bucket: Option<OnChainBucket>) -> BucketSnapshot {
     match bucket.and_then(|bucket| bucket.snapshot) {
         Some(snapshot) => BucketSnapshot {
@@ -753,21 +747,9 @@ fn bucket_snapshot(bucket: Option<OnChainBucket>) -> BucketSnapshot {
     }
 }
 
-/// The generated `ProviderInfo` value held in `StorageProvider::Providers`.
+/// Generated type of a `StorageProvider::Providers` value.
 type OnChainProviderInfo =
     storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
-
-/// Accounts of the bucket's primary providers; empty when the bucket does not
-/// exist.
-fn primary_providers(bucket: Option<OnChainBucket>) -> Vec<subxt::utils::AccountId32> {
-    bucket.map_or_else(Vec::new, |bucket| bucket.primary_providers.0)
-}
-
-/// Whether the provider's on-chain multiaddr differs from `expected`. An empty
-/// on-chain multiaddr counts as different.
-fn needs_multiaddr_update(provider: &OnChainProviderInfo, expected: &str) -> bool {
-    provider.multiaddr.0 != expected.as_bytes()
-}
 
 /// HTTP endpoint a provider serves from, or `None` when it has no multiaddr.
 fn provider_endpoint(provider: &OnChainProviderInfo) -> Option<String> {

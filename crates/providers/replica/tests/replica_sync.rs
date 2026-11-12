@@ -166,7 +166,7 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         bucket_id: BucketId,
     ) -> Result<BucketSnapshot, ChainClientError> {
         if self.snapshot_errors.lock().unwrap().contains(&bucket_id) {
-            return Err(ChainClientError::query("bucket", "decode failed"));
+            return Err(ChainClientError::query("bucket", "injected failure"));
         }
         let snapshots = self.snapshots.lock().unwrap();
         Ok(snapshots
@@ -183,7 +183,7 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         bucket_id: BucketId,
     ) -> Result<Vec<String>, ChainClientError> {
         if self.endpoint_errors.lock().unwrap().contains(&bucket_id) {
-            return Err(ChainClientError::query("provider", "decode failed"));
+            return Err(ChainClientError::query("provider", "injected failure"));
         }
         let endpoints = self.endpoints.lock().unwrap();
         Ok(endpoints.get(&bucket_id).cloned().unwrap_or_default())
@@ -724,20 +724,16 @@ async fn test_duties_happy_path_returns_duty() {
     assert_eq!(duty.sync_price, 100);
 }
 
-/// The bucket-42 duty mock plus bucket 7, an agreement listed first whose
-/// duty `fail` breaks.
-fn mock_with_failing_bucket_7(
-    fail: fn(MockReplicaSyncChainClient) -> MockReplicaSyncChainClient,
-) -> MockReplicaSyncChainClient {
-    let mock = mock_with_bucket_42_duty()
-        .with_snapshot(
-            7,
-            BucketSnapshot {
-                mmr_root: H256::repeat_byte(0x07),
-                leaf_count: 3,
-            },
-        )
-        .with_endpoints(7, vec!["http://primary-7:3333".to_string()]);
+/// `mock_with_bucket_42_duty` plus a checkpointed bucket-7 agreement listed
+/// before bucket 42.
+fn mock_with_buckets_7_and_42() -> MockReplicaSyncChainClient {
+    let mock = mock_with_bucket_42_duty().with_snapshot(
+        7,
+        BucketSnapshot {
+            mmr_root: H256::repeat_byte(0x07),
+            leaf_count: 3,
+        },
+    );
     mock.agreements.lock().unwrap().insert(
         0,
         ReplicaAgreementInfo {
@@ -748,33 +744,29 @@ fn mock_with_failing_bucket_7(
             last_sync: None,
         },
     );
-    fail(mock)
+    mock
+}
+
+/// Assert that the duty pass returns only bucket 42's duty.
+async fn assert_only_bucket_42_duty(mock: MockReplicaSyncChainClient) {
+    let (storage, _dir) = temp_rocksdb();
+    let coordinator = coordinator(ReplicaSyncCoordinatorConfig::default(), storage, mock);
+
+    let duties = coordinator.get_active_replica_duties().await.unwrap();
+    assert_eq!(duties.len(), 1);
+    assert_eq!(duties[0].bucket_id, 42);
 }
 
 #[tokio::test]
 async fn test_duties_skip_a_bucket_whose_snapshot_lookup_fails() {
-    // Bucket 7 fails before bucket 42 is processed. The pass still returns
-    // bucket 42's duty instead of failing for every bucket.
-    let mock = mock_with_failing_bucket_7(|m| m.with_snapshot_error(7));
-
-    let (storage, _dir) = temp_rocksdb();
-    let coordinator = coordinator(ReplicaSyncCoordinatorConfig::default(), storage, mock);
-
-    let duties = coordinator.get_active_replica_duties().await.unwrap();
-    assert_eq!(duties.len(), 1);
-    assert_eq!(duties[0].bucket_id, 42);
+    // The coordinator processes bucket 7 first and its lookup fails; the pass
+    // still returns bucket 42's duty.
+    assert_only_bucket_42_duty(mock_with_buckets_7_and_42().with_snapshot_error(7)).await;
 }
 
 #[tokio::test]
 async fn test_duties_skip_a_bucket_whose_endpoint_lookup_fails() {
-    let mock = mock_with_failing_bucket_7(|m| m.with_endpoint_error(7));
-
-    let (storage, _dir) = temp_rocksdb();
-    let coordinator = coordinator(ReplicaSyncCoordinatorConfig::default(), storage, mock);
-
-    let duties = coordinator.get_active_replica_duties().await.unwrap();
-    assert_eq!(duties.len(), 1);
-    assert_eq!(duties[0].bucket_id, 42);
+    assert_only_bucket_42_duty(mock_with_buckets_7_and_42().with_endpoint_error(7)).await;
 }
 
 #[tokio::test]

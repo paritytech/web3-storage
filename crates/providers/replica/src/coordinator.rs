@@ -175,12 +175,17 @@ pub trait ReplicaSyncChainClient: Send + Sync {
     ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError>;
 
     /// Fetch the bucket snapshot (latest checkpoint state) from chain.
+    ///
+    /// Returns the zero snapshot when the bucket does not exist or has no
+    /// checkpoint.
     async fn fetch_bucket_snapshot(
         &self,
         bucket_id: BucketId,
     ) -> Result<BucketSnapshot, ChainClientError>;
 
     /// Fetch primary provider HTTP endpoints for a bucket.
+    ///
+    /// Returns an empty list when the bucket does not exist.
     async fn fetch_primary_endpoints(
         &self,
         bucket_id: BucketId,
@@ -543,10 +548,9 @@ impl ReplicaSyncCoordinator {
 
     /// Get replica duties for buckets where this provider is a replica.
     ///
-    /// Fails only when the anchor block or the agreement list cannot be read.
-    /// A bucket whose duty cannot be built (a failed snapshot or endpoint
-    /// lookup, a local storage error) is logged and skipped; the next pass
-    /// tries it again.
+    /// Returns an error only when reading the anchor block or the agreement
+    /// list fails. Logs and skips a bucket whose snapshot, endpoint or local
+    /// storage read fails; the next pass retries it.
     pub async fn get_active_replica_duties(&self) -> Result<Vec<SyncDuty>, Error> {
         let mut duties = Vec::new();
 
@@ -571,9 +575,7 @@ impl ReplicaSyncCoordinator {
         Ok(duties)
     }
 
-    /// The sync duty for one replica agreement, or `None` when the bucket
-    /// needs no sync now (balance too low, interval not elapsed, nothing
-    /// checkpointed, or already at the checkpointed root).
+    /// Sync duty for `agreement`, or `None` when the bucket needs no sync.
     async fn duty_for(
         &self,
         agreement: ReplicaAgreementInfo,
