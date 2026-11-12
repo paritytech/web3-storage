@@ -8,7 +8,7 @@
  * Tests: different sizes, roundtrip integrity, edge cases. Workflow 03 covers
  * S3 through the client.
  *
- * Usage: node e2e/04-data-upload-and-retrieval.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/04-data-upload-and-retrieval.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

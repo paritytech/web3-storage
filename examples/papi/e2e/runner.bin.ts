@@ -8,7 +8,7 @@
  * Runs each numbered workflow file as a child process, collects exit codes,
  * and prints a summary table at the end.
  *
- * Usage: npx tsx e2e/runner.bin.ts [chain_ws] [provider_url] [second_provider_url]
+ * Usage: node --import tsx e2e/runner.bin.ts [chain_ws] [provider_url] [second_provider_url]
  */
 
 import { execFileSync } from "node:child_process";

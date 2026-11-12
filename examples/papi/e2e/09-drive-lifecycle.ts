@@ -11,7 +11,7 @@
  * directory tree is stored in the bucket and read and written through the
  * provider's Layer 0 routes only.
  *
- * Usage: node e2e/09-drive-lifecycle.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/09-drive-lifecycle.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

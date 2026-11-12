@@ -10,7 +10,7 @@
  * metadata: the client keeps the key -> content tree in the bucket itself and
  * uses the provider's Layer 0 routes only.
  *
- * Usage: node e2e/03-s3-bucket-and-objects.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/03-s3-bucket-and-objects.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

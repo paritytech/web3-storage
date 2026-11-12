@@ -7,7 +7,7 @@
  *
  * Tests: add/remove members, promote/demote, permission checks.
  *
- * Usage: node e2e/06-bucket-membership-acl.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/06-bucket-membership-acl.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

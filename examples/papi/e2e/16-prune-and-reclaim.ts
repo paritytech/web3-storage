@@ -15,7 +15,7 @@
  * agreement on bucket-related events *after* the bucket exists locally, so
  * the first checkpoint (a BucketCheckpointed event) is what arms the quota.
  *
- * Usage: node e2e/16-prune-and-reclaim.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/16-prune-and-reclaim.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

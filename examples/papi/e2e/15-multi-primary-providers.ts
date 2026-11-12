@@ -20,7 +20,7 @@
  *   `min_providers = 2` bucket. These tests run while the switch scenario
  *   waits for the old agreement to expire.
  *
- * Usage: node e2e/15-multi-primary-providers.js [chain_ws] [provider_url] [second_provider_url]
+ * Usage: node --import tsx e2e/15-multi-primary-providers.ts [chain_ws] [provider_url] [second_provider_url]
  */
 
 import assert from "node:assert";

@@ -22,7 +22,7 @@
  * The role ladder probes `PUT /node` (Writer) and `POST /delete` (Admin). Bucket-bound Layer 0 reads need `Reader` on a private
  * bucket: 12.13 covers that gate, 12.14 the hash-keyed reads that stay open.
  *
- * Usage: node e2e/12-provider-http-auth.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/12-provider-http-auth.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";
