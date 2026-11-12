@@ -18,6 +18,12 @@ pub enum Error {
     #[error(transparent)]
     Backend(#[from] provider_storage::Error),
 
+    #[error("Bucket {bucket_id} is frozen (append-only); deletion refused")]
+    BucketFrozen { bucket_id: u64 },
+
+    #[error("Chain state unavailable: {0}")]
+    ChainStateUnavailable(String),
+
     #[error("Invalid hash: expected {expected}, got {actual}")]
     InvalidHash { expected: String, actual: String },
 
@@ -211,6 +217,20 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "bucket_id": id })),
                     },
                 ),
+                StorageError::BucketCondemned(id) => (
+                    StatusCode::GONE,
+                    ErrorResponse {
+                        error: "bucket_condemned".to_string(),
+                        details: Some(serde_json::json!({ "bucket_id": id })),
+                    },
+                ),
+                StorageError::InvalidDeletionReceipt(id) => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "invalid_signature".to_string(),
+                        details: Some(serde_json::json!({ "bucket_id": id })),
+                    },
+                ),
                 StorageError::RootNotFound(root) => (
                     StatusCode::NOT_FOUND,
                     ErrorResponse {
@@ -287,6 +307,20 @@ impl IntoResponse for Error {
                     },
                 ),
             },
+            Error::BucketFrozen { bucket_id } => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "bucket_frozen".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
+                },
+            ),
+            Error::ChainStateUnavailable(msg) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "chain_state_unavailable".to_string(),
+                    details: Some(serde_json::json!({ "message": msg })),
+                },
+            ),
             Error::InvalidHash { expected, actual } => (
                 StatusCode::BAD_REQUEST,
                 ErrorResponse {
@@ -572,6 +606,24 @@ mod tests {
                 end: 2,
             })),
             StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::BucketFrozen { bucket_id: 1 }),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::BucketCondemned(1))),
+            StatusCode::GONE
+        );
+        assert_eq!(
+            status_of(Error::from(
+                provider_storage::Error::InvalidDeletionReceipt(1)
+            )),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::ChainStateUnavailable("x".into())),
+            StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(
             status_of(Error::from(provider_storage::Error::BucketNotFound(1))),

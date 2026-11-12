@@ -10,7 +10,7 @@ pub mod error;
 pub use backend::build_merkle_tree;
 pub use backend::{
     BucketInfo, BucketState, ChunkTreeNode, CommitOutcome, DeletionReceipt, DiskStorage,
-    StorageBackend, StorageBackendSpec, StorageStats,
+    GarbageCollectorConfiguration, StorageBackend, StorageBackendSpec, StorageStats,
 };
 pub use error::Error;
 

@@ -171,7 +171,10 @@ impl MembershipInvalidations for BlockEventInvalidations {
         let mut all = false;
         loop {
             match events.try_recv() {
-                Ok(BlockEvent::BucketMembershipChanged { bucket_id }) if !all => {
+                Ok(BlockEvent::BucketMembershipChanged { bucket_id })
+                | Ok(BlockEvent::BucketDeleted { bucket_id })
+                    if !all =>
+                {
                     buckets.push(bucket_id)
                 }
                 // A new replica agreement changes the resolver's `serves_as_replica`

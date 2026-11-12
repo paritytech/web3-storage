@@ -88,6 +88,22 @@ impl ChallengeError {
 ///
 /// Backed by the provider node's storage backend; kept narrow so this crate
 /// stays decoupled from the full storage engine.
+/// An admin-signed deletion authorization covering erased leaves: the
+/// evidence for the on-chain `Deleted` challenge defense. Mirrors the
+/// storage engine's receipt so this crate stays decoupled from it; the
+/// provider node maps between the two.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeletionReceipt {
+    /// The post-prune MMR root the admin signed.
+    pub mmr_root: H256,
+    /// The start_seq the deletion advanced the bucket to.
+    pub new_start_seq: u64,
+    /// The admin account that signed the deletion authorization.
+    pub admin: AccountId32,
+    /// The admin's signature over the deletion `CommitmentPayload`.
+    pub signature: sp_runtime::MultiSignature,
+}
+
 pub trait ChallengeProofSource: Send + Sync {
     /// Generate an MMR proof for `leaf_index` against the exact cited
     /// commitment state (which later commits or prunes may have moved past).
@@ -105,6 +121,16 @@ pub trait ChallengeProofSource: Send + Sync {
         data_root: H256,
         chunk_index: u64,
     ) -> Result<(Vec<u8>, Vec<H256>), ChallengeError>;
+
+    /// The stored deletion receipt covering `seq` (smallest `new_start_seq`
+    /// strictly greater than it), if the leaf was deleted with the admin's
+    /// authorization. `Err` means the lookup itself failed, not that no
+    /// receipt exists.
+    fn deletion_receipt_covering(
+        &self,
+        bucket_id: BucketId,
+        seq: u64,
+    ) -> Result<Option<DeletionReceipt>, ChallengeError>;
 }
 
 /// Configuration for the challenge responder.
@@ -203,6 +229,15 @@ pub trait ChallengeChainClient: Send + Sync {
         challenge_id: (u32, u16),
         response: ChallengeResponse,
     ) -> Result<H256, ChallengeError>;
+
+    /// Submit a `Deleted` challenge response: the admin-signed deletion
+    /// authorization defending a challenge on leaves that were pruned and
+    /// physically erased.
+    async fn submit_deleted_response(
+        &self,
+        challenge_id: (u32, u16),
+        receipt: &DeletionReceipt,
+    ) -> Result<H256, ChallengeError>;
 }
 
 /// A response the responder submits for a challenge.
@@ -240,6 +275,16 @@ impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
         response: ChallengeResponse,
     ) -> Result<H256, ChallengeError> {
         self.as_ref().submit_response(challenge_id, response).await
+    }
+
+    async fn submit_deleted_response(
+        &self,
+        challenge_id: (u32, u16),
+        receipt: &DeletionReceipt,
+    ) -> Result<H256, ChallengeError> {
+        self.as_ref()
+            .submit_deleted_response(challenge_id, receipt)
+            .await
     }
 }
 
@@ -482,6 +527,51 @@ impl ChallengeResponder {
         }
     }
 
+    /// Answer a challenge the provider cannot prove with the admin's deletion
+    /// receipt, if one covers the challenged leaf: the leaf was pruned and its
+    /// nodes may be erased. Without a receipt, report `proof_error`.
+    async fn respond_with_receipt(
+        &self,
+        challenge: &DetectedChallenge,
+        what: &str,
+        proof_error: &ChallengeError,
+    ) -> ChallengeResponseResult {
+        let challenge_id = (challenge.deadline, challenge.index);
+        let challenged_seq = challenge
+            .commitment
+            .start_seq
+            .saturating_add(challenge.target.leaf_index);
+        let receipt = match self
+            .proof_source
+            .deletion_receipt_covering(challenge.bucket_id, challenged_seq)
+        {
+            Ok(Some(receipt)) => receipt,
+            Ok(None) => return proof_failure(challenge, what, proof_error),
+            Err(lookup) => {
+                return proof_failure(challenge, "Failed to read deletion receipt", &lookup)
+            }
+        };
+        tracing::info!(
+            "Defending challenge {:?} with the admin's deletion receipt (new_start_seq {})",
+            challenge_id,
+            receipt.new_start_seq
+        );
+        match self
+            .chain_client
+            .submit_deleted_response(challenge_id, &receipt)
+            .await
+        {
+            Ok(block_hash) => ChallengeResponseResult::Success {
+                challenge_id,
+                block_hash,
+            },
+            Err(e) => ChallengeResponseResult::SubmissionFailed {
+                challenge_id,
+                error: e.to_string(),
+            },
+        }
+    }
+
     /// Respond to a specific challenge.
     async fn respond_to_challenge(&self, challenge: &DetectedChallenge) -> ChallengeResponseResult {
         let challenge_id = (challenge.deadline, challenge.index);
@@ -502,7 +592,11 @@ impl ChallengeResponder {
             challenge.target.leaf_index,
         ) {
             Ok(proof) => proof,
-            Err(e) => return proof_failure(challenge, "Failed to generate MMR proof", &e),
+            Err(e) => {
+                return self
+                    .respond_with_receipt(challenge, "Failed to generate MMR proof", &e)
+                    .await
+            }
         };
 
         // Step 2: a chunk index at or past the leaf's chunk count has no chunk
@@ -524,7 +618,11 @@ impl ChallengeResponder {
                 .get_chunk_at_index(mmr_proof.leaf.data_root, challenge.target.chunk_index)
             {
                 Ok(data) => data,
-                Err(e) => return proof_failure(challenge, "Failed to get chunk data", &e),
+                Err(e) => {
+                    return self
+                        .respond_with_receipt(challenge, "Failed to get chunk data", &e)
+                        .await
+                }
             };
             ChallengeResponse::Proof {
                 chunk_data,
@@ -688,6 +786,14 @@ mod tests {
                 }),
             }
         }
+
+        fn deletion_receipt_covering(
+            &self,
+            _bucket_id: BucketId,
+            _seq: u64,
+        ) -> Result<Option<DeletionReceipt>, ChallengeError> {
+            Ok(None)
+        }
     }
 
     /// Records every submitted response; the chain accepts all of them.
@@ -714,6 +820,15 @@ mod tests {
             &self,
             challenge_id: (u32, u16),
             _response: ChallengeResponse,
+        ) -> Result<H256, ChallengeError> {
+            self.submitted.lock().expect("lock").push(challenge_id);
+            Ok(H256::repeat_byte(0xbb))
+        }
+
+        async fn submit_deleted_response(
+            &self,
+            challenge_id: (u32, u16),
+            _receipt: &DeletionReceipt,
         ) -> Result<H256, ChallengeError> {
             self.submitted.lock().expect("lock").push(challenge_id);
             Ok(H256::repeat_byte(0xbb))

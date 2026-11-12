@@ -14,6 +14,7 @@ use crate::chain_connection::{self, ChainWatch};
 use crate::challenge_responder::{
     ChallengeChainClient, ChallengeError, ChallengeResponse, DetectedChallenge,
 };
+use crate::gc_coordinator::{CanonicalBucketState, GcChainClient};
 use crate::Error;
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
@@ -565,49 +566,97 @@ impl SubxtChainClient {
 
         Ok(endpoints)
     }
+}
 
-    /// Parse a BucketSnapshot value from scale_value.
-    fn parse_bucket_snapshot_value<T>(value: &subxt::ext::scale_value::Value<T>) -> BucketSnapshot {
-        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
+#[async_trait::async_trait]
+impl GcChainClient for SubxtChainClient {
+    async fn fetch_canonical_bucket(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<CanonicalBucketState, ChainClientError> {
+        // `unvalidated`: see the `storage-subxt` crate docs.
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .buckets()
+            .unvalidated();
 
-        let mmr_root = if let Some(field0) = value.at(0) {
-            if let ValueDef::Composite(Composite::Unnamed(bytes_vec)) = &field0.value {
-                let bytes: Vec<u8> = bytes_vec
-                    .iter()
-                    .filter_map(|v| {
-                        if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                            Some(*n as u8)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if bytes.len() == 32 {
-                    H256::from_slice(&bytes)
-                } else {
-                    H256::zero()
-                }
-            } else {
-                H256::zero()
-            }
-        } else {
-            H256::zero()
+        let at = self.at_current_block().await?;
+        let block_number = at.block_number();
+        let next_bucket_id = at
+            .storage()
+            .fetch(
+                storage_subxt::api::storage()
+                    .storage_provider()
+                    .next_bucket_id()
+                    .unvalidated(),
+                (),
+            )
+            .await
+            .map_err(|e| ChainClientError::query("next bucket id", e))?
+            .decode()
+            .map_err(|e| ChainClientError::decode("next bucket id", e))?;
+
+        let Some(value) = at
+            .storage()
+            .try_fetch(storage_address, (bucket_id,))
+            .await
+            .map_err(|e| ChainClientError::query("bucket", e))?
+        else {
+            // Authoritative "no bucket row" — distinct from a fetch failure,
+            // which propagates as Err (the GC fails closed on it).
+            return Ok(CanonicalBucketState {
+                block_number,
+                next_bucket_id,
+                ..CanonicalBucketState::default()
+            });
         };
 
-        let leaf_count = if let Some(field2) = value.at(2) {
-            if let ValueDef::Primitive(Primitive::U128(n)) = &field2.value {
-                *n as u64
-            } else {
-                0
-            }
-        } else {
-            0
+        let bucket = value
+            .decode()
+            .map_err(|e| ChainClientError::decode("bucket", e))?;
+
+        Ok(CanonicalBucketState {
+            block_number,
+            exists: true,
+            next_bucket_id,
+            frozen_start_seq: bucket.frozen_start_seq,
+            canonical_start_seq: bucket.snapshot.map(|s| s.commitment.start_seq),
+        })
+    }
+
+    async fn fetch_agreement_max_bytes(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<u64>, ChainClientError> {
+        // `unvalidated`: see the `storage-subxt` crate docs.
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .storage_agreements()
+            .unvalidated();
+
+        let at = self.at_current_block().await?;
+
+        let our_account = subxt::utils::AccountId32(self.signer.public_key().0);
+        let Some(value) = at
+            .storage()
+            .try_fetch(storage_address, (bucket_id, our_account))
+            .await
+            .map_err(|e| ChainClientError::query("storage agreement", e))?
+        else {
+            return Ok(None);
         };
 
-        BucketSnapshot {
-            mmr_root,
-            leaf_count,
-        }
+        let agreement = value
+            .decode()
+            .map_err(|e| ChainClientError::decode("storage agreement", e))?;
+        Ok(Some(agreement.max_bytes))
+    }
+
+    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, ChainClientError> {
+        let challenges = ChallengeChainClient::poll_challenges(self)
+            .await
+            .map_err(|e| ChainClientError::query("pending challenges", e))?;
+        Ok(challenges.iter().any(|c| c.bucket_id == bucket_id))
     }
 }
 
@@ -660,44 +709,42 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<BucketSnapshot, ChainClientError> {
-        use subxt::ext::scale_value::ValueDef;
-
-        let storage_address =
-            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
+        // Never treat a fetch error as "no snapshot" — the GC erases
+        // data based on this answer.
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .buckets()
+            .unvalidated();
 
         let at = self.at_current_block().await?;
 
-        match at
+        let Some(value) = at
             .storage()
-            .try_fetch(storage_address, (Value::u128(bucket_id as u128),))
+            .try_fetch(storage_address, (bucket_id,))
             .await
-        {
-            Ok(Some(value)) => {
-                use subxt::ext::scale_value::At;
-                let decoded = value
-                    .decode()
-                    .map_err(|e| ChainClientError::decode("bucket", e))?;
-
-                if let Some(snapshot_opt) = decoded.at(4) {
-                    if let ValueDef::Variant(variant) = &snapshot_opt.value {
-                        if variant.name == "Some" {
-                            if let Some(snapshot_val) = variant.values.values().next() {
-                                return Ok(Self::parse_bucket_snapshot_value(snapshot_val));
-                            }
-                        }
-                    }
-                }
-
-                Ok(BucketSnapshot {
-                    mmr_root: H256::zero(),
-                    leaf_count: 0,
-                })
-            }
-            _ => Ok(BucketSnapshot {
+            .map_err(|e| ChainClientError::query("bucket", e))?
+        else {
+            // No such bucket: nothing canonical yet.
+            return Ok(BucketSnapshot {
                 mmr_root: H256::zero(),
                 leaf_count: 0,
-            }),
-        }
+            });
+        };
+
+        let bucket = value
+            .decode()
+            .map_err(|e| ChainClientError::decode("bucket", e))?;
+
+        Ok(match bucket.snapshot {
+            Some(snapshot) => BucketSnapshot {
+                mmr_root: H256::from(snapshot.commitment.mmr_root.0),
+                leaf_count: snapshot.commitment.leaf_count,
+            },
+            None => BucketSnapshot {
+                mmr_root: H256::zero(),
+                leaf_count: 0,
+            },
+        })
     }
 
     async fn fetch_primary_endpoints(
@@ -1063,6 +1110,55 @@ impl ChallengeChainClient for SubxtChainClient {
         let tx = storage_subxt::api::tx()
             .storage_provider()
             .respond_to_challenge(RuntimeChallengeId { deadline, index }, response);
+
+        // Zero only when success was inferred from a duplicate rejection, where
+        // the block that took the response is genuinely unknown.
+        let block_hash = self
+            .submit_and_finalize(&tx, "respond_to_challenge")
+            .await
+            .map_err(|e| ChallengeError::Chain {
+                reason: e.to_string(),
+            })?;
+
+        Ok(block_hash.unwrap_or_default())
+    }
+
+    async fn submit_deleted_response(
+        &self,
+        challenge_id: (u32, u16),
+        receipt: &provider_challenge::DeletionReceipt,
+    ) -> Result<H256, ChallengeError> {
+        let challenge_id_val = value!({
+            deadline: challenge_id.0 as u128,
+            index: challenge_id.1 as u128
+        });
+
+        let signature_val = match &receipt.signature {
+            sp_runtime::MultiSignature::Sr25519(sig) => {
+                value!(Sr25519(Value::from_bytes(sig.0.as_slice())))
+            }
+            sp_runtime::MultiSignature::Ed25519(sig) => {
+                value!(Ed25519(Value::from_bytes(sig.0.as_slice())))
+            }
+            other => {
+                return Err(ChallengeError::Chain {
+                    reason: format!("unsupported receipt signature scheme: {other:?}"),
+                })
+            }
+        };
+
+        let response_val = value!(Deleted {
+            new_mmr_root: Value::from_bytes(receipt.mmr_root.as_bytes()),
+            new_start_seq: receipt.new_start_seq as u128,
+            admin: Value::from_bytes(<[u8; 32]>::from(receipt.admin.clone())),
+            admin_signature: signature_val
+        });
+
+        let tx = subxt::dynamic::tx(
+            "StorageProvider",
+            "respond_to_challenge",
+            vec![challenge_id_val, response_val],
+        );
 
         // Zero only when success was inferred from a duplicate rejection, where
         // the block that took the response is genuinely unknown.

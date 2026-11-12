@@ -69,6 +69,14 @@ impl ChallengeChainClient for MockChallengeClient {
         self.submitted.lock().unwrap().push(challenge_id);
         Ok(H256::zero())
     }
+
+    async fn submit_deleted_response(
+        &self,
+        _challenge_id: (u32, u16),
+        _receipt: &provider_challenge::DeletionReceipt,
+    ) -> Result<H256, provider_challenge::ChallengeError> {
+        unimplemented!("event_fanout tests never submit Deleted responses")
+    }
 }
 
 /// Config with the safety net disabled: only the event path may act.
@@ -432,14 +440,20 @@ async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
 
     // A client checkpoint on a bucket we do NOT hold is irrelevant.
     events_tx
-        .send(BlockEvent::BucketCheckpointed { bucket_id: 999 })
+        .send(BlockEvent::BucketCheckpointed {
+            bucket_id: 999,
+            start_seq: 0,
+        })
         .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(mock.duty_passes.load(Ordering::SeqCst), 0);
 
     // One on bucket 7 drives the full duty pass.
     events_tx
-        .send(BlockEvent::BucketCheckpointed { bucket_id: 7 })
+        .send(BlockEvent::BucketCheckpointed {
+            bucket_id: 7,
+            start_seq: 0,
+        })
         .unwrap();
     let results_ref = Arc::clone(&results);
     assert!(

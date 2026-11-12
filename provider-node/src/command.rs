@@ -11,8 +11,9 @@ use crate::{
     membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
-    ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
+    ChallengeResponderHandle, GcCoordinator, GcCoordinatorConfig, GcCoordinatorHandle,
+    ProviderDeps, ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    ReplicaSyncCoordinatorHandle,
 };
 use clap::Parser;
 use provider_auth::Authenticator;
@@ -111,29 +112,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let deps = ProviderDeps { storage, auth };
 
-    // Resolve provider identity
-    let state = match &seed {
-        Some(seed) => {
-            let state = ProviderState::with_seed_scheme(deps, seed, cli.key.key_scheme)?;
-            tracing::info!(
-                "Signing enabled for account: {} (scheme: {:?})",
-                state.provider_id,
-                cli.key.key_scheme
-            );
-            state
-        }
-        None => {
-            tracing::warn!(
-                "No --keyfile set, using --provider-id without signing: {}",
-                provider_id
-            );
-            ProviderState::with_provider_id(deps, provider_id)
-        }
-    }
-    .with_cors_origins(cli.rpc.cors_allowed_origins.clone());
-
-    let state = Arc::new(state);
-
     // The signing chain client shared by every coordinator: one signer (the
     // provider's own account) over the shared watch connection; coordinators
     // each get a cheap clone. Requires a signing key, so this is only
@@ -149,10 +127,41 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         None => None,
     };
 
+    // Resolve provider identity
+    let state = Arc::new(
+        match &seed {
+            Some(seed) => {
+                let state = ProviderState::with_seed_scheme(deps, seed, cli.key.key_scheme)?;
+                tracing::info!(
+                    "Signing enabled for account: {} (scheme: {:?})",
+                    state.provider_id,
+                    cli.key.key_scheme
+                );
+                state
+            }
+            None => {
+                tracing::warn!(
+                    "No --keyfile set, using --provider-id without signing: {}",
+                    provider_id
+                );
+                ProviderState::with_provider_id(deps, provider_id)
+            }
+        }
+        .with_cors_origins(cli.rpc.cors_allowed_origins.clone())
+        // The /delete frozen check reads chain state through the same
+        // client; nodes without one skip the check.
+        .with_gc_chain(
+            chain_client
+                .as_ref()
+                .map(|c| Arc::new(c.clone()) as Arc<dyn crate::gc_coordinator::GcChainClient>),
+        ),
+    );
+
     // Subscribe the coordinators before the follower starts, so none of them
     // can miss the initial `Resubscribed` bootstrap event.
     let replica_events = events_tx.subscribe();
     let challenge_events = events_tx.subscribe();
+    let gc_events = events_tx.subscribe();
 
     // Start optional background services (failures are non-fatal)
     let follower = Arc::new(SubxtChainFollower::new(transport, chain_tx));
@@ -163,6 +172,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _challenge_responder_handle =
         start_challenge_responder(&cli, chain_client.as_ref(), challenge_events, state.clone())
             .await;
+    let _gc_handle = start_gc_coordinator(chain_client.as_ref(), gc_events, state.clone());
 
     // Sync the on-chain multiaddr. Reuses the chain client connected above, so
     // this only runs when that connection succeeded (which also implies a
@@ -225,6 +235,26 @@ fn start_chain_state_coordinator(
 
     tracing::info!("Chain-state coordinator started (retries until the chain is reachable)");
     Some(coordinator.start())
+}
+
+/// Start the GC coordinator, which physically erases pruned/torn-down data
+/// once on-chain liability has passed and keeps bucket quotas synced from
+/// agreements. Chainless nodes (no signing key/connection) run without it:
+/// nothing can be checkpointed or challenged, so stashes simply persist.
+fn start_gc_coordinator(
+    chain_client: Option<&SubxtChainClient>,
+    events_rx: BlockEventRx,
+    state: Arc<ProviderState>,
+) -> Option<GcCoordinatorHandle> {
+    let chain_client = chain_client?.clone();
+
+    let coordinator = GcCoordinator::new(
+        GcCoordinatorConfig::default(),
+        state,
+        Arc::new(chain_client),
+    );
+    tracing::info!("GC coordinator started");
+    Some(coordinator.start(events_rx))
 }
 
 async fn start_replica_sync_coordinator(

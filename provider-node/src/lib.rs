@@ -17,6 +17,7 @@ pub mod cli;
 pub mod command;
 pub mod error;
 pub(crate) mod event_decoding;
+pub mod gc_coordinator;
 pub mod membership;
 pub mod negotiate;
 pub(crate) mod subxt_client;
@@ -25,6 +26,9 @@ pub mod types;
 pub use api::create_router;
 pub use challenge_proofs::StorageProofSource;
 pub use error::Error;
+pub use gc_coordinator::{
+    CanonicalBucketState, GcChainClient, GcCoordinator, GcCoordinatorConfig, GcCoordinatorHandle,
+};
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
 pub use provider_challenge::{
     self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
@@ -81,6 +85,16 @@ pub struct ProviderState {
     /// writer for `current_anchor_block`, `constants`, and `provider_info`.
     /// `/negotiate` gates on all three before signing.
     pub chain_state: Arc<ChainState>,
+    /// Read-only chain client for the `/delete` frozen check (shared with
+    /// the GC coordinator, which owns the trait). The API holding a chain
+    /// read is the established pattern here — `auth` already resolves roles
+    /// through a chain-backed membership query — and this one must be a
+    /// FRESH read: a locally-executed prune cannot be undone, so pruning a
+    /// just-frozen bucket on a stale answer would wedge it for appends
+    /// forever. `None` when the node runs without a chain connection (no
+    /// signing key configured — local dev and tests): nothing can be
+    /// frozen there, so the check is skipped.
+    pub gc_chain: Option<Arc<dyn gc_coordinator::GcChainClient>>,
 }
 
 impl ProviderState {
@@ -101,6 +115,7 @@ impl ProviderState {
             auth,
             cors_allowed_origins: None,
             chain_state: Arc::new(ChainState::default()),
+            gc_chain: None,
         }
     }
 
@@ -149,6 +164,16 @@ impl ProviderState {
     /// the permissive policy; `Some(list)` restricts to exactly those origins.
     pub fn with_cors_origins(mut self, origins: Option<Vec<String>>) -> Self {
         self.cors_allowed_origins = origins;
+        self
+    }
+
+    /// Attach the chain reads used by the `/delete` frozen check.
+    /// Without them the check is skipped.
+    pub fn with_gc_chain(
+        mut self,
+        gc_chain: Option<Arc<dyn gc_coordinator::GcChainClient>>,
+    ) -> Self {
+        self.gc_chain = gc_chain;
         self
     }
 

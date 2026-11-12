@@ -231,6 +231,28 @@ pub struct DeleteResponse {
     pub provider_signature: String,
 }
 
+/// Request to store an admin-signed deletion authorization for a prune.
+/// The signature is a SCALE-encoded `MultiSignature` over
+/// `CommitmentPayload(bucket_id, Commitment { mmr_root, new_start_seq, 0 })`.
+/// `admin` must be the account that signed the request, and the signature must
+/// verify against it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteConfirmRequest {
+    pub bucket_id: BucketId,
+    pub mmr_root: String,
+    pub new_start_seq: u64,
+    /// Admin account, 32 raw bytes hex-encoded.
+    pub admin: String,
+    /// SCALE-encoded `MultiSignature`, hex-encoded.
+    pub signature: String,
+}
+
+/// Response from the deletion confirmation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteConfirmResponse {
+    pub stored: bool,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Health/Info Types
 // ─────────────────────────────────────────────────────────────────────────────

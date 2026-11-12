@@ -2,11 +2,12 @@
 
 //! Integration tests for the challenge responder.
 
-use super::{alice_account, test_state, test_state_with_data, wait_for};
+use super::{alice_account, signed_receipt, test_state, test_state_with_data, wait_for};
+use provider_storage::ChunkTreeNode;
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_primitives::{BucketId, MmrLeaf};
+use storage_primitives::{hash_leaf, BucketId, MmrLeaf};
 use storage_provider_node::challenge_responder::ChallengeError;
 use storage_provider_node::{
     ChallengeChainClient, ChallengeProofSource, ChallengeResponder, ChallengeResponderConfig,
@@ -16,6 +17,7 @@ use storage_provider_node::{
 struct MockChallengeChainClient {
     challenges: Mutex<Vec<DetectedChallenge>>,
     submitted: Mutex<Vec<((u32, u16), ChallengeResponse)>>,
+    deleted_submitted: Mutex<Vec<((u32, u16), u64)>>,
     submit_error: Mutex<Option<String>>,
 }
 
@@ -24,6 +26,7 @@ impl MockChallengeChainClient {
         Self {
             challenges: Mutex::new(Vec::new()),
             submitted: Mutex::new(Vec::new()),
+            deleted_submitted: Mutex::new(Vec::new()),
             submit_error: Mutex::new(None),
         }
     }
@@ -79,6 +82,18 @@ impl ChallengeChainClient for MockChallengeChainClient {
         }
         Ok(H256::zero())
     }
+
+    async fn submit_deleted_response(
+        &self,
+        challenge_id: (u32, u16),
+        receipt: &provider_challenge::DeletionReceipt,
+    ) -> Result<H256, ChallengeError> {
+        self.deleted_submitted
+            .lock()
+            .unwrap()
+            .push((challenge_id, receipt.new_start_seq));
+        Ok(H256::zero())
+    }
 }
 
 /// A [`ChallengeProofSource`] that delegates `get_mmr_proof_for_commitment` to a real
@@ -106,6 +121,14 @@ impl ChallengeProofSource for StepTwoBackendFailure {
         Err(ChallengeError::Storage {
             reason: "simulated RocksDB outage".to_string(),
         })
+    }
+
+    fn deletion_receipt_covering(
+        &self,
+        bucket_id: BucketId,
+        seq: u64,
+    ) -> Result<Option<provider_challenge::DeletionReceipt>, ChallengeError> {
+        self.0.deletion_receipt_covering(bucket_id, seq)
     }
 }
 
@@ -214,6 +237,127 @@ async fn test_stop_command() {
 }
 
 // --- Tests with realistic storage data ---
+
+#[tokio::test(start_paused = true)]
+async fn erased_leaves_are_defended_with_the_deletion_receipt() {
+    // A challenge cites a commitment whose leaves were pruned, confirmed by
+    // the admin, and physically erased: the proof cannot be rebuilt, but the
+    // stored receipt defends via the Deleted response.
+    let (state, challenge, _dir) = test_state_with_data();
+    let post_root = state.storage.delete_before(1, 1).unwrap().mmr_root;
+    state
+        .storage
+        .attach_deletion_receipt(1, signed_receipt(1, post_root, 1))
+        .unwrap();
+    state.storage.erase_pruned_range(1, 0).unwrap();
+
+    // `challenge` cites leaf 0 of the erased (pre-prune) commitment.
+    let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
+
+    let config = ChallengeResponderConfig {
+        poll_interval: Duration::from_millis(50),
+        auto_respond: true,
+        ..ChallengeResponderConfig::new(alice_account())
+    };
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
+
+    let mock_ref = Arc::clone(&mock);
+    assert!(
+        wait_for(5, 10, || {
+            let m = Arc::clone(&mock_ref);
+            async move {
+                m.deleted_submitted
+                    .lock()
+                    .unwrap()
+                    .contains(&((1000, 0), 1))
+            }
+        })
+        .await,
+        "the Deleted response should be submitted with the stored receipt"
+    );
+    assert!(
+        mock.submitted.lock().unwrap().is_empty(),
+        "no Proof response should be attempted for erased leaves"
+    );
+    handle.stop().await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn live_leaf_of_an_erased_commitment_is_answered() {
+    // A commitment signed before a prune covers one erased leaf and one live
+    // leaf. The receipt only defends leaves below its new_start_seq, so a
+    // challenge on the live leaf needs another response. Without one the
+    // provider is slashed although it still stores the challenged data.
+    let (state, first_leaf_challenge, _dir) = test_state_with_data();
+    let live_chunk = b"chunk-that-stays-after-the-prune";
+    let live_chunk_hash = hash_leaf(live_chunk);
+    state
+        .storage
+        .store_node(
+            1,
+            live_chunk_hash,
+            ChunkTreeNode::Chunk(live_chunk.to_vec()),
+        )
+        .unwrap();
+    let pre_prune = state.storage.commit(1, vec![live_chunk_hash]).unwrap();
+    let post_root = state.storage.delete_before(1, 1).unwrap().mmr_root;
+    state
+        .storage
+        .attach_deletion_receipt(1, signed_receipt(1, post_root, 1))
+        .unwrap();
+    state.storage.erase_pruned_range(1, 0).unwrap();
+
+    let challenge = DetectedChallenge {
+        commitment: storage_primitives::Commitment {
+            mmr_root: pre_prune.mmr_root,
+            start_seq: pre_prune.start_seq,
+            leaf_count: pre_prune.leaf_count,
+        },
+        target: storage_primitives::ChunkLocation {
+            leaf_index: 1,
+            chunk_index: 0,
+        },
+        ..first_leaf_challenge
+    };
+    let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
+    let config = ChallengeResponderConfig {
+        poll_interval: Duration::from_millis(50),
+        auto_respond: true,
+        ..ChallengeResponderConfig::new(alice_account())
+    };
+    let responder = ChallengeResponder::new(
+        config,
+        state.challenge_proof_source(),
+        Box::new(Arc::clone(&mock)),
+    );
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
+
+    let mock_ref = Arc::clone(&mock);
+    assert!(
+        wait_for(5, 10, || {
+            let m = Arc::clone(&mock_ref);
+            async move { !m.submitted.lock().unwrap().is_empty() }
+        })
+        .await,
+        "the challenge on the live leaf should be answered"
+    );
+    assert!(
+        mock.deleted_submitted.lock().unwrap().is_empty(),
+        "the receipt does not cover a leaf at its new_start_seq; Deleted would fail on-chain"
+    );
+    handle.stop().await.unwrap();
+}
 
 #[tokio::test(start_paused = true)]
 async fn test_successful_challenge_response() {
@@ -477,6 +621,14 @@ impl ChallengeProofSource for EditLeaf {
         chunk_index: u64,
     ) -> Result<(Vec<u8>, Vec<H256>), ChallengeError> {
         self.0.get_chunk_at_index(data_root, chunk_index)
+    }
+
+    fn deletion_receipt_covering(
+        &self,
+        bucket_id: BucketId,
+        seq: u64,
+    ) -> Result<Option<provider_challenge::DeletionReceipt>, ChallengeError> {
+        self.0.deletion_receipt_covering(bucket_id, seq)
     }
 }
 
