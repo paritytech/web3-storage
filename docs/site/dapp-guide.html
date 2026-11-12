@@ -113,7 +113,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
   </li>
   <li>
     <h3>Read and verify</h3>
-    <p>Read with <code>GET /read?bucket_id=…&amp;data_root=…&amp;offset=…&amp;length=…</code> or <code>GET /node?bucket_id=…&amp;hash=…</code> from any primary or replica, and check each chunk against its hash. Every read is a storage check. In the background, fetch a few random chunks per week and record failures and latency per provider. Three random chunks per week detect a provider that deleted 10% of the data with 98% probability within 13 weeks.</p>
+    <p>Read with <code>GET /read?bucket_id=…&amp;data_root=…&amp;offset=…&amp;length=…</code> or <code>GET /node?bucket_id=…&amp;hash=…</code> from any primary or replica, and check each chunk against its hash. One <code>GET /read</code> returns at most 64 chunks (16 MiB); a longer range fails with <code>400 read_too_large</code>, so read it in consecutive requests. Every read is a storage check. In the background, fetch a few random chunks per week and record failures and latency per provider. Three random chunks per week detect a provider that deleted 10% of the data with 98% probability within 13 weeks.</p>
     <p class="see">Diagram: <a href="10-read-and-verify.html">10 Read and verify</a></p>
   </li>
   <li>
