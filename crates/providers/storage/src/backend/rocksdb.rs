@@ -10,7 +10,7 @@
 use super::types::FORMAT_VERSION;
 use super::{
     canonical_size, BucketInfo, BucketState, ChunkTreeNode, CommitOutcome, DeletionReceipt,
-    EraseOutcome, PrunedRange, PrunedRangeInfo, StorageBackend, StorageStats,
+    EraseOutcome, NodeShape, PrunedRange, PrunedRangeInfo, StorageBackend, StorageStats,
 };
 use crate::error::Error;
 use codec::{DecodeAll, Encode};
@@ -46,7 +46,7 @@ const COLUMN_FAMILIES: [&str; 5] = [
 
 mod refcounts;
 
-use refcounts::{decode_refcount, encode_refcount};
+use refcounts::{decode_refcount, encode_refcount, NodeKind, RefcountEntry};
 
 /// RocksDB key for the persisted format version.
 const KEY_FORMAT_VERSION: &[u8] = b"format_version";
@@ -132,6 +132,13 @@ impl DiskStorage {
     /// `(count, charged_bucket, size)`.
     #[cfg(test)]
     fn refcount_entry(&self, hash: &H256) -> Result<Option<(u64, u64, u64)>, Error> {
+        Ok(self
+            .refcount_row(hash)?
+            .map(|e| (e.count, e.charged_bucket, e.size)))
+    }
+
+    /// Read a CF_REFCOUNTS entry outside a transaction.
+    fn refcount_row(&self, hash: &H256) -> Result<Option<RefcountEntry>, Error> {
         let cf = self
             .db
             .cf_handle(CF_REFCOUNTS)
@@ -142,14 +149,13 @@ impl DiskStorage {
             .transpose()
     }
 
-    /// Lock a CF_REFCOUNTS entry for `txn` and decode it:
-    /// `(count, charged_bucket, size)`.
+    /// Lock a CF_REFCOUNTS entry for `txn` and decode it.
     fn refcount_for_update(
         &self,
         txn: &Transaction<'_, TransactionDB>,
         bucket_id: BucketId,
         hash: &H256,
-    ) -> Result<Option<(u64, u64, u64)>, Error> {
+    ) -> Result<Option<RefcountEntry>, Error> {
         let cf = self
             .db
             .cf_handle(CF_REFCOUNTS)
@@ -419,7 +425,16 @@ impl DiskStorage {
                 .ok_or(Error::ColumnFamilyMissing(CF_REFCOUNTS))?;
             // Charge record: count stays 0 until a commit references the
             // node; erasure credits `bucket_id`'s used_bytes by `charge`.
-            txn.put_cf(&cf_refcounts, key, encode_refcount(0, bucket_id, charge))
+            let entry = RefcountEntry {
+                count: 0,
+                charged_bucket: bucket_id,
+                size: charge,
+                kind: match node {
+                    ChunkTreeNode::Chunk(_) => NodeKind::Chunk,
+                    ChunkTreeNode::Internal { .. } => NodeKind::Internal,
+                },
+            };
+            txn.put_cf(&cf_refcounts, key, encode_refcount(&entry))
                 .map_err(|error| bucket_write_error(bucket_id, error))?;
             self.put_bucket(&txn, bucket_id, &bucket)?;
             txn.commit()?;
@@ -434,6 +449,25 @@ impl DiskStorage {
     /// backend itself failed - the node may still be there.
     pub fn get_node(&self, hash: &H256) -> Result<Option<ChunkTreeNode>, Error> {
         self.read_decoded(CF_NODES, hash.as_bytes())
+    }
+
+    /// Get a node's shape by hash, without reading a chunk's data.
+    ///
+    /// `Ok(None)` means the node genuinely does not exist. `Err` means the
+    /// backend itself failed - the node may still be there.
+    pub fn node_shape(&self, hash: &H256) -> Result<Option<NodeShape>, Error> {
+        let Some(entry) = self.refcount_row(hash)? else {
+            return Ok(None);
+        };
+        match entry.kind {
+            NodeKind::Chunk => Ok(Some(NodeShape::Chunk { size: entry.size })),
+            NodeKind::Internal => match self.get_node(hash)? {
+                Some(ChunkTreeNode::Internal { left, right }) => {
+                    Ok(Some(NodeShape::Internal { left, right }))
+                }
+                _ => Err(Error::NodeNotFound(*hash)),
+            },
+        }
     }
 
     /// Whether a node is stored under `hash`, without decoding it. `Err`
@@ -490,10 +524,10 @@ impl DiskStorage {
         let mut data_sizes = Vec::with_capacity(data_roots.len());
         for root in &data_roots {
             let mut leaves = Vec::new();
-            self.walk_tree(*root, &mut |hash, node| {
+            self.walk_tree(*root, &mut |hash, shape| {
                 *increments.entry(hash).or_default() += 1;
-                if let ChunkTreeNode::Chunk(data) = node {
-                    leaves.push((hash, data.len()));
+                if let NodeShape::Chunk { size } = shape {
+                    leaves.push((hash, *size as usize));
                 }
             })?;
             data_sizes.push(canonical_size(*root, &leaves)?);
@@ -558,15 +592,15 @@ impl DiskStorage {
             // deleted, so both use one stored node. A's erase deletes the
             // node between B's walk and this transaction. Recreating the row
             // would commit a leaf whose data no longer exists.
-            let (count, charged_bucket, size) = self
+            let entry = self
                 .refcount_for_update(&txn, bucket_id, &hash)?
                 .ok_or(Error::NodeNotFound(hash))?;
-            txn.put_cf(
-                &cf_refcounts,
-                hash.as_bytes(),
-                encode_refcount(count.saturating_add(n), charged_bucket, size),
-            )
-            .map_err(|error| bucket_write_error(bucket_id, error))?;
+            let updated = RefcountEntry {
+                count: entry.count.saturating_add(n),
+                ..entry
+            };
+            txn.put_cf(&cf_refcounts, hash.as_bytes(), encode_refcount(&updated))
+                .map_err(|error| bucket_write_error(bucket_id, error))?;
         }
         self.put_bucket(&txn, bucket_id, &bucket)?;
         txn.commit()?;
@@ -849,9 +883,7 @@ impl DiskStorage {
         // Per charged bucket: (nodes deleted, bytes freed).
         let mut credits_by_bucket: HashMap<BucketId, (u64, u64)> = HashMap::new();
         for (hash, n) in walk.decrements {
-            let Some((count, charged_bucket, size)) =
-                self.refcount_for_update(&txn, bucket_id, &hash)?
-            else {
+            let Some(entry) = self.refcount_for_update(&txn, bucket_id, &hash)? else {
                 tracing::warn!(
                     bucket_id,
                     hash = %format!("{:#x}", hash),
@@ -859,23 +891,23 @@ impl DiskStorage {
                 );
                 continue;
             };
-            let new_count = count.saturating_sub(n);
+            let new_count = entry.count.saturating_sub(n);
             if new_count == 0 {
                 txn.delete_cf(&cf_nodes, hash.as_bytes())
                     .map_err(write_error)?;
                 txn.delete_cf(&cf_refcounts, hash.as_bytes())
                     .map_err(write_error)?;
                 nodes_deleted += 1;
-                let credit = credits_by_bucket.entry(charged_bucket).or_default();
+                let credit = credits_by_bucket.entry(entry.charged_bucket).or_default();
                 credit.0 += 1;
-                credit.1 += size;
+                credit.1 += entry.size;
             } else {
-                txn.put_cf(
-                    &cf_refcounts,
-                    hash.as_bytes(),
-                    encode_refcount(new_count, charged_bucket, size),
-                )
-                .map_err(write_error)?;
+                let updated = RefcountEntry {
+                    count: new_count,
+                    ..entry
+                };
+                txn.put_cf(&cf_refcounts, hash.as_bytes(), encode_refcount(&updated))
+                    .map_err(write_error)?;
             }
         }
         let bytes_freed: u64 = credits_by_bucket.values().map(|(_, bytes)| bytes).sum();
@@ -1026,6 +1058,10 @@ impl StorageBackend for DiskStorage {
         self.get_node(hash)
     }
 
+    fn node_shape(&self, hash: &H256) -> Result<Option<NodeShape>, Error> {
+        self.node_shape(hash)
+    }
+
     fn check_exists(
         &self,
         bucket_id: BucketId,
@@ -1134,6 +1170,9 @@ mod tests {
         fn get_node(&self, hash: &H256) -> Result<Option<ChunkTreeNode>, Error> {
             self.get_node_calls.fetch_add(1, Ordering::Relaxed);
             self.inner.get_node(hash)
+        }
+        fn node_shape(&self, hash: &H256) -> Result<Option<NodeShape>, Error> {
+            self.inner.node_shape(hash)
         }
         fn init_bucket(&self, _: BucketId, _: u64) -> Result<(), Error> {
             unreachable!("read-only")
@@ -1295,6 +1334,35 @@ mod tests {
                 array_bytes::bytes2hex("", chunk_hash),
                 array_bytes::bytes2hex("", other_hash)
             )
+        );
+
+        // CF_REFCOUNTS: key = node hash, value = SCALE(count, charged bucket,
+        // size) as three LE u64s, then the kind: 0 for a chunk, 1 for an
+        // internal node.
+        let cf = storage.db.cf_handle(CF_REFCOUNTS).unwrap();
+        let raw = storage
+            .db
+            .get_cf(&cf, chunk_hash.as_bytes())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            array_bytes::bytes2hex("", &raw),
+            "0000000000000000\
+             0807060504030201\
+             0500000000000000\
+             00"
+        );
+        let raw = storage
+            .db
+            .get_cf(&cf, internal_hash.as_bytes())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            array_bytes::bytes2hex("", &raw),
+            "0000000000000000\
+             0807060504030201\
+             4000000000000000\
+             01"
         );
     }
 
@@ -1576,6 +1644,58 @@ mod tests {
     }
 
     #[test]
+    fn node_shape_reads_a_chunk_without_its_data() {
+        let (storage, _dir) = storage_with_bucket(1_000);
+        let hash = store_chunk_of_len(&storage, 1, 40);
+        delete_node_row(&storage, hash);
+
+        assert_eq!(
+            storage.node_shape(&hash).unwrap(),
+            Some(NodeShape::Chunk { size: 40 })
+        );
+        assert!(storage.get_node(&hash).unwrap().is_none());
+    }
+
+    #[test]
+    fn node_shape_reads_the_children_of_an_internal_node() {
+        let (storage, _dir) = storage_with_bucket(1_000);
+        let left = store_chunk_of_len(&storage, 1, 5);
+        let right = store_chunk_of_len(&storage, 2, 6);
+        let parent = store_parent(&storage, left, right);
+
+        assert_eq!(
+            storage.node_shape(&parent).unwrap(),
+            Some(NodeShape::Internal { left, right })
+        );
+    }
+
+    #[test]
+    fn node_shape_of_an_unknown_node_is_none() {
+        let (storage, _dir) = storage_with_bucket(1_000);
+        assert_eq!(storage.node_shape(&H256::repeat_byte(9)).unwrap(), None);
+    }
+
+    #[test]
+    fn node_shape_reports_a_corrupt_row_and_a_missing_internal_body() {
+        let (storage, _dir) = storage_with_bucket(1_000);
+        let left = store_chunk_of_len(&storage, 1, 5);
+        let right = store_chunk_of_len(&storage, 2, 6);
+        let parent = store_parent(&storage, left, right);
+
+        delete_node_row(&storage, parent);
+        assert!(matches!(
+            storage.node_shape(&parent),
+            Err(Error::NodeNotFound(hash)) if hash == parent
+        ));
+
+        corrupt(&storage, CF_REFCOUNTS, left.as_bytes());
+        assert!(matches!(
+            storage.node_shape(&left),
+            Err(Error::Serialization(_))
+        ));
+    }
+
+    #[test]
     fn get_node_round_trips_both_variants() {
         let (storage, _dir) = storage_with_bucket(1_000);
         let bucket_id: BucketId = 1;
@@ -1750,13 +1870,22 @@ mod tests {
             .unwrap();
     }
 
+    /// Remove a node's CF_NODES record and keep its CF_REFCOUNTS record,
+    /// standing in for a chunk whose data a walk must not need.
+    fn delete_node_row(storage: &DiskStorage, hash: H256) {
+        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+        storage.db.delete_cf(&cf, hash.as_bytes()).unwrap();
+    }
+
     /// Remove a node's raw record entirely, standing in for the node
     /// genuinely never having been written (or having been pruned) rather
     /// than corrupted - `store_node`'s children-exist check would otherwise
     /// make it impossible to reference a missing child through the public
-    /// API alone.
+    /// API alone. Deletes the node's CF_REFCOUNTS record too, as an erase
+    /// does.
     fn delete_node(storage: &DiskStorage, hash: H256) {
-        let cf = storage.db.cf_handle(CF_NODES).unwrap();
+        delete_node_row(storage, hash);
+        let cf = storage.db.cf_handle(CF_REFCOUNTS).unwrap();
         storage.db.delete_cf(&cf, hash.as_bytes()).unwrap();
     }
 
@@ -1828,11 +1957,43 @@ mod tests {
         // Chunk index 1 (chunk-1) is healthy and was never actually removed,
         // but a traversal that silently skips the unreadable c0 would only
         // see one chunk and report index 1 as past the end.
-        let err = storage.get_chunk_at_index(root, 1).unwrap_err();
+        assert!(storage.get_chunk_at_index(root, 1).is_ok());
+        let err = storage.get_chunk_at_index(root, 0).unwrap_err();
         assert!(
             matches!(err, Error::Serialization(_)),
             "expected Serialization, got {err:?}"
         );
+    }
+
+    /// A proof reads one chunk's data: the chunk it returns.
+    #[test]
+    fn proof_reads_only_the_proven_chunk() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let leaves: Vec<H256> = [1, 2, 3, 4, 5].map(|b| store_chunk(&storage, b)).to_vec();
+        let root = build_merkle_tree(&storage, BUCKET, &leaves).unwrap();
+
+        let reads = CountingReads::new(&storage);
+        for index in 0..5 {
+            reads.get_chunk_at_index(root, index).unwrap();
+            assert_eq!(
+                reads.get_node_calls.swap(0, Ordering::Relaxed),
+                1,
+                "index {index}"
+            );
+        }
+        assert_eq!(reads.get_chunks_in_range(root, 1..4).unwrap().len(), 3);
+        assert_eq!(reads.get_node_calls.swap(0, Ordering::Relaxed), 3);
+
+        // Every other chunk's data is gone; the remaining one still proves.
+        for leaf in [leaves[0], leaves[1], leaves[2], leaves[4]] {
+            delete_node_row(&storage, leaf);
+        }
+        let (data, proof) = storage.get_chunk_at_index(root, 3).unwrap();
+        assert_eq!(data, vec![4u8; DEFAULT_CHUNK_SIZE as usize]);
+        assert!(verify_merkle_proof(leaves[3], 3, 5, &proof, &root));
+        let range = storage.get_chunks_in_range(root, 3..4).unwrap();
+        assert_eq!(range.len(), 1);
+        assert_eq!(range[0].0, leaves[3]);
     }
 
     #[test]
@@ -2049,6 +2210,29 @@ mod tests {
     }
 
     #[test]
+    fn refcount_kind_is_set_on_store_and_kept_by_commit_and_erase() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let (root, [hash_a, hash_b]) = store_two_chunk_tree(&storage, BUCKET, 0);
+        let kinds = |storage: &DiskStorage| {
+            [root, hash_a, hash_b].map(|hash| storage.refcount_row(&hash).unwrap().unwrap().kind)
+        };
+        let expected = [NodeKind::Internal, NodeKind::Chunk, NodeKind::Chunk];
+
+        assert_eq!(kinds(&storage), expected);
+
+        storage.commit(BUCKET, vec![root]).unwrap();
+        storage.commit(BUCKET, vec![root]).unwrap();
+        assert_eq!(storage.refcount_entry(&root).unwrap(), Some((2, 1, 64)));
+        assert_eq!(kinds(&storage), expected);
+
+        // Erasing one of the two leaves lowers the counts and keeps the nodes.
+        storage.delete_before(BUCKET, 1).unwrap();
+        storage.erase_pruned_range(BUCKET, 0).unwrap();
+        assert_eq!(storage.refcount_entry(&root).unwrap(), Some((1, 1, 64)));
+        assert_eq!(kinds(&storage), expected);
+    }
+
+    #[test]
     fn shared_chunk_across_buckets_counts_twice_charges_once() {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
@@ -2072,14 +2256,50 @@ mod tests {
         assert_eq!(storage.refcount_entry(&hash).unwrap(), Some((2, 1, 16)));
     }
 
+    /// A commit and a leaf listing need each chunk's hash and size, not its
+    /// data, so they succeed with every chunk's data row gone.
+    #[test]
+    fn commit_and_leaf_listing_do_not_read_chunk_data() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let leaves = [
+            store_chunk(&storage, 1),
+            store_chunk(&storage, 2),
+            store_chunk_of_len(&storage, 3, 10),
+        ];
+        let root = build_merkle_tree(&storage, BUCKET, &leaves).unwrap();
+        for leaf in leaves {
+            delete_node_row(&storage, leaf);
+        }
+
+        let sizes = [FULL_CHUNK, FULL_CHUNK, 10];
+        let expected: Vec<(H256, usize)> = leaves
+            .iter()
+            .zip(sizes)
+            .map(|(hash, size)| (*hash, size as usize))
+            .collect();
+        assert_eq!(storage.collect_leaves(root).unwrap(), expected);
+        assert_eq!(
+            storage.canonical_data_size(root).unwrap(),
+            sizes.iter().sum::<u64>()
+        );
+
+        let outcome = storage.commit(BUCKET, vec![root]).unwrap();
+        assert_eq!(outcome.leaf_indices, vec![0]);
+        let bucket = storage.get_bucket(BUCKET).unwrap().unwrap();
+        assert_eq!(bucket.leaves[0].data_size, sizes.iter().sum::<u64>());
+        assert_eq!(storage.refcount_entry(&root).unwrap(), Some((1, 1, 64)));
+        for (leaf, size) in leaves.iter().zip(sizes) {
+            assert_eq!(storage.refcount_entry(leaf).unwrap(), Some((1, 1, size)));
+        }
+    }
+
     #[test]
     fn commit_fails_on_missing_subtree_node() {
         let (storage, _dir) = storage_with_bucket(u64::MAX);
         let (root, [hash_a, _]) = store_two_chunk_tree(&storage, BUCKET, 0);
 
         // Simulate a vanished child (e.g. erased between upload and commit).
-        let cf = storage.db.cf_handle(CF_NODES).unwrap();
-        storage.db.delete_cf(&cf, hash_a.as_bytes()).unwrap();
+        delete_node(&storage, hash_a);
 
         let err = storage.commit(BUCKET, vec![root]).unwrap_err();
         assert!(matches!(err, Error::NodeNotFound(_)), "got {err:?}");
@@ -2626,10 +2846,7 @@ mod tests {
         let (storage, _dir) = storage_with_bucket(u64::MAX);
         let leaves: Vec<H256> = [1, 2, 3].map(|b| store_chunk(&storage, b)).to_vec();
         let root = build_merkle_tree(&storage, BUCKET, &leaves).unwrap();
-        let delete = |hash: H256| {
-            let cf = storage.db.cf_handle(CF_NODES).unwrap();
-            storage.db.delete_cf(&cf, hash.as_bytes()).unwrap();
-        };
+        let delete = |hash: H256| delete_node(&storage, hash);
 
         delete(leaves[1]);
         assert!(matches!(
