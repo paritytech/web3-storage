@@ -27,11 +27,8 @@ const CHANNEL_CAPACITY: usize = 256;
 /// also bounds what a non-archive node could resolve anyway.
 const MAX_BACKFILL: u64 = 256;
 
-/// The `pallet-storage-provider` pallet (Layer 0 raw storage).
+/// The `pallet-storage-provider` pallet (buckets, agreements, challenges).
 pub const STORAGE_PROVIDER_PALLET: &str = "StorageProvider";
-
-/// The storage pallets this crate indexes.
-pub const STORAGE_PALLETS: [&str; 1] = [STORAGE_PROVIDER_PALLET];
 
 /// A decoded runtime event together with the block it was emitted in.
 #[derive(Clone, Debug)]
@@ -83,17 +80,9 @@ impl EventFilter {
     }
 
     /// Match only events from the [`StorageProvider`](STORAGE_PROVIDER_PALLET)
-    /// pallet (Layer 0 raw storage).
+    /// pallet (buckets, agreements, challenges).
     pub fn storage_provider() -> Self {
         Self::pallet(STORAGE_PROVIDER_PALLET)
-    }
-
-    /// Match only events from the [`STORAGE_PALLETS`].
-    pub fn storage_pallets() -> Self {
-        Self {
-            pallets: Some(STORAGE_PALLETS.into_iter().collect()),
-            predicate: None,
-        }
     }
 
     /// Add a pallet to the selection (narrows an [`all`](Self::all) filter).
@@ -157,7 +146,7 @@ impl EventFilter {
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut stream =
-///     EventStream::connect("ws://localhost:2222", EventFilter::storage_pallets()).await?;
+///     EventStream::connect("ws://localhost:2222", EventFilter::storage_provider()).await?;
 /// while let Some(ev) = stream.next().await {
 ///     if let api::Event::StorageProvider(event) = ev.event {
 ///         println!("block {}: {event:?}", ev.block_number);
@@ -382,24 +371,13 @@ mod tests {
 
     #[test]
     fn pallet_gate_selects_only_named_pallets() {
-        let filter = EventFilter::pallet("StorageProvider");
-        assert!(filter.matches_pallet("StorageProvider"));
+        let filter = EventFilter::storage_provider();
+        assert!(filter.matches_pallet(STORAGE_PROVIDER_PALLET));
         assert!(!filter.matches_pallet("Balances"));
 
         let filter = filter.with_pallet("Balances");
         assert!(filter.matches_pallet("Balances"));
         assert!(!filter.matches_pallet("System"));
-    }
-
-    #[test]
-    fn storage_pallets_selects_only_storage_provider() {
-        let filter = EventFilter::storage_pallets();
-        assert!(filter.matches_pallet("StorageProvider"));
-        for pallet in STORAGE_PALLETS {
-            assert!(filter.matches_pallet(pallet));
-        }
-        assert!(!filter.matches_pallet("System"));
-        assert!(!filter.matches_pallet("Balances"));
     }
 
     #[test]

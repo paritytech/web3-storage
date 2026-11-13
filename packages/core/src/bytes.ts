@@ -36,6 +36,15 @@ export function bytesEq(
   return true;
 }
 
+/** Lexicographic comparison of two byte arrays (Rust `[u8]`/`str` ordering). */
+export function compareBytes(a: Uint8Array, b: Uint8Array): number {
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return a.length - b.length;
+}
+
 /** Concatenate byte arrays into one new array. */
 export function concatBytes(...arrays: Uint8Array[]): Uint8Array {
   let total = 0;

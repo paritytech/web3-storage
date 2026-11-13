@@ -376,10 +376,10 @@ pub mod pallet {
     /// Number of unresolved challenges outstanding against a specific
     /// `(bucket, provider)` pair. Maintained in lockstep with
     /// [`PendingChallenges`] and gates that bucket's agreement teardown
-    /// (`end_agreement`, `claim_expired_agreement`) and bucket removal
-    /// (`delete_bucket`, `cleanup_bucket_internal`). An entry exists only
-    /// while the count is positive, so a bucket with no entry under its
-    /// prefix has no open challenge.
+    /// (`end_agreement`, `claim_expired_agreement`, `remove_slashed`) and
+    /// bucket removal (`delete_bucket`). An entry exists only while the count
+    /// is positive, so a bucket with no entry under its prefix has no open
+    /// challenge.
     #[pallet::storage]
     pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
         _,
@@ -548,6 +548,10 @@ pub mod pallet {
         /// Maximum storage capacity in bytes. 0 = unlimited (backward compatible).
         /// When set, provider cannot accept agreements that would exceed this capacity.
         pub max_capacity: u64,
+        /// Smallest agreement size, in bytes, that the provider accepts, for
+        /// primary and replica agreements. 0 = no minimum. Must not exceed a
+        /// non-zero `max_capacity`.
+        pub min_agreement_bytes: u64,
     }
 
     impl<T: Config> Default for ProviderSettings<T> {
@@ -560,6 +564,7 @@ pub mod pallet {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 0, // 0 = unlimited (backward compatible)
+                min_agreement_bytes: 0,
             }
         }
     }
@@ -807,6 +812,7 @@ pub mod pallet {
             mmr_proof: MmrProof,
         },
         /// Data was deleted - show newer commitment without this seq.
+        /// Primary providers only; a replica gets `InvalidDeletionClaim`.
         Deleted {
             /// Root of the newer commitment that no longer holds the
             /// challenged sequence.
@@ -820,6 +826,7 @@ pub mod pallet {
             admin_signature: sp_runtime::MultiSignature,
         },
         /// Challenged state has been superseded by canonical.
+        /// Primary providers only; a replica gets `InvalidSupersededClaim`.
         Superseded,
     }
 
@@ -1179,6 +1186,10 @@ pub mod pallet {
         InsufficientStakeForCapacity,
         /// Provider settings specify `min_duration > max_duration`.
         MinDurationExceedsMaxDuration,
+        /// Provider settings specify `min_agreement_bytes > max_capacity` while
+        /// `max_capacity` is limited. Lower `min_agreement_bytes` or raise
+        /// `max_capacity`.
+        MinAgreementBytesExceedsMaxCapacity,
         /// Provider has already announced a deregistration; the action is
         /// rejected until they complete or cancel it.
         DeregisterAnnounced,
@@ -1284,11 +1295,13 @@ pub mod pallet {
         /// unknown, or a `ChunkOutOfRange` response names a chunk the leaf has.
         /// The challenge stays open; respond again before the deadline.
         InvalidProof,
-        /// `new_start_seq` does not cover the challenged leaf, or the admin
-        /// signature does not verify. The challenge stays open.
+        /// `new_start_seq` does not cover the challenged leaf, the admin
+        /// signature does not verify, or the responder is a replica
+        /// (`Deleted` is a primary-only defense). The challenge stays open.
         InvalidDeletionClaim,
         /// No canonical snapshot replaces the challenged root and covers the
-        /// challenged leaf. The challenge stays open.
+        /// challenged leaf, or the responder is a replica (`Superseded` is a
+        /// primary-only defense). The challenge stays open.
         InvalidSupersededClaim,
         /// Only the challenger who opened the challenge may cancel it.
         NotChallengeChallenger,
@@ -1321,8 +1334,14 @@ pub mod pallet {
         /// A frozen bucket only accepts checkpoints that keep its
         /// `frozen_start_seq`.
         SnapshotViolatesFrozen,
-        /// Fewer valid provider signatures than the bucket's `min_providers`,
-        /// or none.
+        /// The checkpoint moves the bucket backwards. Its start is before the
+        /// current start, or, with the same start, its end is not past the
+        /// current end, or, with a later start, its end is before the current
+        /// end. Submit a commitment that covers new or deleted leaves; to add
+        /// signers to the current commitment, use `extend_checkpoint`.
+        SnapshotNotForward,
+        /// Fewer distinct primary providers signed than the bucket's
+        /// `min_providers`, or none. A repeated signature counts once.
         InsufficientSignatures,
 
         // General errors
@@ -1363,6 +1382,9 @@ pub mod pallet {
         TermsBucketMismatch,
         /// Storage agreement requested 0 byte
         InvalidMaxBytesRequest,
+        /// The terms' `max_bytes` is below the provider's `min_agreement_bytes`.
+        /// Negotiate a quote with at least that many bytes.
+        MaxBytesBelowMinimum,
         /// A challenge against a provider on this bucket is still open.
         /// Resolve it with `respond_to_challenge` or
         /// `resolve_expired_challenge`, then retry.
@@ -1575,11 +1597,13 @@ pub mod pallet {
         }
 
         /// Replace the calling provider's settings: accepted durations, price
-        /// per byte, replica sync price, acceptance flags, and capacity.
+        /// per byte, replica sync price, acceptance flags, capacity, and
+        /// minimum agreement size.
         ///
         /// Rejected while a deregistration is announced, if
         /// `min_duration > max_duration`, if capacity drops below the bytes
-        /// already committed, or if the stake cannot back the capacity.
+        /// already committed, if the stake cannot back the capacity, or if
+        /// `min_agreement_bytes` exceeds a limited `max_capacity`.
         #[pallet::call_index(3)]
         #[pallet::weight(T::WeightInfo::update_provider_settings())]
         pub fn update_provider_settings(
@@ -1752,6 +1776,9 @@ pub mod pallet {
         /// `visibility` sets the new bucket's read visibility (see
         /// [`Visibility`]); it is the owner's choice and not part of the
         /// provider-signed terms.
+        ///
+        /// Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the
+        /// provider's `min_agreement_bytes`.
         #[pallet::call_index(17)]
         #[pallet::weight(T::WeightInfo::create_bucket_with_primary())]
         pub fn create_bucket_with_primary(
@@ -1775,6 +1802,9 @@ pub mod pallet {
         ///
         /// The new provider has none of the bucket's data and is not in the
         /// current snapshot's signer bitfield.
+        ///
+        /// Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the
+        /// provider's `min_agreement_bytes`.
         #[pallet::call_index(18)]
         #[pallet::weight(T::WeightInfo::add_primary_provider())]
         pub fn add_primary_provider(
@@ -1921,6 +1951,9 @@ pub mod pallet {
         /// to its depositor, and removes the provider from the bucket. The
         /// provider's own deposit is on its provider record and is released
         /// by `complete_deregister`; slashing takes the stake only.
+        /// Fails with `AgreementHasPendingChallenge` while a challenge against
+        /// this provider on this bucket is open: the agreement remains until
+        /// every challenge on it resolves.
         #[pallet::call_index(15)]
         #[pallet::weight(T::WeightInfo::remove_slashed())]
         pub fn remove_slashed(
@@ -1936,6 +1969,14 @@ pub mod pallet {
             ensure!(
                 provider_info.stake.is_zero(),
                 Error::<T>::ProviderNotSlashed
+            );
+
+            // Answering a challenge reads the agreement (the responder's role
+            // decides which defenses it may use), so the agreement remains
+            // until every challenge on it resolves.
+            ensure!(
+                PendingChallengesByBucket::<T>::get(bucket_id, &provider) == 0,
+                Error::<T>::AgreementHasPendingChallenge
             );
 
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
@@ -1987,6 +2028,9 @@ pub mod pallet {
         /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with
         /// `bucket: BucketTarget::Existing(bucket_id)` and
         /// `replica_params: Some(_)` off-chain; the caller submits it here.
+        ///
+        /// Fails with `MaxBytesBelowMinimum` if `terms.max_bytes` is below the
+        /// provider's `min_agreement_bytes`.
         #[pallet::call_index(20)]
         #[pallet::weight(T::WeightInfo::add_replica_provider())]
         pub fn add_replica_provider(
@@ -2403,9 +2447,14 @@ pub mod pallet {
 
         /// Writer or admin. Make a provider-signed commitment the bucket's
         /// canonical state. Needs valid signatures from at least
-        /// `min_providers` of the bucket's primary providers, and at least
-        /// one; a frozen bucket
-        /// only accepts commitments that keep its `frozen_start_seq`.
+        /// `min_providers` distinct primary providers, and at least one; a
+        /// repeated signature counts once. A frozen bucket only accepts
+        /// commitments that keep its `frozen_start_seq`.
+        ///
+        /// A checkpoint never moves the bucket backwards. With the same start
+        /// as the current snapshot, its end must be past the current end. A
+        /// deletion moves the start forward and keeps the end, so with a later
+        /// start the end must not be before the current end.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
         pub fn checkpoint(
@@ -2425,11 +2474,21 @@ pub mod pallet {
                 // Must be writer or admin
                 Self::ensure_writer_or_admin(&who, bucket)?;
 
-                // Check frozen constraint
+                // Frozen buckets are append-only: start_seq is pinned to the
+                // frozen value exactly — only leaf_count may grow. `>=` here
+                // would let a checkpoint advance start_seq and delete
+                // history, defeating the freeze.
                 if let Some(frozen_start) = bucket.frozen_start_seq {
                     ensure!(
-                        commitment.start_seq >= frozen_start,
+                        commitment.start_seq == frozen_start,
                         Error::<T>::SnapshotViolatesFrozen
+                    );
+                }
+
+                if let Some(current) = bucket.snapshot.as_ref() {
+                    ensure!(
+                        commitment.moves_forward_from(&current.commitment),
+                        Error::<T>::SnapshotNotForward
                     );
                 }
 
@@ -2439,45 +2498,35 @@ pub mod pallet {
 
                 let mut primary_signers =
                     BitVec::<u8, Lsb0>::repeat(false, bucket.primary_providers.len());
-                let mut signing_count = 0usize;
-                let mut signing_providers = Vec::new();
+                let mut providers = Vec::new();
 
-                for (signer, signature) in signatures.iter() {
-                    // Find signer in primary_providers
+                for (signer, signature) in signatures {
                     let idx = bucket
                         .primary_providers
                         .iter()
-                        .position(|p| p == signer)
+                        .position(|p| *p == signer)
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
-                    // Verify the signature using the provider's registered public key
-                    Self::verify_signature(signature, &encoded_payload, signer)?;
+                    Self::verify_signature(&signature, &encoded_payload, &signer)?;
 
-                    primary_signers
+                    let already_signed = primary_signers
                         .get_mut(idx)
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?
-                        .set(true);
-                    // TODO(#388): this counts signature entries, not distinct
-                    // providers, so one provider's signature repeated N times
-                    // satisfies `min_providers = N`. Count `primary_signers`
-                    // (which ORs, so it is duplicate-free) the way the freeze
-                    // path does, or reject a repeated signer outright.
-                    // https://github.com/paritytech/web3-storage/issues/388
-                    signing_count += 1;
-                    signing_providers.push(signer.clone());
+                        .replace(true);
+                    if !already_signed {
+                        providers.push(signer);
+                    }
                 }
 
                 // At least one signature even if `min_providers` is 0 in
                 // state written before the bound existed: a snapshot no
                 // provider signed is a snapshot no provider is liable for.
                 ensure!(
-                    signing_count >= bucket.min_providers.max(1) as usize,
+                    primary_signers.count_ones() >= bucket.min_providers.max(1) as usize,
                     Error::<T>::InsufficientSignatures
                 );
 
                 let anchor_block = Self::current_anchor_block();
-
-                // Update historical roots
                 Self::update_historical_roots(bucket, anchor_block, commitment);
 
                 bucket.snapshot = Some(BucketSnapshot {
@@ -2491,7 +2540,7 @@ pub mod pallet {
                 Self::deposit_event(Event::BucketCheckpointed {
                     bucket_id,
                     commitment,
-                    providers: signing_providers,
+                    providers,
                 });
 
                 Ok(())
@@ -2708,7 +2757,9 @@ pub mod pallet {
         /// Challenged provider only. Answer before the deadline with a chunk
         /// proof, a proof that the leaf has no chunk at the challenged index, a
         /// proof that the data was legitimately deleted, or a note that the
-        /// challenged state has been superseded.
+        /// challenged state has been superseded (`Deleted` and `Superseded`:
+        /// primary providers only; a replica is liable for exactly the root
+        /// it confirmed).
         ///
         /// A valid response settles the deposit between challenger and
         /// provider. An invalid one is rejected (`InvalidProof`,
@@ -2781,6 +2832,11 @@ pub mod pallet {
                 } => {
                     Self::ensure_admin(&admin, &bucket)?;
 
+                    ensure!(
+                        Self::responder_is_primary(&challenge),
+                        Error::<T>::InvalidDeletionClaim
+                    );
+
                     let challenged_seq = challenge
                         .commitment
                         .start_seq
@@ -2808,6 +2864,11 @@ pub mod pallet {
                     );
                 }
                 ChallengeResponse::Superseded => {
+                    ensure!(
+                        Self::responder_is_primary(&challenge),
+                        Error::<T>::InvalidSupersededClaim
+                    );
+
                     // Valid only when a newer canonical snapshot replaced the
                     // challenged root and still covers the challenged seq. A
                     // root equal to the canonical one means the data is live

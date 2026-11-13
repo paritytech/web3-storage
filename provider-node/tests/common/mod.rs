@@ -115,6 +115,7 @@ pub fn publish_matching_registration(state: &ProviderState) {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 0,
+                min_agreement_bytes: 0,
             },
             stats: Default::default(),
             deregister_at: None,
@@ -207,15 +208,10 @@ pub fn make_auth_header(
     })
 }
 
-/// Bucket id from the URL path (`/s3/{id}/`, `/fs/{id}/`) or a `?bucket_id=`
-/// query param. Matched per-component so a key containing a marker can't mislead.
+/// Bucket id from a `?bucket_id=` query param.
 fn parse_bucket_id(url: &str) -> Option<u64> {
-    let (path, query) = url.split_once('?').unwrap_or((url, ""));
-    let rest = path
-        .split_once("/s3/")
-        .or_else(|| path.split_once("/fs/"))
-        .or_else(|| query.split_once("bucket_id="))
-        .map(|(_, rest)| rest)?;
+    let (_, query) = url.split_once('?')?;
+    let (_, rest) = query.split_once("bucket_id=")?;
     rest.split(|c: char| !c.is_ascii_digit())
         .find(|t| !t.is_empty())?
         .parse()
@@ -246,7 +242,7 @@ impl SignedClient {
         }
     }
 
-    /// Sign for an explicit bucket id (L0 endpoints whose bucket is in the body).
+    /// Sign for an explicit bucket id (endpoints whose bucket is in the body).
     pub fn request_bucket(&self, method: Method, url: String, bucket_id: u64) -> RequestBuilder {
         let header = make_auth_header(
             &self.keypair,
@@ -274,13 +270,5 @@ impl SignedClient {
 
     pub fn post(&self, url: String) -> RequestBuilder {
         self.auto(Method::POST, url)
-    }
-
-    pub fn delete(&self, url: String) -> RequestBuilder {
-        self.auto(Method::DELETE, url)
-    }
-
-    pub fn head(&self, url: String) -> RequestBuilder {
-        self.auto(Method::HEAD, url)
     }
 }

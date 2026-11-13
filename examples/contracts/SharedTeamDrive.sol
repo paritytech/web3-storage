@@ -7,7 +7,7 @@ import "./IWeb3Storage.sol";
 /// @title SharedTeamDrive
 /// @notice Example dApp showing how a contract owns a drive and manages its
 ///         membership through the storage-provider precompile. A drive is a
-///         plain Layer 0 bucket. The contract's substrate-mapped account is
+///         plain bucket. The contract's substrate-mapped account is
 ///         the bucket admin on-chain; per-user roles are tracked here so an
 ///         off-chain client can query them without reading the bucket's
 ///         member list.

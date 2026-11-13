@@ -26,14 +26,13 @@ use std::time::Duration;
 use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ChallengeResponse as RuntimeChallengeResponse;
+use storage_subxt::api::runtime_types::sp_runtime::MultiSignature as RuntimeMultiSignature;
 use storage_subxt::api::runtime_types::storage_primitives::{
     mmr::{MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof},
     ChallengeId as RuntimeChallengeId, ChunkLocation as RuntimeChunkLocation,
     Commitment as RuntimeCommitment,
 };
-use subxt::dynamic::Value;
 use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};
-use subxt::ext::scale_value::value;
 
 /// `StorageProvider` error variants that mean "this action already happened"
 /// — a retry after a dropped transaction watch may race an earlier attempt
@@ -68,18 +67,6 @@ enum Attempt {
     Retryable(ChainClientError),
     /// The chain rejected the call itself; resubmitting would fail identically.
     Rejected(ChainClientError),
-}
-
-/// Encode a `MultiSignature` as the dynamic variant value the runtime's
-/// `MultiSignature` type expects, preserving the scheme tag.
-pub(crate) fn multi_signature_value(signature: &sp_runtime::MultiSignature) -> Value {
-    use sp_runtime::MultiSignature as MS;
-    match signature {
-        MS::Ed25519(s) => value!(Ed25519(Value::from_bytes(s.0))),
-        MS::Sr25519(s) => value!(Sr25519(Value::from_bytes(s.0))),
-        MS::Ecdsa(s) => value!(Ecdsa(Value::from_bytes(s.0))),
-        MS::Eth(s) => value!(Eth(Value::from_bytes(s.0))),
-    }
 }
 
 /// Production implementation that talks to the chain via subxt.
@@ -365,42 +352,6 @@ impl SubxtChainClient {
         format!("/ip4/{host}/tcp/{port}")
     }
 
-    /// Extract the raw bytes of a decoded byte-sequence storage field
-    /// (e.g. a `Vec<u8>` / `BoundedVec<u8>`).
-    ///
-    /// subxt's dynamic decoder represents such a field either as a flat
-    /// sequence of byte primitives, or — for `BoundedVec` and similar newtype
-    /// wrappers — as a single-element composite whose inner value holds the
-    /// real sequence. We handle both, recursing through the wrapper layer. This
-    /// mirrors the decoder behind the typed `storage_client` read path, so the
-    /// shared connection here decodes a multiaddr exactly as that path would.
-    fn extract_byte_vec<T>(val: &subxt::ext::scale_value::Value<T>) -> Vec<u8> {
-        use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
-        match &val.value {
-            ValueDef::Composite(Composite::Unnamed(items)) => {
-                // Direct sequence of byte primitives.
-                let bytes: Vec<u8> = items
-                    .iter()
-                    .filter_map(|item| match &item.value {
-                        ValueDef::Primitive(Primitive::U128(n)) => Some(*n as u8),
-                        _ => None,
-                    })
-                    .collect();
-                if !items.is_empty() && bytes.len() == items.len() {
-                    return bytes;
-                }
-                // BoundedVec wrapper: a single inner field holds the sequence.
-                if items.len() == 1 {
-                    return Self::extract_byte_vec(&items[0]);
-                }
-                Vec::new()
-            }
-            // Some subxt versions encode a single byte as a bare primitive.
-            ValueDef::Primitive(Primitive::U128(n)) => vec![*n as u8],
-            _ => Vec::new(),
-        }
-    }
-
     /// Ensure the provider's on-chain multiaddr matches the address it
     /// advertises.
     ///
@@ -415,8 +366,6 @@ impl SubxtChainClient {
         bind_addr: &str,
         public_multiaddr: Option<&str>,
     ) {
-        use subxt::dynamic::At;
-
         let expected_multiaddr = match public_multiaddr {
             Some(addr) => addr.to_string(),
             None => Self::bind_addr_to_multiaddr(bind_addr),
@@ -431,10 +380,10 @@ impl SubxtChainClient {
                     return;
                 }
             };
-        let our_bytes: [u8; 32] = our_account.into();
-
-        let storage_query =
-            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
+        let storage_query = storage_subxt::api::storage()
+            .storage_provider()
+            .providers()
+            .unvalidated();
 
         let api = match self.api() {
             Ok(api) => api,
@@ -452,7 +401,7 @@ impl SubxtChainClient {
         };
         let result = at
             .storage()
-            .try_fetch(storage_query, (Value::from_bytes(our_bytes),))
+            .try_fetch(storage_query, (subxt_account(&our_account),))
             .await;
 
         let provider_value = match result {
@@ -467,39 +416,16 @@ impl SubxtChainClient {
             }
         };
 
-        // Extract the current multiaddr from the encoded provider storage entry.
-        let current = {
-            let decoded = match provider_value.decode() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Could not decode provider value: {}, skipping sync", e);
-                    return;
-                }
-            };
-
-            let multiaddr_val = match decoded.at("multiaddr") {
-                Some(v) => v,
-                None => {
-                    tracing::warn!("No multiaddr field in provider info, skipping sync");
-                    return;
-                }
-            };
-
-            let bytes = Self::extract_byte_vec(multiaddr_val);
-            if bytes.is_empty() {
-                // Couldn't decode the stored multiaddr. Skip rather than treat
-                // it as a mismatch — otherwise we'd submit a needless
-                // update_provider_multiaddr transaction on every startup.
-                tracing::warn!(
-                    "Could not decode on-chain multiaddr (value: {:?}); skipping sync",
-                    multiaddr_val
-                );
+        let provider = match provider_value.decode() {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Could not decode provider value: {}, skipping sync", e);
                 return;
             }
-            String::from_utf8_lossy(&bytes).to_string()
         };
+        let current = String::from_utf8_lossy(&provider.multiaddr.0).to_string();
 
-        if current == expected_multiaddr {
+        if provider.multiaddr.0 == expected_multiaddr.as_bytes() {
             tracing::info!(
                 "On-chain multiaddr matches advertised address: {}",
                 expected_multiaddr
@@ -513,12 +439,9 @@ impl SubxtChainClient {
             expected_multiaddr
         );
 
-        let multiaddr_bytes = expected_multiaddr.as_bytes().to_vec();
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "update_provider_multiaddr",
-            vec![Value::from_bytes(multiaddr_bytes)],
-        );
+        let tx = storage_subxt::api::tx()
+            .storage_provider()
+            .update_provider_multiaddr(BoundedVec(expected_multiaddr.as_bytes().to_vec()));
 
         match self
             .submit_and_finalize(&tx, "update_provider_multiaddr")
@@ -529,88 +452,58 @@ impl SubxtChainClient {
         }
     }
 
-    /// Resolve each provider account (raw 32-byte keys) to its HTTP endpoint
-    /// via the on-chain `Providers` multiaddr. Accounts without a resolvable
-    /// registration are skipped.
+    /// Resolve each account to its HTTP endpoint from its on-chain multiaddr.
+    /// Skips accounts with no registration or an empty multiaddr.
     async fn endpoints_for_accounts(
         &self,
-        provider_bytes_list: Vec<Vec<u8>>,
+        accounts: Vec<subxt::utils::AccountId32>,
     ) -> Result<Vec<String>, ChainClientError> {
-        use subxt::ext::scale_value::At;
-
-        if provider_bytes_list.is_empty() {
+        if accounts.is_empty() {
             return Ok(Vec::new());
         }
         let at = self.at_current_block().await?;
         let mut endpoints = Vec::new();
-        for provider_bytes in provider_bytes_list {
-            let provider_addr =
-                subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
-            let Ok(Some(value)) = at
+        for account in accounts {
+            let providers = storage_subxt::api::storage()
+                .storage_provider()
+                .providers()
+                .unvalidated();
+            let Some(value) = at
                 .storage()
-                .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
+                .try_fetch(providers, (account,))
                 .await
+                .map_err(|e| ChainClientError::query("provider", e))?
             else {
                 continue;
             };
-            let Ok(decoded) = value.decode() else {
-                continue;
-            };
-            let Some(field0) = decoded.at(0) else {
-                continue;
-            };
-            let bytes = Self::extract_byte_vec(field0);
-            if !bytes.is_empty() {
-                let multiaddr_str = String::from_utf8_lossy(&bytes);
-                endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
-            }
+            let provider = value
+                .decode()
+                .map_err(|e| ChainClientError::decode("provider", e))?;
+            endpoints.extend(provider_endpoint(&provider));
         }
 
         Ok(endpoints)
     }
 
-    /// Parse a BucketSnapshot value from scale_value.
-    fn parse_bucket_snapshot_value<T>(value: &subxt::ext::scale_value::Value<T>) -> BucketSnapshot {
-        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
-
-        let mmr_root = if let Some(field0) = value.at(0) {
-            if let ValueDef::Composite(Composite::Unnamed(bytes_vec)) = &field0.value {
-                let bytes: Vec<u8> = bytes_vec
-                    .iter()
-                    .filter_map(|v| {
-                        if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                            Some(*n as u8)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if bytes.len() == 32 {
-                    H256::from_slice(&bytes)
-                } else {
-                    H256::zero()
-                }
-            } else {
-                H256::zero()
-            }
-        } else {
-            H256::zero()
-        };
-
-        let leaf_count = if let Some(field2) = value.at(2) {
-            if let ValueDef::Primitive(Primitive::U128(n)) = &field2.value {
-                *n as u64
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        BucketSnapshot {
-            mmr_root,
-            leaf_count,
-        }
+    /// The `StorageProvider::Buckets` entry for `bucket_id`, or `None` when the
+    /// bucket does not exist.
+    async fn fetch_bucket(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<OnChainBucket>, ChainClientError> {
+        let buckets = storage_subxt::api::storage()
+            .storage_provider()
+            .buckets()
+            .unvalidated();
+        self.at_current_block()
+            .await?
+            .storage()
+            .try_fetch(buckets, (bucket_id,))
+            .await
+            .map_err(|e| ChainClientError::query("bucket", e))?
+            .map(|value| value.decode())
+            .transpose()
+            .map_err(|e| ChainClientError::decode("bucket", e))
     }
 }
 
@@ -663,98 +556,19 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<BucketSnapshot, ChainClientError> {
-        use subxt::ext::scale_value::ValueDef;
-
-        let storage_address =
-            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
-
-        let at = self.at_current_block().await?;
-
-        match at
-            .storage()
-            .try_fetch(storage_address, (Value::u128(bucket_id as u128),))
-            .await
-        {
-            Ok(Some(value)) => {
-                use subxt::ext::scale_value::At;
-                let decoded = value
-                    .decode()
-                    .map_err(|e| ChainClientError::decode("bucket", e))?;
-
-                if let Some(snapshot_opt) = decoded.at(4) {
-                    if let ValueDef::Variant(variant) = &snapshot_opt.value {
-                        if variant.name == "Some" {
-                            if let Some(snapshot_val) = variant.values.values().next() {
-                                return Ok(Self::parse_bucket_snapshot_value(snapshot_val));
-                            }
-                        }
-                    }
-                }
-
-                Ok(BucketSnapshot {
-                    mmr_root: H256::zero(),
-                    leaf_count: 0,
-                })
-            }
-            _ => Ok(BucketSnapshot {
-                mmr_root: H256::zero(),
-                leaf_count: 0,
-            }),
-        }
+        Ok(bucket_snapshot(self.fetch_bucket(bucket_id).await?))
     }
 
     async fn fetch_primary_endpoints(
         &self,
         bucket_id: BucketId,
     ) -> Result<Vec<String>, ChainClientError> {
-        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
-
-        let storage_address =
-            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
-
-        let at = self.at_current_block().await?;
-
-        let bucket_value = match at
-            .storage()
-            .try_fetch(storage_address, (Value::u128(bucket_id as u128),))
-            .await
-        {
-            Ok(Some(v)) => v,
-            _ => return Ok(vec![]),
-        };
-
-        let decoded = bucket_value
-            .decode()
-            .map_err(|e| ChainClientError::decode("bucket", e))?;
-
-        let mut provider_bytes_list = Vec::new();
-
-        // primary_providers is at index 3
-        if let Some(field3) = decoded.at(3) {
-            if let ValueDef::Composite(Composite::Unnamed(providers_vec)) = &field3.value {
-                for provider_value in providers_vec {
-                    if let ValueDef::Composite(Composite::Unnamed(account_bytes)) =
-                        &provider_value.value
-                    {
-                        let bytes: Vec<u8> = account_bytes
-                            .iter()
-                            .filter_map(|v| {
-                                if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                                    Some(*n as u8)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        if bytes.len() == 32 {
-                            provider_bytes_list.push(bytes);
-                        }
-                    }
-                }
-            }
-        }
-
-        self.endpoints_for_accounts(provider_bytes_list).await
+        let primaries = self
+            .fetch_bucket(bucket_id)
+            .await?
+            .map(|bucket| bucket.primary_providers.0)
+            .unwrap_or_default();
+        self.endpoints_for_accounts(primaries).await
     }
 
     async fn fetch_replica_endpoints(
@@ -778,11 +592,13 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             .await
             .map_err(|e| ChainClientError::query("bucket agreements", e))?;
 
-        let accounts: Vec<Vec<u8>> = agreements
+        let accounts: Vec<subxt::utils::AccountId32> = agreements
             .into_iter()
             .filter(|agreement| matches!(agreement.role, ProviderRole::Replica { .. }))
             .map(|agreement| agreement.provider)
             .filter(|provider| provider != &provider_account)
+            .filter_map(|provider| <[u8; 32]>::try_from(provider).ok())
+            .map(subxt::utils::AccountId32)
             .collect();
 
         self.endpoints_for_accounts(accounts).await
@@ -793,24 +609,13 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         bucket_id: BucketId,
         attestation: SignedSyncRoots,
     ) -> Result<(u8, u128), ChainClientError> {
-        let roots_value: Vec<Value> = attestation
-            .roots
-            .iter()
-            .map(|root| match root {
-                Some(root) => value!(Some(Value::from_bytes(root.as_bytes()))),
-                None => value!(None()),
-            })
-            .collect();
-
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "confirm_replica_sync",
-            vec![
-                Value::u128(bucket_id as u128),
-                Value::unnamed_composite(roots_value),
-                multi_signature_value(&attestation.signature),
-            ],
-        );
+        let tx = storage_subxt::api::tx()
+            .storage_provider()
+            .confirm_replica_sync(
+                bucket_id,
+                attestation.roots.map(|root| root.map(to_runtime_hash)),
+                to_runtime_signature(&attestation.signature),
+            );
 
         tracing::info!(
             "Submitting confirm_replica_sync for bucket {} with roots {:?}",
@@ -844,7 +649,6 @@ pub(crate) async fn fetch_current_anchor_block<C>(
 where
     C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
 {
-    // `unvalidated`: see the `storage-subxt` crate docs.
     at.runtime_apis()
         .call(
             storage_subxt::api::runtime_apis()
@@ -895,6 +699,18 @@ fn chunk_location(target: RuntimeChunkLocation) -> ChunkLocation {
     }
 }
 
+/// Convert a `MultiSignature` into the generated runtime type. Keeps the
+/// signature scheme, which the pallet checks against the registered key.
+fn to_runtime_signature(signature: &sp_runtime::MultiSignature) -> RuntimeMultiSignature {
+    use sp_runtime::MultiSignature as MS;
+    match signature {
+        MS::Ed25519(s) => RuntimeMultiSignature::Ed25519(s.0),
+        MS::Sr25519(s) => RuntimeMultiSignature::Sr25519(s.0),
+        MS::Ecdsa(s) => RuntimeMultiSignature::Ecdsa(s.0),
+        MS::Eth(s) => RuntimeMultiSignature::Eth(s.0),
+    }
+}
+
 /// Map an on-chain `Challenge` at `(deadline, index)` into the responder's
 /// `DetectedChallenge`, or `None` when it targets a different provider.
 fn detected_challenge(
@@ -914,6 +730,38 @@ fn detected_challenge(
         commitment: commitment(challenge.commitment),
         target: chunk_location(challenge.target),
     })
+}
+
+/// Generated type of a `StorageProvider::Buckets` value.
+type OnChainBucket = storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket;
+
+/// Latest checkpoint of a bucket, or the zero snapshot when the bucket does
+/// not exist or has no checkpoint.
+fn bucket_snapshot(bucket: Option<OnChainBucket>) -> BucketSnapshot {
+    match bucket.and_then(|bucket| bucket.snapshot) {
+        Some(snapshot) => BucketSnapshot {
+            mmr_root: H256::from(snapshot.commitment.mmr_root.0),
+            leaf_count: snapshot.commitment.leaf_count,
+        },
+        None => BucketSnapshot {
+            mmr_root: H256::zero(),
+            leaf_count: 0,
+        },
+    }
+}
+
+/// Generated type of a `StorageProvider::Providers` value.
+type OnChainProviderInfo =
+    storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
+
+/// HTTP endpoint a provider serves from, or `None` when it has no multiaddr.
+fn provider_endpoint(provider: &OnChainProviderInfo) -> Option<String> {
+    if provider.multiaddr.0.is_empty() {
+        return None;
+    }
+    Some(SubxtChainClient::multiaddr_to_http_endpoint(
+        &String::from_utf8_lossy(&provider.multiaddr.0),
+    ))
 }
 
 /// One agreement as returned by the `provider_agreements` runtime API.
@@ -981,16 +829,16 @@ impl ChallengeChainClient for SubxtChainClient {
             .unvalidated();
 
         let challenges = self
-            .api()
-            .map_err(|e| ChallengeError::Chain(e.to_string()))?
             .at_current_block()
             .await
-            .map_err(|e| ChallengeError::Chain(format!("Failed to get storage: {e}")))?
+            .map_err(|e| ChallengeError::Chain {
+                reason: e.to_string(),
+            })?
             .runtime_apis()
             .call(payload)
             .await
-            .map_err(|e| {
-                ChallengeError::Chain(format!("provider_challenges runtime API call failed: {e}"))
+            .map_err(|e| ChallengeError::Chain {
+                reason: format!("provider_challenges runtime API call failed: {e}"),
             })?;
 
         Ok(challenges.into_iter().map(detected_from_response).collect())
@@ -1009,31 +857,31 @@ impl ChallengeChainClient for SubxtChainClient {
     ) -> Result<Option<DetectedChallenge>, ChallengeError> {
         let our_bytes: [u8; 32] = self.signer.public_key().0;
 
-        // `unvalidated`: see the `storage-subxt` crate docs.
         let storage_address = storage_subxt::api::storage()
             .storage_provider()
             .challenges()
             .unvalidated();
         let at = self
-            .api()
-            .map_err(|e| ChallengeError::Chain(e.to_string()))?
             .at_current_block()
             .await
-            .map_err(|e| ChallengeError::Chain(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| ChallengeError::Chain {
+                reason: e.to_string(),
+            })?;
 
         let Some(value) = at
             .storage()
             .try_fetch(storage_address, (deadline, index))
             .await
-            .map_err(|e| ChallengeError::Chain(format!("Failed to fetch challenge: {e}")))?
+            .map_err(|e| ChallengeError::Chain {
+                reason: format!("Failed to fetch challenge: {e}"),
+            })?
         else {
             return Ok(None);
         };
 
-        let challenge = value.decode().map_err(|e| {
-            ChallengeError::Chain(format!(
-                "Failed to decode challenge at {deadline}/{index}: {e}"
-            ))
+        // The chain answered, but the value it returned couldn't be decoded.
+        let challenge = value.decode().map_err(|e| ChallengeError::Chain {
+            reason: format!("Failed to decode challenge at {deadline}/{index}: {e}"),
         })?;
 
         Ok(detected_challenge(deadline, index, challenge, &our_bytes))
@@ -1071,7 +919,9 @@ impl ChallengeChainClient for SubxtChainClient {
         let block_hash = self
             .submit_and_finalize(&tx, "respond_to_challenge")
             .await
-            .map_err(|e| ChallengeError::Chain(e.to_string()))?;
+            .map_err(|e| ChallengeError::Chain {
+                reason: e.to_string(),
+            })?;
 
         Ok(block_hash.unwrap_or_default())
     }

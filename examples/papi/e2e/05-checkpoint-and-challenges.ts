@@ -71,7 +71,7 @@ async function main() {
     fn: async () => {
       const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, client);
       assert.ok(ck.mmr_root, "Checkpoint should have mmr_root");
-      const result = await submitClientCheckpoint(api, client, provider, bucketId, ck);
+      const result = await submitClientCheckpoint(api, client, bucketId, [{ provider, commit: ck }]);
       const events = api.event.StorageProvider.BucketCheckpointed.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected BucketCheckpointed event");
     },

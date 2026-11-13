@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Content-addressing verification. CIDs in this system are the Merkle leaf
- * hash of the chunk bytes (`blake2b-256(0x00 ++ data)`); a single-chunk blob's
- * data_root equals its chunk hash
- * (see the single-leaf case of `merkle_root` in
- * crates/primitives/storage/src/merkle.rs), so whole payloads up to
- * DEFAULT_CHUNK_SIZE can be verified directly against an on-chain CID.
- * Multi-chunk payloads need a Merkle DAG walk (Rust-client parity) — not
- * implemented here; callers surface those as "unverified".
+ * Content-addressing verification. A blob's CID is its `data_root`, the root
+ * of the Merkle tree over its chunk hashes. A blob of at most one chunk has
+ * the chunk's leaf hash (`blake2b-256(0x00 ++ data)`) as its root (see the
+ * single-leaf case of `merkle_root` in crates/primitives/storage/src/merkle.rs),
+ * so it can be verified here directly. Multi-chunk blobs are checked chunk by
+ * chunk against their Merkle tree (`readBlob` in @web3-storage/storage).
  */
 
 import { asHex, base64ToBytes, hexToBytes, toHex } from "./bytes.js";
@@ -28,7 +26,7 @@ export class CidMismatchError extends Error {
   }
 }
 
-/** Content id of `data`: its Merkle leaf hash, which is the data_root of a single-chunk blob. */
+/** CID of `data` of at most one chunk: its Merkle leaf hash. Use `computeDataRoot` for larger data. */
 export function computeCid(data: Uint8Array): Uint8Array {
   return hashLeaf(data);
 }

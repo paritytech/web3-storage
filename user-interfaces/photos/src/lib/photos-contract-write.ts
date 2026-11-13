@@ -125,8 +125,9 @@ function stringifyDispatchError(dispatchError: unknown): string {
 // A submission can be rejected as `Stale` (nonce too low) when two same-signer
 // txs go out back-to-back faster than the client's chain view advances — here,
 // `map_account` immediately followed by the `createLibrary` call. PAPI rejects
-// with `{ type: 'Invalid', value: { type: 'Stale' } }`. Mirror the headless
-// flow (`scripts/lib/papi.ts`): wait for a fresh block and re-sign.
+// with `{ type: 'Invalid', value: { type: 'Stale' } }`. Same approach as
+// `submitTx`'s `retryStale`, which the headless scripts use: wait about one
+// block and re-sign.
 const STALE_MAX_ATTEMPTS = 4
 
 function isStaleError(err: unknown): boolean {
@@ -208,6 +209,7 @@ export type CreateLibraryErrorKind =
   | 'bad-signature'
   | 'already-exists'
   | 'capacity'
+  | 'min-size'
   | 'reverted'
   | 'negotiate'
   | 'unknown'
@@ -246,6 +248,16 @@ export function classifyDispatchError(dispatchError: unknown): CreateLibraryErro
       message:
         'The payment was rejected as too low for these terms. Lower the size/duration or pick a cheaper provider, then try again.',
     }
+  }
+  if (raw.includes('MaxBytesBelowMinimum')) {
+    return {
+      kind: 'min-size',
+      message:
+        "The library size is below the provider's minimum agreement size. Increase the size or pick another provider.",
+    }
+  }
+  if (raw.includes('InvalidMaxBytesRequest')) {
+    return { kind: 'min-size', message: 'The library size is 0 bytes. Enter a size above 0.' }
   }
   if (raw.includes('TermsExpired') || raw.includes('AgreementExpired')) {
     return {

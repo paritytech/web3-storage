@@ -43,7 +43,7 @@ export interface CreateBucketInput {
   provider: AvailableProvider;
   url: string;
   signed: SignedTerms;
-  /** Read visibility of the underlying Layer 0 bucket (default Private). */
+  /** Read visibility of the bucket (default Private). */
   visibility?: Visibility;
 }
 
@@ -54,7 +54,7 @@ export type ViewMode = "list" | "grid";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STORAGE_VIEW_MODE = "s3-ui-view-mode";
-// Stores a Layer 0 bucket id. The old "s3-ui-selected-bucket" key stored an
+// Stores a bucket id. The old "s3-ui-selected-bucket" key stored an
 // S3Registry bucket id and is ignored.
 const STORAGE_SELECTED_BUCKET = "s3-ui-selected-l0-bucket";
 const STORAGE_CURRENT_PREFIX = "s3-ui-current-prefix";
@@ -310,7 +310,6 @@ export function abortUpload(): void {
 export async function downloadObject(key: string): Promise<Uint8Array> {
   const bucket = selectedBucket$.getValue();
   if (!bucket) throw new Error("No bucket selected");
-  // Unverified download: see S3Client.getObject.
   let data = await client.getObject(bucket.bucketId, key);
 
   // Decrypt if encryption key is set and data looks encrypted (version byte 0x02)

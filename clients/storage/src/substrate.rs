@@ -146,6 +146,7 @@ pub mod extrinsics {
     /// - `replica_sync_price`: Price for replica sync (None = not accepting replicas)
     /// - `accepting_extensions`: Whether accepting extensions
     /// - `max_capacity`: Maximum storage capacity in bytes (0 = unlimited)
+    /// - `min_agreement_bytes`: Smallest agreement size in bytes (0 = no minimum)
     #[allow(clippy::too_many_arguments)]
     pub fn update_provider_settings(
         min_duration: u32,
@@ -155,6 +156,7 @@ pub mod extrinsics {
         replica_sync_price: Option<u128>,
         accepting_extensions: bool,
         max_capacity: u64,
+        min_agreement_bytes: u64,
     ) -> impl Payload {
         let settings = runtime_types::pallet_storage_provider::pallet::ProviderSettings {
             min_duration,
@@ -164,6 +166,7 @@ pub mod extrinsics {
             replica_sync_price,
             accepting_extensions,
             max_capacity,
+            min_agreement_bytes,
         };
         api::tx()
             .storage_provider()
@@ -183,7 +186,7 @@ pub mod extrinsics {
     /// Build a `create_bucket_with_primary` extrinsic payload.
     ///
     /// Bundles the SCALE-encoded provider-signed terms and signature into
-    /// the call shape Layer 0 expects. The chain hashes
+    /// the call shape the pallet expects. The chain hashes
     /// `blake2_256(TERM_CONTEXT | SCALE(terms))` and verifies the
     /// signature against the provider's registered public key.
     pub fn create_bucket_with_primary(
@@ -474,6 +477,76 @@ where
     at.runtime_apis().call(payload).await.map_err(|e| {
         ClientError::Chain(format!("current_anchor_block runtime API call failed: {e}"))
     })
+}
+
+/// The bucket id from the `BucketCreated` event that a bucket-creating
+/// extrinsic emits.
+pub fn created_bucket_id(
+    events: &subxt::extrinsics::ExtrinsicEvents<PolkadotConfig>,
+) -> Result<storage_primitives::BucketId, ClientError> {
+    let created = events
+        .find_first::<storage_subxt::api::storage_provider::events::BucketCreated>()
+        .ok_or_else(|| {
+            ClientError::Chain("BucketCreated event not found in transaction".to_string())
+        })?
+        .map_err(|e| ClientError::Chain(format!("Failed to decode BucketCreated event: {e}")))?;
+    Ok(created.bucket_id)
+}
+
+/// Read `StorageProvider::Buckets(bucket_id)` at `at`, or `None` if the bucket
+/// does not exist.
+pub async fn fetch_bucket<C>(
+    at: &subxt::client::ClientAtBlock<PolkadotConfig, C>,
+    bucket_id: storage_primitives::BucketId,
+) -> Result<
+    Option<storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket>,
+    ClientError,
+>
+where
+    C: subxt::client::OnlineClientAtBlockT<PolkadotConfig>,
+{
+    let value = at
+        .storage()
+        .try_fetch(
+            storage_subxt::api::storage().storage_provider().buckets(),
+            (bucket_id,),
+        )
+        .await
+        .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?;
+    value
+        .map(|v| {
+            v.decode()
+                .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))
+        })
+        .transpose()
+}
+
+/// Ids of the buckets `account` is a member of, owned or shared, read from
+/// `StorageProvider::MemberBuckets` at `at`. Empty if the account has none.
+pub async fn fetch_member_bucket_ids<C>(
+    at: &subxt::client::ClientAtBlock<PolkadotConfig, C>,
+    account: &AccountId32,
+) -> Result<Vec<storage_primitives::BucketId>, ClientError>
+where
+    C: subxt::client::OnlineClientAtBlockT<PolkadotConfig>,
+{
+    let value = at
+        .storage()
+        .try_fetch(
+            storage_subxt::api::storage()
+                .storage_provider()
+                .member_buckets(),
+            (crate::convert::to_subxt_account(account),),
+        )
+        .await
+        .map_err(|e| ClientError::Chain(format!("Failed to fetch member buckets: {e}")))?;
+    let Some(value) = value else {
+        return Ok(vec![]);
+    };
+    let bucket_ids = value
+        .decode()
+        .map_err(|e| ClientError::Chain(format!("Failed to decode member buckets: {e}")))?;
+    Ok(crate::convert::unbounded(bucket_ids))
 }
 
 /// Decode a provider-emitted signature — `0x`-prefixed hex of a SCALE-encoded

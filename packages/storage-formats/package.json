@@ -1,0 +1,33 @@
+{
+  "name": "@web3-storage/storage-formats",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A file system and S3-style objects stored in a bucket: the Rust storage-formats crate compiled to wasm, with a blob store over the provider's HTTP API. Needs a provider URL and a signer, no chain connection.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run",
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "prepare": "bash scripts/build-wasm.sh"
+  },
+  "dependencies": {
+    "@web3-storage/core": "workspace:*",
+    "@web3-storage/storage": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "~7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "imports": {
+    "#load-wasm": {
+      "types": "./src/load-wasm.browser.ts",
+      "node": "./src/load-wasm.node.ts",
+      "default": "./src/load-wasm.browser.ts"
+    }
+  }
+}
