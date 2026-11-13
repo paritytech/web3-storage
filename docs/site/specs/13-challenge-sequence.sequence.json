@@ -232,7 +232,7 @@
       "y": 642,
       "label": "remove_slashed(bucket_id, provider)",
       "variant": "dashed",
-      "note": "anyone may call"
+      "note": "anyone may call once no challenge is open"
     },
     {
       "id": "payment",
@@ -300,7 +300,7 @@
       "title": "PendingChallenges",
       "items": [
         "Gates complete_deregister; the provider may call resolve_expired_challenge itself",
-        "PendingChallengesByBucket gates end_agreement, claim_expired_agreement",
+        "PendingChallengesByBucket gates end_agreement, claim_expired_agreement, remove_slashed",
         "Each resolution decrements both once"
       ]
     }

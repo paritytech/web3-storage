@@ -2,9 +2,9 @@
 resolver = "2"
 members = [
 	# Storage client
-	"clients/file-system",
-	"clients/s3",
 	"clients/storage",
+	"clients/storage-formats",
+	"clients/test-support",
 
 	# Storage pallet
 	"crates/pallets/storage-provider",
@@ -29,7 +29,6 @@ members = [
 	"runtimes/web3-storage-paseo",
 
 	# Shared primitives
-	"crates/primitives/file-system",
 	"crates/primitives/storage",
 
 	# Smart-contract precompiles (pallet_revive integration)
@@ -62,11 +61,12 @@ storage-provider-node = { path = "provider-node" }
 storage-subxt = { path = "crates/storage-subxt" }
 
 # Storage Interfaces: File System Interface
-file-system-client = { path = "clients/file-system" }
-file-system-primitives = { path = "crates/primitives/file-system", default-features = false }
+storage-formats = { path = "clients/storage-formats" }
 
 # Storage Interfaces: S3-Compatible Interface
-s3-client = { path = "clients/s3" }
+
+# Client crates: shared test helpers
+client-test-support = { path = "clients/test-support" }
 
 # Substrate frame
 frame-benchmarking = { version = "49.0.0", default-features = false }
@@ -94,6 +94,11 @@ pallet-transaction-payment-rpc-runtime-api = { version = "49.0.0", default-featu
 pallet-utility = { version = "49.0.0", default-features = false }
 
 # Substrate primitives
+bounded-collections = { version = "0.3.2", default-features = false }
+getrandom = { version = "0.2.17" }
+js-sys = { version = "0.3" }
+primitive-types = { version = "0.13.1", default-features = false }
+serde-wasm-bindgen = { version = "0.6" }
 sp-api = { version = "43.0.0", default-features = false }
 sp-block-builder = { version = "43.0.0", default-features = false }
 sp-consensus-aura = { version = "0.49.0", default-features = false }
@@ -108,6 +113,9 @@ sp-session = { version = "45.0.0", default-features = false }
 sp-storage = { version = "25.0.0", default-features = false }
 sp-transaction-pool = { version = "43.0.0", default-features = false }
 sp-version = { version = "46.0.0", default-features = false }
+tsify-next = { version = "0.5", default-features = false, features = ["js"] }
+wasm-bindgen = { version = "0.2" }
+wasm-bindgen-futures = { version = "0.4" }
 
 # Hex encoding, as used across the Polkadot SDK
 array-bytes = { version = "6.2.3", default-features = false }
@@ -116,15 +124,15 @@ array-bytes = { version = "6.2.3", default-features = false }
 polkadot-ckb-merkle-mountain-range = { version = "0.8.2", default-features = false }
 
 # Polkadot
-pallet-xcm = { version = "29.0.0", default-features = false }
+pallet-xcm = { version = "29.1.0", default-features = false }
 pallet-xcm-benchmarks = { version = "29.0.0", default-features = false }
 parachains-runtimes-test-utils = { version = "33.0.0", default-features = true }
 polkadot-parachain-primitives = { version = "23.0.0", default-features = false }
 polkadot-primitives = { version = "25.0.0", default-features = false }
 polkadot-runtime-common = { version = "29.0.0", default-features = false }
-xcm = { version = "24.0.0", default-features = false, package = "staging-xcm" }
-xcm-builder = { version = "29.0.0", default-features = false, package = "staging-xcm-builder" }
-xcm-executor = { version = "28.0.0", default-features = false, package = "staging-xcm-executor" }
+xcm = { version = "24.1.0", default-features = false, package = "staging-xcm" }
+xcm-builder = { version = "29.0.1", default-features = false, package = "staging-xcm-builder" }
+xcm-executor = { version = "28.0.1", default-features = false, package = "staging-xcm-executor" }
 xcm-runtime-apis = { version = "0.16.0", default-features = false }
 
 # Cumulus
@@ -138,7 +146,7 @@ cumulus-primitives-aura = { version = "0.24.0", default-features = false }
 cumulus-primitives-core = { version = "0.26.0", default-features = false }
 cumulus-primitives-utility = { version = "0.30.0", default-features = false }
 parachain-info = { version = "0.28.0", default-features = false, package = "staging-parachain-info" }
-parachains-common = { version = "32.0.0", default-features = false }
+parachains-common = { version = "32.1.0", default-features = false }
 
 # Build dependencies
 substrate-wasm-builder = { version = "34.0.0" }
@@ -168,7 +176,6 @@ tracing-subscriber = { version = "0.3.23" }
 
 # Async/HTTP (for provider node)
 axum = "0.7"
-dashmap = "6.0"
 moka = { version = "0.12", features = ["future"] }
 parking_lot = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

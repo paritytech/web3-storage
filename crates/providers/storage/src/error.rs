@@ -2,18 +2,31 @@
 
 //! Error types for the storage engine.
 
+use sp_core::H256;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Node not found: {0}")]
-    NodeNotFound(String),
+    #[error("Node not found: {0:?}")]
+    NodeNotFound(H256),
 
     #[error("Commitment not reproducible from local leaves: {0}")]
     CommitmentNotReproducible(String),
 
+    /// A commitment cites leaves this store does not hold: they were pruned
+    /// below the local `start_seq`, or lie past the local end.
+    #[error(
+        "Leaves {start_seq}+{leaf_count} not held locally (local {local_start_seq}..{local_end})"
+    )]
+    LeavesNotHeld {
+        start_seq: u64,
+        leaf_count: u64,
+        local_start_seq: u64,
+        local_end: u64,
+    },
+
     #[error("Children missing: {0:?}")]
-    ChildrenMissing(Vec<String>),
+    ChildrenMissing(Vec<H256>),
 
     /// An internal node arrived with a child list that is not exactly two
     /// hashes. Send the left and right child hashes.
@@ -25,12 +38,15 @@ pub enum Error {
     #[error("A node is either data (a chunk) or children (an internal node)")]
     InvalidNode,
 
-    /// No chunks to build a tree from. Send at least one byte.
-    #[error("Empty data has no chunk tree")]
-    EmptyData,
-
     #[error("Quota exceeded: used {used}, max {max}")]
     QuotaExceeded { used: u64, max: u64 },
+
+    #[error("Invalid start_seq: requested {requested}, valid range {current}..={end}")]
+    InvalidStartSeq {
+        requested: u64,
+        current: u64,
+        end: u64,
+    },
 
     /// A leaf chunk above `DEFAULT_CHUNK_SIZE` bytes. Split the data into chunks
     /// of at most that size.
@@ -45,11 +61,22 @@ pub enum Error {
     #[error("Bucket not found: {0}")]
     BucketNotFound(u64),
 
-    #[error("Root not found: {0}")]
-    RootNotFound(String),
+    #[error("Root not found: {0:?}")]
+    RootNotFound(H256),
 
-    #[error("Invalid hash: expected {expected}, got {actual}")]
-    InvalidHash { expected: String, actual: String },
+    /// Another writer held the bucket past the lock timeout. Retry the
+    /// request.
+    #[error("Bucket {0} is busy")]
+    BucketBusy(u64),
+
+    /// The content tree under a data root has more than `max_nodes` nodes
+    /// when every shared subtree is counted once per path that reaches it.
+    /// Deduplication lets a few stored nodes span such a tree.
+    #[error("Content tree exceeds {max_nodes} nodes")]
+    TreeTooLarge { max_nodes: u64 },
+
+    #[error("Invalid hash: expected {expected:?}, got {actual:?}")]
+    InvalidHash { expected: H256, actual: H256 },
 
     /// The tree under a data root is not `merkle_tree` over chunks of
     /// `DEFAULT_CHUNK_SIZE` bytes, with only the last chunk shorter. Split the
@@ -58,8 +85,9 @@ pub enum Error {
     #[error("Non-canonical tree: {0}")]
     NonCanonicalTree(String),
 
+    /// A stored record could not be decoded.
     #[error("Serialization error: {0}")]
-    Serialization(String),
+    Serialization(#[from] codec::Error),
 
     /// Building the bucket MMR or a proof from it failed.
     #[error("MMR error: {0}")]

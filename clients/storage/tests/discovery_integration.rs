@@ -14,9 +14,7 @@
 //!
 //! Tests are skipped (not failed) when the chain is unreachable.
 
-mod common;
-
-use common::{chain_guard, chain_setup, dev_discovery};
+use client_test_support::{chain_guard, chain_setup, dev_discovery};
 use storage_client::discovery::PartialMatchReason;
 use storage_client::StorageRequirements;
 

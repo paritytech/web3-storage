@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Storage engine for provider nodes: content-addressed blob storage with MMR
-//! commitments, plus the drive/S3 metadata indexes served over it. No HTTP or
-//! chain dependencies.
+//! commitments. No HTTP or chain dependencies.
 //!
 //! Main types:
 //! * [`StorageBackend`] : the engine interface. The node holds an `Arc<dyn StorageBackend>`.
@@ -27,16 +26,14 @@
 //!    [`StorageBackend::delete_before`] prunes leaves before a sequence number.
 pub mod backend;
 pub mod error;
-pub mod index;
 
+#[cfg(any(test, feature = "test-helpers"))]
+pub use backend::build_merkle_tree;
 pub use backend::{
-    build_merkle_tree, BucketInfo, BucketState, ChunkTreeNode, CommitOutcome, DiskStorage,
-    StorageBackend, StorageBackendSpec,
+    BucketInfo, BucketState, ChunkTreeNode, CommitOutcome, DeletionReceipt, DiskStorage,
+    StorageBackend, StorageBackendSpec, StorageStats,
 };
 pub use error::Error;
-pub use index::{
-    FsEntryMeta, FsIndexManager, FsListEntry, ListResult, ObjectEntry, ObjectMeta, S3IndexManager,
-};
 
 /// Names the scratch directories [`temp_rocksdb`] creates.
 #[cfg(any(test, feature = "test-helpers"))]

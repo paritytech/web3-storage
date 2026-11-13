@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 /**
- * Drive Client — drive-ui's thin adapter over the sdk's FileSystemClient.
+ * Drive Client — drive-ui's thin adapter over the sdk's Web3Storage.
  * What stays here is app-shaped: stateless signer swapping driven by the
  * state layer, Blob conversion for the browser download path, and the
  * progress-status strings. Everything chain/HTTP-mechanical (tx submission,
@@ -17,14 +17,25 @@ import {
   parseMultiaddrToUrl,
   getBucketVisibility as getBucketVisibilityQuery,
   setBucketVisibility as setBucketVisibilityTx,
-  toSs58,
   type ChainSigner,
   type Keypair,
   type NegotiateRequest,
   type SignedTerms,
   type Visibility,
+  Web3Storage,
+  type BucketInfo,
+  type BucketMember,
+  type MemberRole,
+  findMatchingProviders,
+  getCheckpointInfo,
+  listProviders,
+  type AvailableProvider,
+  type CheckpointInfo,
+  type MatchingProviders,
+  type QueryMatchingProvidersParams,
 } from "@web3-storage/sdk";
-import { FileSystemClient } from "@web3-storage/sdk/fs";
+
+export type { AvailableProvider, CheckpointInfo, MatchingProviders, QueryMatchingProvidersParams };
 import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = ChainSigner["signer"];
@@ -37,93 +48,26 @@ export type { NegotiateRequest, SignedTerms, Visibility };
 /** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
 export const parseMultiaddrToHttp = parseMultiaddrToUrl;
 
-export type {
-  BucketMember,
-  DriveInfo,
-  FsEntry,
-  MemberRole,
-  UploadOptions,
-} from "@web3-storage/sdk/fs";
-import type {
-  BucketMember,
-  DriveInfo,
-  FsEntry,
-  MemberRole,
-  UploadOptions,
-} from "@web3-storage/sdk/fs";
+export type { BucketMember, MemberRole };
 
-export interface CheckpointInfo {
-  mmrRoot: string;
-  startSeq: bigint;
-  leafCount: bigint;
-  checkpointBlock: number;
+/** A drive is a bucket; the chain stores nothing else about it. */
+export type DriveInfo = BucketInfo;
+
+/** A directory entry as the file browser shows it. */
+export interface FsEntry {
+  name: string;
+  path: string;
+  entryType: "file" | "directory";
+  size: number;
+  /** Milliseconds since the epoch (stored with second precision). */
+  mtime: number;
+  /** File: CID of its manifest. Directory: CID of its directory node. 0x-hex. */
+  cid: string;
 }
 
-/**
- * A registered provider as surfaced by the provider picker. UI-side discovery
- * type (the `providers` runtime API) — stays in the UI, not the SDK.
- */
-export interface AvailableProvider {
-  account: string;
-  multiaddr: string;
-  stake: bigint;
-  /** Free capacity per the chain; `undefined` = unlimited, not `0n` ("full"). */
-  availableCapacity: bigint | undefined;
-  maxCapacity: bigint;
-  pricePerByte: bigint;
-  minDuration: number;
-  maxDuration: number;
-  acceptingPrimary: boolean;
-  agreementsTotal: number;
-}
-
-/**
- * A provider scored against storage requirements via the
- * `find_matching_providers` runtime API. Carries a `matchScore` and
- * `partialReason` so the picker can rank "best fit" vs near-misses.
- */
-export interface MatchingProviders extends AvailableProvider {
-  matchScore: number;
-  partialReason: string;
-  committedBytes: bigint;
-  replicaSyncPrice?: bigint;
-  acceptingExtensions: boolean;
-  registeredAt: number;
-  agreementsExtended: number;
-  agreementsNotExtended: number;
-  agreementsBurned: number;
-  /** Challenges resolved in the provider's favor (authorized + public tiers). */
-  challengesDefended: number;
-  challengesFailed: number;
-  /** 0-100, computed on-chain by `ProviderStats::reputation`. */
-  reputation: number;
-}
-
-/**
- * `StorageProviderApi.providers` limit for the full list. One page for
- * everything: paging over the hash-ordered `Providers` map skips or repeats a
- * provider when a registration or deregistration occurs between two pages,
- * and this client has no block handle to pin the pages to. The storage scan
- * this replaced read the whole map in one call too.
- */
-const ALL_PROVIDERS = 0xffff_ffff;
-
-/** Most free capacity first; unlimited (`undefined`) sorts ahead of metered. */
-function byFreeCapacityDesc(a: AvailableProvider, b: AvailableProvider): number {
-  if (a.availableCapacity === b.availableCapacity) return 0;
-  if (a.availableCapacity === undefined) return -1;
-  if (b.availableCapacity === undefined) return 1;
-  return b.availableCapacity > a.availableCapacity ? 1 : -1;
-}
-
-export interface QueryMatchingProvidersParams {
-  query: {
-    bytesNeeded: bigint;
-    minDuration: number;
-    maxPricePerByte: bigint;
-    primaryOnly: boolean;
-  };
-  limit: number;
+export interface UploadOptions {
+  contentType?: string;
+  signal?: AbortSignal;
 }
 
 export class DriveClient {
@@ -131,11 +75,11 @@ export class DriveClient {
   private signer: Signer | null = null;
   private signerAddress: string | null = null;
   private keypair: Keypair | null = null;
-  private fsc: FileSystemClient | null = null;
+  private w3s: Web3Storage | null = null;
 
   private rebuild(): void {
     if (!this.api) {
-      this.fsc = null;
+      this.w3s = null;
       return;
     }
     let chainSigner: ChainSigner | null = null;
@@ -147,7 +91,7 @@ export class DriveClient {
         keypair: this.keypair ?? undefined,
       };
     }
-    this.fsc = new FileSystemClient({ api: this.api, signer: chainSigner });
+    this.w3s = new Web3Storage({ api: this.api, signer: chainSigner });
   }
 
   setApi(api: ParachainApi | null): void {
@@ -185,9 +129,9 @@ export class DriveClient {
     return this.api;
   }
 
-  private requireFs(): FileSystemClient {
-    if (!this.fsc) throw new Error("Not connected to chain");
-    return this.fsc;
+  private requireW3s(): Web3Storage {
+    if (!this.w3s) throw new Error("Not connected to chain");
+    return this.w3s;
   }
 
   private requireOwner(): ChainSigner {
@@ -203,11 +147,11 @@ export class DriveClient {
   // ── Provider resolution ───────────────────────────────────────────────────
 
   getProviderUrl(bucketId: bigint): Promise<string> {
-    return this.requireFs().getProviderUrl(bucketId);
+    return this.requireW3s().getProviderUrl(bucketId);
   }
 
   invalidateProviderUrl(bucketId: bigint): void {
-    this.fsc?.invalidateProviderUrl(bucketId);
+    this.w3s?.invalidateProviderUrl(bucketId);
   }
 
   async waitForProvider(
@@ -224,7 +168,7 @@ export class DriveClient {
     onProgress?.(statusFor(0), 0);
     const startTime = Date.now();
     try {
-      const url = await this.requireFs().waitForProvider(bucketId, {
+      const url = await this.requireW3s().waitForProvider(bucketId, {
         timeoutMs: 150_000,
         tickMs: 3_000,
         onTick: (elapsedMs) => onProgress?.(statusFor(Math.round(elapsedMs / 1000)), elapsedMs),
@@ -250,94 +194,17 @@ export class DriveClient {
 
   // ── Drive on-chain operations ─────────────────────────────────────────────
 
-  /**
-   * Every registered provider via the `providers` runtime API, sorted by free
-   * capacity descending. Used by the provider picker to surface candidates
-   * before negotiation. UI-side discovery — the SDK's
-   * `discoverAcceptingProvider` picks one; this lists them all.
-   */
-  async listAvailableProviders(): Promise<AvailableProvider[]> {
-    const api = this.requireApi();
-    const page = await api.apis.StorageProviderApi.providers(0, ALL_PROVIDERS);
-
-    const providers: AvailableProvider[] = page.map(([account, info]) => ({
-      account,
-      multiaddr: new TextDecoder().decode(info.multiaddr),
-      stake: info.stake,
-      // The chain already computed this; `null` is its "unlimited".
-      availableCapacity:
-        info.available_capacity == null ? undefined : BigInt(info.available_capacity),
-      maxCapacity: BigInt(info.max_capacity),
-      pricePerByte: info.price_per_byte,
-      minDuration: info.min_duration,
-      maxDuration: info.max_duration,
-      acceptingPrimary: info.accepting_primary,
-      agreementsTotal: info.stats.agreements_total,
-    }));
-
-    providers.sort(byFreeCapacityDesc);
-
-    return providers;
+  /** Every registered provider, most free capacity first. */
+  listAvailableProviders(): Promise<AvailableProvider[]> {
+    return listProviders(this.requireApi());
   }
 
-  /**
-   * Score registered providers against the given storage requirements via the
-   * `find_matching_providers` runtime API. Returns a `matchScore` and
-   * `partialReason` per provider so the picker can rank candidates.
-   */
-  async queryMatchingProviders(
+  /** Providers scored against storage requirements, best match first. */
+  queryMatchingProviders(
     query: QueryMatchingProvidersParams["query"],
     limit: QueryMatchingProvidersParams["limit"],
   ): Promise<MatchingProviders[]> {
-    const api = this.requireApi();
-    const matches = await api.apis.StorageProviderApi.find_matching_providers(
-      {
-        bytes_needed: query.bytesNeeded,
-        min_duration: query.minDuration,
-        max_price_per_byte: query.maxPricePerByte,
-        primary_only: query.primaryOnly,
-      },
-      limit,
-    );
-
-    return matches
-      .map((match) => {
-        const info = match.info;
-        const maxCapacity = BigInt(info.max_capacity ?? 0);
-        const committedBytes = BigInt(info.committed_bytes ?? 0);
-        // The chain already computed this; `null` is its "unlimited".
-        const availableCapacity =
-          info.available_capacity == null ? undefined : BigInt(info.available_capacity);
-
-        return {
-          account: toSs58(match.account),
-          multiaddr: new TextDecoder().decode(info.multiaddr),
-          stake: BigInt(info.stake ?? 0),
-          availableCapacity,
-          maxCapacity,
-          committedBytes,
-          pricePerByte: BigInt(info.price_per_byte ?? 0),
-          minDuration: info.min_duration ?? 0,
-          maxDuration: info.max_duration ?? 0,
-          acceptingPrimary: info.accepting_primary ?? false,
-          replicaSyncPrice:
-            info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
-          acceptingExtensions: info.accepting_extensions ?? false,
-          registeredAt: Number(info.stats.registered_at ?? 0),
-          agreementsTotal: info.stats.agreements_total ?? 0,
-          agreementsExtended: info.stats.agreements_extended ?? 0,
-          agreementsNotExtended: info.stats.agreements_not_extended ?? 0,
-          agreementsBurned: info.stats.agreements_burned ?? 0,
-          challengesDefended:
-            (info.stats.challenges_received_authorized ?? 0) +
-            (info.stats.challenges_received_public ?? 0),
-          challengesFailed: info.stats.challenges_failed ?? 0,
-          reputation: info.stats.reputation,
-          matchScore: match.match_score,
-          partialReason: match.partial_reason?.type ?? "",
-        };
-      })
-      .sort((a, b) => b.matchScore - a.matchScore);
+    return findMatchingProviders(this.requireApi(), query, limit);
   }
 
   /**
@@ -373,17 +240,26 @@ export class DriveClient {
   }
 
   listDrives(): Promise<DriveInfo[]> {
-    return this.requireFs().listDrives(this.signerAddress ?? undefined);
+    return this.requireW3s().listBuckets(this.signerAddress ?? undefined);
   }
 
   getDrive(bucketId: bigint): Promise<DriveInfo | null> {
-    return this.requireFs().getDrive(bucketId);
+    return this.requireW3s().getBucket(bucketId);
   }
 
   // ── FS HTTP operations ────────────────────────────────────────────────────
 
-  listDirectory(bucketId: bigint, path: string): Promise<FsEntry[]> {
-    return this.requireFs().listDirectory(bucketId, path);
+  async listDirectory(bucketId: bigint, path: string): Promise<FsEntry[]> {
+    const drive = await this.requireW3s().drive(bucketId);
+    const entries = await drive.list(path);
+    return entries.map((e) => ({
+      name: e.name,
+      path: e.path,
+      entryType: e.entryType,
+      size: Number(e.size),
+      mtime: Number(e.mtime) * 1000,
+      cid: e.cid,
+    }));
   }
 
   async uploadFile(
@@ -392,34 +268,40 @@ export class DriveClient {
     data: Uint8Array,
     options: UploadOptions = {},
   ): Promise<void> {
-    await this.requireFs().uploadFile(bucketId, path, data, options);
+    const drive = await this.requireW3s().drive(bucketId, { signal: options.signal });
+    await drive.putFile(path, data, { contentType: options.contentType });
   }
 
   async downloadFile(bucketId: bigint, path: string): Promise<Blob> {
-    const bytes = await this.requireFs().downloadFile(bucketId, path);
-    return new Blob([bytes as BlobPart]);
+    const drive = await this.requireW3s().drive(bucketId);
+    const file = await drive.getFile(path);
+    return new Blob([file.bytes as BlobPart]);
   }
 
-  deleteFile(bucketId: bigint, path: string): Promise<void> {
-    return this.requireFs().deleteFile(bucketId, path);
+  async deleteFile(bucketId: bigint, path: string): Promise<void> {
+    const drive = await this.requireW3s().drive(bucketId);
+    await drive.delete(path);
   }
 
-  createDirectory(bucketId: bigint, path: string): Promise<void> {
-    return this.requireFs().createDirectory(bucketId, path);
+  async createDirectory(bucketId: bigint, path: string): Promise<void> {
+    const drive = await this.requireW3s().drive(bucketId);
+    await drive.mkdir(path);
   }
 
   // ── Members ───────────────────────────────────────────────────────────────
 
-  getBucketMembers(bucketId: bigint): Promise<BucketMember[]> {
-    return this.requireFs().getBucketMembers(bucketId);
+  async getBucketMembers(bucketId: bigint): Promise<BucketMember[]> {
+    const info = await this.requireW3s().getBucket(bucketId);
+    if (!info) throw new Error(`Bucket ${bucketId} not found`);
+    return info.members;
   }
 
   addMember(bucketId: bigint, account: string, role: MemberRole): Promise<void> {
-    return this.requireFs().addMember(bucketId, account, role);
+    return this.requireW3s().setMember(bucketId, account, role);
   }
 
   removeMember(bucketId: bigint, account: string): Promise<void> {
-    return this.requireFs().removeMember(bucketId, account);
+    return this.requireW3s().removeMember(bucketId, account);
   }
 
   async getBucketVisibility(bucketId: bigint): Promise<Visibility> {
@@ -432,20 +314,8 @@ export class DriveClient {
 
   // ── Checkpoint ────────────────────────────────────────────────────────────
 
-  async getCheckpointInfo(bucketId: bigint): Promise<CheckpointInfo | null> {
-    const api = this.requireApi();
-    const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
-    if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
-
-    const snapshot = bucket.snapshot;
-    if (!snapshot) return null;
-
-    return {
-      mmrRoot: snapshot.commitment.mmr_root,
-      startSeq: snapshot.commitment.start_seq,
-      leafCount: snapshot.commitment.leaf_count,
-      checkpointBlock: snapshot.checkpoint_block,
-    };
+  getCheckpointInfo(bucketId: bigint): Promise<CheckpointInfo | null> {
+    return getCheckpointInfo(this.requireApi(), bucketId);
   }
 }
 

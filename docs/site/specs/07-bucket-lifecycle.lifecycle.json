@@ -230,8 +230,9 @@
       "title": "Checkpoint and freeze",
       "items": [
         "checkpoint needs min_providers primary signatures and records primary_signers",
+        "A checkpoint never moves back: start_seq never decreases; the end advances, and after a deletion may also stay (SnapshotNotForward)",
         "freeze_bucket: admin only, irreversible, needs a snapshot with min_providers acknowledgments",
-        "Frozen: start_seq cannot decrease below frozen_start_seq"
+        "Frozen: start_seq stays at frozen_start_seq; only the end advances"
       ]
     },
     {
