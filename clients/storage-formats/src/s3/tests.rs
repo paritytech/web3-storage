@@ -37,7 +37,7 @@ fn key_rules() {
 #[tokio::test]
 async fn metadata_keys_are_lowercased_and_unique() {
     let store = MemoryStore::default();
-    let objects = Objects::new(tree(&store));
+    let objects = S3Bucket::new(tree(&store));
     let put = |metadata: HashMap<String, String>| {
         objects.put_object(
             "k",
@@ -168,7 +168,7 @@ async fn list_matches_a_page_of_all_keys_with_fewer_reads() {
 
     let store = MemoryStore::default();
     let t = tree(&store);
-    let objects = Objects::new(tree(&store));
+    let objects = S3Bucket::new(tree(&store));
     let keys = [
         "a.txt",
         "b/1.txt",
@@ -282,7 +282,7 @@ async fn write_sequence(store: &MemoryStore) {
     t.put_file("/empty", b"", DEFAULT_MIME_TYPE, vec![])
         .await
         .unwrap();
-    Objects::new(tree(store))
+    S3Bucket::new(tree(store))
         .put_object(
             "photos/cat.jpg",
             b"meow",
@@ -314,7 +314,7 @@ async fn a_small_page_reads_few_directories() {
     use std::sync::atomic::Ordering;
 
     let store = MemoryStore::default();
-    let objects = Objects::new(tree(&store));
+    let objects = S3Bucket::new(tree(&store));
     for dir in 'a'..='z' {
         objects
             .put_object(&format!("{dir}/1"), b"x", PutObjectOptions::default())

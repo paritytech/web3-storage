@@ -10,7 +10,7 @@
  */
 
 export { FileSystemError, FsTree, type WriteQueue } from "./tree.js";
-export { ObjectError, Objects } from "./objects.js";
+export { ObjectError, S3Bucket } from "./objects.js";
 export * from "./store.js";
 export type {
   BlobStore,

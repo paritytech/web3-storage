@@ -3,7 +3,7 @@
 /**
  * Smart-contract end-to-end demo for the `TokenGatedDrive` example dApp.
  *
- * The contract owns a private Layer 0 bucket via the storage-provider
+ * The contract owns a private bucket via the storage-provider
  * precompile and mints a transferable token per object key. A token holder
  * is a `Reader` member of the bucket.
  * Flow:

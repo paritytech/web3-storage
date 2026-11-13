@@ -142,9 +142,8 @@ export interface PutChunkResult {
 }
 
 /**
- * PUT a single chunk to the provider without requesting an MMR commitment.
- * Suitable for S3-style object uploads where the Layer 1 metadata records
- * the CID itself and no Layer 0 checkpoint follows immediately.
+ * PUT a single chunk to the provider without a commit. The chunk is not part
+ * of the bucket's MMR until a `/commit` names a data root that contains it.
  *
  * `signer` authenticates the `PUT /node` request; it must hold a Writer/Admin
  * role on `bucketId` (the provider always enforces this).
@@ -387,7 +386,8 @@ export async function fetchChallengeProof(
 // A blob of any size is stored as its 256 KiB chunks plus the internal nodes
 // of its Merkle tree (`storage_primitives::merkle_tree`). Its
 // CID is the tree root (`computeDataRoot`). Blob reads are unauthenticated:
-// a blob's hash and its bucket id are enough to read it (#383/#396).
+// a blob's hash and its bucket id are enough to read it ("Read access at
+// Layer 0" in docs/design/scalable-web3-storage.md).
 
 /** Parallel requests per batch in the blob helpers. */
 const BLOB_CONCURRENCY = 4;

@@ -42,7 +42,7 @@ The canonical system design. Changes require review (see [`.github/CODEOWNERS`](
 
 Unratified / WIP notes. **These need triage** ([#308](https://github.com/paritytech/web3-storage/issues/308)) — each should be reviewed and either promoted into `design/` (design-of-record), folded into an existing doc, or dropped.
 
-- **[Layer 1 Design / Implementation](./drafts/L1_design_implementation.md)** — file-system & S3 provider interfaces on top of Layer 0 (split out of the Layer 0 implementation doc); triage tracked in [#51](https://github.com/paritytech/web3-storage/issues/51).
+- **[Layer 1 Design / Implementation](./drafts/L1_design_implementation.md)** — file-system & S3 provider interfaces on top of buckets (split out of the implementation doc); triage tracked in [#51](https://github.com/paritytech/web3-storage/issues/51).
 - **[Smart Contracts](./drafts/smart-contracts.md)** — `pallet_revive` integration, custom precompile ABI, address mapping, payment flow.
 - **[Marketplace](./drafts/marketplace.md)** — provider capacity, discovery, and matching.
 - **[Checkpoint Protocol](./drafts/CHECKPOINT_PROTOCOL.md)** — multi-provider checkpoint coordination.
@@ -53,9 +53,9 @@ Unratified / WIP notes. **These need triage** ([#308](https://github.com/parityt
 
 ## Clients
 
-- **[Storage Client SDK](../clients/storage/README.md)** — Layer-0 Rust client.
-- **[Storage Formats](../clients/storage-formats/README.md)** — Rust library for drives, directories, files and S3-style objects stored in a bucket.
-- **TypeScript SDK** — `@web3-storage/sdk` at `packages/sdk` (`./fs`, `./s3`, `./revive` subpaths).
+- **[Storage Client SDK](../clients/storage/README.md)** — buckets, agreements, providers, checkpoints and challenges on chain; blob upload and download over the provider's HTTP API.
+- **[Storage Formats](../clients/storage-formats/README.md)** — a directory tree and S3-style objects stored as blobs in one bucket. No chain calls.
+- **TypeScript SDK** — `@web3-storage/sdk` at `packages/sdk` (`./revive` subpath).
 
 ## External
 
