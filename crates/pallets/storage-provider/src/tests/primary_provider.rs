@@ -332,6 +332,30 @@ fn add_primary_provider_works_on_a_frozen_bucket() {
 }
 
 #[test]
+fn add_primary_provider_fails_when_below_min_agreement_bytes() {
+    new_test_ext().execute_with(|| {
+        run_to_block(1);
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                accepting_primary: true,
+                min_agreement_bytes: 51,
+                ..Default::default()
+            },
+        );
+        let bucket_id = create_bucket(1, 1);
+
+        // `quote_for` requests 50 bytes, one below the minimum.
+        let quote = quote_for(2, 1, bucket_id);
+        assert_err!(
+            add_primary(1, bucket_id, 2, quote),
+            Error::<Test>::MaxBytesBelowMinimum
+        );
+    });
+}
+
+#[test]
 fn added_primary_is_challengeable_only_after_it_signs_the_snapshot() {
     new_test_ext().execute_with(|| {
         let (bucket_id, commitment) = setup_signed_checkpoint();

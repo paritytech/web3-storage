@@ -16,29 +16,72 @@ use thiserror::Error;
 /// Client errors.
 #[derive(Error, Debug)]
 pub enum ClientError {
+    /// The HTTP request did not complete: no connection, a TLS failure, or
+    /// a response body that could not be read.
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 
-    #[error("API error: {0}")]
-    Api(String),
+    /// The provider answered `request` with a non-success HTTP status, for
+    /// example 403 when the signer lacks the bucket role the route needs, or
+    /// 404 when the provider has no such node or bucket.
+    #[error("{request} failed: HTTP {status}")]
+    HttpStatus {
+        /// Method and route, e.g. `PUT /node`.
+        request: &'static str,
+        /// HTTP status code.
+        status: u16,
+    },
 
+    /// A request or response body could not be encoded or decoded.
     #[error("Serialization error: {0}")]
     Serialization(String),
 
+    /// Data from a provider does not match its hash or Merkle proof.
     #[error("Data verification failed")]
     VerificationFailed,
 
+    /// A provider did not answer within the timeout.
     #[error("Provider unavailable: {0}")]
     ProviderUnavailable(String),
 
+    /// A chain RPC call, storage read or transaction failed.
     #[error("Chain error: {0}")]
     Chain(String),
 
+    /// The provider node answered `/negotiate` with a non-success status.
+    /// `code` and `details` come from the node's JSON error body, and are
+    /// `None` when the body is not one.
+    #[error(
+        "Provider rejected /negotiate with status {status}: {}",
+        negotiate_reason(code, details)
+    )]
+    NegotiateRejected {
+        status: u16,
+        code: Option<String>,
+        details: Option<serde_json::Value>,
+    },
+
+    /// A setting the call needs is missing or invalid, for example no
+    /// signer.
     #[error("Configuration error: {0}")]
     Config(String),
 
+    /// Reading or writing the local checkpoint state file failed.
     #[error("Storage error: {0}")]
     Storage(String),
+
+    /// Encrypting or decrypting failed: the wrong key, tampered or
+    /// truncated data, or an unknown encryption format version.
+    #[error("Encryption error: {0}")]
+    Encryption(String),
+}
+
+fn negotiate_reason(code: &Option<String>, details: &Option<serde_json::Value>) -> String {
+    match (code, details) {
+        (Some(code), Some(details)) => format!("{code} {details}"),
+        (Some(code), None) => code.clone(),
+        _ => "no error code".to_string(),
+    }
 }
 
 /// Configuration for connecting to the storage system.

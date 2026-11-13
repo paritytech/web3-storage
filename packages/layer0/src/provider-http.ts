@@ -12,7 +12,6 @@ import {
   bytesToBase64,
   chunkCount,
   CidMismatchError,
-  computeCid,
   concatBytes,
   createLimiter,
   DEFAULT_CHUNK_SIZE,
@@ -29,6 +28,7 @@ import {
   signProviderRequest,
   splitChunks,
   verifyChunkProof,
+  verifyMmrProof,
   type MmrProof,
   type ProviderRequestSigner,
   type TreeNode,
@@ -120,7 +120,7 @@ export interface ProviderNodeInfo {
    * until `readiness.provider_info_loaded`.
    */
   provider_registration_info: {
-    settings: { price_per_byte: string | number | bigint };
+    settings: { price_per_byte: string | number | bigint; min_agreement_bytes: string | number | bigint };
   } | null;
 }
 
@@ -198,9 +198,25 @@ export async function putInternalNode(
 }
 
 /**
+ * A commitment and the provider's signature over it, as the provider node
+ * returns it from `/commit` and `/checkpoint-signature`.
+ */
+export type ProviderCommit = {
+  mmr_root: string;
+  start_seq: number | string;
+  leaf_count: number | string;
+  provider_signature: string;
+};
+
+/** The `POST /commit` response body. */
+export type CommitResponse = ProviderCommit & {
+  /** MMR leaf index of each committed data root, in request order. */
+  leaf_indices: number[];
+};
+
+/**
  * PUT a chunk to the provider and request an MMR commitment. Returns the
- * chunk hash, original bytes, and the /commit response (mmr_root,
- * leaf_indices, start_seq, provider_signature).
+ * chunk hash, original bytes, and the /commit response.
  *
  * `signer` authenticates the `PUT /node` and `POST /commit` requests; it must
  * hold a Writer/Admin role on `bucketId` (the provider always enforces this).
@@ -212,7 +228,7 @@ export async function uploadChunk(
   bucketId: bigint | number,
   data: Uint8Array | string,
   signer: ChainSigner,
-): Promise<{ hash: string; data: Uint8Array; commit: any }> {
+): Promise<{ hash: string; data: Uint8Array; commit: CommitResponse }> {
   const { hash, data: bytes } = await putChunk(providerUrl, bucketId, data, signer);
   const commit = await providerFetch(providerUrl, "/commit", {
     method: "POST",
@@ -286,6 +302,10 @@ export type ChallengeResponse = Parameters<
  * the chunk, or `ChunkOutOfRange` with the leaf's MMR proof alone when the
  * challenged `chunk_index` is at or past the leaf's chunk count.
  *
+ * The MMR proof is for the challenge's commitment, which `respond_to_challenge`
+ * verifies against. A proof that does not verify against it throws here,
+ * before the caller submits `respond_to_challenge` and pays its fee.
+ *
  * `signer` authenticates the `GET /mmr_proof` step, which is Reader-gated on
  * private buckets — a bucket member works, and so does the provider's own
  * account (the node grants its own account every Reader check).
@@ -313,38 +333,41 @@ export async function fetchChallengeProof(
         challengeId.index,
     );
 
-  const mmr = await providerFetch(providerUrl, "/mmr_proof", {
-    params: {
-      bucket_id: challenge.bucket_id,
-      leaf_index: challenge.target.leaf_index,
-    },
-    sign: signer ? { signer: signer.signer, bucketId: challenge.bucket_id } : undefined,
-  });
-  if (!Array.isArray(mmr.items))
-    throw new Error(
-      "Provider /mmr_proof response has no `items`: the provider node is older than this client",
-    );
-  if (typeof mmr.leaf?.leaf_version !== "number")
-    throw new Error(
-      "Provider /mmr_proof leaf has no `leaf_version`: the provider node is older than this client",
-    );
-  const mmr_proof = {
-    leaf: {
-      leaf_version: mmr.leaf.leaf_version,
-      data_root: asHex(mmr.leaf.data_root),
-      data_size: BigInt(mmr.leaf.data_size),
-      total_size: BigInt(mmr.leaf.total_size),
-    },
-    items: mmr.items.map((h: string) => asHex(h)),
+  const commitment: MmrProofCommitment = {
+    mmrRoot: hexToBytes(challenge.commitment.mmr_root),
+    startSeq: challenge.commitment.start_seq,
+    leafCount: challenge.commitment.leaf_count,
   };
-  if (challenge.target.chunk_index >= BigInt(leafChunkCount(mmr.leaf))) {
+  const proof = await getMmrProof(providerUrl, challenge.bucket_id, commitment, challenge.target.leaf_index, {
+    signer,
+  });
+  if (!verifyMmrProof(proof, challenge.target.leaf_index, commitment.mmrRoot, commitment.leafCount))
+    throw new Error(
+      "Provider /mmr_proof does not prove leaf " +
+        challenge.target.leaf_index +
+        " of the challenged commitment (root " +
+        toHex(commitment.mmrRoot) +
+        ", " +
+        commitment.leafCount +
+        " leaves): the provider node may be older than this client",
+    );
+
+  // `respond_to_challenge` takes the proof as hex with snake_case fields.
+  const leaf = {
+    leaf_version: proof.leaf.leafVersion,
+    data_root: toHex(proof.leaf.dataRoot),
+    data_size: proof.leaf.dataSize,
+    total_size: proof.leaf.totalSize,
+  };
+  const mmr_proof = { leaf, items: proof.items.map((h) => toHex(h)) };
+  if (challenge.target.chunk_index >= BigInt(leafChunkCount(leaf))) {
     return Enum("ChunkOutOfRange", { mmr_proof });
   }
 
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
       bucket_id: challenge.bucket_id,
-      data_root: mmr.leaf.data_root,
+      data_root: leaf.data_root,
       chunk_index: challenge.target.chunk_index,
     },
   });
@@ -372,14 +395,6 @@ const BLOB_CONCURRENCY = 4;
 const READ_WINDOW_CHUNKS = 16;
 /** Attempts for idempotent requests (`PUT /node` and reads). */
 const IDEMPOTENT_RETRIES = 3;
-
-async function runLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) await fn(items[next++]);
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-}
 
 async function putNode(
   providerUrl: string,
@@ -430,7 +445,7 @@ export async function uploadBlob(
 ): Promise<UploadBlobResult> {
   if (bytes.length === 0) throw new Error("empty data has no chunk tree");
   const chunks = splitChunks(bytes);
-  const hashes = chunks.map((c) => computeCid(c));
+  const hashes = chunks.map(hashLeaf);
   const { root, nodes } = merkleTree(hashes);
   const sent = new Set<string>();
   const once = <T>(items: T[], hashOf: (item: T) => Uint8Array): T[] =>
@@ -445,8 +460,9 @@ export async function uploadBlob(
     chunks.map((data, i) => ({ data, hash: hashes[i] })),
     (c) => c.hash,
   );
-  await runLimited(leaves, BLOB_CONCURRENCY, (c) =>
-    putNode(providerUrl, bucketId, c.hash, { data: c.data }, signer, opts),
+  const limit = createLimiter(BLOB_CONCURRENCY);
+  await Promise.all(
+    leaves.map((c) => limit(() => putNode(providerUrl, bucketId, c.hash, { data: c.data }, signer, opts))),
   );
   // `nodes` is level by level; a level can go up once the one below is stored.
   // A level of `width` hashes has `floor(width / 2)` nodes; an odd last hash
@@ -456,8 +472,10 @@ export async function uploadBlob(
     const count = Math.floor(width / 2);
     const level = once(nodes.slice(offset, offset + count), (n) => n.hash);
     offset += count;
-    await runLimited(level, BLOB_CONCURRENCY, (n) =>
-      putNode(providerUrl, bucketId, n.hash, { children: [n.left, n.right] }, signer, opts),
+    await Promise.all(
+      level.map((n) =>
+        limit(() => putNode(providerUrl, bucketId, n.hash, { children: [n.left, n.right] }, signer, opts)),
+      ),
     );
   }
   return { dataRoot: toHex(root), size: bytes.length, chunkHashes: hashes };
@@ -543,20 +561,36 @@ export async function getCommitment(
   };
 }
 
+/** The commitment a {@link getMmrProof} proof is for. */
+export interface MmrProofCommitment {
+  mmrRoot: Uint8Array;
+  /** First sequence number in the commitment; `leafIndex` counts from it. */
+  startSeq: bigint;
+  leafCount: bigint;
+}
+
 /**
- * `GET /mmr_proof`: the MMR leaf at `leafIndex` (counted from the bucket's
- * current `start_seq`) and its inclusion proof. Check it with
- * `verifyMmrProof` against a trusted MMR root. Reader-gated like
- * {@link getCommitment}: pass a member as `opts.signer` on a private bucket.
+ * `GET /mmr_proof`: the MMR leaf at `leafIndex`, counted from
+ * `commitment.startSeq`, in the MMR of `commitment`, and its inclusion proof.
+ * Check the proof with `verifyMmrProof` against `commitment`. Reader-gated
+ * like {@link getCommitment}: pass a member as `opts.signer` on a private
+ * bucket.
  */
 export async function getMmrProof(
   providerUrl: string,
   bucketId: bigint | number,
+  commitment: MmrProofCommitment,
   leafIndex: bigint | number,
   opts: ProviderHttpOpts & { signer?: ChainSigner } = {},
 ): Promise<MmrProof> {
   const res = await providerFetch(providerUrl, "/mmr_proof", {
-    params: { bucket_id: bucketId, leaf_index: leafIndex },
+    params: {
+      bucket_id: bucketId,
+      leaf_index: leafIndex,
+      mmr_root: toHex(commitment.mmrRoot),
+      start_seq: commitment.startSeq,
+      leaf_count: commitment.leafCount,
+    },
     sign: opts.signer ? { signer: opts.signer.signer, bucketId } : undefined,
     retries: opts.retries ?? IDEMPOTENT_RETRIES,
     fetch: opts.fetch,
@@ -669,7 +703,7 @@ async function readBlobWithProofs(
     got.forEach((c, k) => {
       const data = base64ToBytes(c.data);
       const siblings = c.proof.map(hexToBytes);
-      if (!verifyChunkProof(computeCid(data), start + k, siblings, root, total)) {
+      if (!verifyChunkProof(hashLeaf(data), start + k, siblings, root, total)) {
         throw new BlobVerificationError(rootHex, `chunk ${start + k} does not match its proof`);
       }
       out.push(data);
@@ -728,7 +762,7 @@ async function walkBlob(providerUrl: string, bucketId: bigint, root: Uint8Array,
     return parts.flat();
   };
   const chunks = await walk(root, 0);
-  if (!bytesEq(merkleRoot(chunks.map((c) => computeCid(c))), root)) {
+  if (!bytesEq(merkleRoot(chunks.map(hashLeaf)), root)) {
     throw new BlobVerificationError(rootHex, "chunks do not rebuild the root");
   }
   return chunks;

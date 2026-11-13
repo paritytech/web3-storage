@@ -29,7 +29,7 @@ pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
 pub use provider_challenge::{
     self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
     ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle, ChallengeResponse,
-    ChallengeResponseResult, DetectedChallenge, ResponderCommand,
+    ChallengeResponseResult, DetectedChallenge, ProofTarget, ResponderCommand,
 };
 /// The chain-state coordinator lives in the `provider-coordinator` crate; keep
 /// the old module path working for existing consumers.
@@ -165,6 +165,22 @@ impl ProviderState {
         Ok(array_bytes::bytes2hex("0x", keypair.sign(message).encode()))
     }
 
+    /// Run `work` against the storage backend on the blocking thread pool.
+    /// Storage calls do RocksDB I/O, walk content trees and wait for other
+    /// writers; none of that may stall an async worker thread.
+    pub async fn blocking_storage<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&dyn StorageBackend) -> T + Send + 'static,
+    ) -> Result<T, Error> {
+        let storage = Arc::clone(&self.storage);
+        tokio::task::spawn_blocking(move || work(&*storage))
+            .await
+            .map_err(|join_error| {
+                tracing::error!(error = %join_error, "storage task failed");
+                Error::StorageTaskFailed(join_error.to_string())
+            })
+    }
+
     /// The keypair every signing path goes through, once the guard below
     /// passes.
     ///
@@ -260,6 +276,7 @@ mod tests {
                 replica_sync_price: None,
                 accepting_extensions: true,
                 max_capacity: 0,
+                min_agreement_bytes: 0,
             },
             stats: Default::default(),
             deregister_at: None,
@@ -276,6 +293,23 @@ mod tests {
             .provider_info
             .write()
             .replace(registration(public_key));
+    }
+
+    /// A panic inside a storage call must come back as a 500, not as a
+    /// dropped connection.
+    #[tokio::test]
+    async fn blocking_storage_maps_a_panicking_task_to_storage_task_failed() {
+        let (deps, _dir) = test_deps();
+        let state = ProviderState::with_provider_id(deps, "provider".to_string());
+
+        let result: Result<(), crate::error::Error> = state
+            .blocking_storage(|_| panic!("storage call panicked"))
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(crate::error::Error::StorageTaskFailed(_))
+        ));
     }
 
     #[test]
