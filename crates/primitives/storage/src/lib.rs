@@ -13,8 +13,8 @@ use alloc::vec::Vec;
 use bitvec::prelude::{BitVec, Lsb0};
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use core::fmt::Debug;
+use primitive_types::H256;
 use scale_info::TypeInfo;
-use sp_core::H256;
 
 pub mod agreement_term;
 pub mod merkle;
@@ -268,6 +268,18 @@ impl Commitment {
     pub fn contains_seq(&self, seq: u64) -> bool {
         seq >= self.start_seq && seq < self.range_end()
     }
+
+    /// Whether this commitment may replace `current` as a bucket's snapshot.
+    /// The start never moves back. With the same start, the end must move
+    /// forward. A deletion moves the start forward and keeps the end, so with
+    /// a later start the end must not move back.
+    pub fn moves_forward_from(&self, current: &Commitment) -> bool {
+        if self.start_seq == current.start_seq {
+            self.range_end() > current.range_end()
+        } else {
+            self.start_seq > current.start_seq && self.range_end() >= current.range_end()
+        }
+    }
 }
 
 /// The `(leaf_index, chunk_index)` pair identifying the exact chunk a challenge
@@ -380,7 +392,10 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
 /// In the runtime this calls the host function, which is faster than hashing
 /// in wasm. Native code hashes directly and needs no externalities.
 pub fn blake2_256(data: &[u8]) -> H256 {
-    sp_io::hashing::blake2_256(data).into()
+    #[cfg(substrate_runtime)]
+    return sp_io::hashing::blake2_256(data).into();
+    #[cfg(not(substrate_runtime))]
+    sp_crypto_hashing::blake2_256(data).into()
 }
 
 /// Prefix of a Merkle leaf preimage: a chunk, an MMR leaf or a metadata entry.

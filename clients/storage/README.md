@@ -307,10 +307,8 @@ match client.upload(1, data, Default::default()).await {
 
 - ✅ Multi-provider checkpoint coordination
 - ✅ Consensus verification (configurable threshold)
-- ✅ Conflict detection and resolution
 - ✅ Automatic background checkpointing
 - ✅ Provider health tracking and metrics
-- ✅ Auto-challenge recommendations
 
 ### EventStream
 
@@ -417,9 +415,6 @@ match result {
     CheckpointResult::InsufficientConsensus { agreed, total } => {
         println!("Failed: only {}/{} providers agreed", agreed, total);
     }
-    CheckpointResult::Conflict { conflicts } => {
-        println!("Conflict detected! {} providers disagree", conflicts.len());
-    }
     _ => {}
 }
 
@@ -514,25 +509,9 @@ let filter = EventFilter::storage_provider().with_predicate(move |ev| {
 let mut stream = EventStream::connect("ws://127.0.0.1:2222", filter).await?;
 ```
 
-## Layer 1 File System Interface
+## Layer 1: Storage Formats
 
-For most users, consider using the **Layer 1 File System Client** instead, which provides a familiar file system abstraction (drives, folders, files) over Layer 0's raw blob storage.
-
-**When to use Layer 1 (File System Client):**
-- You need a familiar file/folder interface
-- You want automatic setup and provider selection
-- You're building a general-purpose file storage application
-- You prefer simplicity over low-level control
-
-**When to use Layer 0 (Storage Client - this SDK):**
-- You need full control over storage operations
-- You're building custom storage logic
-- You want to implement your own data structures on top of blob storage
-- You need direct access to buckets and agreements
-
-**Layer 1 Documentation:** See [File System Client](../file-system/README.md)
-
-**Layer 1 Client:** `clients/file-system/`
+[Storage Formats](../storage-formats/README.md) stores files, directories and S3-style objects in a Layer 0 bucket, on top of this SDK. Use this SDK directly to store your own data structures as blobs, or to manage buckets, members and agreements.
 
 ## Status
 

@@ -3309,27 +3309,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "file-system-client"
-version = "0.1.0"
-dependencies = [
- "array-bytes 6.2.3",
- "async-trait",
- "axum",
- "client-test-support",
- "parity-scale-codec",
- "reqwest",
- "sp-core",
- "sp-runtime",
- "storage-client",
- "storage-primitives",
- "subxt-signer 0.50.2",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.23",
-]
-
-[[package]]
 name = "filetime"
 version = "0.2.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6090,9 +6069,9 @@ dependencies = [
 
 [[package]]
 name = "pallet-xcm"
-version = "29.0.0"
+version = "29.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ea0702d1feffe529c69d90318c066a413e1ec871e8a482d869805b74474724"
+checksum = "86d3ae7c71a0481a0d9f4fa94fdc4c0f615e4344f1218a4c42d631d3a7b96018"
 dependencies = [
  "bounded-collections",
  "frame-benchmarking",
@@ -6133,9 +6112,9 @@ dependencies = [
 
 [[package]]
 name = "parachains-common"
-version = "32.0.0"
+version = "32.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6374251dabf6e0c3ca4f25956297836aef896818a7a5eb3c18e49e212d29021b"
+checksum = "b7e8405ed90568235a8425f64cbd1e82e98be8750acc39a59d28217d445fd059"
 dependencies = [
  "cumulus-primitives-core",
  "cumulus-primitives-utility",
@@ -6573,9 +6552,9 @@ dependencies = [
 
 [[package]]
 name = "polkadot-runtime-parachains"
-version = "28.0.0"
+version = "28.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cedaa9b68c289613b75a98e6e0e145b231867699a8d7b64d63d3d9c4782f25c6"
+checksum = "45fd025139de412d4c37ff28f03435977fb25fd6c18ae7d85e7339c032ba0727"
 dependencies = [
  "bitflags 1.3.2",
  "bitvec",
@@ -7119,6 +7098,7 @@ dependencies = [
  "parity-scale-codec",
  "rocksdb",
  "sp-core",
+ "sp-runtime",
  "storage-primitives",
  "tempfile",
  "thiserror 2.0.18",
@@ -7968,29 +7948,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
-name = "s3-client"
-version = "0.1.0"
-dependencies = [
- "array-bytes 6.2.3",
- "async-trait",
- "base64",
- "client-test-support",
- "file-system-client",
- "futures",
- "serde_json",
- "sp-core",
- "sp-runtime",
- "storage-client",
- "storage-primitives",
- "storage-subxt",
- "subxt-signer 0.50.2",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.23",
-]
-
-[[package]]
 name = "safe_arch"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8527,6 +8484,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "serde_bytes"
 version = "0.11.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8550,6 +8518,17 @@ name = "serde_derive"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "serde_derive_internals"
+version = "0.29.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18d26a20a969b9e3fdf2fc2d9f21eda6c40e2de84c9408bb5d3b05d499aae711"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9422,9 +9401,9 @@ dependencies = [
 
 [[package]]
 name = "sp-runtime-interface-proc-macro"
-version = "21.0.0"
+version = "21.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7d9650b5186fd32bf5198adfe08d8fecc76f2ebe8a8927f28aaf2a537d75b2e"
+checksum = "3218b42e2642a47eda4a41b2226e5804742e0626d66a8bfa8af6862099a7cd87"
 dependencies = [
  "Inflector",
  "expander",
@@ -9678,9 +9657,9 @@ dependencies = [
 
 [[package]]
 name = "staging-xcm"
-version = "24.0.0"
+version = "24.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e80fe5081fed2b306dbaa4ef19477872be06241d01d400b65b3365366341f2b"
+checksum = "959ff4e73b0b8d0dcd4e39043b000cb1ed27d51ed3720ad8d5a449a47994d176"
 dependencies = [
  "array-bytes 6.2.3",
  "bounded-collections",
@@ -9700,9 +9679,9 @@ dependencies = [
 
 [[package]]
 name = "staging-xcm-builder"
-version = "29.0.0"
+version = "29.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac858ea645ead44423962e618ef545111d2a561356a0c6e2fce5ee1105bfaf47"
+checksum = "8841aea6f98e20a1a8f82d52f68df0b978c18cee7bb673082a2098a2312937c0"
 dependencies = [
  "environmental",
  "frame-support",
@@ -9726,9 +9705,9 @@ dependencies = [
 
 [[package]]
 name = "staging-xcm-executor"
-version = "28.0.0"
+version = "28.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a6b3578cf8eaa8aa6ceefd1f36b66ea24f44a30b3f39494c62964056caea5b1"
+checksum = "35339755ed0523a907421b01a1a882dc827b5fc1d3051b2ccdaada9451a7d6eb"
 dependencies = [
  "environmental",
  "frame-benchmarking",
@@ -9800,6 +9779,34 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.23",
+]
+
+[[package]]
+name = "storage-formats"
+version = "0.1.0"
+dependencies = [
+ "array-bytes 6.2.3",
+ "async-trait",
+ "axum",
+ "bounded-collections",
+ "client-test-support",
+ "getrandom 0.2.17",
+ "js-sys",
+ "parity-scale-codec",
+ "primitive-types 0.13.1",
+ "reqwest",
+ "serde",
+ "serde-wasm-bindgen",
+ "sp-runtime",
+ "storage-client",
+ "storage-primitives",
+ "subxt-signer 0.50.2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing-subscriber 0.3.23",
+ "tsify-next",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -9954,9 +9961,10 @@ dependencies = [
  "bitvec",
  "parity-scale-codec",
  "polkadot-ckb-merkle-mountain-range",
+ "primitive-types 0.13.1",
  "scale-info",
  "serde",
- "sp-core",
+ "sp-crypto-hashing",
  "sp-io",
 ]
 
@@ -10910,6 +10918,30 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tsify-next"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d0f2208feeb5f7a6edb15a2389c14cd42480ef6417318316bb866da5806a61d"
+dependencies = [
+ "serde",
+ "serde-wasm-bindgen",
+ "tsify-next-macros",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "tsify-next-macros"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f81253930d0d388a3ab8fa4ae56da9973ab171ef833d1be2e9080fc3ce502bd6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals",
+ "syn 2.0.117",
+]
 
 [[package]]
 name = "tt-call"
