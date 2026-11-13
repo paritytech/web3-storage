@@ -3,8 +3,8 @@
 ## Goal
 
 Photos is a normal photo app backed by Web3 Storage. A custom Solidity contract
-(`Photos.sol`) creates a Layer 0 bucket through the storage-provider precompile (`IWeb3Storage`),
-and the app stores a Layer 1 file system in that bucket through the SDK's file tree (`FsTree`),
+(`Photos.sol`) creates a bucket through the storage-provider precompile (`IWeb3Storage`),
+and the app stores a file system in that bucket through the SDK's file tree (`FsTree`),
 walking a signed-in user through:
 
 1. **No library** — the user hasn't set up storage yet; let them create one *with a provider they
@@ -21,7 +21,7 @@ as the on-chain control plane.
 | Decision | Choice | Rationale |
 | --- | --- | --- |
 | Transport / signing | **Substrate-native only** (Polkadot extension + dev accounts) | Off-chain provider auth keeps working; no extra infra. |
-| Storage layer | **Layer 0 bucket + the SDK's file tree (`FsTree`)** | Directories give us **albums for free**, and the SDK's `FsTree` is reusable. |
+| Storage layer | **Bucket + the SDK's file tree (`FsTree`)** | Directories give us **albums for free**, and the SDK's `FsTree` is reusable. |
 | Contract calls | **PAPI `Revive` dispatchables** (`call`, `instantiate_with_code`), **viem for ABI only** | The CI-verified [`sc-coverage.ts`](../../examples/papi/sc-coverage.ts) / [`sc-team-drive.ts`](../../examples/papi/sc-team-drive.ts) pattern. |
 | EVM JSON-RPC / MetaMask | **Out of scope** | Runtime is eth-rpc-ready (`runtimes/web3-storage-local/src/revive.rs`), so a MetaMask UX is a clean future follow-up. |
 | Architecture | **Custom `Photos` contract, one contract-administered bucket per user** | The contract creates the bucket via the **storage-provider precompile** (`IWeb3Storage`, `0x…09010000`), is its admin, and anchors the album-tree root on-chain — a job the chain itself does not do. |
@@ -51,7 +51,7 @@ content-addressed by blake2-256.
 ```
 Photos UI (React · dev-account/extension wallet · viem for ABI)
    │  PAPI: Revive.call (writes) · ReviveApi.call (unsigned reads)
-   │  HTTP: Layer 0 routes via FsTree (albums, photos, thumbnails) — direct, bypasses the contract
+   │  HTTP: blob routes via FsTree (albums, photos, thumbnails) — direct, bypasses the contract
    ▼
 Photos.sol (PolkaVM)            per user: { bucketId, rootCid }
    │  CALL 0x…09010000 (storage-provider precompile, IWeb3Storage)
@@ -59,7 +59,7 @@ Photos.sol (PolkaVM)            per user: { bucketId, rootCid }
 pallet_storage_provider         bucket + one primary agreement · contract account is admin
    │                            · user granted Writer
    ▼
-provider node  Layer 0 routes      holds the photo blobs, thumbnails, and the directory tree blobs
+provider node  blob routes         holds the photo blobs, thumbnails, and the directory tree blobs
         (off-chain, browser ↔ provider; client-computed tree root anchored on-chain by the contract)
 ```
 
@@ -67,7 +67,7 @@ Origin model (from [`smart-contracts.md`](../../docs/drafts/smart-contracts.md))
 `RawOrigin::Signed(contract_account)`, so the **contract** is the admin of every user's bucket.
 Per-user attribution lives in the contract (`bucketOwner`). At creation the contract grants the
 user a **Writer** role on the bucket (`setMember` → `set_member` on the storage-provider
-pallet), so the browser can sign the provider's Layer 0 write requests directly with the user's own
+pallet), so the browser can sign the provider's write requests directly with the user's own
 wallet. This is custodial-by-ownership only — the transparent contract enforces "only you manage
 your library."
 
@@ -153,7 +153,7 @@ Notes:
 `payment = price_per_byte × max_bytes × duration`, where `price_per_byte` is the value the
 provider locked into the **signed terms** (from its `/negotiate` response). `msg.value` (eth-side)
 funds the contract's substrate-mapped account; `pallet_revive` converts at `NativeToEthRatio =
-10^6`. `create_bucket_with_primary` then reserves the payment from the contract's balance via Layer 0. The UI
+10^6`. `create_bucket_with_primary` then reserves the payment from the contract's balance in the storage pallet. The UI
 sets `msg.value` from the computed payment plus a buffer. Unused reserve stays in the contract in
 v1 (per-user refunds = a follow-up; acceptable for a prototype).
 
@@ -161,7 +161,7 @@ v1 (per-user refunds = a follow-up; acceptable for a prototype).
 
 The SDK's `FsTree` (`Web3Storage.drive` in `@web3-storage/sdk`) keeps a directory tree per bucket
 and stores it in the bucket itself: file content, `FileManifest` and
-`DirectoryNode` blobs go up through the provider's Layer 0 routes (`PUT /node`, `POST /commit`),
+`DirectoryNode` blobs go up through the provider's blob routes (`PUT /node`, `POST /commit`),
 and the bucket's last MMR leaf points at the root directory. The tree finds the root through
 `GET /commitment` and `GET /mmr_proof`, which need `Reader` on the private library bucket, and
 reads blobs by hash through `GET /read` and `GET /node`, which need no signature. The user's
@@ -207,7 +207,7 @@ Implications:
 
 ## Provider model
 
-- **Single chosen primary.** `create_bucket_with_primary` opens one Layer 0 bucket + one primary agreement
+- **Single chosen primary.** `create_bucket_with_primary` opens one bucket + one primary agreement
   atomically; the user picks the provider at library creation. (Redundancy via protocol replicas
   is a native-only follow-up — see open questions.)
 - **No auto-accept polling.** The provider signs the deal terms off-chain at `POST /negotiate`
@@ -257,7 +257,7 @@ This app matches the React 19 + Vite + Tailwind + PAPI stack and the shared pack
 | New dep | `viem` (ABI encode/decode only) |
 | Reads | `ReviveApi.call` dry-run + viem `decodeFunctionResult` (unsigned) |
 | Writes | `Revive.call` / `Revive.instantiate_with_code` via PAPI `createAndSubmit` |
-| FS ops | the SDK's `FsTree` over the provider's Layer 0 routes |
+| FS ops | the SDK's `FsTree` over the provider's blob routes |
 | Base | `GITHUB_PAGES` base `/web3-storage/photos/` |
 
 ### Screens (single-page, state-driven)
@@ -289,7 +289,7 @@ This app matches the React 19 + Vite + Tailwind + PAPI stack and the shared pack
   the provider isn't accepting or has no capacity.
 - **Insufficient `msg.value`** → compute payment from the signed `price_per_byte` and add a
   buffer; surface `PaymentExceedsMax` clearly.
-- **Provider authorization** → the browser signs the provider's Layer 0 writes and the root lookup
+- **Provider authorization** → the browser signs the provider's writes and the root lookup
   (`GET /commitment`, `GET /mmr_proof`) with the user's wallet; the Writer role granted at
   `createLibrary` (`setMember`) also satisfies `Reader`. Blob reads by hash need no signature.
 - **Integrity mismatch** → reject/flag a library whose locally-recomputed metadata root ≠ the

@@ -7,7 +7,7 @@
 //! interfaces with `tsify`.
 
 use crate::format::{Cid, DirectoryEntry, EntryType, MetadataEntry};
-use crate::s3::{ListObjectsParams, Objects, PutObjectOptions, S3ClientError};
+use crate::s3::{ListObjectsParams, PutObjectOptions, S3Bucket, S3ClientError};
 use crate::tree::{BlobLength, BlobStore, EmptyParents, Tree};
 use crate::{FsClientError, Result};
 use serde::{Deserialize, Serialize};
@@ -618,17 +618,17 @@ impl WasmTree {
 }
 
 /// S3-style objects of one bucket, stored in its tree: key `k` is the file `/k`.
-#[wasm_bindgen(js_name = WasmObjects)]
-pub struct WasmObjects {
-    objects: Objects<JsBlobStore>,
+#[wasm_bindgen(js_name = WasmS3Bucket)]
+pub struct WasmS3Bucket {
+    objects: S3Bucket<JsBlobStore>,
 }
 
-#[wasm_bindgen(js_class = WasmObjects)]
-impl WasmObjects {
+#[wasm_bindgen(js_class = WasmS3Bucket)]
+impl WasmS3Bucket {
     #[wasm_bindgen(constructor)]
-    pub fn new(store: JsBlobStore, bucket_id: u64) -> WasmObjects {
-        WasmObjects {
-            objects: Objects::new(Tree::with_clock(store, bucket_id, now)),
+    pub fn new(store: JsBlobStore, bucket_id: u64) -> WasmS3Bucket {
+        WasmS3Bucket {
+            objects: S3Bucket::new(Tree::with_clock(store, bucket_id, now)),
         }
     }
 

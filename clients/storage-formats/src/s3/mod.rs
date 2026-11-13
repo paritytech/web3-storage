@@ -3,8 +3,8 @@
 //! S3-style objects in a bucket's file tree.
 //!
 //! An object is a file of the [`Tree`]: key `k` is the file at path `/k`.
-//! [`Objects::put_object`] creates the directories a key needs and
-//! [`Objects::delete_object`] removes the directories it leaves empty, so the
+//! [`S3Bucket::put_object`] creates the directories a key needs and
+//! [`S3Bucket::delete_object`] removes the directories it leaves empty, so the
 //! bucket has no directory objects. The content type and the user metadata
 //! (keys lowercased) are stored in the file's manifest. The ETag is `0x` and
 //! the hex of the content root.
@@ -30,7 +30,7 @@ use thiserror::Error;
 /// Maximum object key length in bytes.
 const MAX_OBJECT_KEY_LEN: usize = 1024;
 
-/// Default and maximum page size of [`Objects::list_objects`].
+/// Default and maximum page size of [`S3Bucket::list_objects`].
 const DEFAULT_MAX_KEYS: u32 = 1000;
 
 /// Errors of the object operations.
@@ -70,7 +70,7 @@ pub enum S3ClientError {
 /// Result type of the object operations.
 pub type Result<T> = std::result::Result<T, S3ClientError>;
 
-/// Options for [`Objects::put_object`].
+/// Options for [`S3Bucket::put_object`].
 #[derive(Default, Clone, Debug)]
 pub struct PutObjectOptions {
     /// Content type (MIME type). `None` or an empty string stores
@@ -80,18 +80,18 @@ pub struct PutObjectOptions {
     pub metadata: HashMap<String, String>,
 }
 
-/// Response from [`Objects::put_object`].
+/// Response from [`S3Bucket::put_object`].
 #[derive(Clone, Debug)]
 pub struct PutObjectResponse {
     /// ETag: `0x` + hex of the content root.
     pub etag: String,
-    /// Content root (Layer 0 data root) of the object data.
+    /// Content root (data root) of the object data.
     pub cid: H256,
     /// Size of the uploaded object in bytes.
     pub size: u64,
 }
 
-/// Response from [`Objects::get_object`].
+/// Response from [`S3Bucket::get_object`].
 #[derive(Clone, Debug)]
 pub struct GetObjectResponse {
     /// Object data, checked against the content root.
@@ -108,7 +108,7 @@ pub struct GetObjectResponse {
     pub metadata: HashMap<String, String>,
 }
 
-/// Response from [`Objects::head_object`].
+/// Response from [`S3Bucket::head_object`].
 #[derive(Clone, Debug)]
 pub struct HeadObjectResponse {
     /// Content type.
@@ -119,13 +119,13 @@ pub struct HeadObjectResponse {
     pub size: u64,
     /// Last modified time, in seconds since the Unix epoch.
     pub last_modified: u64,
-    /// Content root (Layer 0 data root) of the object data.
+    /// Content root (data root) of the object data.
     pub cid: H256,
     /// User metadata.
     pub metadata: HashMap<String, String>,
 }
 
-/// Parameters for [`Objects::list_objects`].
+/// Parameters for [`S3Bucket::list_objects`].
 #[derive(Clone, Debug, Default)]
 pub struct ListObjectsParams {
     /// Return only keys that start with this prefix.
@@ -153,7 +153,7 @@ pub struct ObjectSummary {
     pub last_modified: u64,
 }
 
-/// Response from [`Objects::list_objects`].
+/// Response from [`S3Bucket::list_objects`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListObjectsResponse {
     /// Matching objects, sorted by key bytes.
@@ -168,11 +168,11 @@ pub struct ListObjectsResponse {
 }
 
 /// The objects of one bucket, stored in its file tree.
-pub struct Objects<S> {
+pub struct S3Bucket<S> {
     tree: Tree<S>,
 }
 
-impl<S: BlobStore> Objects<S> {
+impl<S: BlobStore> S3Bucket<S> {
     /// The objects stored in `tree`.
     pub fn new(tree: Tree<S>) -> Self {
         Self { tree }
@@ -268,7 +268,7 @@ impl<S: BlobStore> Objects<S> {
     /// page: one outside the prefix, one that sorts before `start_after`, and
     /// one whose keys all fall in a common prefix already on the page (with
     /// delimiter `/`, each subdirectory is read only until it shows an
-    /// object). Reads no manifests: [`Objects::head_object`] returns an
+    /// object). Reads no manifests: [`S3Bucket::head_object`] returns an
     /// object's ETag.
     pub async fn list_objects(&self, params: ListObjectsParams) -> Result<ListObjectsResponse> {
         let prefix = params.prefix.unwrap_or_default();

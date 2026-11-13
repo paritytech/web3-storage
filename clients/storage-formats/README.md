@@ -3,11 +3,11 @@
 Rust library for a file system and S3-style objects stored in a Scalable Web3
 Storage bucket.
 
-A drive is a Layer 0 bucket of `pallet-storage-provider`, identified by its
+A drive is a bucket of `pallet-storage-provider`, identified by its
 bucket id. Directories (`DirectoryNode`), file manifests (`FileManifest`) and
 file contents are blobs in the bucket, and the root directory is the bucket's
 last MMR leaf, so any client instance can open the drive. The crate talks to
-the provider's Layer 0 routes only and makes no chain calls.
+the provider's blob routes only and makes no chain calls.
 
 - `format`: the blob types (`DirectoryNode`, `FileManifest`) and their rules.
 - `tree`: root discovery, the write order and the limits (single writer,
@@ -21,7 +21,7 @@ and checkpoint it with `storage_client::CheckpointManager`.
 ## Usage
 
 ```rust
-use storage_formats::{s3::Objects, EmptyParents, Tree};
+use storage_formats::{s3::S3Bucket, EmptyParents, Tree};
 use storage_client::{Signer, StorageUserClient};
 
 let store = StorageUserClient::for_provider("http://127.0.0.1:3333", Signer::from_seed("//Alice")?)?;
@@ -33,7 +33,7 @@ let entries = tree.list("/documents").await?;
 let file = tree.get_file("/documents/hello.txt").await?;
 tree.delete("/documents/hello.txt", EmptyParents::Keep).await?;
 
-let objects = Objects::new(Tree::new(&store, bucket_id));
+let objects = S3Bucket::new(Tree::new(&store, bucket_id));
 objects.put_object("photos/cat.jpg", &jpeg, Default::default()).await?;
 let listing = objects.list_objects(Default::default()).await?;
 ```
@@ -60,7 +60,7 @@ just file-system-demo   # examples/demo.rs, needs a running chain and provider
 ## Documentation
 
 - API reference: `cargo doc -p storage-formats --no-deps --open`
-- [Layer 0 design](../../docs/design/scalable-web3-storage.md)
+- [Storage design](../../docs/design/scalable-web3-storage.md)
 
 ## License
 

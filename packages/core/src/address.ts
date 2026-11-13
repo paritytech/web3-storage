@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Address-format primitives. Pure byte/SS58 computation with no chain coupling,
-// so they belong in core rather than the layer-0 chain binding.
+// so they belong in core rather than the chain binding (`@web3-storage/storage`).
 
 import { ss58Address } from "@polkadot-labs/hdkd-helpers";
 
@@ -16,7 +16,7 @@ export interface MappedAccount {
  * deployed contract): the 20 address bytes followed by 12 bytes of `0xEE`. Use
  * it as the `owner` of negotiated terms when a contract forwards them on a
  * user's behalf. The inverse is `substrateToH160` in
- * `@web3-storage/layer0/revive` (it needs viem).
+ * `@web3-storage/storage/revive` (it needs viem).
  */
 export function h160ToSubstrate(addressBytes: Uint8Array): MappedAccount {
   const publicKey = new Uint8Array(32).fill(0xee);

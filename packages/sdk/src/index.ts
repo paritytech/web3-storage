@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * @web3-storage/sdk: umbrella over @web3-storage/core, layer0 and
- * file-system, plus the Web3Storage class. pallet_revive helpers stay on the
+ * @web3-storage/sdk: umbrella over @web3-storage/core, storage and
+ * storage-formats, plus the Web3Storage class. pallet_revive helpers stay on the
  * ./revive subpath, so consumers that never touch contracts do not load viem.
  */
 
-export * from "@web3-storage/layer0";
+export * from "@web3-storage/storage";
 export * from "@web3-storage/storage-formats";
 
-// core's chain-free primitives that layer0 doesn't already re-export.
+// core's chain-free primitives that storage doesn't already re-export.
 export {
   h160ToSubstrate,
   type MappedAccount,

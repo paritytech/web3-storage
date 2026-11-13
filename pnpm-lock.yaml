@@ -71,43 +71,6 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
-  packages/layer0:
-    dependencies:
-      '@polkadot-api/descriptors':
-        specifier: workspace:*
-        version: link:../papi/.papi/descriptors
-      '@polkadot-labs/hdkd':
-        specifier: ^0.0.32
-        version: 0.0.32
-      '@polkadot-labs/hdkd-helpers':
-        specifier: ^0.0.34
-        version: 0.0.34
-      '@web3-storage/core':
-        specifier: workspace:*
-        version: link:../core
-      '@web3-storage/papi':
-        specifier: workspace:*
-        version: link:../papi
-      polkadot-api:
-        specifier: ^3.3.0
-        version: 3.3.0(esbuild@0.28.2)(rxjs@7.8.2)
-      rxjs:
-        specifier: ^7.8.2
-        version: 7.8.2
-    devDependencies:
-      '@types/node':
-        specifier: ^26.6.6
-        version: 26.6.6
-      typescript:
-        specifier: ~7.0.2
-        version: 7.0.2
-      viem:
-        specifier: ^2.57.13
-        version: 2.57.13(typescript@7.0.2)(zod@4.4.3)
-      vitest:
-        specifier: ^5.0.5
-        version: 5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
-
   packages/papi:
     dependencies:
       '@multiformats/multiaddr-to-uri':
@@ -144,9 +107,9 @@ importers:
       '@web3-storage/core':
         specifier: workspace:*
         version: link:../core
-      '@web3-storage/layer0':
+      '@web3-storage/storage':
         specifier: workspace:*
-        version: link:../layer0
+        version: link:../storage
       '@web3-storage/storage-formats':
         specifier: workspace:*
         version: link:../storage-formats
@@ -161,14 +124,51 @@ importers:
         specifier: ~7.0.2
         version: 7.0.2
 
+  packages/storage:
+    dependencies:
+      '@polkadot-api/descriptors':
+        specifier: workspace:*
+        version: link:../papi/.papi/descriptors
+      '@polkadot-labs/hdkd':
+        specifier: ^0.0.32
+        version: 0.0.32
+      '@polkadot-labs/hdkd-helpers':
+        specifier: ^0.0.34
+        version: 0.0.34
+      '@web3-storage/core':
+        specifier: workspace:*
+        version: link:../core
+      '@web3-storage/papi':
+        specifier: workspace:*
+        version: link:../papi
+      polkadot-api:
+        specifier: ^3.3.0
+        version: 3.3.0(esbuild@0.28.2)(rxjs@7.8.2)
+      rxjs:
+        specifier: ^7.8.2
+        version: 7.8.2
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.6
+        version: 26.6.6
+      typescript:
+        specifier: ~7.0.2
+        version: 7.0.2
+      viem:
+        specifier: ^2.57.13
+        version: 2.57.13(typescript@7.0.2)(zod@4.4.3)
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+
   packages/storage-formats:
     dependencies:
       '@web3-storage/core':
         specifier: workspace:*
         version: link:../core
-      '@web3-storage/layer0':
+      '@web3-storage/storage':
         specifier: workspace:*
-        version: link:../layer0
+        version: link:../storage
     devDependencies:
       '@types/node':
         specifier: ^26.6.6

@@ -2,8 +2,8 @@
 
 Five React + Vite + Polkadot-API single-page apps:
 
-- **`drive-ui/`** (port `5174`) — Layer 1 file system browser. Drives, files, members, checkpoints. Talks to the parachain (`ws://127.0.0.1:2222`) and to whichever provider node a drive's bucket points at (resolved via on-chain multiaddr).
-- **`s3-ui/`** (port `5177`) — Layer 0 S3-style object store. Buckets, objects, client-side encryption, checkpoints.
+- **`drive-ui/`** (port `5174`) — file system browser. Drives, files, members, checkpoints. Talks to the parachain (`ws://127.0.0.1:2222`) and to whichever provider node a drive's bucket points at (resolved via on-chain multiaddr).
+- **`s3-ui/`** (port `5177`) — S3-style object store. Buckets, objects, client-side encryption, checkpoints.
 - **`provider/`** (port `5175`) — Provider operator dashboard. Registration, agreements, checkpoints, challenges, earnings.
 - **`photos/`** (port `5178`) — Photo library backed by decentralized storage, with the album-tree root anchored on-chain via a smart contract.
 - **`explorer/`** (port `5179`) — Capacity Explorer, the network-wide on-chain view. Summary stats plus searchable lists of every provider, agreement, bucket, and open challenge. Read-only: never submits an extrinsic; a wallet is only used to highlight "mine".

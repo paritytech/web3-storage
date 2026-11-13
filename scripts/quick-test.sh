@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Curl-based smoke test for the Layer-0 provider HTTP API.
+# Curl-based smoke test for the provider HTTP API.
 #
 # Checks: chain reachable, provider reachable, block production, upload, list,
 # download+verify, and MMR root retrieval — all against bucket 0.
