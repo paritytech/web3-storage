@@ -347,6 +347,17 @@ async fn commit(
     )
     .await?;
 
+    // A replica takes its commitments from the chain, so it rejects a commit
+    // even from a primary provider that may push nodes to it.
+    let is_replica = state
+        .auth
+        .own_agreement(request.bucket_id)
+        .await?
+        .is_some_and(|agreement| agreement.replica);
+    if is_replica {
+        return Err(provider_auth::AuthError::NotPrimary.into());
+    }
+
     let data_roots: Vec<H256> = request
         .data_roots
         .iter()

@@ -28,11 +28,53 @@ impl From<(AccountId32, Role)> for Member {
     }
 }
 
+/// The role a provider node holds on a bucket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeRole {
+    /// Takes client writes and signs commitments.
+    Primary,
+    /// Receives data by sync or by a push from a primary.
+    Replica,
+}
+
+/// Everyone with a role on a bucket: members by role (reader, writer, admin)
+/// and provider nodes by role (primary, replica).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BucketMembership {
+    pub members: Vec<Member>,
+    pub primary_providers: Vec<AccountId32>,
+    pub replica_providers: Vec<AccountId32>,
+    /// This node's role on the bucket, if it has one.
+    pub own_node_role: Option<NodeRole>,
+}
+
+impl BucketMembership {
+    /// The role `account` holds as a bucket member.
+    pub fn role_of(&self, account: &AccountId32) -> Option<Role> {
+        self.members
+            .iter()
+            .find(|m| &m.account == account)
+            .map(|m| m.role)
+    }
+
+    /// The role `account` holds as a provider node of the bucket.
+    pub fn node_role_of(&self, account: &AccountId32) -> Option<NodeRole> {
+        if self.primary_providers.contains(account) {
+            Some(NodeRole::Primary)
+        } else if self.replica_providers.contains(account) {
+            Some(NodeRole::Replica)
+        } else {
+            None
+        }
+    }
+}
+
 /// The slice of on-chain bucket state that access control needs: who the
-/// members are, and whether reads are member-only.
+/// members are, whether reads are member-only, and which provider accounts
+/// are the bucket's primaries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BucketAccess {
-    pub members: Vec<Member>,
+    pub members: BucketMembership,
     pub visibility: Visibility,
 }
 
@@ -41,7 +83,10 @@ impl BucketAccess {
     /// is not known (missing on chain, or a fixed test member set).
     pub fn private(members: Vec<Member>) -> Self {
         Self {
-            members,
+            members: BucketMembership {
+                members,
+                ..Default::default()
+            },
             visibility: Visibility::Private,
         }
     }
@@ -120,11 +165,7 @@ impl CachedMembership {
     }
 
     pub(crate) fn role_of(&self, account: &AccountId32) -> Option<Role> {
-        self.access
-            .members
-            .iter()
-            .find(|m| &m.account == account)
-            .map(|m| m.role)
+        self.access.members.role_of(account)
     }
 }
 
@@ -190,6 +231,12 @@ impl StaticMembershipResolver {
     /// Member-only buckets (auth always required) with the given members.
     pub fn private(members: Vec<Member>) -> Self {
         Self::new(BucketAccess::private(members))
+    }
+
+    /// Resolve every bucket with these primary provider accounts.
+    pub fn with_primary_providers(mut self, primary_providers: Vec<AccountId32>) -> Self {
+        self.access.members.primary_providers = primary_providers;
+        self
     }
 
     /// Resolve every bucket as replica-held by this node.
@@ -282,7 +329,7 @@ struct MembershipExpiry {
 
 impl MembershipExpiry {
     fn residency(&self, value: &Arc<CachedMembership>) -> Duration {
-        if value.access.members.is_empty() {
+        if value.access.members.members.is_empty() {
             self.ttl
         } else {
             self.max_stale
@@ -583,6 +630,49 @@ mod tests {
                 "{granted:?} vs required {required:?}"
             );
         }
+    }
+
+    #[test]
+    fn bucket_membership_resolves_member_and_node_roles() {
+        let account = |byte: u8| AccountId32::new([byte; 32]);
+        let membership = BucketMembership {
+            members: vec![
+                (account(1), Role::Admin).into(),
+                (account(2), Role::Reader).into(),
+            ],
+            primary_providers: vec![account(10)],
+            replica_providers: vec![account(11)],
+            own_node_role: None,
+        };
+
+        assert_eq!(membership.role_of(&account(1)), Some(Role::Admin));
+        assert_eq!(membership.role_of(&account(2)), Some(Role::Reader));
+        assert_eq!(membership.role_of(&account(10)), None);
+        assert_eq!(
+            membership.node_role_of(&account(10)),
+            Some(NodeRole::Primary)
+        );
+        assert_eq!(
+            membership.node_role_of(&account(11)),
+            Some(NodeRole::Replica)
+        );
+        assert_eq!(membership.node_role_of(&account(1)), None);
+    }
+
+    #[tokio::test]
+    async fn static_resolver_returns_the_configured_primary_providers() {
+        let primaries = vec![AccountId32::new([7u8; 32])];
+        let resolver =
+            StaticMembershipResolver::private(vec![]).with_primary_providers(primaries.clone());
+        assert_eq!(
+            resolver
+                .fetch_access(1)
+                .await
+                .unwrap()
+                .members
+                .primary_providers,
+            primaries
+        );
     }
 
     #[tokio::test]
