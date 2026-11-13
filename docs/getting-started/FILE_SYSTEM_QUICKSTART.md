@@ -1,6 +1,6 @@
 # File System Quick Start Guide
 
-Quick commands to test and run the Layer 1 File System Interface.
+Quick commands to test and run the file system.
 
 ## Prerequisites
 
@@ -26,10 +26,10 @@ just file-system-demo
 ```
 
 `file-system-demo` runs `clients/storage-formats/examples/demo.rs`
-against the running infrastructure: it creates a drive (a plain Layer 0 bucket
+against the running infrastructure: it creates a drive (a plain bucket
 with one primary agreement, via `create_bucket_with_primary`), runs directory,
 file and S3 object operations that the client stores in the bucket through
-the provider's Layer 0 endpoints, and asserts the
+the provider's blob endpoints, and asserts the
 round-trip. It assumes the chain and provider are already up.
 
 This is the same flow exercised by CI in `.github/workflows/integration-tests.yml`,

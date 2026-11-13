@@ -44,10 +44,10 @@ challenges for buckets it still has agreements for.
 
 ## Authentication
 
-Authentication is always enforced: every mutating Layer-0 endpoint (`PUT
+Authentication is always enforced: every mutating blob endpoint (`PUT
 /node`, `POST /commit`, `POST /delete`) requires a signed `Authorization`
 header, and there is no way to turn enforcement off.
-Layer-0 reads that return a bucket's commitments, proofs or MMR shape
+Reads that return a bucket's commitments, proofs or MMR shape
 require the `Reader` role on a private bucket. Hash-keyed reads (`GET /node`,
 `GET /read`, `GET /chunk_proof`, `POST /fetch_nodes`) take a `bucket_id` but
 need no signature: the hash is the read capability. See "Read access at

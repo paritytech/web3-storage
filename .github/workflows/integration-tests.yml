@@ -119,9 +119,9 @@ jobs:
             target/release/wbuild/*/*.compact.compressed.wasm
 
   # ── Zombienet smoke test (FS + S3) ────────────────────────────────────────
-  # Runs Layer 1 FS and S3 demos on a real relay-chain + parachain (zombienet)
+  # Runs the storage demo and the file-system demo on a real relay-chain + parachain (zombienet)
   # to validate production-like topology. Single runtime (web3-storage-paseo).
-  # Layer 0 breadth is handled comprehensively by e2e-integration-tests.
+  # Storage breadth is handled comprehensively by e2e-integration-tests.
   #
   # Pins the backend explicitly; the other jobs take the binary default.
   integration-tests:
@@ -217,8 +217,8 @@ jobs:
         with:
           min-blocks-per-minute: "20"
 
-      # One provider for all three demos: the L0 demo registers //Alice on-chain
-      # and the L1 demos reuse that registration, on the justfile's default
+      # One provider for both demos: the storage demo registers //Alice on-chain
+      # and the file-system demo reuses that registration, on the justfile's default
       # PROVIDER_URL.
       - name: Start provider (rocksdb)
         uses: ./.github/actions/start-provider
@@ -226,7 +226,7 @@ jobs:
           backend: rocksdb
           label: rocksdb
 
-      - name: Run L0 demo
+      - name: Run storage demo
         run: just demo
 
       - name: Run file system and S3 objects demo
