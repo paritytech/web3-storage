@@ -175,6 +175,49 @@ async fn provider(
         .map(|value| value.decode().expect("provider decodes"))
 }
 
+/// Print the provider record the runtime stores, one field per line.
+fn print_provider(record: &ProviderInfo) {
+    let settings = &record.settings;
+    let deregister_at = match record.deregister_at {
+        Some(block) => block.to_string(),
+        None => "none".to_string(),
+    };
+    let replica_sync_price = match settings.replica_sync_price {
+        Some(price) => price.to_string(),
+        None => "none".to_string(),
+    };
+    println!("provider record on chain:");
+    println!(
+        "  multiaddr: {}",
+        String::from_utf8_lossy(&record.multiaddr.0)
+    );
+    println!(
+        "  public_key: {}",
+        array_bytes::bytes2hex("0x", &record.public_key.0)
+    );
+    println!("  stake: {}", record.stake);
+    println!("  committed_bytes: {}", record.committed_bytes);
+    println!("  registered_at: {}", record.stats.registered_at);
+    println!("  deregister_at: {deregister_at}");
+    println!("  settings.min_duration: {}", settings.min_duration);
+    println!("  settings.max_duration: {}", settings.max_duration);
+    println!("  settings.price_per_byte: {}", settings.price_per_byte);
+    println!(
+        "  settings.accepting_primary: {}",
+        settings.accepting_primary
+    );
+    println!("  settings.replica_sync_price: {replica_sync_price}");
+    println!(
+        "  settings.accepting_extensions: {}",
+        settings.accepting_extensions
+    );
+    println!("  settings.max_capacity: {}", settings.max_capacity);
+    println!(
+        "  settings.min_agreement_bytes: {}",
+        settings.min_agreement_bytes
+    );
+}
+
 fn keyfile_json(path: &Path) -> serde_json::Value {
     let contents = std::fs::read_to_string(path).expect("keyfile readable");
     serde_json::from_str(&contents).expect("keyfile is JSON")
@@ -275,6 +318,7 @@ async fn helper_manages_a_generated_provider_account() {
     let record = provider(&api, Some(run.finalized_in()), &account)
         .await
         .expect("registered");
+    print_provider(&record);
     assert_eq!(record.multiaddr.0, multiaddr.as_bytes());
     assert_eq!(record.public_key.0, public_key);
     assert_eq!(record.stake, stake);
