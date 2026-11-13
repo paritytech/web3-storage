@@ -1,2 +1,8 @@
 1009e0f17bd0ac99f8b64f22b2f3f88f139be24a0e551a61a9b0b759746b7a2a  docs/design/scalable-web3-storage-implementation.md
 18eb6d7b982cf555ea53a0d268ec40c6b7220ae27bf68a27e6018999b5af0ac8  docs/design/scalable-web3-storage.md
+6f318557e99c0445b79c5b46fcc862b53b773db4926190a58d9339f92cdd0f26  docs/design/storage-provider-node/provider-auth.md
+ab04dbdf1a546af241bb47a8acea5ca2e4fb5c07ce3a40a99b53afd29275b6b0  docs/design/storage-provider-node/provider-challenge.md
+45f8d5026e71ff3bbc8e88ede7e62fcfaedf7f1ce943e3ef3c4ce119c8e0f945  docs/design/storage-provider-node/provider-coordinator.md
+b3db4fdb8c8a7d76f5d6aa175cf08003668e15569b9e66466237c1956a326240  docs/design/storage-provider-node/provider-replica.md
+d7ecaa9ab6747e06a9efe0fcd11e0d7e8a3dcc4c8b29abb40f8a1c3e079871ea  docs/design/storage-provider-node/provider-storage.md
+5d99db1e19b41ec7844f595569b3e8c0b7ee4e2331f51806242555677be0b276  docs/design/storage-provider-node/storage-provider-node.md
