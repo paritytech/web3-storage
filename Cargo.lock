@@ -1823,13 +1823,13 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "provider-auth",
+ "provider-http",
  "provider-storage",
  "provider-types",
  "sp-core",
  "sp-runtime",
  "storage-client",
  "storage-primitives",
- "storage-provider-node",
  "subxt-signer 0.50.2",
  "tokio",
  "tracing",
@@ -7053,6 +7053,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-http"
+version = "0.1.0"
+dependencies = [
+ "array-bytes 6.2.3",
+ "async-trait",
+ "axum",
+ "base64",
+ "parity-scale-codec",
+ "provider-auth",
+ "provider-coordinator",
+ "provider-negotiation",
+ "provider-replica",
+ "provider-storage",
+ "provider-types",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sp-core",
+ "sp-crypto-hashing",
+ "sp-runtime",
+ "storage-primitives",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rate-limit",
+ "tower-http",
+ "tracing",
+]
+
+[[package]]
 name = "provider-negotiation"
 version = "0.1.0"
 dependencies = [
@@ -9975,7 +10005,6 @@ dependencies = [
  "array-bytes 6.2.3",
  "async-trait",
  "axum",
- "base64",
  "clap",
  "parity-scale-codec",
  "parking_lot",
@@ -9983,13 +10012,11 @@ dependencies = [
  "provider-challenge",
  "provider-coordinator",
  "provider-events",
- "provider-negotiation",
+ "provider-http",
  "provider-replica",
  "provider-storage",
  "provider-types",
- "reqwest",
  "scale-info",
- "serde",
  "serde_json",
  "sp-core",
  "sp-crypto-hashing",
@@ -10002,8 +10029,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "tokio-rate-limit",
- "tower-http",
  "tracing",
  "tracing-subscriber 0.3.23",
 ]

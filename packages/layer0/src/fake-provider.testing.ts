@@ -4,7 +4,7 @@
  * In-memory provider node for unit tests. Implements the Layer 0 routes the
  * blob helpers and the file-system tree use (`PUT/GET /node`, `POST
  * /commit`, `GET /read`, `GET /commitment`, `GET /mmr_proof`) with the same
- * checks and JSON shapes as `provider-node/src/api.rs`. Signatures are not
+ * checks and JSON shapes as `crates/providers/http/src/api.rs`. Signatures are not
  * verified; a write and a Reader-gated read (`GET /commitment`, `GET
  * /mmr_proof`) only need an `Authorization` header, as on a private bucket.
  * Exported for tests as `@web3-storage/layer0/testing`, not from the package

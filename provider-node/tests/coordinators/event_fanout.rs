@@ -4,7 +4,7 @@
 //! reacting to [`BlockEvent`]s fanned out by the chain-state coordinator,
 //! including the bootstrap scan on `Resubscribed` and lag recovery.
 
-use super::{alice_account, test_state, test_state_with_data, wait_for};
+use super::{alice_account, proof_source, test_state, test_state_with_data, wait_for};
 use provider_events::BlockEvent;
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use sp_core::H256;
@@ -87,7 +87,7 @@ async fn challenge_event_triggers_point_read_and_response() {
     let mock = MockChallengeClient::new(challenge);
     let responder = ChallengeResponder::new(
         event_only_config(),
-        state.challenge_proof_source(),
+        proof_source(&state),
         Box::new(Arc::clone(&mock)),
     );
 
@@ -131,7 +131,7 @@ async fn foreign_challenge_event_is_ignored() {
     let mock = MockChallengeClient::new(challenge);
     let responder = ChallengeResponder::new(
         event_only_config(),
-        state.challenge_proof_source(),
+        proof_source(&state),
         Box::new(Arc::clone(&mock)),
     );
 
@@ -164,7 +164,7 @@ async fn resubscribe_triggers_bootstrap_scan() {
     let mock = MockChallengeClient::new(challenge);
     let responder = ChallengeResponder::new(
         event_only_config(),
-        state.challenge_proof_source(),
+        proof_source(&state),
         Box::new(Arc::clone(&mock)),
     );
 
@@ -198,7 +198,7 @@ async fn membership_scope_unknown_does_not_trigger_bootstrap_scan() {
     let mock = MockChallengeClient::new(challenge);
     let responder = ChallengeResponder::new(
         event_only_config(),
-        state.challenge_proof_source(),
+        proof_source(&state),
         Box::new(Arc::clone(&mock)),
     );
 
@@ -229,7 +229,7 @@ async fn event_sent_while_paused_survives_until_resume() {
     let mock = MockChallengeClient::new(challenge);
     let responder = ChallengeResponder::new(
         event_only_config(),
-        state.challenge_proof_source(),
+        proof_source(&state),
         Box::new(Arc::clone(&mock)),
     );
 

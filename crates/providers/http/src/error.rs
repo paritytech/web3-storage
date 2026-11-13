@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Error types for the provider node.
 
@@ -91,10 +91,6 @@ pub enum Error {
         "Chain state not ready: current_anchor_block and request_timeout must both be non-zero"
     )]
     ChainStateNotReady,
-
-    /// The node has not connected to the chain yet.
-    #[error(transparent)]
-    ChainNotConnected(#[from] crate::chain_connection::NotConnected),
 
     /// The node cannot sign with its registered key. Each reason keeps the
     /// response code it had when these were three separate variants.
@@ -481,15 +477,6 @@ impl IntoResponse for Error {
                     })),
                 },
             ),
-            Error::ChainNotConnected(_) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "chain_unavailable".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "the node has not yet established a connection to the chain"
-                    })),
-                },
-            ),
             Error::ProviderDeregistering => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorResponse {
@@ -691,11 +678,6 @@ mod tests {
         );
         assert_eq!(
             status_of(SigningRefused::NoKey.into()),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-        // A connection that was never established is retryable.
-        assert_eq!(
-            status_of(crate::chain_connection::NotConnected.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
     }
