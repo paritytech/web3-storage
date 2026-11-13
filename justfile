@@ -418,6 +418,11 @@ e2e PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL: papi-setu
         --include="examples/papi/**" --include="packages/sdk/src/**" \
         node --import tsx examples/papi/e2e/runner.bin.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ SECOND_PROVIDER_URL }}"
 
+# Funds a generated account from //Bob, so CHAIN_WS must be a dev chain.
+# Run the Rust e2e test of `storage-provider-node helper` (needs `just start-e2e-chain`)
+helper-e2e:
+    E2E_CHAIN_WS="{{ CHAIN_WS }}" cargo test --release -p storage-provider-node --test provider_helper_e2e -- --ignored --nocapture
+
 # Run a single E2E workflow by number (e.g. just e2e-single 01)
 e2e-single NUM PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL: papi-setup
     #!/usr/bin/env bash

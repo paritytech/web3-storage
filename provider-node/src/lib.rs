@@ -17,6 +17,7 @@ pub mod cli;
 pub mod command;
 pub mod error;
 pub(crate) mod event_decoding;
+pub mod helper_command;
 pub mod membership;
 pub mod negotiate;
 pub(crate) mod subxt_client;

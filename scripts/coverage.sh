@@ -29,6 +29,7 @@ COV_PACKAGES=(
 	provider-storage
 	provider-challenge
 	provider-types
+	provider-helpers
 	storage-formats
 )
 
@@ -77,7 +78,7 @@ verify_classification() {
 # not run here); chain-access layer (needs a live chain); the skipped client
 # crates storage-client and client-test-support, which the storage-formats
 # tests link and run only in part; binary entry points.
-COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/(storage|test-support)/src/|clients/[^/]+/tests/|src/main\.rs|src/cli\.rs|src/command\.rs)'
+COV_IGNORE='(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|/primitives/|/storage-subxt/|subxt_client\.rs|_subxt\.rs|clients/(storage|test-support)/src/|clients/[^/]+/tests/|src/main\.rs|src/cli\.rs|src/command\.rs|src/helper_command\.rs)'
 
 REPO_ROOT="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}"
 cd "$REPO_ROOT"

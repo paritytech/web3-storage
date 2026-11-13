@@ -12,6 +12,32 @@ just start-provider   # requires a running chain (just start-chain)
 just health           # check provider is up
 ```
 
+## On-chain registration
+
+The `helper` subcommand submits one signed provider-management transaction and exits.
+It signs with the account derived from `--keyfile`, the same identity the node runs as.
+
+```bash
+storage-provider-node helper --keyfile ./seed generate-key
+storage-provider-node helper --keyfile ./seed register --multiaddr /ip4/1.2.3.4/tcp/3333 --stake 1000000000000000
+storage-provider-node helper --keyfile ./seed update-settings --price-per-byte 7 --max-capacity 1073741824
+storage-provider-node helper --keyfile ./seed deregister
+```
+
+`generate-key` writes a new keyfile with owner-only permissions and prints its public fields; it never overwrites an existing file.
+The keyfile is JSON with common names as substrate best-practice:
+
+```json
+{
+  "secretPhrase": "<12-word BIP39 mnemonic>",
+  "keyScheme": "sr25519",
+  "accountId": "0x...",
+  "publicKey": "0x...",
+  "ss58Address": "1...",
+  "ss58Prefix": 0
+}
+```
+
 ## Signing key
 
 The keypair derived from `--keyfile` signs commitments, checkpoint

@@ -395,6 +395,13 @@ jobs:
       - name: Run E2E test suite
         run: just e2e "http://127.0.0.1:3333" "http://127.0.0.1:3334"
 
+      # Drives the built binary's `helper` subcommand (generate-key, register,
+      # update-settings, deregister) against the same chain with a generated
+      # account funded by //Alice. The tests are ignored by default because
+      # they need this chain; --release reuses the build job's cache.
+      - name: Run provider helper e2e
+        run: just helper-e2e
+
       - name: Print JS coverage
         if: always()
         run: |

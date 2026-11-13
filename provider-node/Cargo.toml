@@ -13,6 +13,7 @@ provider-auth = { workspace = true }
 provider-challenge = { workspace = true }
 provider-coordinator = { workspace = true }
 provider-events = { workspace = true }
+provider-helpers = { workspace = true }
 provider-negotiation = { workspace = true }
 provider-replica = { workspace = true }
 provider-storage = { workspace = true }
