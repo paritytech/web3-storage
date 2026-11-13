@@ -98,6 +98,12 @@ jobs:
       - name: Build provider
         run: just build-provider
 
+      # Not uploaded: the e2e job builds storage-cli itself for `just
+      # helper-e2e`. Building it here puts its dependencies in the Rust cache
+      # that job restores.
+      - name: Build storage-cli
+        run: cargo build --release -p storage-cli
+
       # Upload only what the test jobs consume: provider binary + the final
       # compressed wasm per runtime. NOT the full wbuild tree (~900 MiB Cargo
       # scratch). Both paths sit under target/release, so the artifact is rooted
@@ -395,10 +401,10 @@ jobs:
       - name: Run E2E test suite
         run: just e2e "http://127.0.0.1:3333" "http://127.0.0.1:3334"
 
-      # Drives the built binary's `helper` subcommand (generate-key, register,
-      # update-settings, deregister) against the same chain with a generated
-      # account funded by //Alice. The tests are ignored by default because
-      # they need this chain; --release reuses the build job's cache.
+      # Drives `storage-cli provider` (generate-key, register, update-settings,
+      # deregister) against the same chain with a generated account funded by
+      # //Bob. The tests are ignored by default because they need this chain;
+      # --release reuses the dependency artifacts from the build job's cache.
       - name: Run provider helper e2e
         run: just helper-e2e
 

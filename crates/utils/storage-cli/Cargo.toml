@@ -9,6 +9,11 @@ description = "Operator CLI for scalable Web3 storage (stress-test and ops tooli
 
 [dependencies]
 storage-client = { workspace = true }
+storage-subxt = { workspace = true }
+provider-helpers = { workspace = true }
+provider-types = { workspace = true, features = ["clap"] }
+subxt = { workspace = true }
+async-trait = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }

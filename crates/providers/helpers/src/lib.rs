@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Provider management operations for operator tooling: generate the
-//! provider's keyfile, register a provider, update its settings, and
+//! Provider management operations for operator tooling: generate and read
+//! the provider's keyfile, register a provider, update its settings, and
 //! announce its deregistration.
 //!
 //! [`ProviderHelper`] contains the operation logic: it validates the input
@@ -17,8 +17,8 @@ mod types;
 pub use chain::{ChainError, ProviderChain};
 pub use helper::{HelperError, ProviderHelper, SettingsUpdateOutcome};
 pub use keyfile::{
-    generate_mnemonic, write_keyfile, Keyfile, KeyfileError, DEFAULT_MNEMONIC_WORDS,
-    MNEMONIC_WORD_COUNTS,
+    generate_mnemonic, read_keyfile, write_keyfile, Keyfile, KeyfileError, KeyfileSecret,
+    DEFAULT_MNEMONIC_WORDS, MNEMONIC_WORD_COUNTS,
 };
 pub use types::{
     ProviderRecord, ProviderRegistration, ProviderSettings, ProviderSettingsUpdate, SettingsError,

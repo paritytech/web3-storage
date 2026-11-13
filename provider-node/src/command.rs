@@ -6,8 +6,8 @@ use crate::{
     chain_connection::{self, ChainHandle},
     chain_follower::SubxtChainFollower,
     chain_state_coordinator::ChainStateCoordinator,
-    cli::{Cli, Command, DEFAULT_PROVIDER_ID},
-    create_router, helper_command,
+    cli::{Cli, DEFAULT_PROVIDER_ID},
+    create_router,
     membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
@@ -25,33 +25,17 @@ use std::time::Duration;
 use tokio::sync::{broadcast, watch};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-/// Parse CLI arguments, then run the subcommand or start the node.
+/// Parse CLI arguments, initialize the node, and run the server.
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
-
-    // The helper prints its outcome itself; only warnings (a transaction
-    // retry, for example) and errors reach the log by default.
-    let default_log_filter = match cli.command {
-        Some(Command::Helper(_)) => "storage_provider_node=warn",
-        None => "storage_provider_node=debug,tower_http=debug",
-    };
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| default_log_filter.into()),
+                .unwrap_or_else(|_| "storage_provider_node=debug,tower_http=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    if let Some(Command::Helper(command)) = cli.command {
-        // One line per failure, in the error's own words, with a failing
-        // exit status for scripts.
-        if let Err(e) = helper_command::run(cli.chain, command).await {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
-        }
-        return Ok(());
-    }
+    let cli = Cli::parse();
 
     // One chain connection for the whole node, published through a watch
     // channel. The chain-state coordinator owns the sender and rebuilds the

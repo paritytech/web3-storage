@@ -4,8 +4,7 @@
 //!
 //! A single [`SubxtChainClient`] holds one [`subxt::OnlineClient`] connection
 //! and one signing key, and implements every coordinator's chain-client trait
-//! (`ReplicaSyncChainClient`, `ChallengeChainClient`) plus the operator
-//! helper's `ProviderChain`. Coordinators still
+//! (`ReplicaSyncChainClient`, `ChallengeChainClient`). Coordinators still
 //! depend on the narrow trait they need, so per-trait mocks keep working; the
 //! production wiring just hands each one a clone of the same client (a cheap
 //! `OnlineClient`/`Keypair` clone that shares the underlying WebSocket
@@ -16,9 +15,6 @@ use crate::challenge_responder::{
     ChallengeChainClient, ChallengeError, ChallengeResponse, DetectedChallenge,
 };
 use crate::Error;
-use provider_helpers::{
-    ChainError, ProviderChain, ProviderRecord, ProviderRegistration, ProviderSettings, TxReceipt,
-};
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
 use sp_core::crypto::Ss58Codec;
@@ -29,9 +25,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
-use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::{
-    ChallengeResponse as RuntimeChallengeResponse, ProviderSettings as RuntimeProviderSettings,
-};
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ChallengeResponse as RuntimeChallengeResponse;
 use storage_subxt::api::runtime_types::sp_runtime::MultiSignature as RuntimeMultiSignature;
 use storage_subxt::api::runtime_types::storage_primitives::{
     mmr::{MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof},
@@ -45,10 +39,9 @@ use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSu
 /// that landed, and these rejections prove the duty is done rather than
 /// failed. Matched against the pallet + error-variant names resolved from
 /// runtime metadata (see [`SubxtChainClient::is_already_done`]).
-const ALREADY_DONE_ERRORS: [&str; 3] = [
+const ALREADY_DONE_ERRORS: [&str; 2] = [
     "ChallengeNotFound", // respond_to_challenge: challenge was taken on defense
     "SyncTooFrequent",   // confirm_replica_sync: a sync already confirmed
-    "ProviderAlreadyRegistered", // register_provider: the registration landed
 ];
 
 /// Upper bound on one submit-and-watch pass. Generous next to normal
@@ -73,10 +66,6 @@ enum Attempt {
     Rejected(ChainClientError),
 }
 
-/// The generic Substrate SS58 prefix, 42: how an account is displayed before
-/// the chain's own `System::SS58Prefix` is known.
-pub const GENERIC_SS58_PREFIX: u16 = 42;
-
 /// Production implementation that talks to the chain via subxt.
 ///
 /// Holds a receiver of the connection watch channel (owned by the chain-state
@@ -94,10 +83,6 @@ pub struct SubxtChainClient {
     /// reason: the nonce only advances once the first transaction lands.
     // ponytail: per-node serialization; a real nonce manager if duty-tx volume ever grows.
     submit_lock: Arc<tokio::sync::Mutex<()>>,
-    /// SS58 prefix the signing account is displayed with: the chain's
-    /// `System::SS58Prefix` once [`Self::with_ss58_prefix`] sets it, else
-    /// [`GENERIC_SS58_PREFIX`].
-    ss58_prefix: u16,
 }
 
 /// Turning the configured seed into a keypair is all [`SubxtChainClient::new`]
@@ -132,17 +117,7 @@ impl SubxtChainClient {
             chain_rx,
             signer,
             submit_lock: Arc::new(tokio::sync::Mutex::new(())),
-            ss58_prefix: GENERIC_SS58_PREFIX,
         })
-    }
-
-    /// Display the signing account with the chain's SS58 prefix
-    /// (`System::SS58Prefix`) instead of [`GENERIC_SS58_PREFIX`], so
-    /// [`ProviderChain::account`] prints the same address the chain's own
-    /// tools show.
-    pub fn with_ss58_prefix(mut self, ss58_prefix: u16) -> Self {
-        self.ss58_prefix = ss58_prefix;
-        self
     }
 
     /// The current live connection, or an error while the chain has never
@@ -527,171 +502,6 @@ impl SubxtChainClient {
             .transpose()
             .map_err(|e| ChainClientError::decode("bucket", e))
     }
-
-    /// The signing account's `StorageProvider::Providers` entry, or `None`
-    /// when it is not registered.
-    async fn fetch_own_provider(&self) -> Result<Option<OnChainProviderInfo>, ChainClientError> {
-        let providers = storage_subxt::api::storage()
-            .storage_provider()
-            .providers()
-            .unvalidated();
-        let account = subxt::utils::AccountId32(self.signer.public_key().0);
-        self.at_current_block()
-            .await?
-            .storage()
-            .try_fetch(providers, (account,))
-            .await
-            .map_err(|e| ChainClientError::query("provider", e))?
-            .map(|value| value.decode())
-            .transpose()
-            .map_err(|e| ChainClientError::decode("provider", e))
-    }
-}
-
-/// The operator helper's chain access: reads and writes about the signing
-/// account only, over the same connection, signer and submit path as the
-/// coordinators.
-#[async_trait::async_trait]
-impl ProviderChain for SubxtChainClient {
-    fn account(&self) -> String {
-        sp_core::crypto::AccountId32::from(self.signer.public_key().0)
-            .to_ss58check_with_version(sp_core::crypto::Ss58AddressFormat::custom(self.ss58_prefix))
-    }
-
-    async fn fetch_provider(&self) -> Result<Option<ProviderRecord>, ChainError> {
-        Ok(self
-            .fetch_own_provider()
-            .await
-            .map_err(helper_chain_error)?
-            .map(provider_record))
-    }
-
-    /// The pallet's `MinStakePerByte` constant from the runtime metadata.
-    async fn min_stake_per_byte(&self) -> Result<u128, ChainError> {
-        let address = storage_subxt::api::constants()
-            .storage_provider()
-            .min_stake_per_byte();
-        self.at_current_block()
-            .await
-            .map_err(helper_chain_error)?
-            .constants()
-            .entry(address)
-            .map_err(|e| ChainError::Read {
-                what: "MinStakePerByte",
-                reason: e.to_string(),
-            })
-    }
-
-    async fn register_provider(
-        &self,
-        registration: &ProviderRegistration,
-    ) -> Result<TxReceipt, ChainError> {
-        let tx = storage_subxt::api::tx()
-            .storage_provider()
-            .register_provider(
-                BoundedVec(registration.multiaddr.as_bytes().to_vec()),
-                BoundedVec(registration.public_key.clone()),
-                registration.stake,
-            );
-        let block_hash = self
-            .submit_and_finalize(&tx, "register_provider")
-            .await
-            .map_err(helper_chain_error)?;
-        Ok(receipt(block_hash))
-    }
-
-    async fn update_provider_settings(
-        &self,
-        settings: &ProviderSettings,
-    ) -> Result<TxReceipt, ChainError> {
-        let settings = runtime_settings(settings)?;
-        let tx = storage_subxt::api::tx()
-            .storage_provider()
-            .update_provider_settings(settings);
-        let block_hash = self
-            .submit_and_finalize(&tx, "update_provider_settings")
-            .await
-            .map_err(helper_chain_error)?;
-        Ok(receipt(block_hash))
-    }
-
-    async fn deregister_provider(&self) -> Result<TxReceipt, ChainError> {
-        let tx = storage_subxt::api::tx()
-            .storage_provider()
-            .deregister_provider();
-        let block_hash = self
-            .submit_and_finalize(&tx, "deregister_provider")
-            .await
-            .map_err(helper_chain_error)?;
-        Ok(receipt(block_hash))
-    }
-}
-
-/// The coordinators' error type in the helper's vocabulary. Every kind of
-/// read is one variant there; the submit/rejected split stays because the
-/// operator acts on it differently (retry, or fix the input).
-fn helper_chain_error(e: ChainClientError) -> ChainError {
-    match e {
-        ChainClientError::Query { what, reason } | ChainClientError::Decode { what, reason } => {
-            ChainError::Read { what, reason }
-        }
-        ChainClientError::InvalidAccount { account, reason } => ChainError::Read {
-            what: "account",
-            reason: format!("{account}: {reason}"),
-        },
-        ChainClientError::TxSubmit { what, reason } => ChainError::Submit { what, reason },
-        ChainClientError::TxRejected { what, reason } => ChainError::Rejected { what, reason },
-    }
-}
-
-/// The helper's receipt for a landed transaction.
-fn receipt(block_hash: Option<H256>) -> TxReceipt {
-    TxReceipt {
-        block_hash: block_hash.map(|h| array_bytes::bytes2hex("0x", h.0)),
-    }
-}
-
-/// The helper's view of a `Providers` entry.
-fn provider_record(info: OnChainProviderInfo) -> ProviderRecord {
-    ProviderRecord {
-        multiaddr: String::from_utf8_lossy(&info.multiaddr.0).into_owned(),
-        public_key: info.public_key.0,
-        stake: info.stake,
-        committed_bytes: info.committed_bytes,
-        settings: ProviderSettings {
-            min_duration: u64::from(info.settings.min_duration),
-            max_duration: u64::from(info.settings.max_duration),
-            price_per_byte: info.settings.price_per_byte,
-            accepting_primary: info.settings.accepting_primary,
-            replica_sync_price: info.settings.replica_sync_price,
-            accepting_extensions: info.settings.accepting_extensions,
-            max_capacity: info.settings.max_capacity,
-            min_agreement_bytes: info.settings.min_agreement_bytes,
-        },
-        deregister_at: info.deregister_at.map(u64::from),
-    }
-}
-
-/// The helper's settings in the runtime's encoding. The runtime counts
-/// blocks in `u32`; the CLI already limits durations to that range, and a
-/// larger value from another caller is reported here instead of truncated.
-fn runtime_settings(settings: &ProviderSettings) -> Result<RuntimeProviderSettings, ChainError> {
-    let block_number = |field: &str, value: u64| {
-        u32::try_from(value).map_err(|_| ChainError::Rejected {
-            what: "update_provider_settings",
-            reason: format!("{field} {value} exceeds the chain's block number range (u32)"),
-        })
-    };
-    Ok(RuntimeProviderSettings {
-        min_duration: block_number("min_duration", settings.min_duration)?,
-        max_duration: block_number("max_duration", settings.max_duration)?,
-        price_per_byte: settings.price_per_byte,
-        accepting_primary: settings.accepting_primary,
-        replica_sync_price: settings.replica_sync_price,
-        accepting_extensions: settings.accepting_extensions,
-        max_capacity: settings.max_capacity,
-        min_agreement_bytes: settings.min_agreement_bytes,
-    })
 }
 
 #[async_trait::async_trait]

@@ -12,6 +12,7 @@ mod commands;
 mod common;
 mod metrics;
 mod prepare;
+mod provider_chain;
 
 use anyhow::bail;
 use clap::Parser;
@@ -27,10 +28,12 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Scenarios return their metrics and what their setup phase created;
-    // `main` only renders them, so every subcommand shares one output path.
-    let (summary, preparation) = match &cli.command {
+    // `main` only renders them, so every scenario shares one output path.
+    // The provider subcommand prints its own outcome.
+    let (summary, preparation) = match cli.command {
+        Command::Provider(command) => return commands::provider::run(&cli.global, command).await,
         Command::StressTest(StressTest::ProviderUpload(args)) => {
-            commands::stress_test::upload(&cli.global, args).await?
+            commands::stress_test::upload(&cli.global, &args).await?
         }
     };
     let all_results: Vec<OpSummary> = vec![summary];

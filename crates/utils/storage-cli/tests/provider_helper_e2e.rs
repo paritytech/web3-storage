@@ -1,18 +1,18 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end test of the `helper` subcommand against a running dev chain.
+//! End-to-end test of the `provider` subcommand against a running dev chain.
 //!
-//! It runs the built `storage-provider-node` binary the way an operator does:
-//! generate a keyfile, fund the new account, register, update the settings,
-//! and announce deregistration. Every step is checked twice: the command's
-//! exit code and output, and the provider record the chain stores afterwards.
+//! It runs the built `storage-cli` binary the way an operator does: generate
+//! a keyfile, fund the new account, register, update the settings, and
+//! announce deregistration. Every step is checked twice: the command's exit
+//! code and output, and the provider record the chain stores afterwards.
 //!
 //! The test needs a chain at `E2E_CHAIN_WS` (default `ws://127.0.0.1:2222`,
 //! what `just start-e2e-chain` serves) whose `//Bob` account is funded, so
 //! it is ignored by default. Run it with:
 //!
 //! ```text
-//! cargo test -p storage-provider-node --test provider_helper_e2e -- --ignored --nocapture
+//! cargo test -p storage-cli --test provider_helper_e2e -- --ignored --nocapture
 //! ```
 //!
 //! `--nocapture` shows the provider the run used (keyfile path, address,
@@ -41,8 +41,8 @@ fn chain_ws() -> String {
     std::env::var("E2E_CHAIN_WS").unwrap_or_else(|_| DEFAULT_CHAIN_WS.to_string())
 }
 
-/// The `helper` subcommand of the binary this test crate builds, bound to one
-/// keyfile and the chain under test.
+/// The `provider` subcommand of the `storage-cli` binary this test crate
+/// builds, bound to one keyfile and the chain under test.
 struct Helper {
     keyfile: PathBuf,
     chain_ws: String,
@@ -101,15 +101,15 @@ impl Run {
 
 impl Helper {
     fn run(&self, args: &[&str]) -> Run {
-        let output = Command::new(env!("CARGO_BIN_EXE_storage-provider-node"))
-            .arg("helper")
+        let output = Command::new(env!("CARGO_BIN_EXE_storage-cli"))
             .arg("--chain-rpc")
             .arg(&self.chain_ws)
             .arg("--keyfile")
             .arg(&self.keyfile)
+            .arg("provider")
             .args(args)
             .output()
-            .expect("the provider binary runs");
+            .expect("the storage-cli binary runs");
         Run {
             success: output.status.success(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
