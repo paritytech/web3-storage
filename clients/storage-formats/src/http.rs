@@ -8,8 +8,8 @@ use crate::Result;
 use storage_client::{ChunkingStrategy, StorageUserClient};
 use storage_primitives::{BucketId, Commitment, MmrProof};
 
-/// Layer 0 over HTTP. The client must not have encryption enabled: the
-/// stored bytes would then not match the CIDs the tree computes.
+/// The provider's blob routes over HTTP. The client must not have encryption
+/// enabled: the stored bytes would then not match the CIDs the tree computes.
 #[async_trait::async_trait]
 impl BlobStore for StorageUserClient {
     async fn put_blob(&self, bucket_id: BucketId, data: &[u8]) -> Result<Cid> {

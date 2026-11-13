@@ -2,7 +2,7 @@
   "name": "@web3-storage/sdk",
   "version": "0.1.0",
   "private": true,
-  "description": "Umbrella SDK for the storage parachain: re-exports @web3-storage/{core,layer0,file-system} and hosts the Web3Storage class (chain ops, provider resolution, per-bucket drive and object handles).",
+  "description": "Umbrella SDK for the storage parachain: re-exports @web3-storage/{core,storage,storage-formats} and hosts the Web3Storage class (chain ops, provider resolution, per-bucket drive and object handles).",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
@@ -15,7 +15,7 @@
   "dependencies": {
     "@web3-storage/core": "workspace:*",
     "@web3-storage/storage-formats": "workspace:*",
-    "@web3-storage/layer0": "workspace:*",
+    "@web3-storage/storage": "workspace:*",
     "polkadot-api": "^3.3.0"
   },
   "devDependencies": {

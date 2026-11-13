@@ -6,7 +6,7 @@ import "./IWeb3Storage.sol";
 
 /// @title Photos
 /// @notice Per-user control plane for the Photos dApp. The contract creates one
-///         Layer 0 bucket per user through the storage-provider precompile,
+///         bucket per user through the storage-provider precompile,
 ///         grants the user a Writer role so their browser can write to the
 ///         bucket through the provider directly, and anchors the album-tree
 ///         root CID on-chain.

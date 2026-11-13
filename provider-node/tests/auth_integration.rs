@@ -151,7 +151,7 @@ async fn delete_missing_auth_returns_401() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// L0 node / commit endpoint auth tests
+// Node and commit endpoint auth tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Build an `UploadNodeRequest` body for `bucket_id` storing `data`.
@@ -334,7 +334,7 @@ async fn commit_reader_blocked() {
 }
 
 /// A validly-signed request from an account that is not a member of the bucket
-/// must be rejected on the L0 write path — a correct signature only proves
+/// must be rejected on the write path — a correct signature only proves
 /// identity, not authorization.
 #[tokio::test]
 async fn node_non_member_returns_forbidden() {
@@ -389,7 +389,7 @@ async fn public_bucket_node_upload_still_requires_auth() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Layer-0 read gates: bucket-bound reads are Reader-gated; hash-keyed
+// Read gates: bucket-bound reads are Reader-gated; hash-keyed
 // reads stay open as capability lookups.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -401,7 +401,7 @@ fn mmr_proof_path(commitment: &Commitment) -> String {
     )
 }
 
-/// The bucket-bound L0 `GET` reads gated at Reader, with `/mmr_proof` for
+/// The bucket-bound `GET` reads gated at Reader, with `/mmr_proof` for
 /// `commitment`. Add a newly gated endpoint here; both tests below walk this
 /// list.
 fn l0_gated_gets(commitment: &Commitment) -> Vec<String> {
@@ -415,7 +415,7 @@ fn l0_gated_gets(commitment: &Commitment) -> Vec<String> {
     ]
 }
 
-/// Every bucket-bound L0 read answers 401 to an anonymous request on a
+/// Every bucket-bound read answers 401 to an anonymous request on a
 /// private bucket.
 #[tokio::test]
 async fn l0_reads_require_auth_on_private_bucket() {
@@ -450,7 +450,7 @@ async fn l0_reads_require_auth_on_private_bucket() {
 async fn l0_member_reads_private_bucket() {
     let server = AuthTestServer::with_role(Role::Admin).await;
     let alice = test_member_pair();
-    let (_, commitment) = upload_and_commit(&server, &alice, b"l0-gate-test-data").await;
+    let (_, commitment) = upload_and_commit(&server, &alice, b"read-gate-test-data").await;
 
     for path in l0_gated_gets(&commitment) {
         let header = make_auth_header(&alice, "GET", 1, current_timestamp());
@@ -485,7 +485,7 @@ async fn l0_member_reads_private_bucket() {
 async fn l0_reads_open_on_public_bucket() {
     let server = AuthTestServer::public_with_role(Role::Writer).await;
     let alice = test_member_pair();
-    upload_and_commit(&server, &alice, b"l0-gate-test-data").await;
+    upload_and_commit(&server, &alice, b"read-gate-test-data").await;
 
     let resp = server
         .client
@@ -504,7 +504,7 @@ async fn l0_reads_open_on_public_bucket() {
 async fn hash_keyed_reads_stay_open_on_private_bucket() {
     let server = AuthTestServer::with_role(Role::Admin).await;
     let alice = test_member_pair();
-    let (hash_hex, _) = upload_and_commit(&server, &alice, b"l0-gate-test-data").await;
+    let (hash_hex, _) = upload_and_commit(&server, &alice, b"read-gate-test-data").await;
 
     let resp = server
         .client
@@ -550,7 +550,7 @@ async fn provider_account_reads_private_bucket_proofs() {
         .with_provider_account(AccountId32::new(alice.public().0)),
     )
     .await;
-    let (_, commitment) = upload_and_commit(&server, &bob, b"l0-gate-test-data").await;
+    let (_, commitment) = upload_and_commit(&server, &bob, b"read-gate-test-data").await;
 
     // Alice is not a member, but is the node's own account: Reader passes.
     let header = make_auth_header(&alice, "GET", 1, current_timestamp());
@@ -586,7 +586,7 @@ async fn replica_served_private_bucket_reads_anonymously() {
         .with_serves_as_replica(),
     )
     .await;
-    upload_and_commit(&server, &alice, b"l0-gate-test-data").await;
+    upload_and_commit(&server, &alice, b"read-gate-test-data").await;
 
     let resp = server
         .client

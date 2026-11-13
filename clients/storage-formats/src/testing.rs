@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! In-memory Layer 0 for the crate's tests.
+//! In-memory blob store for the crate's tests.
 
 use crate::format::{compute_cid, Cid};
 use crate::tree::{BlobLength, BlobStore, Tree};
