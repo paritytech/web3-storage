@@ -1,6 +1,6 @@
 # Provider Node Quick Start Guide
 
-This guide explains how to install, configure and start `storage-provider-node`, and how to register it as a storage provider on chain.
+This guide explains how to install `storage-provider-node`, register it as a storage provider on chain, and start it.
 It is for the operator who runs the provider node.
 
 The provider node is an HTTP server.
@@ -24,8 +24,8 @@ If the node loses its data, it cannot answer challenges for buckets that still h
 ### Prerequisites
 
 - `curl` and `jq`, for the download and the health check.
-- A Substrate key tool to generate the provider seed, for example `polkadot-omni-node`.
-  Download it from `https://github.com/paritytech/polkadot-sdk/releases/download/polkadot-stable2606/polkadot-omni-node` on Linux, or from the same URL with the suffix `-aarch64-apple-darwin` on macOS, and make it executable with `chmod +x`.
+
+The node binary generates the provider key and submits the registration transactions, so no other tool is needed.
 
 Install the node with one of the two options below.
 
@@ -108,31 +108,49 @@ The provider node uses one secret seed for two purposes:
 - The sr25519 account derived from the seed is the provider's on-chain identity.
   The node submits all transactions from this account, and the account pays the stake and transaction fees.
 - The signing key derived from the same seed signs commitments, checkpoint co-signatures, negotiated terms and replica sync attestations.
-  `--key-scheme` selects the signing scheme: `sr25519` (default), `ed25519`, `ecdsa` or `eth`.
+  The keyfile records the signing scheme: `sr25519` (default), `ed25519`, `ecdsa` or `eth`.
+  `--key-scheme` overrides it.
 
-### Generate a seed
+### Generate the keyfile
 
-Generate a new secret phrase with any Substrate key tool, for example:
-
-```bash
-polkadot-omni-node key generate --scheme sr25519 --words 12
-```
-
-Record the secret phrase and the SS58 address.
-The SS58 address is the provider account.
-
-### Create the keyfile
-
-Create the file with owner-only permissions, paste the secret phrase, and press `Ctrl-D`:
+The `helper generate-key` subcommand creates a new 12-word BIP39 secret phrase and writes it to the keyfile:
 
 ```bash
-(umask 077; cat > provider.key)
+storage-provider-node helper \
+  --chain-rpc wss://<parachain-rpc-host> \
+  --keyfile ./secret/provider.key \
+  generate-key
 ```
 
-This command keeps the phrase out of the shell history.
+The command creates the file with owner-only permissions and never overwrites an existing file.
+It reads the SS58 prefix from the chain so that the printed address matches the chain's own tools.
+If the chain is not reachable, it prints a warning and uses the generic prefix 42.
+`--words` selects another BIP39 length: 15, 18, 21 or 24.
 
-The file contains a single secret phrase or derivation path (for example `//Alice` on a development chain).
+The command prints the public fields of the new key:
+
+```json
+{
+  "keyfile": "./secret/provider.key",
+  "keyScheme": "sr25519",
+  "accountId": "0x...",
+  "publicKey": "0x...",
+  "ss58Address": "5...",
+  "ss58Prefix": 42
+}
+```
+
+`ss58Address` is the provider account.
+The secret phrase is only in the file.
+
+The keyfile is a JSON file with `secretPhrase`, `keyScheme` and the four identity fields from the output.
+It does not contain `keyfile`.
+`secretPhrase`, `publicKey`, `accountId` and `ss58Address` use the field names following substrate best-practice.
+The node also accepts a keyfile that contains only a plain secret phrase or derivation path, for example `//Alice` on a development chain.
 The node does not start if the file is empty, or if the file is readable by group or others.
+
+At the moment, the helper supports `sr25519` only.
+To register with another scheme, write a plain-phrase keyfile and register with the example program described in [Register with the example program](#register-with-the-example-program).
 
 ### Fund the account
 
@@ -142,28 +160,128 @@ The stake also limits the capacity you can offer: each byte of capacity requires
 
 ### Key rules
 
-- Keep the seed secret and back it up.
-  Anyone with the seed controls the provider account and the stake.
+- Keep the keyfile secret and back it up.
+  Anyone with the secret phrase controls the provider account and the stake.
 - The signing key registered on chain cannot be changed.
-  The `--key-scheme` you start the node with must match the scheme you register.
+  The node signs with the scheme recorded in the keyfile, or with `--key-scheme` when given, and that scheme must match the one you register.
   If they differ, every signing endpoint returns `503 provider_key_mismatch`.
-  To fix a mismatch, start the node with the original seed and scheme.
+  To fix a mismatch, start the node with the original keyfile and scheme.
 
-## 4. Start and Configure
+## 4. Register as Provider
+
+Registration has two transactions, both signed by the provider account:
+
+1. `StorageProvider.register_provider(multiaddr, public_key, stake)`
+   - `multiaddr`: the address clients use to reach the node. Pass the same value as `--public-multiaddr` when you start the node.
+   - `public_key`: the public signing key derived from the secret phrase for the scheme in the keyfile.
+   - `stake`: at least 1000 tokens.
+2. `StorageProvider.update_provider_settings(settings)`
+   - `min_duration` and `max_duration`: the agreement durations you accept, in relay chain blocks.
+   - `price_per_byte`: the price in planck per byte per relay chain block.
+   - `accepting_primary`: whether you accept new primary agreements.
+   - `replica_sync_price`: the price in planck per sync confirmation, or none if you do not accept replica agreements.
+   - `accepting_extensions`: whether you accept extensions of existing agreements.
+   - `max_capacity`: the maximum capacity in bytes, or `0` for no limit, covered by your stake.
+   - `min_agreement_bytes`: the smallest agreement size in bytes you accept, or `0` for no minimum.
+
+The `helper` subcommand of the node binary submits each transaction.
+It signs with the account derived from `--keyfile`, validates the input and the provider's on-chain state before it submits, and exits with a non-zero status and the error message on failure.
+It does not need a running node.
+`--chain-rpc` selects the chain, as for the node.
+
+### Register
+
+Submit `register_provider` with the multiaddr and the stake in planck.
+The chain has 12 decimals, so the minimum stake of 1000 tokens is `1000000000000000` planck:
+
+```bash
+storage-provider-node helper \
+  --chain-rpc wss://<parachain-rpc-host> \
+  --keyfile ./secret/provider.key \
+  register \
+  --multiaddr /dns4/<your-domain>/tcp/443/tls/http \
+  --stake 1000000000000000
+```
+
+The command prints the account, the multiaddr, the stake and the block that included the transaction.
+It rejects an empty multiaddr, a zero stake and an account that is already registered.
+The chain rejects a stake below the minimum and a multiaddr above its length limit.
+
+Registration applies the default settings: no price, no duration limits, no capacity limit, no minimum agreement size, primary agreements and extensions accepted, replica agreements not accepted.
+
+### Set the provider settings
+
+Submit `update_provider_settings` with the settings of your offer that differ from the defaults.
+Only the given flags change; every other setting keeps its on-chain value.
+
+```bash
+storage-provider-node helper \
+  --chain-rpc wss://<parachain-rpc-host> \
+  --keyfile ./secret/provider.key \
+  update-settings \
+  --price-per-byte 1 \
+  --min-duration 10 \
+  --max-duration 100000 \
+  --max-capacity 1000000000000
+```
+
+| Flag | Setting |
+|------|---------|
+| `--min-duration <BLOCKS>` | `min_duration` |
+| `--max-duration <BLOCKS>` | `max_duration` |
+| `--price-per-byte <AMOUNT>` | `price_per_byte` |
+| `--accepting-primary <BOOL>` | `accepting_primary` |
+| `--replica-sync-price <AMOUNT>` | `replica_sync_price`; setting it accepts replica agreements |
+| `--no-replicas` | `replica_sync_price = none`; stops accepting replica agreements |
+| `--accepting-extensions <BOOL>` | `accepting_extensions` |
+| `--max-capacity <BYTES>` | `max_capacity` |
+| `--min-agreement-bytes <BYTES>` | `min_agreement_bytes` |
+
+The command prints the settings that are on chain after the update.
+If the merged settings equal the current ones, it submits nothing.
+Before it submits, it rejects a `min_duration` above `max_duration`.
+When `max_capacity` is not `0`, it also rejects a `max_capacity` below the bytes already committed, a `min_agreement_bytes` above `max_capacity`, and a `max_capacity` that the stake does not cover.
+
+Run the same command later to change your offer.
+
+### Register with the example program
+
+The repository also contains a program that runs both transactions and supports every key scheme.
+It runs from a source checkout and needs the Rust toolchain from Option B.
+It reads the keyfile as a plain secret phrase and does not parse the JSON keyfile from `helper generate-key`.
+It derives the public key from the phrase in the same way as the node, and it does nothing if the account is already registered with the same key.
+
+```bash
+cargo run -p storage-client --example register_provider -- \
+  wss://<parachain-rpc-host> \
+  https://<your-domain> \
+  /dns4/<your-domain>/tcp/443/tls/http \
+  ./secret/provider.key \
+  sr25519
+```
+
+The arguments are, in order: chain RPC URL, provider HTTP URL, multiaddr, keyfile and key scheme.
+The program stakes 1000 tokens and applies these settings: `price_per_byte = 1`, `min_duration = 10`, `max_duration = 100000`, `accepting_primary = true`, `accepting_extensions = true`, no replica agreements, `max_capacity = 0`.
+After registration, change the settings with `helper update-settings` to match your offer.
+
+On a local development chain, `just register-provider` registers the `//Alice` development account.
+
+## 5. Start and Configure
 
 ### Start the node
 
 ```bash
 storage-provider-node \
-  --keyfile ./provider.key \
+  --keyfile ./secret/provider.key \
   --chain-rpc wss://<parachain-rpc-host> \
   --storage-path /var/lib/provider-data \
   --bind-addr 0.0.0.0:3333 \
   --public-multiaddr /dns4/<your-domain>/tcp/443/tls/http \
-  --cors-allowed-origins https://<your-app-domain> \
-  --enable-challenge-responder \
-  --enable-replica-sync
+  --enable-challenge-responder
 ```
+
+`--public-multiaddr` must be the multiaddr you registered in [Register](#register).
+The options below add CORS restrictions, replica sync and other settings.
 
 On startup the node logs the storage backend, the signing account, and the address it listens on:
 
@@ -175,7 +293,7 @@ Starting storage provider node on 0.0.0.0:3333
 If the chain is not reachable at startup, the node logs a warning and keeps retrying in the background.
 
 In a source checkout, for a local development chain, the shortcut `just start-provider` builds and starts the node with the `//Alice` development key, connected to `ws://127.0.0.1:2222`.
-Pass your own key with `just PROVIDER_KEYFILE=./provider.key start-provider`.
+Pass your own key with `just PROVIDER_KEYFILE=./secret/provider.key start-provider`.
 
 ### Chain RPC endpoint
 
@@ -205,8 +323,8 @@ Set `--cors-allowed-origins` in production.
 
 | Option | Environment variable | Default | Description |
 |--------|----------------------|---------|-------------|
-| `--keyfile` | none | none | Path to the keyfile. Without it, the node cannot sign or submit transactions. |
-| `--key-scheme` | none | `sr25519` | Signing scheme: `sr25519`, `ed25519`, `ecdsa` or `eth`. |
+| `--keyfile` | none | none | Path to the keyfile: the JSON file from `helper generate-key`, or a plain secret phrase. Without it, the node cannot sign or submit transactions. |
+| `--key-scheme` | none | `keyScheme` from the keyfile, else `sr25519` | Signing scheme: `sr25519`, `ed25519`, `ecdsa` or `eth`. |
 | `--storage-backend` | none | `rocksdb` | Storage engine. |
 | `--storage-path` | `STORAGE_PATH` | `./provider-data` | Directory for chunks and commitment state. |
 
@@ -235,7 +353,7 @@ Enable the challenge responder unless another service answers challenges for you
 
 The defaults are suitable for most deployments.
 
-## 5. Health Check
+## 6. Health Check
 
 Check that the HTTP server is running:
 
@@ -261,7 +379,7 @@ The `readiness` object reports:
 | Field | Meaning |
 |-------|---------|
 | `signing_configured` | `true` when the node started with a keyfile. |
-| `provider_info_loaded` | `true` when the node found its registration on chain. It is `false` until you register. |
+| `provider_info_loaded` | `true` when the node found its registration on chain. It is `false` when the provider is not registered. |
 | `deregistering` | `true` when the provider has announced deregistration. |
 
 Check the stored data:
@@ -274,46 +392,9 @@ The response contains the provider account, the number of buckets, the number of
 
 On a local setup, `just health` and `just stats` run the same requests.
 
-## 6. Register as Provider
-
-Registration has two transactions, both signed by the provider account:
-
-1. `StorageProvider.register_provider(multiaddr, public_key, stake)`
-   - `multiaddr`: the address clients use to reach the node, the same value as `--public-multiaddr`.
-   - `public_key`: the public signing key derived from the seed for the scheme in `--key-scheme`.
-   - `stake`: at least 1000 tokens.
-2. `StorageProvider.update_provider_settings(settings)`
-   - `min_duration` and `max_duration`: the agreement durations you accept, in relay chain blocks.
-   - `price_per_byte`: the price in planck per byte per relay chain block.
-   - `accepting_primary`: whether you accept new primary agreements.
-   - `replica_sync_price`: the price in planck per sync confirmation, or none if you do not accept replica agreements.
-   - `accepting_extensions`: whether you accept extensions of existing agreements.
-   - `max_capacity`: the maximum capacity in bytes, or `0` for no limit, covered by your stake.
-
-### Register with the example program
-
-The repository contains a program that runs both transactions.
-It runs from a source checkout and needs the Rust toolchain from Option B.
-It derives the public key from your keyfile in the same way as the node, and it does nothing if the account is already registered with the same key.
-
-```bash
-cargo run -p storage-client --example register_provider -- \
-  wss://<parachain-rpc-host> \
-  https://<your-domain> \
-  /dns4/<your-domain>/tcp/443/tls/http \
-  ./provider.key \
-  sr25519
-```
-
-The arguments are, in order: chain RPC URL, provider HTTP URL, multiaddr, keyfile and key scheme.
-The program stakes 1000 tokens and applies these settings: `price_per_byte = 1`, `min_duration = 10`, `max_duration = 100000`, `accepting_primary = true`, `accepting_extensions = true`, no replica agreements, `max_capacity = 0`.
-After registration, change the settings with `update_provider_settings` to match your offer.
-
-On a local development chain, `just register-provider` registers the `//Alice` development account.
-
 ### Verify the registration
 
-The running node detects the registration when the block that contains it is finalized.
+The node reads its registration from the chain at startup.
 Query `/info`:
 
 ```bash
