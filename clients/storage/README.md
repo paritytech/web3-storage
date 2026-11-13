@@ -307,10 +307,8 @@ match client.upload(1, data, Default::default()).await {
 
 - ✅ Multi-provider checkpoint coordination
 - ✅ Consensus verification (configurable threshold)
-- ✅ Conflict detection and resolution
 - ✅ Automatic background checkpointing
 - ✅ Provider health tracking and metrics
-- ✅ Auto-challenge recommendations
 
 ### EventStream
 

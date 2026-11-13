@@ -13,7 +13,7 @@ use provider_replica::{
 };
 use provider_storage::{temp_rocksdb, ChunkTreeNode, StorageBackend};
 use sp_core::H256;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::{hash_leaf, BucketId};
@@ -82,6 +82,8 @@ struct MockReplicaSyncChainClient {
     attestations: Mutex<Vec<SignedSyncRoots>>,
     confirm_result: Mutex<Result<(u8, u128), ChainClientError>>,
     replica_endpoints: Mutex<Result<Vec<String>, ChainClientError>>,
+    snapshot_errors: Mutex<HashSet<BucketId>>,
+    endpoint_errors: Mutex<HashSet<BucketId>>,
 }
 
 impl MockReplicaSyncChainClient {
@@ -95,6 +97,8 @@ impl MockReplicaSyncChainClient {
             attestations: Mutex::new(Vec::new()),
             confirm_result: Mutex::new(Ok((0, 1000))),
             replica_endpoints: Mutex::new(Ok(Vec::new())),
+            snapshot_errors: Mutex::new(HashSet::new()),
+            endpoint_errors: Mutex::new(HashSet::new()),
         }
     }
 
@@ -112,6 +116,18 @@ impl MockReplicaSyncChainClient {
             snapshots: Mutex::new(map),
             ..self
         }
+    }
+
+    /// Make `fetch_bucket_snapshot` fail for `bucket_id`.
+    fn with_snapshot_error(self, bucket_id: BucketId) -> Self {
+        self.snapshot_errors.lock().unwrap().insert(bucket_id);
+        self
+    }
+
+    /// Make `fetch_primary_endpoints` fail for `bucket_id`.
+    fn with_endpoint_error(self, bucket_id: BucketId) -> Self {
+        self.endpoint_errors.lock().unwrap().insert(bucket_id);
+        self
     }
 
     fn with_replica_endpoints(self, result: Result<Vec<String>, ChainClientError>) -> Self {
@@ -149,6 +165,9 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<BucketSnapshot, ChainClientError> {
+        if self.snapshot_errors.lock().unwrap().contains(&bucket_id) {
+            return Err(ChainClientError::query("bucket", "injected failure"));
+        }
         let snapshots = self.snapshots.lock().unwrap();
         Ok(snapshots
             .get(&bucket_id)
@@ -163,6 +182,9 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<Vec<String>, ChainClientError> {
+        if self.endpoint_errors.lock().unwrap().contains(&bucket_id) {
+            return Err(ChainClientError::query("provider", "injected failure"));
+        }
         let endpoints = self.endpoints.lock().unwrap();
         Ok(endpoints.get(&bucket_id).cloned().unwrap_or_default())
     }
@@ -700,6 +722,51 @@ async fn test_duties_happy_path_returns_duty() {
     assert_eq!(duty.source_endpoints, vec!["http://primary:3333"]);
     assert_eq!(duty.sync_balance, 1000);
     assert_eq!(duty.sync_price, 100);
+}
+
+/// `mock_with_bucket_42_duty` plus a checkpointed bucket-7 agreement listed
+/// before bucket 42.
+fn mock_with_buckets_7_and_42() -> MockReplicaSyncChainClient {
+    let mock = mock_with_bucket_42_duty().with_snapshot(
+        7,
+        BucketSnapshot {
+            mmr_root: H256::repeat_byte(0x07),
+            leaf_count: 3,
+        },
+    );
+    mock.agreements.lock().unwrap().insert(
+        0,
+        ReplicaAgreementInfo {
+            bucket_id: 7,
+            sync_balance: 1000,
+            sync_price: 100,
+            min_sync_interval: 0,
+            last_sync: None,
+        },
+    );
+    mock
+}
+
+/// Assert that the duty pass returns only bucket 42's duty.
+async fn assert_only_bucket_42_duty(mock: MockReplicaSyncChainClient) {
+    let (storage, _dir) = temp_rocksdb();
+    let coordinator = coordinator(ReplicaSyncCoordinatorConfig::default(), storage, mock);
+
+    let duties = coordinator.get_active_replica_duties().await.unwrap();
+    assert_eq!(duties.len(), 1);
+    assert_eq!(duties[0].bucket_id, 42);
+}
+
+#[tokio::test]
+async fn test_duties_skip_a_bucket_whose_snapshot_lookup_fails() {
+    // The coordinator processes bucket 7 first and its lookup fails; the pass
+    // still returns bucket 42's duty.
+    assert_only_bucket_42_duty(mock_with_buckets_7_and_42().with_snapshot_error(7)).await;
+}
+
+#[tokio::test]
+async fn test_duties_skip_a_bucket_whose_endpoint_lookup_fails() {
+    assert_only_bucket_42_duty(mock_with_buckets_7_and_42().with_endpoint_error(7)).await;
 }
 
 #[tokio::test]

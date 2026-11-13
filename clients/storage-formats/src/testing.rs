@@ -107,11 +107,20 @@ impl BlobStore for MemoryStore {
         Ok(commitment)
     }
 
-    async fn mmr_proof(&self, _bucket_id: BucketId, leaf_index: u64) -> Result<MmrProof> {
-        Ok(mmr::proof(&self.leaves(), leaf_index)
-            .unwrap()
-            .expect("no leaf at this index")
-            .1)
+    async fn mmr_proof(
+        &self,
+        _bucket_id: BucketId,
+        commitment: &Commitment,
+        leaf_index: u64,
+    ) -> Result<MmrProof> {
+        // This store never prunes, so every commitment starts at sequence 0.
+        let leaves = self.leaves();
+        Ok(
+            mmr::proof(&leaves[..commitment.leaf_count as usize], leaf_index)
+                .unwrap()
+                .expect("no leaf at this index")
+                .1,
+        )
     }
 }
 

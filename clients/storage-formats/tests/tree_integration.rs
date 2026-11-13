@@ -148,11 +148,11 @@ async fn write_commits_root_as_last_leaf() {
     tree.put_file("/a/f", b"x", DEFAULT_MIME_TYPE, vec![])
         .await
         .unwrap();
-    let commitment = client.get_commitment(BUCKET).await.unwrap();
+    let commitment = client.get_commitment(BUCKET).await.unwrap().commitment();
     // content, manifest, /a, root
     assert_eq!(commitment.leaf_count, 4);
     let last = client
-        .get_mmr_proof(BUCKET, commitment.leaf_count - 1)
+        .get_mmr_proof(BUCKET, &commitment, commitment.leaf_count - 1)
         .await
         .unwrap();
     assert_eq!(

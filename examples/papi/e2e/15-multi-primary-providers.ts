@@ -13,8 +13,9 @@
  * - 15.1-15.4: a bucket with two primaries, and a stale primary signature;
  * - 15.5-15.8 and 15.13-15.14: a provider switch. The client moves the data
  *   from the old primary to a new one, the new primary signs the snapshot with
- *   `extend_checkpoint`, the client checkpoints without the old primary, and
- *   ends the old agreement after it expires;
+ *   `extend_checkpoint`, the client commits new data on the new primary and
+ *   checkpoints it without the old primary, and ends the old agreement after
+ *   it expires;
  * - 15.9-15.12: an admin ending a primary agreement early on a
  *   `min_providers = 2` bucket. These tests run while the switch scenario
  *   waits for the old agreement to expire.
@@ -319,8 +320,18 @@ async function main() {
     name: "15.7 Checkpoint with the new primary only",
     fn: async () => {
       assert.ok(moved !== undefined && next, "15.6 must pass first");
+      // The snapshot already covers the moved data and a checkpoint must move
+      // the bucket forward, so upload new data to the new primary and
+      // checkpoint with its signature only. 15.14 still challenges the moved
+      // leaf from `next`.
+      const upload = await uploadChunk(
+        SECOND_PROVIDER_URL,
+        moved,
+        `after-switch @ ${Date.now()}`,
+        client
+      );
       await submitClientCheckpoint(api, client, moved, [
-        { provider: second, commit: next.commit },
+        { provider: second, commit: upload.commit },
       ], { label: "checkpoint (new primary)" });
       assert.deepStrictEqual(
         await snapshotSigners(api, moved),
@@ -387,10 +398,25 @@ async function main() {
     name: "15.10 Checkpoint with a removed primary's signature fails",
     fn: async () => {
       assert.ok(leaving, "15.9 must pass first");
-      const tx = checkpointTx(api, leaving.bucketId, [
-        { provider: first, commit: leaving.first },
-        { provider: second, commit: leaving.second },
-      ]);
+      // The snapshot already covers `leaving`. Re-submitting it fails with
+      // `SnapshotNotForward` before the pallet checks any signature. New data
+      // on the remaining primary moves the range forward. The tx is built
+      // directly because the SDK rejects commits that differ.
+      const fresh = (
+        await uploadChunk(SECOND_PROVIDER_URL, leaving.bucketId, `removed @ ${Date.now()}`, client)
+      ).commit;
+      const tx = api.tx.StorageProvider.checkpoint({
+        bucket_id: leaving.bucketId,
+        commitment: {
+          mmr_root: asHex(fresh.mmr_root),
+          start_seq: BigInt(fresh.start_seq),
+          leaf_count: BigInt(fresh.leaf_count),
+        },
+        signatures: [
+          [first.address, decodeMultiSignature(leaving.first.provider_signature)],
+          [second.address, decodeMultiSignature(fresh.provider_signature)],
+        ],
+      });
       await submitTxExpectFailure(tx, client.signer, "ProviderNotInSnapshot", "15.10");
     },
   });

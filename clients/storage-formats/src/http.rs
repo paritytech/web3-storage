@@ -35,14 +35,17 @@ impl BlobStore for StorageUserClient {
 
     async fn commitment(&self, bucket_id: BucketId) -> Result<Option<Commitment>> {
         let commitment = self.get_commitment_if_exists(bucket_id).await?;
-        Ok(commitment.map(|c| Commitment {
-            mmr_root: c.mmr_root,
-            start_seq: c.start_seq,
-            leaf_count: c.leaf_count,
-        }))
+        Ok(commitment.map(|c| c.commitment()))
     }
 
-    async fn mmr_proof(&self, bucket_id: BucketId, leaf_index: u64) -> Result<MmrProof> {
-        Ok(self.get_mmr_proof(bucket_id, leaf_index).await?)
+    async fn mmr_proof(
+        &self,
+        bucket_id: BucketId,
+        commitment: &Commitment,
+        leaf_index: u64,
+    ) -> Result<MmrProof> {
+        Ok(self
+            .get_mmr_proof(bucket_id, commitment, leaf_index)
+            .await?)
     }
 }
