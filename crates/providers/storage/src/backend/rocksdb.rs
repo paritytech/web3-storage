@@ -574,7 +574,7 @@ impl DiskStorage {
                 data_size,
                 total_size,
             };
-            mmr::append(&mut bucket.peaks, bucket.leaves.len() as u64, &leaf);
+            mmr::append(&mut bucket.peaks, bucket.leaves.len() as u64, &leaf)?;
             bucket.leaves.push(leaf);
         }
 

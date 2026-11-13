@@ -88,14 +88,16 @@ pub fn bag_peaks(peaks: &[H256]) -> H256 {
 /// more leaf; the caller increments its leaf count.
 ///
 /// `peaks` must hold `leaf_count.count_ones()` peaks, as [`peaks`] returns.
-pub fn append(peaks: &mut Vec<H256>, leaf_count: u64, leaf: &MmrLeaf) {
+/// Fails with [`Error::InconsistentStore`] if `peaks` has fewer.
+pub fn append(peaks: &mut Vec<H256>, leaf_count: u64, leaf: &MmrLeaf) -> Result<(), Error> {
     let mut node = hash_leaf(&leaf.encode());
     // Each trailing one bit of the leaf count is a peak the new node merges with.
     for _ in 0..leaf_count.trailing_ones() {
-        let left = peaks.pop().expect("one peak per set bit of the leaf count");
+        let left = peaks.pop().ok_or(Error::InconsistentStore)?;
         node = hash_children(left, node);
     }
     peaks.push(node);
+    Ok(())
 }
 
 /// Combine a peak with the bagged peaks to its right:
@@ -258,7 +260,7 @@ mod tests {
             let (root, rebuilt) = super::peaks(&all[..count]).unwrap();
             assert_eq!(peaks, rebuilt, "peaks of {count} leaves");
             assert_eq!(bag_peaks(&peaks), root, "root of {count} leaves");
-            append(&mut peaks, count as u64, leaf);
+            append(&mut peaks, count as u64, leaf).unwrap();
         }
         let (root, rebuilt) = super::peaks(&all).unwrap();
         assert_eq!(peaks, rebuilt);
