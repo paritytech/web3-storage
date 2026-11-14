@@ -12,6 +12,7 @@
 
 import assert from "node:assert";
 import {
+  cancelChallenge,
   challengeCheckpoint,
   challengeOffchain,
   ensureProviderRegistered,
@@ -181,6 +182,26 @@ async function main() {
         target: { leaf_index: 999n, chunk_index: 0n },
       });
       await submitTxExpectFailure(tx, client.signer, "LeafNotInCommitment", "5.7");
+    },
+  });
+
+  tests.push({
+    name: "5.8 Challenger cancels before the response",
+    fn: async () => {
+      const challengeId = await challengeCheckpoint(
+        api,
+        client,
+        provider,
+        bucketId,
+        uploadInfo.leafIndex
+      );
+      // Only the challenger may withdraw it.
+      const tx = api.tx.StorageProvider.cancel_challenge({ challenge_id: challengeId });
+      await submitTxExpectFailure(tx, provider.signer, "NotChallengeChallenger", "5.8");
+      const result = await cancelChallenge(api, client, challengeId);
+      const events = api.event.StorageProvider.ChallengeCancelled.filter(result.events as never);
+      assert.strictEqual(events.length, 1, "Expected ChallengeCancelled event");
+      assert.ok(events[0].payload.deposit > 0n, "the released deposit is non-zero");
     },
   });
 
