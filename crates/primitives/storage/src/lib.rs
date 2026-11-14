@@ -33,6 +33,13 @@ pub type BucketId = u64;
 /// shorter. The provider rejects a larger chunk on upload and replica sync.
 pub const DEFAULT_CHUNK_SIZE: u32 = 256 * 1024;
 
+/// Most chunks one provider `/read` returns. 64 chunks of `DEFAULT_CHUNK_SIZE`
+/// are 16 MiB, eight times the 2 MiB example in the design, and about 21 MiB
+/// once base64-encoded into the JSON response. The read is unauthenticated and
+/// the provider holds the whole response in memory, so a bound is needed; a
+/// caller that wants more reads in several requests.
+pub const MAX_READ_CHUNKS: u64 = 64;
+
 /// Prime numbers used for historical root bucketing.
 /// These provide logarithmic time coverage for replica sync validation.
 pub const HISTORICAL_ROOT_PRIMES: [u32; 6] = [3, 7, 11, 23, 47, 113];
