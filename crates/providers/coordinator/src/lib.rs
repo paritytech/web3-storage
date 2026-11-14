@@ -19,6 +19,29 @@
 //! It also broadcasts bucket-membership changes as
 //! [`BlockEvent::BucketMembershipChanged`], so the membership cache can drop
 //! stale authorization on its own rather than being told to.
+//!
+//! Main types:
+//! * [`ChainStateCoordinator`] : the background service. [`ChainStateCoordinatorHandle`] controls it.
+//! * [`ChainFollower`] : opens a chain connection and its finalized-block stream. The provider
+//!   node implements it with subxt.
+//! * [`ChainStateChainClient`] : the chain reads used to refresh [`ChainState`]. The provider node
+//!   implements it on the same connection.
+//!
+//! Inputs: finalized blocks with their decoded events ([`BlockContents`]), from the connection
+//! that a [`ChainFollower`] opens.
+//!
+//! Outputs: updates to [`ChainState`], and [`BlockEvent`]s broadcast to the other background
+//! services.
+//!
+//! How it works:
+//! 1. Open a connection through the [`ChainFollower`], with a timeout. The follower publishes the
+//!    new connection to the node's other chain consumers.
+//! 2. On every connect, fetch the pallet constants and the provider info, then broadcast
+//!    `Resubscribed` so the other services rescan chain state.
+//! 3. For each finalized block, update the anchor block, broadcast the block's [`BlockEvent`]s,
+//!    and re-fetch the provider info when a block event concerns this provider.
+//! 4. When the block stream ends, or no finalized block arrives within the stall timeout, wait
+//!    and reconnect from step 1.
 
 mod chain;
 
