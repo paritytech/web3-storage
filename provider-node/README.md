@@ -12,6 +12,12 @@ just start-provider   # requires a running chain (just start-chain)
 just health           # check provider is up
 ```
 
+## On-chain registration
+
+The node does not register itself.
+`storage-cli provider` generates the keyfile the node runs with and submits the registration, settings and deregistration transactions for its account.
+See the [storage-cli README](../crates/utils/storage-cli/README.md#provider).
+
 ## Signing key
 
 The keypair derived from `--keyfile` signs commitments, checkpoint

@@ -29,6 +29,7 @@ COV_PACKAGES=(
 	provider-storage
 	provider-challenge
 	provider-types
+	provider-helpers
 	storage-formats
 )
 

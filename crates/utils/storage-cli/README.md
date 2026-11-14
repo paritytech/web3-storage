@@ -9,6 +9,7 @@ built on top of the [`storage-client`](../../../clients/storage) SDK.
 
 ```bash
 cargo run -p storage-cli -- --help
+cargo run -p storage-cli -- provider --help
 cargo run -p storage-cli -- stress-test upload --help
 ```
 
@@ -19,12 +20,55 @@ cargo run -p storage-cli -- stress-test upload --help
 | `--chain-rpc <URL>`    | `ws://127.0.0.1:2222`   | `CHAIN_RPC`    | Parachain RPC WebSocket endpoint.                  |
 | `--provider-url <URL>` | `http://127.0.0.1:3333` | `PROVIDER_URL` | Provider node HTTP endpoint.                       |
 | `--suri <SURI>`        | —                       |                | Secret URI for the account, e.g. `//Alice`.        |
-| `--keyfile <FILE>`     | —                       |                | File whose contents are the SURI/seed.             |
+| `--keyfile <FILE>`     | —                       |                | Keyfile: the JSON file `provider generate-key` writes, or a file whose contents are the SURI/seed. Must not be group- or world-readable. |
 | `--output <FORMAT>`    | `text`                  |                | Metrics summary format: `text` or `json`.          |
 
 `--suri` and `--keyfile` are mutually exclusive; exactly one is required. The
-account they resolve to signs the `Authorization` header on every provider
-request, so it must be a member of the buckets being written to.
+account they resolve to signs every transaction and the `Authorization` header
+on every provider request, so for `stress-test` it must be a member of the
+buckets being written to.
+
+## `provider`
+
+Manages a provider's on-chain registration with the `--suri`/`--keyfile` account.
+Each chain action submits one signed transaction, waits for it to be final and exits.
+The account is the same identity the provider node runs with (`storage-provider-node --keyfile`).
+
+```bash
+storage-cli --keyfile ./provider.json provider generate-key
+storage-cli --keyfile ./provider.json provider register --multiaddr /ip4/1.2.3.4/tcp/3333 --stake 1000000000000000
+storage-cli --keyfile ./provider.json provider update-settings --price-per-byte 7 --max-capacity 1073741824
+storage-cli --keyfile ./provider.json provider deregister
+```
+
+| Action            | Description                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| `generate-key`    | Create a new secret in `--keyfile` and print, as JSON, the account it derives. Never overwrites an existing file. |
+| `register`        | Register the account as a provider with `--multiaddr` and `--stake`.                                          |
+| `update-settings` | Change the given settings; every other setting keeps its on-chain value. A no-op submits nothing.            |
+| `deregister`      | Announce deregistration. The stake is released by `complete_deregister` after the announcement period.        |
+
+`provider --key-scheme <SCHEME>` names the scheme of the key `register` puts on chain.
+Only `sr25519` is supported for now.
+
+`generate-key` writes the keyfile with owner-only permissions.
+Its address uses the chain's SS58 prefix, read from `--chain-rpc`; when the chain is unreachable the generic prefix 42 is used and reported.
+The file is JSON with the field names `subkey generate --output-type json` uses:
+
+```json
+{
+  "secretPhrase": "<12-word BIP39 mnemonic>",
+  "keyScheme": "sr25519",
+  "accountId": "0x...",
+  "publicKey": "0x...",
+  "ss58Address": "1...",
+  "ss58Prefix": 0
+}
+```
+
+Every action validates the input and the provider's current on-chain state before it submits, so a rejected transaction and its fee are avoided: for example, `register` on an already registered account and `update-settings` with a `max_capacity` the stake cannot back fail without submitting.
+
+The end-to-end test `tests/provider_helper_e2e.rs` drives these actions against a dev chain: `just helper-e2e` after `just start-e2e-chain`.
 
 ## `stress-test upload`
 
@@ -118,7 +162,7 @@ summary.
 ### Required on-chain setup
 
 The provider must be registered on-chain and its node running (`just start-chain`,
-`just start-provider`, `cargo run -p storage-client --example register_provider`).
+`just start-provider`, `storage-cli provider register`).
 Buckets and agreements either exist already (default `discover` mode) or the run
 opens them with `--prepare-buckets N`. The signing account pays for the prepared
 agreements at the provider's listed price.

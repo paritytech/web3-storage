@@ -41,7 +41,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // channel. The chain-state coordinator owns the sender and rebuilds the
     // connection on loss or stall; every consumer (HTTP auth, the signing
     // client, coordinators) borrows the current handle from the receiver.
-    let transport = cli.rpc.chain_transport()?;
+    let transport = cli.chain.chain_transport()?;
     let (chain_tx, chain_rx) = watch::channel::<Option<ChainHandle>>(None);
     // Per-block event fan-out from the chain-state coordinator to the
     // background coordinators.
@@ -63,7 +63,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // The provider identity, resolved once: the sr25519 submission account
     // derived from the seed (whatever the signing scheme), else --provider-id.
-    let seed = cli.key.load_seed()?;
+    let key = cli.key.load()?;
+    let key_scheme = key.as_ref().map(|k| k.scheme).unwrap_or_default();
+    let seed = key.map(|k| k.seed);
     let provider_id = match &seed {
         Some(seed) => ProviderState::provider_id_from_seed(seed)?,
         None => cli
@@ -114,11 +116,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Resolve provider identity
     let state = match &seed {
         Some(seed) => {
-            let state = ProviderState::with_seed_scheme(deps, seed, cli.key.key_scheme)?;
+            let state = ProviderState::with_seed_scheme(deps, seed, key_scheme)?;
             tracing::info!(
                 "Signing enabled for account: {} (scheme: {:?})",
                 state.provider_id,
-                cli.key.key_scheme
+                key_scheme
             );
             state
         }

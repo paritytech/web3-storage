@@ -40,6 +40,9 @@ pub struct Cli {
     pub storage: StorageParams,
 
     #[clap(flatten)]
+    pub chain: ChainParams,
+
+    #[clap(flatten)]
     pub rpc: RpcParams,
 
     #[clap(flatten)]
@@ -74,7 +77,7 @@ impl StorageParams {
     }
 }
 
-/// Parameters for network endpoints.
+/// Parameters for the HTTP server.
 #[derive(Debug, clap::Args)]
 pub struct RpcParams {
     /// Address to bind the HTTP server to.
@@ -86,6 +89,32 @@ pub struct RpcParams {
     )]
     pub bind_addr: String,
 
+    /// Public multiaddr to advertise on chain instead of the bind-derived one.
+    ///
+    /// On hosted deployments the bind address (e.g. `0.0.0.0:3333`) is not
+    /// reachable by clients, so the multiaddr sync would otherwise pin a
+    /// useless `/ip4/127.0.0.1/tcp/3333` on chain. Set this to the
+    /// externally-reachable address — typically a TLS-terminating reverse
+    /// proxy — and the sync maintains it instead, e.g.
+    /// `/dns4/example.com/tcp/443/tls/http/http-path/web3-storage-provider`.
+    #[arg(long, value_name = "MULTIADDR", env = "PUBLIC_MULTIADDR")]
+    pub public_multiaddr: Option<String>,
+
+    /// Comma-separated list of browser origins allowed via CORS
+    /// (e.g. "https://app.example.com,http://localhost:5174").
+    /// When unset, all origins are allowed (permissive) — set this in production.
+    #[arg(
+        long,
+        value_name = "ORIGIN",
+        env = "CORS_ALLOWED_ORIGINS",
+        value_delimiter = ','
+    )]
+    pub cors_allowed_origins: Option<Vec<String>>,
+}
+
+/// Parameters for the chain connection.
+#[derive(Debug, clap::Args)]
+pub struct ChainParams {
     /// WebSocket URL for the parachain RPC.
     #[arg(
         long,
@@ -119,28 +148,6 @@ pub struct RpcParams {
     /// --chain-rpc (dev only).
     #[arg(long, value_name = "FILE|WS_URL", env = "PARA_CHAIN_SPEC")]
     pub para_chain_spec: Option<String>,
-
-    /// Public multiaddr to advertise on chain instead of the bind-derived one.
-    ///
-    /// On hosted deployments the bind address (e.g. `0.0.0.0:3333`) is not
-    /// reachable by clients, so the multiaddr sync would otherwise pin a
-    /// useless `/ip4/127.0.0.1/tcp/3333` on chain. Set this to the
-    /// externally-reachable address — typically a TLS-terminating reverse
-    /// proxy — and the sync maintains it instead, e.g.
-    /// `/dns4/example.com/tcp/443/tls/http/http-path/web3-storage-provider`.
-    #[arg(long, value_name = "MULTIADDR", env = "PUBLIC_MULTIADDR")]
-    pub public_multiaddr: Option<String>,
-
-    /// Comma-separated list of browser origins allowed via CORS
-    /// (e.g. "https://app.example.com,http://localhost:5174").
-    /// When unset, all origins are allowed (permissive) — set this in production.
-    #[arg(
-        long,
-        value_name = "ORIGIN",
-        env = "CORS_ALLOWED_ORIGINS",
-        value_delimiter = ','
-    )]
-    pub cors_allowed_origins: Option<Vec<String>>,
 }
 
 /// Chain transport selection for `--chain-transport`.
@@ -165,7 +172,7 @@ fn spec_source(value: &str) -> SpecSource {
     }
 }
 
-impl RpcParams {
+impl ChainParams {
     /// Resolve the CLI flags into a concrete [`ChainTransport`].
     ///
     /// Errors when the light transport has no relay spec source.
@@ -193,8 +200,9 @@ impl RpcParams {
 /// Parameters for provider identity and signing keys.
 #[derive(Debug, clap::Args)]
 pub struct KeyParams {
-    /// Path to a file containing the secret seed phrase or derivation path
-    /// (e.g., "//Alice"). The file must not be group- or world-readable
+    /// Path to the keyfile: the JSON file `storage-cli provider
+    /// generate-key` writes, or a plain secret seed phrase or derivation
+    /// path (e.g., "//Alice"). The file must not be group- or world-readable
     /// (permissions <= 0600 on Unix).
     #[arg(long, value_name = "FILE")]
     pub keyfile: Option<PathBuf>,
@@ -205,66 +213,55 @@ pub struct KeyParams {
     pub provider_id: Option<String>,
 
     /// Signature scheme for the signing keypair derived from --keyfile — must
-    /// match the scheme of the `public_key` registered on-chain. The
+    /// match the scheme of the `public_key` registered on-chain. Defaults to
+    /// the scheme recorded in a JSON keyfile, else sr25519. The
     /// extrinsic-submission account stays sr25519 regardless.
-    #[arg(long, value_enum, default_value_t = provider_types::KeyScheme::Sr25519)]
-    pub key_scheme: provider_types::KeyScheme,
+    #[arg(long, value_enum)]
+    pub key_scheme: Option<provider_types::KeyScheme>,
+}
+
+/// The secret loaded from a keyfile and the scheme to sign with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadedKey {
+    /// The seed phrase or derivation path.
+    pub seed: String,
+    /// The signing scheme: `--key-scheme` when given, else the keyfile's
+    /// `keyScheme`, else sr25519.
+    pub scheme: provider_types::KeyScheme,
+}
+
+/// Read a keyfile (JSON or plain seed, with permission checks) and resolve
+/// the signing scheme: `scheme_flag`, else the keyfile's `keyScheme`, else
+/// sr25519.
+fn load_key(
+    path: &std::path::Path,
+    scheme_flag: Option<provider_types::KeyScheme>,
+) -> Result<LoadedKey, String> {
+    let secret = provider_helpers::read_keyfile(path).map_err(|e| e.to_string())?;
+    let file_scheme = match &secret.key_scheme {
+        Some(name) => <provider_types::KeyScheme as clap::ValueEnum>::from_str(name, true)
+            .map_err(|_| format!("Keyfile {} has unknown keyScheme {name:?}", path.display()))?,
+        None => provider_types::KeyScheme::default(),
+    };
+    Ok(LoadedKey {
+        seed: secret.seed,
+        scheme: scheme_flag.unwrap_or(file_scheme),
+    })
 }
 
 impl KeyParams {
-    /// Resolve the signing seed from CLI parameters.
+    /// Resolve the signing key from CLI parameters.
     ///
     /// Priority:
     /// 1. `--keyfile` reads the file contents (with permission checks)
     /// 2. No keyfile returns `None` (provider-id mode without signing)
-    pub fn load_seed(&self) -> Result<Option<String>, String> {
+    pub fn load(&self) -> Result<Option<LoadedKey>, String> {
         let Some(ref path) = self.keyfile else {
             return Ok(None);
         };
 
-        read_secret_file(path).map(Some)
+        load_key(path, self.key_scheme).map(Some)
     }
-}
-
-/// Read a secret from a file, rejecting insecure permissions on Unix.
-///
-/// Opens the file, checks permissions on the open handle (Unix), and then
-/// reads and trims the contents, and rejects empty files.
-fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
-    use std::io::Read;
-
-    let file = std::fs::File::open(path)
-        .map_err(|e| format!("Failed to open keyfile {}: {e}", path.display()))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = file
-            .metadata()
-            .map_err(|e| format!("Cannot read keyfile metadata: {e}"))?
-            .permissions()
-            .mode();
-        if mode & 0o077 != 0 {
-            return Err(format!(
-                "Keyfile {} has insecure permissions {:o}. Run: chmod 600 {}",
-                path.display(),
-                mode & 0o777,
-                path.display(),
-            ));
-        }
-    }
-
-    let mut contents = String::new();
-    std::io::BufReader::new(file)
-        .read_to_string(&mut contents)
-        .map_err(|e| format!("Failed to read keyfile {}: {e}", path.display()))?;
-
-    let seed = contents.trim().to_string();
-    if seed.is_empty() {
-        return Err(format!("Keyfile {} is empty", path.display()));
-    }
-
-    Ok(seed)
 }
 
 /// Parameters for authentication and authorization.
@@ -380,7 +377,7 @@ mod tests {
         ));
         assert_eq!(cli.storage.storage_path, PathBuf::from("./provider-data"));
         assert_eq!(cli.rpc.bind_addr, "0.0.0.0:3333");
-        assert_eq!(cli.rpc.chain_rpc, "ws://127.0.0.1:2222");
+        assert_eq!(cli.chain.chain_rpc, "ws://127.0.0.1:2222");
         assert!(cli.key.keyfile.is_none());
         assert!(cli.key.provider_id.is_none());
         assert!(!cli.replica_sync.enable_replica_sync);
@@ -421,7 +418,7 @@ mod tests {
         ));
         assert_eq!(cli.storage.storage_path, PathBuf::from("/data"));
         assert_eq!(cli.rpc.bind_addr, "127.0.0.1:4444");
-        assert_eq!(cli.rpc.chain_rpc, "ws://example.com:9944");
+        assert_eq!(cli.chain.chain_rpc, "ws://example.com:9944");
         assert_eq!(
             cli.key.keyfile.as_ref().unwrap().to_str().unwrap(),
             "/tmp/test-key"
@@ -458,8 +455,8 @@ mod tests {
     #[test]
     fn transport_defaults_to_rpc() {
         let cli = Cli::try_parse_from(["storage-provider-node"]).unwrap();
-        assert!(matches!(cli.rpc.chain_transport, TransportKind::Rpc));
-        let transport = cli.rpc.chain_transport().unwrap();
+        assert!(matches!(cli.chain.chain_transport, TransportKind::Rpc));
+        let transport = cli.chain.chain_transport().unwrap();
         assert!(matches!(transport, ChainTransport::Rpc { url } if url == "ws://127.0.0.1:2222"));
     }
 
@@ -479,7 +476,7 @@ mod tests {
         let ChainTransport::LightClient {
             relay_spec,
             para_spec,
-        } = cli.rpc.chain_transport().unwrap()
+        } = cli.chain.chain_transport().unwrap()
         else {
             panic!("expected light transport");
         };
@@ -503,7 +500,7 @@ mod tests {
         let ChainTransport::LightClient {
             relay_spec,
             para_spec,
-        } = cli.rpc.chain_transport().unwrap()
+        } = cli.chain.chain_transport().unwrap()
         else {
             panic!("expected light transport");
         };
@@ -517,22 +514,29 @@ mod tests {
     fn light_transport_without_relay_source_errors() {
         let cli =
             Cli::try_parse_from(["storage-provider-node", "--chain-transport", "light"]).unwrap();
-        let err = cli.rpc.chain_transport().unwrap_err();
+        let err = cli.chain.chain_transport().unwrap_err();
         assert!(
             err.contains("--relay-chain-spec"),
             "unexpected error: {err}"
         );
     }
 
+    fn key_params(keyfile: Option<PathBuf>) -> KeyParams {
+        KeyParams {
+            keyfile,
+            provider_id: None,
+            key_scheme: None,
+        }
+    }
+
     #[test]
     fn load_seed_missing_file() {
-        let params = KeyParams {
-            keyfile: Some(PathBuf::from("/nonexistent/path/to/keyfile")),
-            provider_id: None,
-            key_scheme: provider_types::KeyScheme::Sr25519,
-        };
-        let err = params.load_seed().unwrap_err();
-        assert!(err.contains("Failed to open"), "unexpected error: {err}");
+        let params = key_params(Some(PathBuf::from("/nonexistent/path/to/keyfile")));
+        let err = params.load().unwrap_err();
+        assert!(
+            err.contains("cannot read keyfile"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -546,12 +550,7 @@ mod tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         }
 
-        let params = KeyParams {
-            keyfile: Some(path),
-            provider_id: None,
-            key_scheme: provider_types::KeyScheme::Sr25519,
-        };
-        let err = params.load_seed().unwrap_err();
+        let err = key_params(Some(path)).load().unwrap_err();
         assert!(err.contains("empty"), "unexpected error: {err}");
     }
 
@@ -566,12 +565,84 @@ mod tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         }
 
+        // A plain seed file: the scheme is the flag, else sr25519.
+        assert_eq!(
+            key_params(Some(path.clone())).load().unwrap(),
+            Some(LoadedKey {
+                seed: "//Charlie".to_string(),
+                scheme: provider_types::KeyScheme::Sr25519,
+            })
+        );
         let params = KeyParams {
-            keyfile: Some(path),
-            provider_id: None,
-            key_scheme: provider_types::KeyScheme::Sr25519,
+            key_scheme: Some(provider_types::KeyScheme::Eth),
+            ..key_params(Some(path))
         };
-        assert_eq!(params.load_seed().unwrap(), Some("//Charlie".to_string()));
+        assert_eq!(
+            params.load().unwrap().unwrap().scheme,
+            provider_types::KeyScheme::Eth
+        );
+    }
+
+    /// A JSON keyfile supplies the seed and, unless `--key-scheme` is given,
+    /// the scheme.
+    #[test]
+    fn load_seed_from_json_keyfile() {
+        let path = std::env::temp_dir().join("cli-test-json-keyfile");
+        std::fs::write(
+            &path,
+            r#"{"secretPhrase": "//Dave", "keyScheme": "ecdsa", "ss58Address": "5abc"}"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        assert_eq!(
+            key_params(Some(path.clone())).load().unwrap(),
+            Some(LoadedKey {
+                seed: "//Dave".to_string(),
+                scheme: provider_types::KeyScheme::Ecdsa,
+            })
+        );
+        let params = KeyParams {
+            key_scheme: Some(provider_types::KeyScheme::Ed25519),
+            ..key_params(Some(path.clone()))
+        };
+        assert_eq!(
+            params.load().unwrap().unwrap().scheme,
+            provider_types::KeyScheme::Ed25519
+        );
+
+        // No keyScheme (as subkey writes it): sr25519.
+        std::fs::write(
+            &path,
+            r#"{"secretPhrase": "//Dave", "networkId": "substrate", "secretSeed": "0x00"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            key_params(Some(path.clone())).load().unwrap(),
+            Some(LoadedKey {
+                seed: "//Dave".to_string(),
+                scheme: provider_types::KeyScheme::Sr25519,
+            })
+        );
+
+        std::fs::write(&path, r#"{"secretPhrase": "  "}"#).unwrap();
+        let err = key_params(Some(path.clone())).load().unwrap_err();
+        assert!(
+            err.contains("empty secretPhrase"),
+            "unexpected error: {err}"
+        );
+
+        std::fs::write(&path, r#"{"secretPhrase": "//Dave", "keyScheme": "rsa"}"#).unwrap();
+        let err = key_params(Some(path.clone())).load().unwrap_err();
+        assert!(err.contains("unknown keyScheme"), "unexpected error: {err}");
+
+        std::fs::write(&path, r#"{"keyScheme": "ecdsa"}"#).unwrap();
+        let err = key_params(Some(path)).load().unwrap_err();
+        assert!(err.contains("not valid JSON"), "unexpected error: {err}");
     }
 
     #[cfg(unix)]
@@ -583,12 +654,7 @@ mod tests {
         std::fs::write(&path, "//Alice").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        let params = KeyParams {
-            keyfile: Some(path),
-            provider_id: None,
-            key_scheme: provider_types::KeyScheme::Sr25519,
-        };
-        let err = params.load_seed().unwrap_err();
+        let err = key_params(Some(path)).load().unwrap_err();
         assert!(
             err.contains("insecure permissions"),
             "unexpected error: {err}"
@@ -597,11 +663,6 @@ mod tests {
 
     #[test]
     fn load_seed_none_without_keyfile() {
-        let params = KeyParams {
-            keyfile: None,
-            provider_id: None,
-            key_scheme: provider_types::KeyScheme::Sr25519,
-        };
-        assert_eq!(params.load_seed().unwrap(), None);
+        assert_eq!(key_params(None).load().unwrap(), None);
     }
 }

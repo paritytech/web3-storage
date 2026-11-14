@@ -31,6 +31,7 @@ packages/storage-formats/pkg/
 # Local config
 .env
 .env.local
+secret
 
 # Downloaded binaries
 .bin/
