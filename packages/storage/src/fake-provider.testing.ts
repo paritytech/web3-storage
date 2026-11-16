@@ -7,7 +7,7 @@
  * checks and JSON shapes as `provider-node/src/api.rs`. Signatures are not
  * verified; a write and a Reader-gated read (`GET /commitment`, `GET
  * /mmr_proof`) only need an `Authorization` header, as on a private bucket.
- * Exported for tests as `@web3-storage/layer0/testing`, not from the package
+ * Exported for tests as `@web3-storage/storage/testing`, not from the package
  * root.
  */
 

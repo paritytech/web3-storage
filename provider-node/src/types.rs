@@ -296,7 +296,7 @@ pub struct MmrPeaksResponse {
 }
 
 /// Request to fetch multiple nodes of a bucket. Like `GET /node`, the hash is
-/// the read capability (see the L0 read-access rules in the design doc's
+/// the read capability (see the read-access rules in the design doc's
 /// "Bucket Visibility & Access").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchNodesRequest {

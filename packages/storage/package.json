@@ -1,8 +1,8 @@
 {
-  "name": "@web3-storage/layer0",
+  "name": "@web3-storage/storage",
   "version": "0.1.0",
   "private": true,
-  "description": "Layer-0 chain binding (#123 layout): PAPI typed wrappers per pallet, signers, tx submission with in-block defaults, watchValue waits, provider-node HTTP. Depends on @web3-storage/core; pallet_revive helpers on ./revive.",
+  "description": "Chain binding: PAPI typed wrappers per pallet, signers, tx submission with in-block defaults, watchValue waits, provider-node HTTP. Depends on @web3-storage/core; pallet_revive helpers on ./revive.",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
@@ -26,11 +26,11 @@
   "devDependencies": {
     "@types/node": "^26.6.6",
     "typescript": "~7.0.2",
-    "viem": "^2.57.13",
-    "vitest": "^5.0.5"
+    "viem": "^2.57.16",
+    "vitest": "^5.1.0"
   },
   "peerDependencies": {
-    "viem": "^2.57.13"
+    "viem": "^2.57.16"
   },
   "peerDependenciesMeta": {
     "viem": {

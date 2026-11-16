@@ -6,7 +6,7 @@
  * the chunk's leaf hash (`blake2b-256(0x00 ++ data)`) as its root (see the
  * single-leaf case of `merkle_root` in crates/primitives/storage/src/merkle.rs),
  * so it can be verified here directly. Multi-chunk blobs are checked chunk by
- * chunk against their Merkle tree (`readBlob` in @web3-storage/layer0).
+ * chunk against their Merkle tree (`readBlob` in @web3-storage/storage).
  */
 
 import { asHex, base64ToBytes, hexToBytes, toHex } from "./bytes.js";
