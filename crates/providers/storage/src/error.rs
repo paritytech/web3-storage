@@ -10,10 +10,6 @@ pub enum Error {
     #[error("Node not found: {0:?}")]
     NodeNotFound(H256),
 
-    /// A leaf index past the end of a bucket's leaf list.
-    #[error("Leaf not found: index {leaf_index} in bucket {bucket_id}")]
-    LeafNotFound { bucket_id: u64, leaf_index: u64 },
-
     #[error("Commitment not reproducible from local leaves: {0}")]
     CommitmentNotReproducible(String),
 

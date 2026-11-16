@@ -3446,9 +3446,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                235u8, 90u8, 8u8, 165u8, 153u8, 145u8, 61u8, 254u8, 38u8, 9u8, 127u8, 3u8, 185u8,
-                41u8, 90u8, 235u8, 74u8, 157u8, 124u8, 235u8, 18u8, 22u8, 201u8, 72u8, 47u8, 146u8,
-                124u8, 138u8, 117u8, 150u8, 43u8, 156u8,
+                243u8, 225u8, 8u8, 187u8, 138u8, 16u8, 221u8, 31u8, 30u8, 151u8, 218u8, 173u8,
+                161u8, 11u8, 219u8, 80u8, 30u8, 109u8, 34u8, 18u8, 102u8, 130u8, 231u8, 29u8,
+                110u8, 13u8, 144u8, 25u8, 178u8, 138u8, 198u8, 7u8,
             ]
     }
     pub mod system {
@@ -16048,6 +16048,11 @@ pub mod api {
             #[doc = "`min_providers` distinct primary providers, and at least one; a"]
             #[doc = "repeated signature counts once. A frozen bucket only accepts"]
             #[doc = "commitments that keep its `frozen_start_seq`."]
+            #[doc = ""]
+            #[doc = "A checkpoint never moves the bucket backwards. With the same start"]
+            #[doc = "as the current snapshot, its end must be past the current end. A"]
+            #[doc = "deletion moves the start forward and keeps the end, so with a later"]
+            #[doc = "start the end must not be before the current end."]
             pub struct Checkpoint {
                 pub bucket_id: checkpoint::BucketId,
                 pub commitment: checkpoint::Commitment,
@@ -17048,6 +17053,11 @@ pub mod api {
                     #[doc = "`min_providers` distinct primary providers, and at least one; a"]
                     #[doc = "repeated signature counts once. A frozen bucket only accepts"]
                     #[doc = "commitments that keep its `frozen_start_seq`."]
+                    #[doc = ""]
+                    #[doc = "A checkpoint never moves the bucket backwards. With the same start"]
+                    #[doc = "as the current snapshot, its end must be past the current end. A"]
+                    #[doc = "deletion moves the start forward and keeps the end, so with a later"]
+                    #[doc = "start the end must not be before the current end."]
                     pub fn checkpoint(
                         &self,
                         bucket_id: super::checkpoint::BucketId,
@@ -20210,10 +20220,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            173u8, 154u8, 41u8, 124u8, 73u8, 225u8, 191u8, 98u8, 141u8, 133u8,
-                            22u8, 189u8, 135u8, 118u8, 105u8, 95u8, 64u8, 185u8, 176u8, 192u8,
-                            107u8, 19u8, 184u8, 107u8, 19u8, 210u8, 238u8, 23u8, 205u8, 186u8,
-                            111u8, 53u8,
+                            63u8, 180u8, 254u8, 53u8, 142u8, 204u8, 117u8, 56u8, 53u8, 80u8, 79u8,
+                            160u8, 95u8, 126u8, 115u8, 33u8, 84u8, 206u8, 111u8, 141u8, 129u8,
+                            11u8, 129u8, 7u8, 207u8, 139u8, 139u8, 101u8, 185u8, 181u8, 14u8,
+                            111u8,
                         ],
                     )
                 }
@@ -24941,6 +24951,11 @@ pub mod api {
                     #[doc = "`min_providers` distinct primary providers, and at least one; a"]
                     #[doc = "repeated signature counts once. A frozen bucket only accepts"]
                     #[doc = "commitments that keep its `frozen_start_seq`."]
+                    #[doc = ""]
+                    #[doc = "A checkpoint never moves the bucket backwards. With the same start"]
+                    #[doc = "as the current snapshot, its end must be past the current end. A"]
+                    #[doc = "deletion moves the start forward and keeps the end, so with a later"]
+                    #[doc = "start the end must not be before the current end."]
                     checkpoint {
                         bucket_id: ::core::primitive::u64,
                         commitment: runtime_types::storage_primitives::Commitment,
@@ -25346,64 +25361,71 @@ pub mod api {
                     #[doc = "`frozen_start_seq`."]
                     SnapshotViolatesFrozen,
                     #[codec(index = 61)]
+                    #[doc = "The checkpoint moves the bucket backwards. Its start is before the"]
+                    #[doc = "current start, or, with the same start, its end is not past the"]
+                    #[doc = "current end, or, with a later start, its end is before the current"]
+                    #[doc = "end. Submit a commitment that covers new or deleted leaves; to add"]
+                    #[doc = "signers to the current commitment, use `extend_checkpoint`."]
+                    SnapshotNotForward,
+                    #[codec(index = 62)]
                     #[doc = "Fewer distinct primary providers signed than the bucket's"]
                     #[doc = "`min_providers`, or none. A repeated signature counts once."]
                     InsufficientSignatures,
-                    #[codec(index = 62)]
+                    #[codec(index = 63)]
                     #[doc = "A balance or counter computation overflowed."]
                     ArithmeticOverflow,
-                    #[codec(index = 63)]
+                    #[codec(index = 64)]
                     #[doc = "The public key is not 32 bytes (sr25519/ed25519) or 33 bytes"]
                     #[doc = "(compressed ecdsa), or does not match the signature's scheme."]
                     InvalidPublicKey,
-                    #[codec(index = 64)]
+                    #[codec(index = 65)]
                     #[doc = "Account is a member of too many buckets."]
                     TooManyBucketsForMember,
-                    #[codec(index = 65)]
+                    #[codec(index = 66)]
                     #[doc = "Provider signature over the SCALE-encoded terms is invalid."]
                     InvalidProviderSignature,
-                    #[codec(index = 66)]
+                    #[codec(index = 67)]
                     #[doc = "Signed terms have passed their `valid_until` block."]
                     TermsExpired,
-                    #[codec(index = 67)]
+                    #[codec(index = 68)]
                     #[doc = "Signed terms' `valid_until` extends beyond `now + RequestTimeout` —"]
                     #[doc = "the provider-signed validity window cap enforced on-chain."]
                     TermsValidityTooLong,
-                    #[codec(index = 68)]
+                    #[codec(index = 69)]
                     #[doc = "The terms' nonce does not match the owner's next expected"]
                     #[doc = "[`AgreementNonces`] value. Read the current value and request a"]
                     #[doc = "new quote with it."]
                     NonceMismatch,
-                    #[codec(index = 69)]
+                    #[codec(index = 70)]
                     #[doc = "The terms' declared owner does not match the extrinsic origin."]
                     TermsOwnerMismatch,
-                    #[codec(index = 70)]
+                    #[codec(index = 71)]
                     #[doc = "Replica terms missing from a signed quote redeemed as a replica"]
                     #[doc = "agreement."]
                     MissingReplicaTerms,
-                    #[codec(index = 71)]
+                    #[codec(index = 72)]
                     #[doc = "Replica terms present in a signed quote redeemed as a primary"]
                     #[doc = "agreement. Negotiate the quote without `replica_params`, or"]
                     #[doc = "redeem it with `add_replica_provider`."]
                     UnexpectedReplicaTerms,
-                    #[codec(index = 72)]
+                    #[codec(index = 73)]
                     #[doc = "The terms' `bucket` does not name the bucket the call targets:"]
                     #[doc = "`New` is redeemable only by the calls that create a bucket, and"]
                     #[doc = "`Existing(id)` only against bucket `id`."]
                     TermsBucketMismatch,
-                    #[codec(index = 73)]
+                    #[codec(index = 74)]
                     #[doc = "Storage agreement requested 0 byte"]
                     InvalidMaxBytesRequest,
-                    #[codec(index = 74)]
+                    #[codec(index = 75)]
                     #[doc = "The terms' `max_bytes` is below the provider's `min_agreement_bytes`."]
                     #[doc = "Negotiate a quote with at least that many bytes."]
                     MaxBytesBelowMinimum,
-                    #[codec(index = 75)]
+                    #[codec(index = 76)]
                     #[doc = "A challenge against a provider on this bucket is still open."]
                     #[doc = "Resolve it with `respond_to_challenge` or"]
                     #[doc = "`resolve_expired_challenge`, then retry."]
                     BucketHasPendingChallenge,
-                    #[codec(index = 76)]
+                    #[codec(index = 77)]
                     #[doc = "The bucket still has a storage agreement. End or claim every"]
                     #[doc = "agreement before deleting the bucket."]
                     BucketNotEmpty,
