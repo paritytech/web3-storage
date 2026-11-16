@@ -13,9 +13,7 @@ mod common;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use common::{current_timestamp, make_auth_header, test_member_pair};
-use provider_auth::{
-    Authenticator, BucketAccess, BucketMembership, MembershipResolver, StaticMembershipResolver,
-};
+use provider_auth::{Authenticator, BucketAccess, MembershipResolver, StaticMembershipResolver};
 use provider_storage::{temp_rocksdb, ChunkTreeNode, StorageBackend};
 use reqwest::Client;
 use serde_json::Value;
@@ -56,10 +54,8 @@ impl AuthTestServer {
     async fn public_with_role(alice_role: Role) -> Self {
         let alice_account = common::test_member_account();
         Self::with_resolver(StaticMembershipResolver::new(BucketAccess {
-            members: BucketMembership {
-                members: vec![(alice_account, alice_role).into()],
-                ..Default::default()
-            },
+            members: vec![(alice_account, alice_role).into()],
+            primary_providers: vec![],
             visibility: Visibility::Public,
         }))
         .await

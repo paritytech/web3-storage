@@ -6,7 +6,7 @@ use crate::error::AuthError;
 use crate::http_auth::auth_message;
 use crate::membership::{
     role_satisfies, LocalBucketAgreement, MembershipCache, MembershipInvalidations,
-    MembershipResolver, NodeRole,
+    MembershipResolver,
 };
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::Duration;
@@ -209,7 +209,7 @@ impl Authenticator {
                 if entry.serves_as_replica {
                     if let (Role::Writer, Some(header)) = (required, auth_header) {
                         let account = verify_signature(header, method, bucket_id, self.max_skew)?;
-                        if entry.access.members.node_role_of(&account) == Some(NodeRole::Primary) {
+                        if entry.access.primary_providers.contains(&account) {
                             return Ok(());
                         }
                     }
@@ -261,9 +261,7 @@ mod tests {
     use super::*;
     use crate::error::MembershipError;
     use crate::http_auth::build_auth_header;
-    use crate::membership::{
-        BucketAccess, BucketMembership, Member, MembershipResolver, StaticMembershipResolver,
-    };
+    use crate::membership::{BucketAccess, Member, MembershipResolver, StaticMembershipResolver};
     use crate::test_support::FlakyResolver;
     use sp_core::Pair;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -388,10 +386,8 @@ mod tests {
     async fn public_bucket_serves_reads_without_auth_but_still_gates_writes() {
         let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
         let auth = Authenticator::new(StaticMembershipResolver::new(BucketAccess {
-            members: BucketMembership {
-                members: vec![(AccountId32::new(alice.public().0), Role::Reader).into()],
-                ..Default::default()
-            },
+            members: vec![(AccountId32::new(alice.public().0), Role::Reader).into()],
+            primary_providers: vec![],
             visibility: Visibility::Public,
         }));
 

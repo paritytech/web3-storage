@@ -20,7 +20,7 @@ pub use http_auth::{auth_message, build_auth_header};
 #[cfg(any(test, feature = "test-helpers"))]
 pub use membership::StaticMembershipResolver;
 pub use membership::{
-    role_satisfies, BucketAccess, BucketMembership, Invalidation, LocalBucketAgreement, Member,
-    MembershipInvalidations, MembershipResolver, NodeRole,
+    role_satisfies, BucketAccess, Invalidation, LocalBucketAgreement, Member,
+    MembershipInvalidations, MembershipResolver,
 };
 pub use verify::Authenticator;

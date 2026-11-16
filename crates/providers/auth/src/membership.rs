@@ -28,54 +28,31 @@ impl From<(AccountId32, Role)> for Member {
     }
 }
 
-/// The role a provider node holds on a bucket.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeRole {
-    /// Takes client writes and signs commitments.
-    Primary,
-    /// Receives data by sync or by a push from a primary.
-    Replica,
+/// This node's own storage agreement on a bucket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalBucketAgreement {
+    /// The agreement's role, as stored on chain.
+    pub role: RuntimeProviderRole,
+    /// The agreement's quota, in bytes.
+    pub max_bytes: u64,
 }
 
-/// Everyone with a role on a bucket: members by role (reader, writer, admin)
-/// and provider nodes by role (primary, replica).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct BucketMembership {
-    pub members: Vec<Member>,
-    pub primary_providers: Vec<AccountId32>,
-    pub replica_providers: Vec<AccountId32>,
-    /// This node's role on the bucket, if it has one.
-    pub own_node_role: Option<NodeRole>,
-}
-
-impl BucketMembership {
-    /// The role `account` holds as a bucket member.
-    pub fn role_of(&self, account: &AccountId32) -> Option<Role> {
-        self.members
-            .iter()
-            .find(|m| &m.account == account)
-            .map(|m| m.role)
-    }
-
-    /// The role `account` holds as a provider node of the bucket.
-    pub fn node_role_of(&self, account: &AccountId32) -> Option<NodeRole> {
-        if self.primary_providers.contains(account) {
-            Some(NodeRole::Primary)
-        } else if self.replica_providers.contains(account) {
-            Some(NodeRole::Replica)
-        } else {
-            None
-        }
+impl LocalBucketAgreement {
+    pub fn is_primary(&self) -> bool {
+        matches!(self.role, RuntimeProviderRole::Primary)
     }
 }
 
-/// The slice of on-chain bucket state that access control needs: who the
-/// members are, whether reads are member-only, and which provider accounts
-/// are the bucket's primaries.
+
+/// Everything access control and bucket initialization need about one
+/// bucket, resolved in one call at one block and cached as one entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BucketAccess {
-    pub members: BucketMembership,
+    pub members: Vec<Member>,
+    pub primary_providers: Vec<AccountId32>,
     pub visibility: Visibility,
+    /// `None`: this node has no agreement on the bucket.
+    pub local_agreement: Option<LocalAgreement>,
 }
 
 impl BucketAccess {
@@ -83,12 +60,18 @@ impl BucketAccess {
     /// is not known (missing on chain, or a fixed test member set).
     pub fn private(members: Vec<Member>) -> Self {
         Self {
-            members: BucketMembership {
-                members,
-                ..Default::default()
-            },
+            members,
+            primary_providers: Vec::new(),
             visibility: Visibility::Private,
         }
+    }
+
+    /// The role `account` holds as a bucket member.
+    pub fn role_of(&self, account: &AccountId32) -> Option<Role> {
+        self.members
+            .iter()
+            .find(|m| &m.account == account)
+            .map(|m| m.role)
     }
 }
 
@@ -105,21 +88,6 @@ pub fn role_satisfies(required: Role, granted: Role) -> bool {
     }
 }
 
-/// This node's own storage agreement on a bucket.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalBucketAgreement {
-    /// The agreement's role, as stored on chain.
-    pub role: RuntimeProviderRole,
-    /// The agreement's quota, in bytes.
-    pub max_bytes: u64,
-}
-
-impl LocalBucketAgreement {
-    pub fn is_primary(&self) -> bool {
-        matches!(self.role, RuntimeProviderRole::Primary)
-    }
-}
-
 /// Cached access entry for a bucket: the bucket's own state plus this node's
 /// standing on it. Kept as separate fields — [`BucketAccess`] is bucket state,
 /// `serves_as_replica` is the node's relationship to the bucket — but cached as one
@@ -130,10 +98,6 @@ impl LocalBucketAgreement {
 #[derive(Debug, Clone)]
 pub(crate) struct CachedMembership {
     pub(crate) access: BucketAccess,
-    /// This node serves the bucket under a replica agreement, so Reader
-    /// checks pass without auth (replicas serve reads to everyone —
-    /// visibility gates primaries only).
-    pub(crate) serves_as_replica: bool,
     fetched_at: Instant,
 }
 
@@ -156,7 +120,7 @@ impl CachedMembership {
     }
 
     pub(crate) fn role_of(&self, account: &AccountId32) -> Option<Role> {
-        self.access.members.role_of(account)
+        self.access.role_of(account)
     }
 }
 
@@ -168,16 +132,6 @@ pub trait MembershipResolver: Send + Sync {
     /// empty member set means nobody is a member — either the bucket does not
     /// exist, or it holds no members.
     async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError>;
-
-    /// *This node's* agreement on `bucket_id`, or `None` if it has none.
-    /// Defaults to `None`, the right answer for a resolver with no node
-    /// identity.
-    async fn fetch_bucket_agreement(
-        &self,
-        _bucket_id: BucketId,
-    ) -> Result<Option<LocalBucketAgreement>, MembershipError> {
-        Ok(None)
-    }
 }
 
 /// So a boxed resolver still satisfies the `impl MembershipResolver` bound.
@@ -226,7 +180,7 @@ impl StaticMembershipResolver {
 
     /// Resolve every bucket with these primary provider accounts.
     pub fn with_primary_providers(mut self, primary_providers: Vec<AccountId32>) -> Self {
-        self.access.members.primary_providers = primary_providers;
+        self.access.primary_providers = primary_providers;
         self
     }
 
@@ -326,7 +280,7 @@ struct MembershipExpiry {
 
 impl MembershipExpiry {
     fn residency(&self, value: &Arc<CachedMembership>) -> Duration {
-        if value.access.members.members.is_empty() {
+        if value.access.members.is_empty() {
             self.ttl
         } else {
             self.max_stale
@@ -629,45 +583,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn bucket_membership_resolves_member_and_node_roles() {
-        let account = |byte: u8| AccountId32::new([byte; 32]);
-        let membership = BucketMembership {
-            members: vec![
-                (account(1), Role::Admin).into(),
-                (account(2), Role::Reader).into(),
-            ],
-            primary_providers: vec![account(10)],
-            replica_providers: vec![account(11)],
-            own_node_role: None,
-        };
-
-        assert_eq!(membership.role_of(&account(1)), Some(Role::Admin));
-        assert_eq!(membership.role_of(&account(2)), Some(Role::Reader));
-        assert_eq!(membership.role_of(&account(10)), None);
-        assert_eq!(
-            membership.node_role_of(&account(10)),
-            Some(NodeRole::Primary)
-        );
-        assert_eq!(
-            membership.node_role_of(&account(11)),
-            Some(NodeRole::Replica)
-        );
-        assert_eq!(membership.node_role_of(&account(1)), None);
-    }
-
     #[tokio::test]
     async fn static_resolver_returns_the_configured_primary_providers() {
         let primaries = vec![AccountId32::new([7u8; 32])];
         let resolver =
             StaticMembershipResolver::private(vec![]).with_primary_providers(primaries.clone());
         assert_eq!(
-            resolver
-                .fetch_access(1)
-                .await
-                .unwrap()
-                .members
-                .primary_providers,
+            resolver.fetch_access(1).await.unwrap().primary_providers,
             primaries
         );
     }
