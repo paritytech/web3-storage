@@ -125,8 +125,9 @@ function stringifyDispatchError(dispatchError: unknown): string {
 // A submission can be rejected as `Stale` (nonce too low) when two same-signer
 // txs go out back-to-back faster than the client's chain view advances — here,
 // `map_account` immediately followed by the `createLibrary` call. PAPI rejects
-// with `{ type: 'Invalid', value: { type: 'Stale' } }`. Mirror the headless
-// flow (`scripts/lib/papi.ts`): wait for a fresh block and re-sign.
+// with `{ type: 'Invalid', value: { type: 'Stale' } }`. Same approach as
+// `submitTx`'s `retryStale`, which the headless scripts use: wait about one
+// block and re-sign.
 const STALE_MAX_ATTEMPTS = 4
 
 function isStaleError(err: unknown): boolean {

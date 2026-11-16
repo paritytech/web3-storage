@@ -1,4 +1,4 @@
-# Photos dApp (Layer 1) — contract + headless M1–M3 flow.
+# Photos dApp — contract + headless M1–M3 flow.
 #
 # Invoked as a module from the root justfile: `just photos <recipe>`
 # (e.g. `just photos deploy`). Run `just photos` to list the recipes.
