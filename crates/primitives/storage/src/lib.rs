@@ -24,6 +24,12 @@ pub use agreement_term::*;
 pub use merkle::*;
 pub use mmr::{bag_peaks, verify_mmr_proof, MmrLeaf, MmrProof, StorageMerge, LEAF_VERSION};
 
+/// The runtime's `Balance` type, for off-chain code that mirrors runtime types.
+pub type RuntimeBalance = u128;
+
+/// The runtime's `BlockNumber` type, for off-chain code that mirrors runtime types.
+pub type RuntimeBlockNumber = u32;
+
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
 pub type BucketId = u64;
@@ -132,6 +138,8 @@ pub enum ProviderRole<Balance, BlockNumber> {
         last_sync: Option<ReplicaSyncRecord<BlockNumber>>,
     },
 }
+
+pub type RuntimeProviderRole = ProviderRole<RuntimeBalance, RuntimeBlockNumber>;
 
 /// A replica's last confirmed sync: the commitment and the anchor block.
 /// `challenge_replica` targets leaves of this commitment.
