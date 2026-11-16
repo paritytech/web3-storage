@@ -68,8 +68,6 @@ The file is JSON with the field names `subkey generate --output-type json` uses:
 
 Every action validates the input and the provider's current on-chain state before it submits, so a rejected transaction and its fee are avoided: for example, `register` on an already registered account and `update-settings` with a `max_capacity` the stake cannot back fail without submitting.
 
-The end-to-end test `tests/provider_helper_e2e.rs` drives these actions against a dev chain: `just helper-e2e` after `just start-e2e-chain`.
-
 ## `stress-test upload`
 
 Drives configurable upload load against a provider: `--users` simulated clients

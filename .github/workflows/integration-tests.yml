@@ -99,8 +99,8 @@ jobs:
         run: just build-provider
 
       # Not uploaded: the e2e job builds storage-cli itself for `just
-      # helper-e2e`. Building it here puts its dependencies in the Rust cache
-      # that job restores.
+      # storage-cli-provider-e2e`. Building it here puts its dependencies in
+      # the Rust cache that job restores.
       - name: Build storage-cli
         run: cargo build --release -p storage-cli
 
@@ -405,8 +405,8 @@ jobs:
       # deregister) against the same chain with a generated account funded by
       # //Bob. The tests are ignored by default because they need this chain;
       # --release reuses the dependency artifacts from the build job's cache.
-      - name: Run provider helper e2e
-        run: just helper-e2e
+      - name: Run storage-cli provider e2e
+        run: just storage-cli-provider-e2e
 
       - name: Print JS coverage
         if: always()

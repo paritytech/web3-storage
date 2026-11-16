@@ -3,7 +3,7 @@
 //! Chain access of the `provider` subcommand: [`ProviderChain`] over the
 //! SDK's [`SubstrateClient`].
 
-use provider_helpers::{
+use super::{
     ChainError, ProviderChain, ProviderRecord, ProviderRegistration, ProviderSettings, TxReceipt,
 };
 use sp_core::crypto::{AccountId32, Ss58AddressFormat, Ss58Codec};
@@ -39,7 +39,7 @@ pub async fn chain_ss58_prefix(client: &SubstrateClient) -> Result<u16, ChainErr
 /// Reads and writes about one signing account, over one connection. Every
 /// transaction is signed by the client's signer and waited for until it is
 /// final.
-pub struct HelperChain {
+pub struct SubstrateProviderChain {
     client: SubstrateClient,
     /// The signing account's raw 32 bytes.
     account: [u8; 32],
@@ -47,7 +47,7 @@ pub struct HelperChain {
     ss58_prefix: u16,
 }
 
-impl HelperChain {
+impl SubstrateProviderChain {
     /// Chain access signed by `client`'s signer; fails when it has none.
     pub fn new(client: SubstrateClient, ss58_prefix: u16) -> Result<Self, ChainError> {
         let account = client
@@ -120,7 +120,7 @@ impl HelperChain {
 }
 
 #[async_trait::async_trait]
-impl ProviderChain for HelperChain {
+impl ProviderChain for SubstrateProviderChain {
     fn account(&self) -> String {
         AccountId32::from(self.account)
             .to_ss58check_with_version(Ss58AddressFormat::custom(self.ss58_prefix))
@@ -199,7 +199,7 @@ impl ProviderChain for HelperChain {
     }
 }
 
-/// A failed chain read in the helper's vocabulary.
+/// A failed chain read in the provider operations' vocabulary.
 fn read_error(what: &'static str, reason: impl std::fmt::Display) -> ChainError {
     ChainError::Read {
         what,
@@ -207,7 +207,7 @@ fn read_error(what: &'static str, reason: impl std::fmt::Display) -> ChainError 
     }
 }
 
-/// The helper's view of a `Providers` entry.
+/// The provider operations' view of a `Providers` entry.
 fn provider_record(info: RuntimeProviderInfo) -> ProviderRecord {
     ProviderRecord {
         multiaddr: String::from_utf8_lossy(&info.multiaddr.0).into_owned(),

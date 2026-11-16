@@ -237,7 +237,7 @@ fn load_key(
     path: &std::path::Path,
     scheme_flag: Option<provider_types::KeyScheme>,
 ) -> Result<LoadedKey, String> {
-    let secret = provider_helpers::read_keyfile(path).map_err(|e| e.to_string())?;
+    let secret = provider_types::read_keyfile(path).map_err(|e| e.to_string())?;
     let file_scheme = match &secret.key_scheme {
         Some(name) => <provider_types::KeyScheme as clap::ValueEnum>::from_str(name, true)
             .map_err(|_| format!("Keyfile {} has unknown keyScheme {name:?}", path.display()))?,

@@ -12,7 +12,7 @@ mod commands;
 mod common;
 mod metrics;
 mod prepare;
-mod provider_chain;
+mod provider;
 
 use anyhow::bail;
 use clap::Parser;

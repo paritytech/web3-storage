@@ -12,7 +12,7 @@
 //! it is ignored by default. Run it with:
 //!
 //! ```text
-//! cargo test -p storage-cli --test provider_helper_e2e -- --ignored --nocapture
+//! cargo test -p storage-cli --test provider_e2e -- --ignored --nocapture
 //! ```
 //!
 //! `--nocapture` shows the provider the run used (keyfile path, address,
@@ -43,12 +43,12 @@ fn chain_ws() -> String {
 
 /// The `provider` subcommand of the `storage-cli` binary this test crate
 /// builds, bound to one keyfile and the chain under test.
-struct Helper {
+struct ProviderCli {
     keyfile: PathBuf,
     chain_ws: String,
 }
 
-/// What a helper run printed, with the exit status.
+/// What a CLI run printed, with the exit status.
 struct Run {
     success: bool,
     stdout: String,
@@ -88,7 +88,7 @@ impl Run {
         self
     }
 
-    /// The block the helper reported its transaction finalized in.
+    /// The block the CLI reported its transaction finalized in.
     fn finalized_in(&self) -> H256 {
         let hash = self
             .stdout
@@ -99,7 +99,7 @@ impl Run {
     }
 }
 
-impl Helper {
+impl ProviderCli {
     fn run(&self, args: &[&str]) -> Run {
         let output = Command::new(env!("CARGO_BIN_EXE_storage-cli"))
             .arg("--chain-rpc")
@@ -138,9 +138,9 @@ async fn fund(api: &OnlineClient<PolkadotConfig>, dest: AccountId32, amount: u12
 }
 
 /// The provider record at the current finalized block, read once that block
-/// is at or after `since`. The helper waits for its own transaction to be
+/// is at or after `since`. The CLI waits for its own transaction to be
 /// finalized, but this client learns of new finalized blocks on its own
-/// schedule, so a read right after the helper returns could still see the
+/// schedule, so a read right after the CLI returns could still see the
 /// block before the transaction.
 async fn provider(
     api: &OnlineClient<PolkadotConfig>,
@@ -225,7 +225,7 @@ fn keyfile_json(path: &Path) -> serde_json::Value {
 
 #[tokio::test]
 #[ignore = "needs a dev chain at E2E_CHAIN_WS (just start-e2e-chain)"]
-async fn helper_manages_a_generated_provider_account() {
+async fn manages_a_generated_provider_account() {
     let chain_ws = chain_ws();
     let api = OnlineClient::<PolkadotConfig>::from_url(&chain_ws)
         .await
@@ -243,13 +243,13 @@ async fn helper_manages_a_generated_provider_account() {
         .expect("MinStakePerByte");
 
     let dir = tempfile::tempdir().unwrap();
-    let helper = Helper {
+    let cli = ProviderCli {
         keyfile: dir.path().join("provider.json"),
         chain_ws,
     };
 
     // generate-key: the keyfile is written once and carries the chain's prefix.
-    let run = helper.run(&["generate-key"]);
+    let run = cli.run(&["generate-key"]);
     run.assert_ok("generate-key");
     let printed: serde_json::Value = serde_json::from_str(&run.stdout).expect("JSON on stdout");
     assert_eq!(printed["keyScheme"], "sr25519");
@@ -258,7 +258,7 @@ async fn helper_manages_a_generated_provider_account() {
         printed.get("secretPhrase").is_none(),
         "secret printed: {printed}"
     );
-    let keyfile = keyfile_json(&helper.keyfile);
+    let keyfile = keyfile_json(&cli.keyfile);
     assert_eq!(
         keyfile["secretPhrase"].as_str().unwrap().split(' ').count(),
         12
@@ -267,22 +267,16 @@ async fn helper_manages_a_generated_provider_account() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&helper.keyfile)
+        let mode = std::fs::metadata(&cli.keyfile)
             .unwrap()
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600, "mode {mode:o}");
     }
-    helper
-        .run(&["generate-key"])
+    cli.run(&["generate-key"])
         .assert_rejected("second generate-key", "exists");
-    assert_eq!(
-        keyfile_json(&helper.keyfile),
-        keyfile,
-        "keyfile overwritten"
-    );
-    helper
-        .run(&["--key-scheme", "ecdsa", "generate-key"])
+    assert_eq!(keyfile_json(&cli.keyfile), keyfile, "keyfile overwritten");
+    cli.run(&["--key-scheme", "ecdsa", "generate-key"])
         .assert_rejected("ecdsa generate-key", "only sr25519");
 
     let ss58_address = printed["ss58Address"].as_str().unwrap().to_string();
@@ -295,16 +289,16 @@ async fn helper_manages_a_generated_provider_account() {
         "fresh account is registered"
     );
 
-    // register: the record the chain stores is what the helper submitted.
+    // register: the record the chain stores is what the CLI submitted.
     let stake = min_stake * 2;
     let multiaddr = "/ip4/127.0.0.1/tcp/3399";
     println!(
         "provider under test:\n  keyfile: {}\n  ss58Address: {ss58_address}\n  accountId: {account_hex}\n  stake: {stake}\n  multiaddr: {multiaddr}\n  funded from //Bob: {}",
-        helper.keyfile.display(),
+        cli.keyfile.display(),
         stake * FUNDING_FACTOR
     );
     fund(&api, account, stake * FUNDING_FACTOR).await;
-    let run = helper.run(&[
+    let run = cli.run(&[
         "register",
         "--multiaddr",
         multiaddr,
@@ -325,15 +319,14 @@ async fn helper_manages_a_generated_provider_account() {
     assert_eq!(record.committed_bytes, 0);
     assert_eq!(record.deregister_at, None);
 
-    helper
-        .run(&[
-            "register",
-            "--multiaddr",
-            multiaddr,
-            "--stake",
-            &stake.to_string(),
-        ])
-        .assert_rejected("second register", "already registered");
+    cli.run(&[
+        "register",
+        "--multiaddr",
+        multiaddr,
+        "--stake",
+        &stake.to_string(),
+    ])
+    .assert_rejected("second register", "already registered");
 
     // update-settings: the merged settings land on chain; a repeat is a no-op;
     // what the pallet rejects is rejected before submission.
@@ -351,7 +344,7 @@ async fn helper_manages_a_generated_provider_account() {
         &capacity_arg,
         "--no-replicas",
     ];
-    let run = helper.run(&update);
+    let run = cli.run(&update);
     run.assert_ok("update-settings")
         .assert_prints(
             "update-settings",
@@ -369,8 +362,7 @@ async fn helper_manages_a_generated_provider_account() {
     assert_eq!(settings.replica_sync_price, None);
     assert_eq!(settings.max_capacity, max_capacity as u64);
 
-    helper
-        .run(&update)
+    cli.run(&update)
         .assert_ok("repeated update-settings")
         .assert_prints(
             "repeated update-settings",
@@ -378,11 +370,9 @@ async fn helper_manages_a_generated_provider_account() {
         );
 
     let over_capacity = (max_capacity + 1).to_string();
-    helper
-        .run(&["update-settings", "--max-capacity", &over_capacity])
+    cli.run(&["update-settings", "--max-capacity", &over_capacity])
         .assert_rejected("over-capacity update-settings", "cannot back max_capacity");
-    helper
-        .run(&["update-settings", "--min-duration", "200"])
+    cli.run(&["update-settings", "--min-duration", "200"])
         .assert_rejected("inverted-duration update-settings", "exceeds max_duration");
     assert_eq!(
         provider(&api, Some(updated_in), &account)
@@ -395,7 +385,7 @@ async fn helper_manages_a_generated_provider_account() {
 
     // deregister: announced once; afterwards neither settings nor a second
     // announcement are accepted.
-    let run = helper.run(&["deregister"]);
+    let run = cli.run(&["deregister"]);
     run.assert_ok("deregister").assert_prints(
         "deregister",
         &format!("Announced deregistration of provider {ss58_address}"),
@@ -406,11 +396,9 @@ async fn helper_manages_a_generated_provider_account() {
     assert!(record.deregister_at.is_some(), "deregister_at unset");
     assert!(!record.settings.accepting_primary);
 
-    helper
-        .run(&["deregister"])
+    cli.run(&["deregister"])
         .assert_rejected("second deregister", "has announced deregistration");
-    helper
-        .run(&["update-settings", "--price-per-byte", "8"])
+    cli.run(&["update-settings", "--price-per-byte", "8"])
         .assert_rejected(
             "update-settings after deregister",
             "has announced deregistration",
@@ -421,24 +409,23 @@ async fn helper_manages_a_generated_provider_account() {
 /// prefix it fell back to; the chain operations fail before anything is
 /// written.
 #[tokio::test]
-async fn helper_without_a_chain() {
+async fn provider_without_a_chain() {
     let dir = tempfile::tempdir().unwrap();
-    let helper = Helper {
+    let cli = ProviderCli {
         keyfile: dir.path().join("provider.json"),
         chain_ws: "ws://127.0.0.1:1".to_string(),
     };
-    let run = helper.run(&["generate-key"]);
+    let run = cli.run(&["generate-key"]);
     run.assert_ok("offline generate-key");
     assert!(run.stderr.contains("prefix 42"), "stderr:\n{}", run.stderr);
-    assert_eq!(keyfile_json(&helper.keyfile)["ss58Prefix"], 42);
+    assert_eq!(keyfile_json(&cli.keyfile)["ss58Prefix"], 42);
 
-    helper
-        .run(&[
-            "register",
-            "--multiaddr",
-            "/ip4/127.0.0.1/tcp/3399",
-            "--stake",
-            "1",
-        ])
-        .assert_rejected("offline register", "Error:");
+    cli.run(&[
+        "register",
+        "--multiaddr",
+        "/ip4/127.0.0.1/tcp/3399",
+        "--stake",
+        "1",
+    ])
+    .assert_rejected("offline register", "Error:");
 }

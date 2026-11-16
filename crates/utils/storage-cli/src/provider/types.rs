@@ -6,7 +6,7 @@
 //! block counts, byte sizes are `u64`, and keys are raw bytes. A chain
 //! implementation converts between these and its own encoding.
 //!
-//! [`ProviderChain`]: crate::ProviderChain
+//! [`ProviderChain`]: super::ProviderChain
 
 /// A provider's pricing, acceptance and capacity settings.
 ///
@@ -206,7 +206,7 @@ pub struct ProviderRegistration {
     pub stake: u128,
 }
 
-/// A provider's on-chain record, as far as the helper operations need it.
+/// A provider's on-chain record, as far as the provider operations need it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderRecord {
     /// Advertised network address.

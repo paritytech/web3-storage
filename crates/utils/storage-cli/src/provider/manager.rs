@@ -2,8 +2,8 @@
 
 //! The provider management operations.
 
-use crate::chain::{ChainError, ProviderChain};
-use crate::types::{
+use super::chain::{ChainError, ProviderChain};
+use super::types::{
     ProviderRecord, ProviderRegistration, ProviderSettings, ProviderSettingsUpdate, SettingsError,
     TxReceipt,
 };
@@ -12,10 +12,10 @@ use crate::types::{
 /// ed25519, 33 for compressed ecdsa.
 const ACCEPTED_PUBLIC_KEY_LENGTHS: [usize; 2] = [32, 33];
 
-/// Why a helper operation did not submit a transaction, or why the chain
+/// Why a provider operation did not submit a transaction, or why the chain
 /// rejected the one it submitted.
 #[derive(Debug, thiserror::Error)]
-pub enum HelperError {
+pub enum ProviderError {
     /// An input value fails a check the chain would also reject it for.
     #[error("invalid {field}: {reason}")]
     Invalid {
@@ -73,7 +73,7 @@ pub enum HelperError {
     Chain(#[from] ChainError),
 }
 
-/// Outcome of [`ProviderHelper::update_settings`].
+/// Outcome of [`ProviderManager::update_settings`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SettingsUpdateOutcome {
     /// The settings now on chain: the current ones with the update applied.
@@ -84,11 +84,11 @@ pub struct SettingsUpdateOutcome {
 }
 
 /// Provider management operations over a [`ProviderChain`].
-pub struct ProviderHelper<C> {
+pub struct ProviderManager<C> {
     chain: C,
 }
 
-impl<C: ProviderChain> ProviderHelper<C> {
+impl<C: ProviderChain> ProviderManager<C> {
     /// Operations signed by `chain`'s account.
     pub fn new(chain: C) -> Self {
         Self { chain }
@@ -99,12 +99,6 @@ impl<C: ProviderChain> ProviderHelper<C> {
         self.chain.account()
     }
 
-    /// The signing account's provider record, or `None` when it is not
-    /// registered.
-    pub async fn provider(&self) -> Result<Option<ProviderRecord>, HelperError> {
-        Ok(self.chain.fetch_provider().await?)
-    }
-
     /// Register the signing account as a provider.
     ///
     /// Rejects an empty multiaddr, a public key of a length no scheme uses,
@@ -113,15 +107,15 @@ impl<C: ProviderChain> ProviderHelper<C> {
     pub async fn register(
         &self,
         registration: &ProviderRegistration,
-    ) -> Result<TxReceipt, HelperError> {
+    ) -> Result<TxReceipt, ProviderError> {
         if registration.multiaddr.is_empty() {
-            return Err(HelperError::Invalid {
+            return Err(ProviderError::Invalid {
                 field: "multiaddr",
                 reason: "must not be empty".to_string(),
             });
         }
         if !ACCEPTED_PUBLIC_KEY_LENGTHS.contains(&registration.public_key.len()) {
-            return Err(HelperError::Invalid {
+            return Err(ProviderError::Invalid {
                 field: "public_key",
                 reason: format!(
                     "{} bytes; expected 32 (sr25519, ed25519) or 33 (ecdsa)",
@@ -130,13 +124,13 @@ impl<C: ProviderChain> ProviderHelper<C> {
             });
         }
         if registration.stake == 0 {
-            return Err(HelperError::Invalid {
+            return Err(ProviderError::Invalid {
                 field: "stake",
                 reason: "must be greater than zero".to_string(),
             });
         }
         if self.chain.fetch_provider().await?.is_some() {
-            return Err(HelperError::AlreadyRegistered {
+            return Err(ProviderError::AlreadyRegistered {
                 account: self.chain.account(),
             });
         }
@@ -153,7 +147,7 @@ impl<C: ProviderChain> ProviderHelper<C> {
     pub async fn update_settings(
         &self,
         update: &ProviderSettingsUpdate,
-    ) -> Result<SettingsUpdateOutcome, HelperError> {
+    ) -> Result<SettingsUpdateOutcome, ProviderError> {
         let provider = self.registered_provider().await?;
         self.ensure_no_deregister_announced(&provider)?;
 
@@ -181,11 +175,11 @@ impl<C: ProviderChain> ProviderHelper<C> {
     /// deregistration, and a provider with committed bytes. The pallet's
     /// `complete_deregister` releases the stake after the announcement
     /// period.
-    pub async fn deregister(&self) -> Result<TxReceipt, HelperError> {
+    pub async fn deregister(&self) -> Result<TxReceipt, ProviderError> {
         let provider = self.registered_provider().await?;
         self.ensure_no_deregister_announced(&provider)?;
         if provider.committed_bytes > 0 {
-            return Err(HelperError::HasActiveAgreements {
+            return Err(ProviderError::HasActiveAgreements {
                 account: self.chain.account(),
                 committed_bytes: provider.committed_bytes,
             });
@@ -193,19 +187,22 @@ impl<C: ProviderChain> ProviderHelper<C> {
         Ok(self.chain.deregister_provider().await?)
     }
 
-    /// The signing account's record, or [`HelperError::NotRegistered`].
-    async fn registered_provider(&self) -> Result<ProviderRecord, HelperError> {
+    /// The signing account's record, or [`ProviderError::NotRegistered`].
+    async fn registered_provider(&self) -> Result<ProviderRecord, ProviderError> {
         self.chain
             .fetch_provider()
             .await?
-            .ok_or_else(|| HelperError::NotRegistered {
+            .ok_or_else(|| ProviderError::NotRegistered {
                 account: self.chain.account(),
             })
     }
 
-    fn ensure_no_deregister_announced(&self, provider: &ProviderRecord) -> Result<(), HelperError> {
+    fn ensure_no_deregister_announced(
+        &self,
+        provider: &ProviderRecord,
+    ) -> Result<(), ProviderError> {
         match provider.deregister_at {
-            Some(deregister_at) => Err(HelperError::DeregisterAnnounced {
+            Some(deregister_at) => Err(ProviderError::DeregisterAnnounced {
                 account: self.chain.account(),
                 deregister_at,
             }),
@@ -325,35 +322,35 @@ mod tests {
         }
     }
 
-    fn submitted(helper: &ProviderHelper<MockChain>) -> Vec<Submitted> {
-        std::mem::take(&mut *helper.chain.submitted.lock().unwrap())
+    fn submitted(manager: &ProviderManager<MockChain>) -> Vec<Submitted> {
+        std::mem::take(&mut *manager.chain.submitted.lock().unwrap())
     }
 
     #[tokio::test]
     async fn register_submits_for_unregistered_account() {
-        let helper = ProviderHelper::new(MockChain::new(None));
-        let got = helper.register(&registration()).await.unwrap();
+        let manager = ProviderManager::new(MockChain::new(None));
+        let got = manager.register(&registration()).await.unwrap();
         assert_eq!(got, receipt());
         assert_eq!(
-            submitted(&helper),
+            submitted(&manager),
             vec![Submitted::Register(registration())]
         );
     }
 
     #[tokio::test]
     async fn register_rejects_registered_account() {
-        let helper = ProviderHelper::new(MockChain::new(Some(record())));
-        let err = helper.register(&registration()).await.unwrap_err();
+        let manager = ProviderManager::new(MockChain::new(Some(record())));
+        let err = manager.register(&registration()).await.unwrap_err();
         assert!(
-            matches!(err, HelperError::AlreadyRegistered { .. }),
+            matches!(err, ProviderError::AlreadyRegistered { .. }),
             "{err}"
         );
-        assert!(submitted(&helper).is_empty());
+        assert!(submitted(&manager).is_empty());
     }
 
     #[tokio::test]
     async fn register_rejects_invalid_input_before_reading_chain() {
-        let helper = ProviderHelper::new(MockChain::new(None));
+        let manager = ProviderManager::new(MockChain::new(None));
         let cases = [
             (
                 ProviderRegistration {
@@ -385,24 +382,24 @@ mod tests {
             ),
         ];
         for (input, expected_field) in cases {
-            let err = helper.register(&input).await.unwrap_err();
+            let err = manager.register(&input).await.unwrap_err();
             assert!(
-                matches!(err, HelperError::Invalid { field, .. } if field == expected_field),
+                matches!(err, ProviderError::Invalid { field, .. } if field == expected_field),
                 "{err}"
             );
         }
-        assert!(submitted(&helper).is_empty());
+        assert!(submitted(&manager).is_empty());
     }
 
     #[tokio::test]
     async fn update_settings_merges_and_submits() {
-        let helper = ProviderHelper::new(MockChain::new(Some(record())));
+        let manager = ProviderManager::new(MockChain::new(Some(record())));
         let update = ProviderSettingsUpdate {
             price_per_byte: Some(9),
             replica_sync_price: Some(Some(3)),
             ..Default::default()
         };
-        let got = helper.update_settings(&update).await.unwrap();
+        let got = manager.update_settings(&update).await.unwrap();
         let expected = ProviderSettings {
             price_per_byte: 9,
             replica_sync_price: Some(3),
@@ -411,52 +408,52 @@ mod tests {
         assert_eq!(got.settings, expected);
         assert_eq!(got.receipt, Some(receipt()));
         assert_eq!(
-            submitted(&helper),
+            submitted(&manager),
             vec![Submitted::UpdateSettings(expected)]
         );
     }
 
     #[tokio::test]
     async fn update_settings_skips_no_op() {
-        let helper = ProviderHelper::new(MockChain::new(Some(record())));
+        let manager = ProviderManager::new(MockChain::new(Some(record())));
         let update = ProviderSettingsUpdate {
             price_per_byte: Some(settings().price_per_byte),
             ..Default::default()
         };
-        let got = helper.update_settings(&update).await.unwrap();
+        let got = manager.update_settings(&update).await.unwrap();
         assert_eq!(got.settings, settings());
         assert_eq!(got.receipt, None);
-        assert!(submitted(&helper).is_empty());
+        assert!(submitted(&manager).is_empty());
     }
 
     #[tokio::test]
     async fn update_settings_rejects_unregistered_and_deregistering() {
-        let helper = ProviderHelper::new(MockChain::new(None));
-        let err = helper
+        let manager = ProviderManager::new(MockChain::new(None));
+        let err = manager
             .update_settings(&ProviderSettingsUpdate::default())
             .await
             .unwrap_err();
-        assert!(matches!(err, HelperError::NotRegistered { .. }), "{err}");
+        assert!(matches!(err, ProviderError::NotRegistered { .. }), "{err}");
 
-        let helper = ProviderHelper::new(MockChain::new(Some(ProviderRecord {
+        let manager = ProviderManager::new(MockChain::new(Some(ProviderRecord {
             deregister_at: Some(500),
             ..record()
         })));
-        let err = helper
+        let err = manager
             .update_settings(&ProviderSettingsUpdate::default())
             .await
             .unwrap_err();
         assert!(
             matches!(
                 err,
-                HelperError::DeregisterAnnounced {
+                ProviderError::DeregisterAnnounced {
                     deregister_at: 500,
                     ..
                 }
             ),
             "{err}"
         );
-        assert!(submitted(&helper).is_empty());
+        assert!(submitted(&manager).is_empty());
     }
 
     /// The merged settings go through [`ProviderSettings::validate`] with
@@ -464,7 +461,7 @@ mod tests {
     /// `MinStakePerByte`; a failure submits nothing.
     #[tokio::test]
     async fn update_settings_rejects_what_the_pallet_rejects() {
-        let helper = ProviderHelper::new(MockChain::new(Some(ProviderRecord {
+        let manager = ProviderManager::new(MockChain::new(Some(ProviderRecord {
             committed_bytes: 4_096,
             stake: 1_000_000,
             ..record()
@@ -515,13 +512,13 @@ mod tests {
             ),
         ];
         for (update, expected) in cases {
-            let err = helper.update_settings(&update).await.unwrap_err();
+            let err = manager.update_settings(&update).await.unwrap_err();
             assert!(
-                matches!(&err, HelperError::Settings(e) if *e == expected),
+                matches!(&err, ProviderError::Settings(e) if *e == expected),
                 "{err}"
             );
         }
-        assert!(submitted(&helper).is_empty());
+        assert!(submitted(&manager).is_empty());
 
         // The largest capacity the stake backs is accepted; unlimited
         // capacity skips the capacity checks.
@@ -536,50 +533,50 @@ mod tests {
                 ..Default::default()
             },
         ] {
-            helper.update_settings(&update).await.unwrap();
+            manager.update_settings(&update).await.unwrap();
         }
-        assert_eq!(submitted(&helper).len(), 2);
+        assert_eq!(submitted(&manager).len(), 2);
     }
 
     #[tokio::test]
     async fn deregister_submits_for_idle_provider() {
-        let helper = ProviderHelper::new(MockChain::new(Some(record())));
-        assert_eq!(helper.deregister().await.unwrap(), receipt());
-        assert_eq!(submitted(&helper), vec![Submitted::Deregister]);
+        let manager = ProviderManager::new(MockChain::new(Some(record())));
+        assert_eq!(manager.deregister().await.unwrap(), receipt());
+        assert_eq!(submitted(&manager), vec![Submitted::Deregister]);
     }
 
     #[tokio::test]
     async fn deregister_rejects_unregistered_announced_and_committed() {
-        let helper = ProviderHelper::new(MockChain::new(None));
-        let err = helper.deregister().await.unwrap_err();
-        assert!(matches!(err, HelperError::NotRegistered { .. }), "{err}");
+        let manager = ProviderManager::new(MockChain::new(None));
+        let err = manager.deregister().await.unwrap_err();
+        assert!(matches!(err, ProviderError::NotRegistered { .. }), "{err}");
 
-        let helper = ProviderHelper::new(MockChain::new(Some(ProviderRecord {
+        let manager = ProviderManager::new(MockChain::new(Some(ProviderRecord {
             deregister_at: Some(500),
             ..record()
         })));
-        let err = helper.deregister().await.unwrap_err();
+        let err = manager.deregister().await.unwrap_err();
         assert!(
-            matches!(err, HelperError::DeregisterAnnounced { .. }),
+            matches!(err, ProviderError::DeregisterAnnounced { .. }),
             "{err}"
         );
 
-        let helper = ProviderHelper::new(MockChain::new(Some(ProviderRecord {
+        let manager = ProviderManager::new(MockChain::new(Some(ProviderRecord {
             committed_bytes: 1,
             ..record()
         })));
-        let err = helper.deregister().await.unwrap_err();
+        let err = manager.deregister().await.unwrap_err();
         assert!(
             matches!(
                 err,
-                HelperError::HasActiveAgreements {
+                ProviderError::HasActiveAgreements {
                     committed_bytes: 1,
                     ..
                 }
             ),
             "{err}"
         );
-        assert!(submitted(&helper).is_empty());
+        assert!(submitted(&manager).is_empty());
     }
 
     #[tokio::test]
@@ -617,8 +614,8 @@ mod tests {
             }
         }
 
-        let helper = ProviderHelper::new(FailingChain);
-        let err = helper.register(&registration()).await.unwrap_err();
-        assert!(matches!(err, HelperError::Chain(_)), "{err}");
+        let manager = ProviderManager::new(FailingChain);
+        let err = manager.register(&registration()).await.unwrap_err();
+        assert!(matches!(err, ProviderError::Chain(_)), "{err}");
     }
 }

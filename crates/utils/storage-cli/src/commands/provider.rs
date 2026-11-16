@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `provider` subcommand: provider management from the command line, backed
-//! by `provider-helpers` over the SDK's chain client.
+//! by the `provider` module over the SDK's chain client.
 
 use std::path::Path;
 
+use crate::provider::{
+    ProviderManager, ProviderRegistration, ProviderSettings, ProviderSettingsUpdate, TxReceipt,
+};
 use anyhow::{anyhow, Context, Result};
 use clap::{Args, Subcommand};
-use provider_helpers::{
-    Keyfile, ProviderHelper, ProviderRegistration, ProviderSettings, ProviderSettingsUpdate,
-    TxReceipt,
-};
+use provider_types::Keyfile;
 use provider_types::{KeyScheme, ProviderKeypair};
 use sp_core::crypto::{AccountId32, Ss58AddressFormat, Ss58Codec};
 use sp_core::{sr25519, Pair};
@@ -19,7 +19,7 @@ use storage_client::Signer;
 
 use crate::cli::GlobalArgs;
 use crate::common::{key_scheme_name, resolve_key};
-use crate::provider_chain::{chain_ss58_prefix, HelperChain, GENERIC_SS58_PREFIX};
+use crate::provider::{chain_ss58_prefix, SubstrateProviderChain, GENERIC_SS58_PREFIX};
 
 /// `storage-cli provider`: one signed provider management transaction, then
 /// exit. The account is the global `--suri` or `--keyfile`.
@@ -47,7 +47,7 @@ pub enum ProviderAction {
         #[arg(
             long,
             value_name = "COUNT",
-            default_value_t = provider_helpers::DEFAULT_MNEMONIC_WORDS,
+            default_value_t = crate::provider::DEFAULT_MNEMONIC_WORDS,
             value_parser = mnemonic_word_count
         )]
         words: usize,
@@ -78,7 +78,7 @@ pub enum ProviderAction {
 
 /// `--words` of `provider generate-key`: one of the BIP39 word counts.
 fn mnemonic_word_count(value: &str) -> Result<usize, String> {
-    let counts = provider_helpers::MNEMONIC_WORD_COUNTS;
+    let counts = crate::provider::MNEMONIC_WORD_COUNTS;
     match value.parse::<usize>() {
         Ok(words) if counts.contains(&words) => Ok(words),
         _ => Err(format!(
@@ -163,7 +163,7 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
                 anyhow!("generate-key needs --keyfile: the path of the keyfile to create")
             })?;
             // Reject an unsupported scheme before connecting anywhere.
-            let scheme = helper_scheme(command.key_scheme.unwrap_or_default())?;
+            let scheme = supported_scheme(command.key_scheme.unwrap_or_default())?;
             let ss58_prefix = match SubstrateClient::connect(&global.chain_rpc).await {
                 Ok(client) => chain_ss58_prefix(&client).await?,
                 Err(e) => {
@@ -181,14 +181,14 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
     };
 
     let key = resolve_key(global, command.key_scheme)?;
-    helper_scheme(key.scheme)?;
+    supported_scheme(key.scheme)?;
     let signer = Signer::from_seed(&key.seed).context("failed to derive keypair from SURI")?;
     let client = SubstrateClient::connect(&global.chain_rpc)
         .await?
         .with_signer(signer);
     let ss58_prefix = chain_ss58_prefix(&client).await?;
-    let helper = ProviderHelper::new(HelperChain::new(client, ss58_prefix)?);
-    let account = helper.account();
+    let manager = ProviderManager::new(SubstrateProviderChain::new(client, ss58_prefix)?);
+    let account = manager.account();
 
     match action {
         // Returned above; the chain operations follow.
@@ -202,7 +202,7 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
                 public_key,
                 stake,
             };
-            let receipt = helper.register(&registration).await?;
+            let receipt = manager.register(&registration).await?;
             println!(
                 "Registered provider {account} at {} with stake {}{}",
                 registration.multiaddr,
@@ -211,7 +211,7 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
             );
         }
         ProviderAction::UpdateSettings(args) => {
-            let outcome = helper.update_settings(&args.update()).await?;
+            let outcome = manager.update_settings(&args.update()).await?;
             match outcome.receipt {
                 Some(receipt) => println!(
                     "Updated settings of provider {account}{}",
@@ -222,7 +222,7 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
             print_settings(&outcome.settings);
         }
         ProviderAction::Deregister => {
-            let receipt = helper.deregister().await?;
+            let receipt = manager.deregister().await?;
             println!(
                 "Announced deregistration of provider {account}{}. Call complete_deregister after the announcement period to release the stake.",
                 included_in(&receipt)
@@ -234,7 +234,7 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
 }
 
 /// The subcommand supports sr25519 only for now.
-fn helper_scheme(scheme: KeyScheme) -> Result<KeyScheme> {
+fn supported_scheme(scheme: KeyScheme) -> Result<KeyScheme> {
     match scheme {
         KeyScheme::Sr25519 => Ok(scheme),
         other => Err(anyhow!(
@@ -258,7 +258,7 @@ fn generate_key(
     words: usize,
     ss58_prefix: u16,
 ) -> Result<serde_json::Value> {
-    let mnemonic = provider_helpers::generate_mnemonic(words)?;
+    let mnemonic = crate::provider::generate_mnemonic(words)?;
     let account = AccountId32::from(
         sr25519::Pair::from_string(&mnemonic, None)
             .map_err(|e| anyhow!("Failed to create keypair: {e:?}"))?
@@ -289,7 +289,7 @@ fn generate_key(
         .map(|(k, v)| (k.to_string(), v))
         .collect(),
     };
-    provider_helpers::write_keyfile(path, &keyfile)?;
+    crate::provider::write_keyfile(path, &keyfile)?;
 
     let mut public = serde_json::Map::new();
     public.insert("keyfile".into(), path.display().to_string().into());
@@ -328,11 +328,11 @@ mod tests {
     use crate::common::tests::global_args;
 
     /// A generated mnemonic is a secret every signing scheme and the
-    /// submission account derive from: the BIP39 phrase `provider-helpers`
+    /// submission account derive from: the BIP39 phrase `generate_mnemonic`
     /// produces is the format `sp_core` parses.
     #[test]
     fn generated_mnemonic_derives_under_every_scheme() {
-        let mnemonic = provider_helpers::generate_mnemonic(12).unwrap();
+        let mnemonic = crate::provider::generate_mnemonic(12).unwrap();
         sr25519::Pair::from_string(&mnemonic, None).unwrap();
         for scheme in [
             KeyScheme::Sr25519,
@@ -360,10 +360,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("provider.json");
 
-        let err = helper_scheme(KeyScheme::Ecdsa).unwrap_err().to_string();
+        let err = supported_scheme(KeyScheme::Ecdsa).unwrap_err().to_string();
         assert!(err.contains("ecdsa") && err.contains("sr25519"), "{err}");
 
-        let scheme = helper_scheme(KeyScheme::default()).unwrap();
+        let scheme = supported_scheme(KeyScheme::default()).unwrap();
         let output = generate_key(&path, scheme, 24, 0).unwrap();
         let loaded = resolve_key(&global_args(None, Some(path.clone())), None).unwrap();
         assert_eq!(loaded.scheme, KeyScheme::Sr25519);

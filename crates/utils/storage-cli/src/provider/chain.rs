@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The chain boundary of the helper operations.
+//! The chain boundary of the provider operations.
 
-use crate::types::{ProviderRecord, ProviderRegistration, ProviderSettings, TxReceipt};
+use super::types::{ProviderRecord, ProviderRegistration, ProviderSettings, TxReceipt};
 
 /// A failed chain read or write, reported by a [`ProviderChain`]
 /// implementation. `what` names the read or the transaction; `reason` is
@@ -40,7 +40,7 @@ pub enum ChainError {
 ///
 /// An implementation owns one signing account: every write is signed by it
 /// and every read is about it. It encodes the plain types in
-/// [`crate::types`] for its chain and waits for each transaction to be
+/// [`super::types`] for its chain and waits for each transaction to be
 /// final before returning a [`TxReceipt`].
 #[async_trait::async_trait]
 pub trait ProviderChain: Send + Sync {

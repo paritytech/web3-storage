@@ -29,7 +29,7 @@ pub fn resolve_key(global: &GlobalArgs, scheme_flag: Option<KeyScheme>) -> Resul
     let (seed, file_scheme) = match (&global.suri, &global.keyfile) {
         (Some(suri), _) => (suri.clone(), None),
         (None, Some(path)) => {
-            let secret = provider_helpers::read_keyfile(path)?;
+            let secret = provider_types::read_keyfile(path)?;
             let scheme = secret
                 .key_scheme
                 .map(|name| {
