@@ -2278,7 +2278,7 @@ GET /read?bucket_id=1&data_root=0x...&offset=0&length=2097152
 Capability read: keyed by data root, unauthenticated; 404 for a bucket the
 node does not store (see Authentication & RBAC).
 
-One request returns at most MAX_READ_CHUNKS = 64 chunks (16 MiB at the
+One request returns at most MAX_READ_CHUNKS = 16 chunks (4 MiB at the
 256 KiB CHUNK_SIZE). The read is unauthenticated and the provider builds the
 whole response in memory, so the bound limits what one request can make the
 node load. A client reads a longer range in consecutive requests. The
@@ -2293,7 +2293,7 @@ Response:
 }
 
 Response (400 Bad Request):
-{ "error": "read_too_large", "details": { "requested": 80, "max": 64 } }
+{ "error": "read_too_large", "details": { "requested": 20, "max": 16 } }
 ```
 
 ### Other Endpoints
