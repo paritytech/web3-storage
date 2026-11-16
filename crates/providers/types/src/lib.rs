@@ -9,10 +9,6 @@
 //!   and the reasons the node cannot sign.
 //! * [`ChainClientError`] : the error the chain-client traits of the provider crates report.
 //! * [`Balance`], [`BlockNumber`] - the runtime's numeric types.
-//!
-//! Inputs: none. Pure data types and signing helpers, with no chain connection or I/O.
-//!
-//! Outputs: values the other provider crates and the node pass between each other.
 
 mod chain;
 mod keys;
