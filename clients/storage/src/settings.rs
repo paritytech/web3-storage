@@ -4,10 +4,17 @@
 
 use crate::ProviderSettings;
 
-/// Why the `StorageProvider` pallet rejects a [`ProviderSettings`] value.
-/// Each variant is the pallet error of the same name.
+/// Why a provider registration or a [`ProviderSettings`] value is rejected.
+/// The settings variants are the `StorageProvider` pallet errors of the same
+/// name.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SettingsError {
+    /// The provider's multiaddr is empty.
+    #[error("multiaddr must not be empty")]
+    EmptyMultiaddr,
+    /// The provider's stake is zero.
+    #[error("stake must be greater than zero")]
+    ZeroStake,
     /// `min_duration` is above `max_duration`.
     #[error("min_duration {min_duration} exceeds max_duration {max_duration}")]
     MinDurationExceedsMaxDuration {
@@ -68,15 +75,25 @@ impl ProviderSettings {
     /// pallet's order, so the first error reported is the one the chain
     /// would report.
     ///
-    /// `committed_bytes` and `stake` are the provider's current on-chain
-    /// values; `min_stake_per_byte` is the chain's `MinStakePerByte`
+    /// Before those, it rejects an empty `multiaddr` and a zero `stake`.
+    ///
+    /// `multiaddr`, `committed_bytes` and `stake` are the provider's values:
+    /// the registration input for a new provider, the on-chain record for a
+    /// registered one. `min_stake_per_byte` is the chain's `MinStakePerByte`
     /// parameter.
     pub fn validate(
         &self,
+        multiaddr: &str,
         committed_bytes: u64,
         stake: u128,
         min_stake_per_byte: u128,
     ) -> Result<(), SettingsError> {
+        if multiaddr.is_empty() {
+            return Err(SettingsError::EmptyMultiaddr);
+        }
+        if stake == 0 {
+            return Err(SettingsError::ZeroStake);
+        }
         if self.min_duration > self.max_duration {
             return Err(SettingsError::MinDurationExceedsMaxDuration {
                 min_duration: self.min_duration,
@@ -192,10 +209,11 @@ mod tests {
     /// Every check of the pallet's `validate_settings`, in its order.
     #[test]
     fn validate_mirrors_the_pallet() {
+        const MULTIADDR: &str = "/ip4/127.0.0.1/tcp/3333";
         const STAKE: u128 = 1_000_000;
         const PER_BYTE: u128 = 10;
         const COMMITTED: u64 = 4_096;
-        let check = |s: ProviderSettings| s.validate(COMMITTED, STAKE, PER_BYTE);
+        let check = |s: ProviderSettings| s.validate(MULTIADDR, COMMITTED, STAKE, PER_BYTE);
 
         // Unlimited capacity: only the duration order matters.
         check(settings()).unwrap();
@@ -260,7 +278,7 @@ mod tests {
                 max_capacity: u64::MAX,
                 ..settings()
             }
-            .validate(0, u128::MAX, u128::MAX),
+            .validate(MULTIADDR, 0, u128::MAX, u128::MAX),
             Err(SettingsError::ArithmeticOverflow {
                 max_capacity: u64::MAX,
                 min_stake_per_byte: u128::MAX,
@@ -293,5 +311,21 @@ mod tests {
             ..settings()
         };
         assert_eq!(update.apply(&settings()), expected);
+    }
+
+    #[test]
+    fn validate_rejects_empty_multiaddr_and_zero_stake() {
+        let defaults = ProviderSettings::default();
+        defaults
+            .validate("/ip4/127.0.0.1/tcp/3333", 0, 1, 0)
+            .unwrap();
+        assert_eq!(
+            defaults.validate("", 0, 1_000, 0),
+            Err(SettingsError::EmptyMultiaddr)
+        );
+        assert_eq!(
+            defaults.validate("/ip4/127.0.0.1/tcp/3333", 0, 0, 0),
+            Err(SettingsError::ZeroStake)
+        );
     }
 }
