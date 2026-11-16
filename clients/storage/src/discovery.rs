@@ -128,7 +128,7 @@ pub struct ProviderInfo {
 /// Why a provider operation did not submit a transaction, or why the chain
 /// rejected the one it submitted.
 #[derive(Debug, thiserror::Error)]
-pub enum ProviderError {
+pub enum ProviderInfoError {
     /// The signing account is already a registered provider.
     #[error("account {account} is already registered as a provider")]
     AlreadyRegistered {
@@ -199,12 +199,12 @@ impl ProviderInfo {
     pub fn active_provider(
         account: &str,
         provider: Option<ProviderInfo>,
-    ) -> Result<ProviderInfo, ProviderError> {
-        let provider = provider.ok_or_else(|| ProviderError::NotRegistered {
+    ) -> Result<ProviderInfo, ProviderInfoError> {
+        let provider = provider.ok_or_else(|| ProviderInfoError::NotRegistered {
             account: account.to_string(),
         })?;
         match provider.deregister_at {
-            Some(deregister_at) => Err(ProviderError::DeregisterAnnounced {
+            Some(deregister_at) => Err(ProviderInfoError::DeregisterAnnounced {
                 account: account.to_string(),
                 deregister_at,
             }),
@@ -213,9 +213,9 @@ impl ProviderInfo {
     }
 
     /// A provider can announce deregistration only with no committed bytes.
-    pub fn check_deregister(&self, account: &str) -> Result<(), ProviderError> {
+    pub fn check_deregister(&self, account: &str) -> Result<(), ProviderInfoError> {
         if self.committed_bytes > 0 {
-            return Err(ProviderError::HasActiveAgreements {
+            return Err(ProviderInfoError::HasActiveAgreements {
                 account: account.to_string(),
                 committed_bytes: self.committed_bytes,
             });

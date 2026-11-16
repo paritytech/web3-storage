@@ -4,7 +4,7 @@
 
 use sp_core::crypto::{AccountId32, Ss58AddressFormat, Ss58Codec};
 use sp_core::H256;
-use storage_client::discovery::{ProviderError, ProviderInfo};
+use storage_client::discovery::{ProviderInfo, ProviderInfoError};
 use storage_client::{ProviderClient, ProviderSettings, ProviderSettingsUpdate, Signer};
 
 /// Outcome of [`ProviderManager::update_settings`].
@@ -53,14 +53,14 @@ impl ProviderManager {
         multiaddr: String,
         public_key: Vec<u8>,
         stake: u128,
-    ) -> Result<H256, ProviderError> {
+    ) -> Result<H256, ProviderInfoError> {
         if self
             .client
             .get_provider_info(&self.account)
             .await?
             .is_some()
         {
-            return Err(ProviderError::AlreadyRegistered {
+            return Err(ProviderInfoError::AlreadyRegistered {
                 account: self.display_account.clone(),
             });
         }
@@ -78,7 +78,7 @@ impl ProviderManager {
     pub async fn update_settings(
         &self,
         update: &ProviderSettingsUpdate,
-    ) -> Result<SettingsUpdateOutcome, ProviderError> {
+    ) -> Result<SettingsUpdateOutcome, ProviderInfoError> {
         let provider = ProviderInfo::active_provider(
             &self.display_account,
             self.client.get_provider_info(&self.account).await?,
@@ -112,7 +112,7 @@ impl ProviderManager {
     /// deregistration, and a provider with committed bytes. The pallet's
     /// `complete_deregister` releases the stake after the announcement
     /// period.
-    pub async fn deregister(&self) -> Result<H256, ProviderError> {
+    pub async fn deregister(&self) -> Result<H256, ProviderInfoError> {
         let provider = ProviderInfo::active_provider(
             &self.display_account,
             self.client.get_provider_info(&self.account).await?,
