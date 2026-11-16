@@ -242,7 +242,7 @@ impl SignedClient {
         }
     }
 
-    /// Sign for an explicit bucket id (L0 endpoints whose bucket is in the body).
+    /// Sign for an explicit bucket id (endpoints whose bucket is in the body).
     pub fn request_bucket(&self, method: Method, url: String, bucket_id: u64) -> RequestBuilder {
         let header = make_auth_header(
             &self.keypair,

@@ -51,7 +51,7 @@ just demo
 
 ### Next Steps
 
-1. **`just demo`** drives the full Layer-0 happy path against an already-running
+1. **`just demo`** drives the full storage happy path against an already-running
    chain + provider: registers a provider, creates a bucket, opens an agreement,
    uploads data, fires two challenges, and asserts the provider defends both.
    This is also what CI runs. It does **not** start the chain or provider for
@@ -62,10 +62,10 @@ just demo
    status), `just health` (provider node health), `just stats` (provider stats).
 
 3. **Build something on top**: see [Client Documentation](./clients/storage/README.md)
-   for the Layer-0 SDK, or [`FILE_SYSTEM_QUICKSTART.md`](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
-   for the Layer-1 file-system interface.
+   for the storage SDK, or [`FILE_SYSTEM_QUICKSTART.md`](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
+   for the file system.
 
-## File System Interface (Layer 1)
+## File System
 
 > [!NOTE]
 > **Layer 1 design is under triage.** Its design/implementation notes have been
@@ -73,8 +73,20 @@ just demo
 > pending a decision on the layered architecture (what belongs on-chain vs.
 > provider-only). See [#51](https://github.com/paritytech/web3-storage/issues/51).
 
-The Layer 1 File System Interface provides a familiar file/folder abstraction
-over Layer 0's raw blob storage.
+The file system stores a directory tree in one bucket. Directories
+and file manifests are blobs, each addressed by its CID (the blob's
+`data_root`), and the bucket's last MMR leaf is the CID of the root
+directory. The client verifies every blob against its CID and the root
+against the provider's MMR commitment. The provider only serves its blob
+routes and does not parse the tree. The same tree also serves S3-style
+objects: the key `a/b.txt` is the file `/a/b.txt`.
+
+- Rust: [`clients/storage-formats`](./clients/storage-formats/README.md)
+  (tree and S3 view), blob format in its `format` module.
+- TypeScript: `@web3-storage/storage-formats` (`packages/storage-formats`),
+  the Rust crate compiled to wasm, opened per bucket with
+  `Web3Storage.drive` and `Web3Storage.objects` from
+  [`@web3-storage/sdk`](./packages/sdk/README.md).
 
 ### Quick Start with File System
 
@@ -87,11 +99,6 @@ just start-provider         # Terminal 2: provider node
 just file-system-demo       # Terminal 3
 ```
 
-**What you get:**
-- ✅ Familiar file/folder interface
-- ✅ Automatic provider selection
-- ✅ Built-in blockchain integration
-
 ### File System Commands
 
 ```bash
@@ -101,15 +108,13 @@ just file-system-demo          # Demo against a running chain + provider
 
 **Complete guide**: [FILE_SYSTEM_QUICKSTART.md](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
 
-### When to Use Layer 0 vs Layer 1
+### When to use the file system or the storage client
 
-**Use Layer 1 (File System)** if you:
-- Want a familiar file/folder interface
-- Need automatic setup and provider selection
+**Use the file system** if you:
+- Want files and directories, or S3-style objects, in a bucket
 - Are building a general-purpose file storage app
-- Prefer simplicity over low-level control
 
-**Use Layer 0 (Direct Storage)** if you:
+**Use the storage client directly** if you:
 - Need full control over storage operations
 - Are building custom storage logic
 - Want to implement your own data structures
@@ -130,7 +135,7 @@ just health                  # Check provider health
 just stats                   # Provider storage stats
 
 # End-to-end demos (require chain + provider running)
-just demo                    # Layer-0 PAPI demo: setup, upload, 2 challenges
+just demo                    # Storage PAPI demo: setup, upload, 2 challenges
 just file-system-demo        # File system and S3 objects demo
 
 # Tests
@@ -150,7 +155,7 @@ cargo test -p storage-formats  # File system and S3 objects
 | API reference | Pallet rustdoc: `cargo doc --workspace --no-deps --open`. The same text ships in the runtime metadata, so PAPI/subxt IDE hover and polkadot.js Apps show it too |
 | [Architecture Design](./docs/design/scalable-web3-storage.md) | System design, economics, common concerns |
 | [Implementation Details](./docs/design/scalable-web3-storage-implementation.md) | Technical specs |
-| [Photos dApp](./user-interfaces/photos/README.md) | Example photo-storage dApp — Layer 1 + a custom contract ([design](./user-interfaces/photos/DESIGN.md)) |
+| [Photos dApp](./user-interfaces/photos/README.md) | Example photo-storage dApp — file system + a custom contract ([design](./user-interfaces/photos/DESIGN.md)) |
 
 ## Architecture
 
@@ -196,8 +201,8 @@ web3-storage/
 │   └── utils/              # Ultility crates
 ├── runtimes/               # Parachain runtimes: web3-storage-local, web3-storage-paseo
 ├── provider-node/          # Off-chain provider binary
-├── clients/                # Rust client SDKs: storage (Layer 0), file-system, s3 (Layer 1)
-├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,file-system,papi,sdk}
+├── clients/                # Rust client SDKs: storage, storage-formats with S3 view
+├── packages/               # JS/TS workspace: @web3-storage/{core,storage,storage-formats,papi,sdk}
 ├── user-interfaces/        # Web apps: landing, explorer, drive-ui, provider, s3-ui, photos, shared
 ├── examples/               # contracts/ (Solidity dApps), papi/ (end-to-end PAPI demos)
 ├── scripts/                # Helper scripts (chain spec, health checks, smoke test)

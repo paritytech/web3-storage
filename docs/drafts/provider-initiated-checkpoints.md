@@ -1022,7 +1022,7 @@ dynamic tx). HTTP surface (wire formats in
 
 ## Client surface to restore
 
-- `packages/layer0`: tx wrappers `configureCheckpointWindow`,
+- `packages/storage`: tx wrappers `configureCheckpointWindow`,
   `fundCheckpointPool`, `submitProviderCheckpoint`, `claimCheckpointRewards`,
   `reportMissedCheckpoint` (each `submitTx` + `requireOneEvent` on its event);
   HTTP helpers `fetchCheckpointDuty`, `signCheckpointProposal`.
@@ -3042,7 +3042,7 @@ main().then(() => console.log("\n=== Done ==="));
 Everything removed from `packages/`, `examples/`, `user-interfaces/`,
 `justfile`, and CI, organized by file.
 
-### packages/layer0/src/pallets/storage-provider.ts
+### packages/storage/src/pallets/storage-provider.ts
 
 ```ts
 export async function configureCheckpointWindow(
@@ -3166,7 +3166,7 @@ export async function reportMissedCheckpoint(
 }
 ```
 
-### packages/layer0/src/provider-http.ts
+### packages/storage/src/provider-http.ts
 
 ```ts
 export async function fetchCheckpointDuty(
@@ -3197,7 +3197,7 @@ export async function signCheckpointProposal(
 }
 ```
 
-### packages/layer0/src/waits.ts (doc comment, original wording)
+### packages/storage/src/waits.ts (doc comment, original wording)
 
 ```ts
 /**

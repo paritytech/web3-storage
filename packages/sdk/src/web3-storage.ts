@@ -4,7 +4,7 @@
  * Web3Storage: one handle over a chain connection. It creates buckets and
  * manages their members on chain, finds each bucket's provider, and opens a
  * bucket as a file-system tree (`drive`) or as S3-style objects (`objects`).
- * Everything here can also be done with the layer0 and file-system functions
+ * Everything here can also be done with the storage and storage-formats functions
  * directly.
  */
 
@@ -29,8 +29,8 @@ import {
   type TxStatusListener,
   type Visibility,
   type WaitOpts,
-} from "@web3-storage/layer0";
-import { FsTree, Objects, providerBlobStore, type WriteQueue } from "@web3-storage/storage-formats";
+} from "@web3-storage/storage";
+import { FsTree, S3Bucket, providerBlobStore, type WriteQueue } from "@web3-storage/storage-formats";
 
 export interface Web3StorageOptions {
   api: ParachainApi;
@@ -194,8 +194,8 @@ export class Web3Storage {
   }
 
   /** The bucket's S3-style objects, stored in its file-system tree. */
-  async objects(bucketId: bigint, opts: { signal?: AbortSignal } = {}): Promise<Objects> {
-    return new Objects(await this.drive(bucketId, opts));
+  async objects(bucketId: bigint, opts: { signal?: AbortSignal } = {}): Promise<S3Bucket> {
+    return new S3Bucket(await this.drive(bucketId, opts));
   }
 
   /** Close the chain connection opened by {@link connect}. */

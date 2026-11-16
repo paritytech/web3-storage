@@ -5,7 +5,7 @@
  *
  * Owns the DriveClient instance, syncing it with chain.state.ts (api) and
  * wallet.state.ts (signer). Holds drives/entries/selection state. A drive is
- * a Layer 0 bucket, identified by its bucket id. Subscribes to StorageProvider
+ * a bucket, identified by its bucket id. Subscribes to StorageProvider
  * bucket and member events for real-time updates.
  */
 
@@ -44,7 +44,7 @@ export interface CreateDriveInput {
   provider: AvailableProvider;
   /** Terms already negotiated with the provider (`POST /negotiate`). */
   signed: SignedTerms;
-  /** Read visibility of the underlying Layer 0 bucket (default Private). */
+  /** Read visibility of the bucket (default Private). */
   visibility?: Visibility;
 }
 

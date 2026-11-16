@@ -5,7 +5,7 @@ pragma solidity ^0.8.34;
 import "./IWeb3Storage.sol";
 
 /// @title TokenGatedDrive
-/// @notice Example dApp: a Solidity contract owns a private Layer 0 bucket
+/// @notice Example dApp: a Solidity contract owns a private bucket
 ///         and mints a transferable token per object key. Holding at least
 ///         one token makes the holder a `Reader` member of the bucket, so the
 ///         provider serves them its objects; transferring the last token

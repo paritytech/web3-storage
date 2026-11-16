@@ -22,9 +22,7 @@ export type NegotiateProviderResult =
   | { ok: false; error: string };
 
 /**
- * A primary provider backing a bucket/drive's underlying layer-0 storage.
- * Shared by the S3 and file-system interfaces (re-exported from both as
- * `PrimaryProviderInfo`).
+ * A primary provider of a bucket.
  */
 export interface PrimaryProviderInfo {
   account: string;
@@ -34,7 +32,7 @@ export interface PrimaryProviderInfo {
 }
 
 /**
- * Resolve the primary-provider info for each given layer-0 bucket record,
+ * Resolve the primary-provider info for each given bucket record,
  * reading every provider in one batched query. Returns an array aligned
  * with `buckets`; each entry is that bucket's primary providers (possibly
  * empty).

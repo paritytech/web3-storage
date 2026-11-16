@@ -22,7 +22,7 @@ const KNOWN_DEV_SEEDS = Object.values(devSigners).map((s) => s.seed);
  * Make `keep` the only provider that the SDK clients pick when they
  * discover a provider for `create_bucket_with_primary`.
  *
- * The Layer 1 paths select via `query_available_providers[0]`, which iterates
+ * The file-system paths select via `query_available_providers[0]`, which iterates
  * `Providers` in storage-hash order — non-deterministic across AccountIds.
  * When CI registers a second provider, the auto-match flips between them at
  * random and tests that assume a specific provider signed the checkpoint
