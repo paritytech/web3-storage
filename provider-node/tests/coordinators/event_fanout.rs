@@ -4,9 +4,10 @@
 //! reacting to [`BlockEvent`]s fanned out by the chain-state coordinator,
 //! including the bootstrap scan on `Resubscribed` and lag recovery.
 
-use super::{alice_account, proof_source, test_state, test_state_with_data, wait_for};
+use super::{alice_account, proof_source, test_storage_with_data, wait_for, ALICE_SS58};
 use provider_events::BlockEvent;
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
+use provider_storage::temp_rocksdb;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -81,13 +82,13 @@ fn event_only_config() -> ChallengeResponderConfig {
 
 #[tokio::test]
 async fn challenge_event_triggers_point_read_and_response() {
-    let (state, challenge, _dir) = test_state_with_data();
+    let (storage, challenge, _dir) = test_storage_with_data();
     let (deadline, index) = (challenge.deadline, challenge.index);
     let bucket_id = challenge.bucket_id;
     let mock = MockChallengeClient::new(challenge);
     let responder = ChallengeResponder::new(
         event_only_config(),
-        proof_source(&state),
+        proof_source(&storage),
         Box::new(Arc::clone(&mock)),
     );
 
@@ -125,13 +126,13 @@ async fn challenge_event_triggers_point_read_and_response() {
 
 #[tokio::test]
 async fn foreign_challenge_event_is_ignored() {
-    let (state, challenge, _dir) = test_state_with_data();
+    let (storage, challenge, _dir) = test_storage_with_data();
     let (deadline, index) = (challenge.deadline, challenge.index);
     let bucket_id = challenge.bucket_id;
     let mock = MockChallengeClient::new(challenge);
     let responder = ChallengeResponder::new(
         event_only_config(),
-        proof_source(&state),
+        proof_source(&storage),
         Box::new(Arc::clone(&mock)),
     );
 
@@ -160,11 +161,11 @@ async fn foreign_challenge_event_is_ignored() {
 
 #[tokio::test]
 async fn resubscribe_triggers_bootstrap_scan() {
-    let (state, challenge, _dir) = test_state_with_data();
+    let (storage, challenge, _dir) = test_storage_with_data();
     let mock = MockChallengeClient::new(challenge);
     let responder = ChallengeResponder::new(
         event_only_config(),
-        proof_source(&state),
+        proof_source(&storage),
         Box::new(Arc::clone(&mock)),
     );
 
@@ -194,11 +195,11 @@ async fn membership_scope_unknown_does_not_trigger_bootstrap_scan() {
     // undecodable or unreachable membership event) - it says nothing about
     // whether the challenge responder's view of chain state is stale, so it
     // must not cost this coordinator a full scan the way `Resubscribed` does.
-    let (state, challenge, _dir) = test_state_with_data();
+    let (storage, challenge, _dir) = test_storage_with_data();
     let mock = MockChallengeClient::new(challenge);
     let responder = ChallengeResponder::new(
         event_only_config(),
-        proof_source(&state),
+        proof_source(&storage),
         Box::new(Arc::clone(&mock)),
     );
 
@@ -223,13 +224,13 @@ async fn membership_scope_unknown_does_not_trigger_bootstrap_scan() {
 async fn event_sent_while_paused_survives_until_resume() {
     // The safety net is off here, so a dropped event would be unrecoverable:
     // the queued event is the only thing that can produce a response.
-    let (state, challenge, _dir) = test_state_with_data();
+    let (storage, challenge, _dir) = test_storage_with_data();
     let (deadline, index) = (challenge.deadline, challenge.index);
     let bucket_id = challenge.bucket_id;
     let mock = MockChallengeClient::new(challenge);
     let responder = ChallengeResponder::new(
         event_only_config(),
-        proof_source(&state),
+        proof_source(&storage),
         Box::new(Arc::clone(&mock)),
     );
 
@@ -340,11 +341,11 @@ async fn replica_agreement_event_triggers_duty_pass() {
         poll_interval: Duration::ZERO,
         ..Default::default()
     };
-    let (state, _dir) = test_state();
+    let (storage, _dir) = temp_rocksdb();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        state.storage.clone(),
-        state.provider_id.clone(),
+        storage.clone(),
+        ALICE_SS58.to_string(),
         Box::new(Arc::clone(&mock)),
         None,
     );
@@ -387,9 +388,8 @@ async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
     // A client checkpoint on a bucket we hold locally must trigger a duty pass, and
     // the resulting duty (new root, no reachable primaries) must surface as
     // SourcesUnavailable through the callback — all without any network.
-    let (state, _dir) = test_state();
-    state
-        .storage
+    let (storage, _dir) = temp_rocksdb();
+    storage
         .init_bucket(7, 1024 * 1024)
         .expect("bucket initialises");
 
@@ -410,8 +410,8 @@ async fn bucket_checkpointed_event_drives_duty_through_sync_attempt() {
     };
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        state.storage.clone(),
-        state.provider_id.clone(),
+        storage.clone(),
+        ALICE_SS58.to_string(),
         Box::new(Arc::clone(&mock)),
         None,
     );
