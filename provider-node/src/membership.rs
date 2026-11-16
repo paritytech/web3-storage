@@ -4,8 +4,8 @@
 
 use crate::chain_connection::{self, ChainWatch};
 use provider_auth::{
-    BucketAccess, BucketMembership, Invalidation, Member, MembershipError, MembershipInvalidations,
-    MembershipResolver, OwnAgreement,
+    BucketAccess, BucketMembership, Invalidation, LocalBucketAgreement, Member, MembershipError,
+    MembershipInvalidations, MembershipResolver,
 };
 use provider_events::{BlockEvent, BlockEventRx};
 use sp_core::crypto::AccountId32;
@@ -120,10 +120,10 @@ impl MembershipResolver for ChainMembershipResolver {
     /// here, so a lapsed-but-unpruned agreement keeps serving until the entry
     /// is invalidated or falls out of the TTL, the same freshness bound the
     /// member set lives under.
-    async fn fetch_own_agreement(
+    async fn fetch_bucket_agreement(
         &self,
         bucket_id: BucketId,
-    ) -> Result<Option<OwnAgreement>, MembershipError> {
+    ) -> Result<Option<LocalBucketAgreement>, MembershipError> {
         let Some(own) = &self.provider_account else {
             return Ok(None);
         };
@@ -157,8 +157,8 @@ impl MembershipResolver for ChainMembershipResolver {
                 reason: e.to_string(),
             })?;
 
-        Ok(Some(OwnAgreement {
-            replica: matches!(agreement.role, ProviderRole::Replica { .. }),
+        Ok(Some(LocalBucketAgreement {
+            role: agreement.role.into(),
             max_bytes: agreement.max_bytes,
         }))
     }

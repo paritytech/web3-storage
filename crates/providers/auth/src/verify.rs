@@ -5,12 +5,12 @@
 use crate::error::AuthError;
 use crate::http_auth::auth_message;
 use crate::membership::{
-    MembershipCache, MembershipInvalidations, MembershipResolver, NodeRole, OwnAgreement,
-    RequiredRole,
+    role_satisfies, LocalBucketAgreement, MembershipCache, MembershipInvalidations,
+    MembershipResolver, NodeRole,
 };
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::Duration;
-use storage_primitives::{BucketId, Visibility};
+use storage_primitives::{BucketId, Role, Visibility};
 
 /// Wrap a payload the way Polkadot message-signing surfaces do before signing:
 /// `<Bytes>` ++ payload ++ `</Bytes>`. Browser extensions (`signRaw`) and PAPI's
@@ -197,17 +197,17 @@ impl Authenticator {
         auth_header: Option<&str>,
         method: &str,
         bucket_id: BucketId,
-        required: RequiredRole,
+        required: Role,
     ) -> Result<(), AuthError> {
         // One lookup serves both gates; its failure only matters once the
         // request has proven it needs a role.
         let access = self.membership.lookup(bucket_id).await;
         // A replica takes data by sync or by a push from a primary provider
         // of the bucket, so no one else may write to it.
-        if required != RequiredRole::Reader {
+        if required != Role::Reader {
             if let Ok(entry) = &access {
                 if entry.serves_as_replica {
-                    if let (RequiredRole::Writer, Some(header)) = (required, auth_header) {
+                    if let (Role::Writer, Some(header)) = (required, auth_header) {
                         let account = verify_signature(header, method, bucket_id, self.max_skew)?;
                         if entry.access.members.node_role_of(&account) == Some(NodeRole::Primary) {
                             return Ok(());
@@ -217,7 +217,7 @@ impl Authenticator {
                 }
             }
         }
-        if required == RequiredRole::Reader
+        if required == Role::Reader
             && access.as_ref().is_ok_and(|entry| {
                 entry.access.visibility == Visibility::Public || entry.serves_as_replica
             })
@@ -230,7 +230,7 @@ impl Authenticator {
 
         // Checked before the membership lookup result is consulted, so
         // operator reads keep working through a chain outage.
-        if required == RequiredRole::Reader && self.provider_account.as_ref() == Some(&account) {
+        if required == Role::Reader && self.provider_account.as_ref() == Some(&account) {
             return Ok(());
         }
 
@@ -238,7 +238,7 @@ impl Authenticator {
             .role_of(&account)
             .ok_or(AuthError::InsufficientRole)?;
 
-        if !required.is_satisfied_by(role) {
+        if !role_satisfies(required, role) {
             return Err(AuthError::InsufficientRole);
         }
 
@@ -248,11 +248,11 @@ impl Authenticator {
     /// This node's agreement on `bucket_id`, or `None` if it has none, read
     /// from the chain without the membership cache. Fails when the chain cannot
     /// be reached.
-    pub async fn own_agreement(
+    pub async fn bucket_agreement(
         &self,
         bucket_id: BucketId,
-    ) -> Result<Option<OwnAgreement>, AuthError> {
-        Ok(self.membership.fetch_own_agreement(bucket_id).await?)
+    ) -> Result<Option<LocalBucketAgreement>, AuthError> {
+        Ok(self.membership.fetch_bucket_agreement(bucket_id).await?)
     }
 }
 
@@ -269,7 +269,6 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
-    use storage_primitives::Role;
 
     fn make_auth_header(
         keypair: &sr25519::Pair,
@@ -369,20 +368,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn own_agreement_reports_the_resolved_agreement() {
+    async fn bucket_agreement_reports_the_resolved_agreement() {
         let with_agreement =
             Authenticator::new(StaticMembershipResolver::private(vec![]).with_max_bytes(1_000));
         assert_eq!(
-            with_agreement.own_agreement(1).await.unwrap(),
-            Some(OwnAgreement {
-                replica: false,
+            with_agreement.bucket_agreement(1).await.unwrap(),
+            Some(LocalBucketAgreement {
+                role: storage_primitives::RuntimeProviderRole::Primary,
                 max_bytes: 1_000
             })
         );
 
         let without =
             Authenticator::new(StaticMembershipResolver::private(vec![]).without_agreement());
-        assert_eq!(without.own_agreement(1).await.unwrap(), None);
+        assert_eq!(without.bucket_agreement(1).await.unwrap(), None);
     }
 
     #[tokio::test]
@@ -396,19 +395,15 @@ mod tests {
             visibility: Visibility::Public,
         }));
 
-        let anonymous_read = auth
-            .require_role(None, "GET", 1, RequiredRole::Reader)
-            .await;
+        let anonymous_read = auth.require_role(None, "GET", 1, Role::Reader).await;
         assert!(anonymous_read.is_ok(), "got {anonymous_read:?}");
 
-        let anonymous_write = auth
-            .require_role(None, "PUT", 1, RequiredRole::Writer)
-            .await;
+        let anonymous_write = auth.require_role(None, "PUT", 1, Role::Writer).await;
         assert!(matches!(anonymous_write, Err(AuthError::AuthRequired)));
 
         let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
         let reader_write = auth
-            .require_role(Some(&header), "PUT", 1, RequiredRole::Writer)
+            .require_role(Some(&header), "PUT", 1, Role::Writer)
             .await;
         assert!(matches!(reader_write, Err(AuthError::InsufficientRole)));
     }
@@ -421,14 +416,10 @@ mod tests {
         let auth =
             Authenticator::new(StaticMembershipResolver::private(vec![]).with_serves_as_replica());
 
-        let anonymous_read = auth
-            .require_role(None, "GET", 1, RequiredRole::Reader)
-            .await;
+        let anonymous_read = auth.require_role(None, "GET", 1, Role::Reader).await;
         assert!(anonymous_read.is_ok(), "got {anonymous_read:?}");
 
-        let anonymous_write = auth
-            .require_role(None, "PUT", 1, RequiredRole::Writer)
-            .await;
+        let anonymous_write = auth.require_role(None, "PUT", 1, Role::Writer).await;
         assert!(matches!(anonymous_write, Err(AuthError::NotPrimary)));
     }
 
@@ -439,9 +430,9 @@ mod tests {
         let members = |role| vec![(alice_account.clone(), role).into()];
 
         for (role, required) in [
-            (Role::Writer, RequiredRole::Writer),
-            (Role::Admin, RequiredRole::Writer),
-            (Role::Admin, RequiredRole::Admin),
+            (Role::Writer, Role::Writer),
+            (Role::Admin, Role::Writer),
+            (Role::Admin, Role::Admin),
         ] {
             let auth = Authenticator::new(
                 StaticMembershipResolver::private(members(role)).with_serves_as_replica(),
@@ -466,7 +457,7 @@ mod tests {
         let header = make_auth_header(&primary, "PUT", 1, current_timestamp());
 
         let write = auth
-            .require_role(Some(&header), "PUT", 1, RequiredRole::Writer)
+            .require_role(Some(&header), "PUT", 1, Role::Writer)
             .await;
         assert!(write.is_ok(), "got {write:?}");
     }
@@ -483,13 +474,13 @@ mod tests {
 
         let header = make_auth_header(&primary, "POST", 1, current_timestamp());
         let admin = auth
-            .require_role(Some(&header), "POST", 1, RequiredRole::Admin)
+            .require_role(Some(&header), "POST", 1, Role::Admin)
             .await;
         assert!(matches!(admin, Err(AuthError::NotPrimary)), "got {admin:?}");
 
         let header = make_auth_header(&stranger, "PUT", 1, current_timestamp());
         let write = auth
-            .require_role(Some(&header), "PUT", 1, RequiredRole::Writer)
+            .require_role(Some(&header), "PUT", 1, Role::Writer)
             .await;
         assert!(matches!(write, Err(AuthError::NotPrimary)), "got {write:?}");
     }
@@ -508,7 +499,7 @@ mod tests {
         let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
 
         let write = auth
-            .require_role(Some(&header), "PUT", 1, RequiredRole::Writer)
+            .require_role(Some(&header), "PUT", 1, Role::Writer)
             .await;
         assert!(write.is_ok(), "got {write:?}");
     }
@@ -524,13 +515,13 @@ mod tests {
 
         let header = make_auth_header(&provider, "GET", 1, current_timestamp());
         let read = auth
-            .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .require_role(Some(&header), "GET", 1, Role::Reader)
             .await;
         assert!(read.is_ok(), "got {read:?}");
 
         let header = make_auth_header(&provider, "PUT", 1, current_timestamp());
         let write = auth
-            .require_role(Some(&header), "PUT", 1, RequiredRole::Writer)
+            .require_role(Some(&header), "PUT", 1, Role::Writer)
             .await;
         assert!(matches!(write, Err(AuthError::InsufficientRole)));
     }
@@ -554,7 +545,7 @@ mod tests {
         for _ in 0..2 {
             let header = make_auth_header(&provider, "GET", 1, current_timestamp());
             let read = auth
-                .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+                .require_role(Some(&header), "GET", 1, Role::Reader)
                 .await;
             assert!(read.is_ok(), "got {read:?}");
         }
@@ -566,13 +557,11 @@ mod tests {
         let auth = authenticator(vec![
             (AccountId32::new(alice.public().0), Role::Reader).into()
         ]);
-        let anonymous_read = auth
-            .require_role(None, "GET", 1, RequiredRole::Reader)
-            .await;
+        let anonymous_read = auth.require_role(None, "GET", 1, Role::Reader).await;
         assert!(matches!(anonymous_read, Err(AuthError::AuthRequired)));
     }
 
-    async fn require_role_for(granted: Role, required: RequiredRole) -> Result<(), AuthError> {
+    async fn require_role_for(granted: Role, required: Role) -> Result<(), AuthError> {
         let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
         let auth = authenticator(vec![(AccountId32::new(keypair.public().0), granted).into()]);
         let header = make_auth_header(&keypair, "PUT", 1, current_timestamp());
@@ -585,15 +574,15 @@ mod tests {
         // Drives every (granted, required) pair through `require_role` so the
         // privilege ladder cannot be widened without a test failing.
         for (granted, required, allowed) in [
-            (Role::Reader, RequiredRole::Reader, true),
-            (Role::Reader, RequiredRole::Writer, false),
-            (Role::Reader, RequiredRole::Admin, false),
-            (Role::Writer, RequiredRole::Reader, true),
-            (Role::Writer, RequiredRole::Writer, true),
-            (Role::Writer, RequiredRole::Admin, false),
-            (Role::Admin, RequiredRole::Reader, true),
-            (Role::Admin, RequiredRole::Writer, true),
-            (Role::Admin, RequiredRole::Admin, true),
+            (Role::Reader, Role::Reader, true),
+            (Role::Reader, Role::Writer, false),
+            (Role::Reader, Role::Admin, false),
+            (Role::Writer, Role::Reader, true),
+            (Role::Writer, Role::Writer, true),
+            (Role::Writer, Role::Admin, false),
+            (Role::Admin, Role::Reader, true),
+            (Role::Admin, Role::Writer, true),
+            (Role::Admin, Role::Admin, true),
         ] {
             let result = require_role_for(granted, required).await;
             if allowed {
@@ -630,7 +619,7 @@ mod tests {
         let header = make_auth_header(&keypair, "PUT", 1, current_timestamp());
 
         assert!(auth
-            .require_role(Some(&header), "PUT", 1, RequiredRole::Admin)
+            .require_role(Some(&header), "PUT", 1, Role::Admin)
             .await
             .is_ok());
     }
@@ -647,7 +636,7 @@ mod tests {
         let header = make_auth_header(&bob, "GET", 1, current_timestamp());
 
         let result = auth
-            .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .require_role(Some(&header), "GET", 1, Role::Reader)
             .await;
         assert!(matches!(result, Err(AuthError::InsufficientRole)));
     }
@@ -659,16 +648,14 @@ mod tests {
             (AccountId32::new(alice.public().0), Role::Admin).into()
         ]);
 
-        let missing = auth
-            .require_role(None, "GET", 1, RequiredRole::Reader)
-            .await;
+        let missing = auth.require_role(None, "GET", 1, Role::Reader).await;
         assert!(matches!(missing, Err(AuthError::AuthRequired)));
 
         // Header signed for bucket 1 must not authorize bucket 2, even though
         // the signer is an Admin of the bucket it did sign for.
         let header = make_auth_header(&alice, "GET", 1, current_timestamp());
         let replayed = auth
-            .require_role(Some(&header), "GET", 2, RequiredRole::Reader)
+            .require_role(Some(&header), "GET", 2, Role::Reader)
             .await;
         assert!(matches!(replayed, Err(AuthError::AuthRequired)));
     }
@@ -692,13 +679,13 @@ mod tests {
         let header = make_auth_header(&keypair, "GET", 1, current_timestamp());
 
         // Seeds the cache via the resolver's one successful call.
-        auth.require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+        auth.require_role(Some(&header), "GET", 1, Role::Reader)
             .await
             .expect("first lookup must succeed and cache the member set");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         let result = auth
-            .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .require_role(Some(&header), "GET", 1, Role::Reader)
             .await;
         assert!(
             matches!(
@@ -726,12 +713,12 @@ mod tests {
         .with_max_stale(Duration::from_secs(300));
         let header = make_auth_header(&keypair, "GET", 1, current_timestamp());
 
-        auth.require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+        auth.require_role(Some(&header), "GET", 1, Role::Reader)
             .await
             .expect("first lookup must succeed and cache the member set");
 
         let result = auth
-            .require_role(Some(&header), "GET", 1, RequiredRole::Reader)
+            .require_role(Some(&header), "GET", 1, Role::Reader)
             .await;
         assert!(
             result.is_ok(),

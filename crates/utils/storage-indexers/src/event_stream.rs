@@ -27,7 +27,7 @@ const CHANNEL_CAPACITY: usize = 256;
 /// also bounds what a non-archive node could resolve anyway.
 const MAX_BACKFILL: u64 = 256;
 
-/// The `pallet-storage-provider` pallet (Layer 0 raw storage).
+/// The `pallet-storage-provider` pallet (buckets, agreements, challenges).
 pub const STORAGE_PROVIDER_PALLET: &str = "StorageProvider";
 
 /// A decoded runtime event together with the block it was emitted in.
@@ -80,7 +80,7 @@ impl EventFilter {
     }
 
     /// Match only events from the [`StorageProvider`](STORAGE_PROVIDER_PALLET)
-    /// pallet (Layer 0 raw storage).
+    /// pallet (buckets, agreements, challenges).
     pub fn storage_provider() -> Self {
         Self::pallet(STORAGE_PROVIDER_PALLET)
     }

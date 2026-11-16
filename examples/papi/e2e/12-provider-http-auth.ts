@@ -19,7 +19,7 @@
  * Workflow 06 covers the same ACL on-chain; this one is the off-chain half —
  * it is the only workflow that sends an `Authorization` header.
  *
- * The role ladder probes `PUT /node` (Writer) and `POST /delete` (Admin). Bucket-bound Layer 0 reads need `Reader` on a private
+ * The role ladder probes `PUT /node` (Writer) and `POST /delete` (Admin). Bucket-bound reads need `Reader` on a private
  * bucket: 12.13 covers that gate, 12.14 the hash-keyed reads that stay open.
  *
  * Usage: node e2e/12-provider-http-auth.js [chain_ws] [provider_url]
@@ -136,7 +136,7 @@ const writeStatus = (who: ChainSigner, bucketId: bigint, text: string) =>
   signedStatus(who, "PUT", "/node", bucketId, { body: nodeBody(bucketId, text) });
 
 /**
- * Body for the Admin-guarded `POST /delete` (L0 prune). Only ever sent by a
+ * Body for the Admin-guarded `POST /delete` (prune). Only ever sent by a
  * non-admin here: a prune that got past the guard would rewrite the bucket's
  * MMR, so the authorized path stays with the storage tests.
  */
@@ -367,10 +367,10 @@ async function main() {
     },
   });
 
-  // ── Layer-0 read gates ────────────────────────────────────────────────────
+  // ── Read gates ────────────────────────────────────────────────────────────
 
   tests.push({
-    name: "12.13 L0 bucket-bound reads are Reader-gated",
+    name: "12.13 Bucket-bound reads are Reader-gated",
     fn: async () => {
       // Unsigned: refused on the (private) bucket.
       assert.strictEqual(await statusOf("GET", `/commitment?bucket_id=${bucketId}`), 401);
@@ -393,7 +393,7 @@ async function main() {
   });
 
   tests.push({
-    name: "12.14 Hash-keyed L0 reads stay open (capability reads)",
+    name: "12.14 Hash-keyed reads stay open (capability reads)",
     fn: async () => {
       // A chunk a Writer stored is fetchable by hash with no signature:
       // possession of the hash is the capability; the enumeration surfaces

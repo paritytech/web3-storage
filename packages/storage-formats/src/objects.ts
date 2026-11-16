@@ -8,7 +8,7 @@
 import { loadWasm } from "#load-wasm";
 
 import {
-  WasmObjects,
+  WasmS3Bucket,
   type GetObjectResponse,
   type HeadObjectResponse,
   type ListObjectsOptions,
@@ -36,14 +36,14 @@ const objectError = (code: string, message: string, cause: unknown) =>
   OBJECT_ERROR_CODES.has(code) ? new ObjectError(code, message, { cause }) : new FileSystemError(code, message, { cause });
 
 /** The objects of one bucket, stored in its file tree. Writes run through the tree's write queue. */
-export class Objects {
-  private objects?: WasmObjects;
+export class S3Bucket {
+  private objects?: WasmS3Bucket;
 
   constructor(private readonly tree: FsTree) {}
 
-  private async wasm(): Promise<WasmObjects> {
+  private async wasm(): Promise<WasmS3Bucket> {
     await loadWasm();
-    this.objects ??= new WasmObjects(this.tree.store, this.tree.bucketId);
+    this.objects ??= new WasmS3Bucket(this.tree.store, this.tree.bucketId);
     return this.objects;
   }
 

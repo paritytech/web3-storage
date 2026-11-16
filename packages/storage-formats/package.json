@@ -16,12 +16,12 @@
   },
   "dependencies": {
     "@web3-storage/core": "workspace:*",
-    "@web3-storage/layer0": "workspace:*"
+    "@web3-storage/storage": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
     "typescript": "~7.0.2",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   },
   "imports": {
     "#load-wasm": {

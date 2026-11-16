@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 /**
- * S3 Client — s3-ui's thin adapter over the SDK's Web3Storage + layer0 pallet
+ * S3 Client — s3-ui's thin adapter over the SDK's Web3Storage + storage pallet
  * wrappers, mirroring drive-ui's DriveClient. Everything chain/HTTP-mechanical
  * (bucket/object ops, tx submission, provider resolution + caching, retry,
  * request signing, the negotiate→establish flow, MultiSignature encoding)
@@ -199,7 +199,7 @@ export class S3Client {
   /**
    * Redeem provider-signed terms in `create_bucket_with_primary`
    * (negotiate→establish). The terms are pre-negotiated by the create-bucket
-   * UI. Returns the new Layer 0 bucket id.
+   * UI. Returns the new bucket id.
    */
   async createBucket(
     providerAccount: string,
@@ -222,7 +222,7 @@ export class S3Client {
     return this.requireW3s().listBuckets();
   }
 
-  // ── S3 Object operations (the bucket's own tree, via the SDK's Objects) ────
+  // ── S3 Object operations (the bucket's own tree, via the SDK's S3Bucket) ────
 
   async putObject(
     bucketId: bigint,
@@ -324,7 +324,7 @@ export class S3Client {
   /**
    * Open a checkpoint challenge against a provider. The chain submission
    * (finalized — the challenge id must survive to the response) goes through
-   * the SDK's `submitTx`; we extract `respond_by` ourselves because layer0's
+   * the SDK's `submitTx`; we extract `respond_by` ourselves because the storage package's
    * `challengeCheckpoint` wrapper returns only the id and forces chunk 0.
    */
   async challengeCheckpoint(

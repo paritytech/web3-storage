@@ -34,7 +34,7 @@ function BucketsContent() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Buckets</h1>
-        <p className="text-gray-400">Layer 0 storage buckets you are serving</p>
+        <p className="text-gray-400">Storage buckets you are serving</p>
       </div>
 
       {/* Stats */}
@@ -61,7 +61,7 @@ function BucketsContent() {
       <Card>
         <CardHeader>
           <CardTitle>Your Buckets</CardTitle>
-          <CardDescription>Detailed view of each L0 bucket you serve</CardDescription>
+          <CardDescription>Detailed view of each bucket you serve</CardDescription>
         </CardHeader>
         <CardContent>
           {buckets.length === 0 ? (
