@@ -72,7 +72,7 @@ client-test-support = { path = "clients/test-support" }
 frame-benchmarking = { version = "50.0.0", default-features = false }
 frame-executive = { version = "49.0.0", default-features = false }
 frame-metadata-hash-extension = { version = "0.17.0", default-features = false }
-frame-support = { version = "49.0.1", default-features = false }
+frame-support = { version = "49.1.0", default-features = false }
 frame-system = { version = "49.0.0", default-features = false }
 frame-system-benchmarking = { version = "50.0.0", default-features = false }
 frame-system-rpc-runtime-api = { version = "44.0.0", default-features = false }
@@ -85,7 +85,7 @@ pallet-authorship = { version = "49.0.0", default-features = false }
 pallet-balances = { version = "51.0.2", default-features = false }
 pallet-collator-selection = { version = "31.0.0", default-features = false }
 pallet-message-queue = { version = "53.0.0", default-features = false }
-pallet-revive = { version = "0.20.2", default-features = false }
+pallet-revive = { version = "0.22.0", default-features = false }
 pallet-session = { version = "50.0.0", default-features = false }
 pallet-sudo = { version = "50.0.0", default-features = false }
 pallet-timestamp = { version = "49.0.0", default-features = false }
@@ -124,7 +124,7 @@ array-bytes = { version = "6.2.3", default-features = false }
 polkadot-ckb-merkle-mountain-range = { version = "0.8.2", default-features = false }
 
 # Polkadot
-pallet-xcm = { version = "31.0.0", default-features = false }
+pallet-xcm = { version = "31.1.0", default-features = false }
 pallet-xcm-benchmarks = { version = "31.0.0", default-features = false }
 parachains-runtimes-test-utils = { version = "40.0.0", default-features = true }
 polkadot-parachain-primitives = { version = "24.0.0", default-features = false }
@@ -132,7 +132,7 @@ polkadot-primitives = { version = "26.0.0", default-features = false }
 polkadot-runtime-common = { version = "34.0.0", default-features = false }
 xcm = { version = "25.0.0", default-features = false, package = "staging-xcm" }
 xcm-builder = { version = "31.0.0", default-features = false, package = "staging-xcm-builder" }
-xcm-executor = { version = "29.0.1", default-features = false, package = "staging-xcm-executor" }
+xcm-executor = { version = "29.0.2", default-features = false, package = "staging-xcm-executor" }
 xcm-runtime-apis = { version = "0.17.0", default-features = false }
 
 # Cumulus
