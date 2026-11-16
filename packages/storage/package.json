@@ -26,11 +26,11 @@
   "devDependencies": {
     "@types/node": "^26.6.6",
     "typescript": "~7.0.2",
-    "viem": "^2.57.13",
-    "vitest": "^5.0.5"
+    "viem": "^2.57.16",
+    "vitest": "^5.1.0"
   },
   "peerDependencies": {
-    "viem": "^2.57.13"
+    "viem": "^2.57.16"
   },
   "peerDependenciesMeta": {
     "viem": {
