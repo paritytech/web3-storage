@@ -3,11 +3,13 @@
 //! Shared provider-related types.
 
 mod chain;
+mod chain_state;
 mod keys;
 mod provider_info;
 mod runtime_type;
 
 pub use chain::ChainClientError;
+pub use chain_state::{ChainState, PalletConstants};
 pub use keys::{KeyScheme, ProviderKeypair, SigningRefused};
 pub use provider_info::{ProviderInfo, ProviderSettings, ProviderStats};
 pub use runtime_type::{Balance, BlockNumber};

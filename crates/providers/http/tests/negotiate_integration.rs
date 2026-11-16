@@ -10,10 +10,9 @@
 
 use axum::http::StatusCode;
 use provider_auth::{Authenticator, StaticMembershipResolver};
-use provider_coordinator::PalletConstants;
 use provider_http::{create_router, NegotiateRequest, ProviderDeps, ProviderState, SignedTerms};
 use provider_storage::temp_rocksdb;
-use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
+use provider_types::{PalletConstants, ProviderInfo, ProviderSettings, ProviderStats};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};

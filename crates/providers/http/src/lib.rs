@@ -15,7 +15,7 @@ pub mod types;
 pub use api::create_router;
 pub use error::Error;
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
-pub use provider_coordinator::ChainState;
+pub use provider_types::ChainState;
 pub use types::*;
 
 use codec::Encode;
