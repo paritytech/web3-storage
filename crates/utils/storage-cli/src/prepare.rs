@@ -14,7 +14,7 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use clap::ValueEnum;
 use serde::{Serialize, Serializer};
-use sp_runtime::AccountId32;
+use sp_core::crypto::AccountId32;
 use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Visibility};
 
 use crate::common::BucketId;

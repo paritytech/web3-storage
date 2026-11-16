@@ -9738,7 +9738,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "array-bytes 6.2.3",
- "async-trait",
  "bip39",
  "clap",
  "provider-types",
@@ -9746,10 +9745,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sp-core",
- "sp-runtime",
  "storage-client",
  "storage-subxt",
- "subxt",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

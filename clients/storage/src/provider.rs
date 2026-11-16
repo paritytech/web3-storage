@@ -494,7 +494,7 @@ impl ProviderClient {
 
 // Types
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderSettings {
     pub price_per_byte: u128,
     pub min_duration: u32,

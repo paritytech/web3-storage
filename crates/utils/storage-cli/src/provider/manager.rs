@@ -2,15 +2,12 @@
 
 //! The provider management operations.
 
-use super::chain::{ChainError, ProviderChain};
-use super::types::{
-    ProviderRecord, ProviderRegistration, ProviderSettings, ProviderSettingsUpdate, SettingsError,
-    TxReceipt,
+use sp_core::crypto::{AccountId32, Ss58AddressFormat, Ss58Codec};
+use sp_core::H256;
+use storage_client::discovery::ProviderInfo;
+use storage_client::{
+    ClientError, ProviderClient, ProviderSettings, ProviderSettingsUpdate, SettingsError, Signer,
 };
-
-/// Public key lengths the pallet accepts: 32 bytes for sr25519 and
-/// ed25519, 33 for compressed ecdsa.
-const ACCEPTED_PUBLIC_KEY_LENGTHS: [usize; 2] = [32, 33];
 
 /// Why a provider operation did not submit a transaction, or why the chain
 /// rejected the one it submitted.
@@ -49,7 +46,7 @@ pub enum ProviderError {
         /// The signing account.
         account: String,
         /// Anchor block at which `complete_deregister` becomes callable.
-        deregister_at: u64,
+        deregister_at: u32,
     },
 
     /// The provider still has committed bytes. The pallet rejects a
@@ -68,73 +65,66 @@ pub enum ProviderError {
     #[error("invalid settings: {0}")]
     Settings(#[from] SettingsError),
 
-    /// A chain read or write failed.
+    /// A chain read or write failed, or the chain rejected the transaction.
     #[error(transparent)]
-    Chain(#[from] ChainError),
+    Chain(#[from] ClientError),
 }
 
 /// Outcome of [`ProviderManager::update_settings`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct SettingsUpdateOutcome {
     /// The settings now on chain: the current ones with the update applied.
     pub settings: ProviderSettings,
-    /// The transaction receipt, or `None` when the update changed nothing
-    /// and no transaction was submitted.
-    pub receipt: Option<TxReceipt>,
+    /// The finalized block that includes the update, or `None` when the
+    /// update changed nothing and no transaction was submitted.
+    pub block_hash: Option<H256>,
 }
 
-/// Provider management operations over a [`ProviderChain`].
-pub struct ProviderManager<C> {
-    chain: C,
+/// Provider management operations over a connected [`ProviderClient`].
+pub struct ProviderManager {
+    client: ProviderClient,
+    account: AccountId32,
+    display_account: String,
 }
 
-impl<C: ProviderChain> ProviderManager<C> {
-    /// Operations signed by `chain`'s account.
-    pub fn new(chain: C) -> Self {
-        Self { chain }
+impl ProviderManager {
+    /// Operations over the connected `client`, signed by `signer`. The
+    /// account is displayed with `ss58_prefix`.
+    pub fn new(client: ProviderClient, signer: &Signer, ss58_prefix: u16) -> Self {
+        let account = signer.account_id();
+        let display_account =
+            account.to_ss58check_with_version(Ss58AddressFormat::custom(ss58_prefix));
+        Self {
+            client,
+            account,
+            display_account,
+        }
     }
 
-    /// The signing account in the chain's display encoding.
-    pub fn account(&self) -> String {
-        self.chain.account()
+    /// The signing account in the chain's SS58 encoding.
+    pub fn account(&self) -> &str {
+        &self.display_account
     }
 
     /// Register the signing account as a provider.
     ///
-    /// Rejects an empty multiaddr, a public key of a length no scheme uses,
-    /// a zero stake, and an account that is already registered. The chain
-    /// still enforces its minimum stake and its multiaddr length limit.
+    /// Rejects an empty multiaddr, a zero stake, and an account that is
+    /// already registered. The chain still enforces its minimum stake, its
+    /// multiaddr length limit and the public key length.
     pub async fn register(
         &self,
-        registration: &ProviderRegistration,
-    ) -> Result<TxReceipt, ProviderError> {
-        if registration.multiaddr.is_empty() {
-            return Err(ProviderError::Invalid {
-                field: "multiaddr",
-                reason: "must not be empty".to_string(),
-            });
-        }
-        if !ACCEPTED_PUBLIC_KEY_LENGTHS.contains(&registration.public_key.len()) {
-            return Err(ProviderError::Invalid {
-                field: "public_key",
-                reason: format!(
-                    "{} bytes; expected 32 (sr25519, ed25519) or 33 (ecdsa)",
-                    registration.public_key.len()
-                ),
-            });
-        }
-        if registration.stake == 0 {
-            return Err(ProviderError::Invalid {
-                field: "stake",
-                reason: "must be greater than zero".to_string(),
-            });
-        }
-        if self.chain.fetch_provider().await?.is_some() {
+        multiaddr: String,
+        public_key: Vec<u8>,
+        stake: u128,
+    ) -> Result<H256, ProviderError> {
+        check_registration(&multiaddr, stake)?;
+        if self.provider().await?.is_some() {
             return Err(ProviderError::AlreadyRegistered {
-                account: self.chain.account(),
+                account: self.display_account.clone(),
             });
         }
-        Ok(self.chain.register_provider(registration).await?)
+        let tx = self.client.register(multiaddr, public_key, stake).await?;
+        Ok(tx.block_hash)
     }
 
     /// Apply `update` to the signing account's current settings and submit
@@ -142,30 +132,27 @@ impl<C: ProviderChain> ProviderManager<C> {
     ///
     /// Rejects an unregistered account, a provider with an announced
     /// deregistration, and merged settings the chain would reject (see
-    /// [`ProviderSettings::validate`]). Submits nothing when the merged
-    /// settings equal the current ones.
+    /// [`ProviderSettings::validate`]). Submits nothing when the merged settings
+    /// equal the current ones.
     pub async fn update_settings(
         &self,
         update: &ProviderSettingsUpdate,
     ) -> Result<SettingsUpdateOutcome, ProviderError> {
-        let provider = self.registered_provider().await?;
-        self.ensure_no_deregister_announced(&provider)?;
+        let provider = active_provider(&self.display_account, self.provider().await?)?;
+        let min_stake_per_byte = self.client.min_stake_per_byte().await?;
+        let settings = merged_settings(&provider, update, min_stake_per_byte)?;
 
-        let settings = update.apply(&provider.settings);
-        let min_stake_per_byte = self.chain.min_stake_per_byte().await?;
-        settings.validate(provider.committed_bytes, provider.stake, min_stake_per_byte)?;
-
-        if settings == provider.settings {
+        if settings == provider.settings() {
             return Ok(SettingsUpdateOutcome {
                 settings,
-                receipt: None,
+                block_hash: None,
             });
         }
 
-        let receipt = self.chain.update_provider_settings(&settings).await?;
+        let tx = self.client.update_settings(settings.clone()).await?;
         Ok(SettingsUpdateOutcome {
             settings,
-            receipt: Some(receipt),
+            block_hash: Some(tx.block_hash),
         })
     }
 
@@ -175,274 +162,142 @@ impl<C: ProviderChain> ProviderManager<C> {
     /// deregistration, and a provider with committed bytes. The pallet's
     /// `complete_deregister` releases the stake after the announcement
     /// period.
-    pub async fn deregister(&self) -> Result<TxReceipt, ProviderError> {
-        let provider = self.registered_provider().await?;
-        self.ensure_no_deregister_announced(&provider)?;
-        if provider.committed_bytes > 0 {
-            return Err(ProviderError::HasActiveAgreements {
-                account: self.chain.account(),
-                committed_bytes: provider.committed_bytes,
-            });
-        }
-        Ok(self.chain.deregister_provider().await?)
+    pub async fn deregister(&self) -> Result<H256, ProviderError> {
+        let provider = active_provider(&self.display_account, self.provider().await?)?;
+        check_deregister(&self.display_account, &provider)?;
+        let tx = self.client.deregister().await?;
+        Ok(tx.block_hash)
     }
 
-    /// The signing account's record, or [`ProviderError::NotRegistered`].
-    async fn registered_provider(&self) -> Result<ProviderRecord, ProviderError> {
-        self.chain
-            .fetch_provider()
-            .await?
-            .ok_or_else(|| ProviderError::NotRegistered {
-                account: self.chain.account(),
-            })
+    /// The signing account's provider record, or `None` when it is not
+    /// registered.
+    async fn provider(&self) -> Result<Option<ProviderInfo>, ProviderError> {
+        Ok(self.client.get_provider_info(&self.account).await?)
     }
+}
 
-    fn ensure_no_deregister_announced(
-        &self,
-        provider: &ProviderRecord,
-    ) -> Result<(), ProviderError> {
-        match provider.deregister_at {
-            Some(deregister_at) => Err(ProviderError::DeregisterAnnounced {
-                account: self.chain.account(),
-                deregister_at,
-            }),
-            None => Ok(()),
-        }
+/// The input checks of a registration, made before any chain read.
+fn check_registration(multiaddr: &str, stake: u128) -> Result<(), ProviderError> {
+    if multiaddr.is_empty() {
+        return Err(ProviderError::Invalid {
+            field: "multiaddr",
+            reason: "must not be empty".to_string(),
+        });
     }
+    if stake == 0 {
+        return Err(ProviderError::Invalid {
+            field: "stake",
+            reason: "must be greater than zero".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// The record of a registered provider with no announced deregistration.
+fn active_provider(
+    account: &str,
+    provider: Option<ProviderInfo>,
+) -> Result<ProviderInfo, ProviderError> {
+    let provider = provider.ok_or_else(|| ProviderError::NotRegistered {
+        account: account.to_string(),
+    })?;
+    match provider.deregister_at {
+        Some(deregister_at) => Err(ProviderError::DeregisterAnnounced {
+            account: account.to_string(),
+            deregister_at,
+        }),
+        None => Ok(provider),
+    }
+}
+
+/// `update` applied to the provider's settings, checked like the pallet
+/// checks them.
+fn merged_settings(
+    provider: &ProviderInfo,
+    update: &ProviderSettingsUpdate,
+    min_stake_per_byte: u128,
+) -> Result<ProviderSettings, ProviderError> {
+    let settings = update.apply(&provider.settings());
+    settings.validate(provider.committed_bytes, provider.stake, min_stake_per_byte)?;
+    Ok(settings)
+}
+
+/// A provider can announce deregistration only with no committed bytes.
+fn check_deregister(account: &str, provider: &ProviderInfo) -> Result<(), ProviderError> {
+    if provider.committed_bytes > 0 {
+        return Err(ProviderError::HasActiveAgreements {
+            account: account.to_string(),
+            committed_bytes: provider.committed_bytes,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    /// What the mock chain recorded being submitted.
-    #[derive(Debug, PartialEq, Eq)]
-    enum Submitted {
-        Register(ProviderRegistration),
-        UpdateSettings(ProviderSettings),
-        Deregister,
-    }
-
-    /// `MinStakePerByte` of the mock chain. A stake of 1_000_000 backs
-    /// capacities up to 10_000 bytes.
+    /// `MinStakePerByte` of the tests. A stake of 1_000_000 backs capacities
+    /// up to 10_000 bytes.
     const MIN_STAKE_PER_BYTE: u128 = 100;
 
-    struct MockChain {
-        provider: Option<ProviderRecord>,
-        submitted: Mutex<Vec<Submitted>>,
-    }
-
-    impl MockChain {
-        fn new(provider: Option<ProviderRecord>) -> Self {
-            Self {
-                provider,
-                submitted: Mutex::new(Vec::new()),
-            }
-        }
-    }
-
-    fn receipt() -> TxReceipt {
-        TxReceipt {
-            block_hash: Some("0x01".to_string()),
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl ProviderChain for MockChain {
-        fn account(&self) -> String {
-            "alice".to_string()
-        }
-
-        async fn fetch_provider(&self) -> Result<Option<ProviderRecord>, ChainError> {
-            Ok(self.provider.clone())
-        }
-
-        async fn min_stake_per_byte(&self) -> Result<u128, ChainError> {
-            Ok(MIN_STAKE_PER_BYTE)
-        }
-
-        async fn register_provider(
-            &self,
-            registration: &ProviderRegistration,
-        ) -> Result<TxReceipt, ChainError> {
-            self.submitted
-                .lock()
-                .unwrap()
-                .push(Submitted::Register(registration.clone()));
-            Ok(receipt())
-        }
-
-        async fn update_provider_settings(
-            &self,
-            settings: &ProviderSettings,
-        ) -> Result<TxReceipt, ChainError> {
-            self.submitted
-                .lock()
-                .unwrap()
-                .push(Submitted::UpdateSettings(settings.clone()));
-            Ok(receipt())
-        }
-
-        async fn deregister_provider(&self) -> Result<TxReceipt, ChainError> {
-            self.submitted.lock().unwrap().push(Submitted::Deregister);
-            Ok(receipt())
-        }
-    }
-
-    fn settings() -> ProviderSettings {
-        ProviderSettings {
+    fn provider() -> ProviderInfo {
+        ProviderInfo {
+            multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
+            public_key: vec![1; 32],
+            stake: 1_000,
             min_duration: 10,
             max_duration: 100,
             price_per_byte: 5,
             accepting_primary: true,
-            replica_sync_price: None,
             accepting_extensions: true,
-            max_capacity: 0,
-            min_agreement_bytes: 0,
+            ..Default::default()
         }
     }
 
-    fn record() -> ProviderRecord {
-        ProviderRecord {
-            multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
-            public_key: vec![1; 32],
-            stake: 1_000,
-            committed_bytes: 0,
-            settings: settings(),
-            deregister_at: None,
-        }
+    #[test]
+    fn registration_accepts_valid_input() {
+        check_registration("/ip4/127.0.0.1/tcp/3333", 1_000).unwrap();
+        check_registration("/ip4/127.0.0.1/tcp/3333", 1).unwrap();
     }
 
-    fn registration() -> ProviderRegistration {
-        ProviderRegistration {
-            multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
-            public_key: vec![1; 32],
-            stake: 1_000,
-        }
-    }
-
-    fn submitted(manager: &ProviderManager<MockChain>) -> Vec<Submitted> {
-        std::mem::take(&mut *manager.chain.submitted.lock().unwrap())
-    }
-
-    #[tokio::test]
-    async fn register_submits_for_unregistered_account() {
-        let manager = ProviderManager::new(MockChain::new(None));
-        let got = manager.register(&registration()).await.unwrap();
-        assert_eq!(got, receipt());
-        assert_eq!(
-            submitted(&manager),
-            vec![Submitted::Register(registration())]
-        );
-    }
-
-    #[tokio::test]
-    async fn register_rejects_registered_account() {
-        let manager = ProviderManager::new(MockChain::new(Some(record())));
-        let err = manager.register(&registration()).await.unwrap_err();
-        assert!(
-            matches!(err, ProviderError::AlreadyRegistered { .. }),
-            "{err}"
-        );
-        assert!(submitted(&manager).is_empty());
-    }
-
-    #[tokio::test]
-    async fn register_rejects_invalid_input_before_reading_chain() {
-        let manager = ProviderManager::new(MockChain::new(None));
+    #[test]
+    fn registration_rejects_invalid_input() {
         let cases = [
-            (
-                ProviderRegistration {
-                    multiaddr: String::new(),
-                    ..registration()
-                },
-                "multiaddr",
-            ),
-            (
-                ProviderRegistration {
-                    public_key: vec![1; 20],
-                    ..registration()
-                },
-                "public_key",
-            ),
-            (
-                ProviderRegistration {
-                    public_key: vec![1; 64],
-                    ..registration()
-                },
-                "public_key",
-            ),
-            (
-                ProviderRegistration {
-                    stake: 0,
-                    ..registration()
-                },
-                "stake",
-            ),
+            ("", 1_000, "multiaddr"),
+            ("/ip4/127.0.0.1/tcp/3333", 0, "stake"),
         ];
-        for (input, expected_field) in cases {
-            let err = manager.register(&input).await.unwrap_err();
+        for (multiaddr, stake, expected_field) in cases {
+            let err = check_registration(multiaddr, stake).unwrap_err();
             assert!(
                 matches!(err, ProviderError::Invalid { field, .. } if field == expected_field),
                 "{err}"
             );
         }
-        assert!(submitted(&manager).is_empty());
     }
 
-    #[tokio::test]
-    async fn update_settings_merges_and_submits() {
-        let manager = ProviderManager::new(MockChain::new(Some(record())));
-        let update = ProviderSettingsUpdate {
-            price_per_byte: Some(9),
-            replica_sync_price: Some(Some(3)),
-            ..Default::default()
-        };
-        let got = manager.update_settings(&update).await.unwrap();
-        let expected = ProviderSettings {
-            price_per_byte: 9,
-            replica_sync_price: Some(3),
-            ..settings()
-        };
-        assert_eq!(got.settings, expected);
-        assert_eq!(got.receipt, Some(receipt()));
-        assert_eq!(
-            submitted(&manager),
-            vec![Submitted::UpdateSettings(expected)]
+    #[test]
+    fn active_provider_requires_a_registered_provider() {
+        let record = active_provider("5Abc", Some(provider())).unwrap();
+        assert_eq!(record.stake, 1_000);
+
+        let err = active_provider("5Abc", None).unwrap_err();
+        assert!(
+            matches!(&err, ProviderError::NotRegistered { account } if account == "5Abc"),
+            "{err}"
         );
     }
 
-    #[tokio::test]
-    async fn update_settings_skips_no_op() {
-        let manager = ProviderManager::new(MockChain::new(Some(record())));
-        let update = ProviderSettingsUpdate {
-            price_per_byte: Some(settings().price_per_byte),
-            ..Default::default()
-        };
-        let got = manager.update_settings(&update).await.unwrap();
-        assert_eq!(got.settings, settings());
-        assert_eq!(got.receipt, None);
-        assert!(submitted(&manager).is_empty());
-    }
-
-    #[tokio::test]
-    async fn update_settings_rejects_unregistered_and_deregistering() {
-        let manager = ProviderManager::new(MockChain::new(None));
-        let err = manager
-            .update_settings(&ProviderSettingsUpdate::default())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, ProviderError::NotRegistered { .. }), "{err}");
-
-        let manager = ProviderManager::new(MockChain::new(Some(ProviderRecord {
-            deregister_at: Some(500),
-            ..record()
-        })));
-        let err = manager
-            .update_settings(&ProviderSettingsUpdate::default())
-            .await
-            .unwrap_err();
+    #[test]
+    fn active_provider_rejects_an_announced_deregistration() {
+        let err = active_provider(
+            "5Abc",
+            Some(ProviderInfo {
+                deregister_at: Some(500),
+                ..provider()
+            }),
+        )
+        .unwrap_err();
         assert!(
             matches!(
                 err,
@@ -453,19 +308,44 @@ mod tests {
             ),
             "{err}"
         );
-        assert!(submitted(&manager).is_empty());
     }
 
-    /// The merged settings go through [`ProviderSettings::validate`] with
-    /// the provider's committed bytes and stake and the chain's
-    /// `MinStakePerByte`; a failure submits nothing.
-    #[tokio::test]
-    async fn update_settings_rejects_what_the_pallet_rejects() {
-        let manager = ProviderManager::new(MockChain::new(Some(ProviderRecord {
+    #[test]
+    fn merged_settings_applies_only_the_set_fields() {
+        let update = ProviderSettingsUpdate {
+            price_per_byte: Some(9),
+            replica_sync_price: Some(Some(3)),
+            ..Default::default()
+        };
+        let merged = merged_settings(&provider(), &update, MIN_STAKE_PER_BYTE).unwrap();
+        assert_eq!(
+            merged,
+            ProviderSettings {
+                price_per_byte: 9,
+                replica_sync_price: Some(3),
+                ..provider().settings()
+            }
+        );
+
+        let unchanged = merged_settings(
+            &provider(),
+            &ProviderSettingsUpdate::default(),
+            MIN_STAKE_PER_BYTE,
+        )
+        .unwrap();
+        assert_eq!(unchanged, provider().settings());
+    }
+
+    /// The merged settings go through [`ProviderSettings::validate`] with the
+    /// provider's committed bytes and stake and the chain's
+    /// `MinStakePerByte`.
+    #[test]
+    fn merged_settings_rejects_what_the_pallet_rejects() {
+        let record = ProviderInfo {
             committed_bytes: 4_096,
             stake: 1_000_000,
-            ..record()
-        })));
+            ..provider()
+        };
         let cases = [
             (
                 ProviderSettingsUpdate {
@@ -512,13 +392,12 @@ mod tests {
             ),
         ];
         for (update, expected) in cases {
-            let err = manager.update_settings(&update).await.unwrap_err();
+            let err = merged_settings(&record, &update, MIN_STAKE_PER_BYTE).unwrap_err();
             assert!(
                 matches!(&err, ProviderError::Settings(e) if *e == expected),
                 "{err}"
             );
         }
-        assert!(submitted(&manager).is_empty());
 
         // The largest capacity the stake backs is accepted; unlimited
         // capacity skips the capacity checks.
@@ -533,39 +412,22 @@ mod tests {
                 ..Default::default()
             },
         ] {
-            manager.update_settings(&update).await.unwrap();
+            merged_settings(&record, &update, MIN_STAKE_PER_BYTE).unwrap();
         }
-        assert_eq!(submitted(&manager).len(), 2);
     }
 
-    #[tokio::test]
-    async fn deregister_submits_for_idle_provider() {
-        let manager = ProviderManager::new(MockChain::new(Some(record())));
-        assert_eq!(manager.deregister().await.unwrap(), receipt());
-        assert_eq!(submitted(&manager), vec![Submitted::Deregister]);
-    }
+    #[test]
+    fn deregister_requires_no_committed_bytes() {
+        check_deregister("5Abc", &provider()).unwrap();
 
-    #[tokio::test]
-    async fn deregister_rejects_unregistered_announced_and_committed() {
-        let manager = ProviderManager::new(MockChain::new(None));
-        let err = manager.deregister().await.unwrap_err();
-        assert!(matches!(err, ProviderError::NotRegistered { .. }), "{err}");
-
-        let manager = ProviderManager::new(MockChain::new(Some(ProviderRecord {
-            deregister_at: Some(500),
-            ..record()
-        })));
-        let err = manager.deregister().await.unwrap_err();
-        assert!(
-            matches!(err, ProviderError::DeregisterAnnounced { .. }),
-            "{err}"
-        );
-
-        let manager = ProviderManager::new(MockChain::new(Some(ProviderRecord {
-            committed_bytes: 1,
-            ..record()
-        })));
-        let err = manager.deregister().await.unwrap_err();
+        let err = check_deregister(
+            "5Abc",
+            &ProviderInfo {
+                committed_bytes: 1,
+                ..provider()
+            },
+        )
+        .unwrap_err();
         assert!(
             matches!(
                 err,
@@ -576,46 +438,5 @@ mod tests {
             ),
             "{err}"
         );
-        assert!(submitted(&manager).is_empty());
-    }
-
-    #[tokio::test]
-    async fn chain_errors_propagate() {
-        struct FailingChain;
-
-        #[async_trait::async_trait]
-        impl ProviderChain for FailingChain {
-            fn account(&self) -> String {
-                "alice".to_string()
-            }
-            async fn fetch_provider(&self) -> Result<Option<ProviderRecord>, ChainError> {
-                Err(ChainError::Read {
-                    what: "provider",
-                    reason: "connection refused".to_string(),
-                })
-            }
-            async fn min_stake_per_byte(&self) -> Result<u128, ChainError> {
-                unreachable!()
-            }
-            async fn register_provider(
-                &self,
-                _: &ProviderRegistration,
-            ) -> Result<TxReceipt, ChainError> {
-                unreachable!()
-            }
-            async fn update_provider_settings(
-                &self,
-                _: &ProviderSettings,
-            ) -> Result<TxReceipt, ChainError> {
-                unreachable!()
-            }
-            async fn deregister_provider(&self) -> Result<TxReceipt, ChainError> {
-                unreachable!()
-            }
-        }
-
-        let manager = ProviderManager::new(FailingChain);
-        let err = manager.register(&registration()).await.unwrap_err();
-        assert!(matches!(err, ProviderError::Chain(_)), "{err}");
     }
 }

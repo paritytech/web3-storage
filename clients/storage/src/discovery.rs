@@ -76,7 +76,7 @@ impl MatchedProvider {
 }
 
 /// Provider information for discovery.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProviderInfo {
     /// Network address for connecting.
     pub multiaddr: String,
@@ -123,6 +123,24 @@ pub struct ProviderInfo {
     pub deregister_at: Option<u32>,
     /// Reputation 0-100, computed on-chain by `ProviderStats::reputation`.
     pub reputation: u8,
+}
+
+impl ProviderInfo {
+    /// The provider's settings, as [`ProviderClient::update_settings`] takes them.
+    ///
+    /// [`ProviderClient::update_settings`]: crate::ProviderClient::update_settings
+    pub fn settings(&self) -> crate::ProviderSettings {
+        crate::ProviderSettings {
+            price_per_byte: self.price_per_byte,
+            min_duration: self.min_duration,
+            max_duration: self.max_duration,
+            accepting_primary: self.accepting_primary,
+            replica_sync_price: self.replica_sync_price,
+            accepting_extensions: self.accepting_extensions,
+            max_capacity: self.max_capacity,
+            min_agreement_bytes: self.min_agreement_bytes,
+        }
+    }
 }
 
 impl From<rt_api::ProviderInfoResponse> for ProviderInfo {
@@ -524,5 +542,39 @@ impl DiscoveryClient {
                 )
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `settings` copies every settings field of the record.
+    #[test]
+    fn provider_info_settings_copies_every_field() {
+        let info = ProviderInfo {
+            max_capacity: 7,
+            min_agreement_bytes: 6,
+            min_duration: 4,
+            max_duration: 3,
+            price_per_byte: 2,
+            accepting_primary: true,
+            replica_sync_price: Some(1),
+            accepting_extensions: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            info.settings(),
+            crate::ProviderSettings {
+                price_per_byte: 2,
+                min_duration: 4,
+                max_duration: 3,
+                accepting_primary: true,
+                replica_sync_price: Some(1),
+                accepting_extensions: true,
+                max_capacity: 7,
+                min_agreement_bytes: 6,
+            }
+        );
     }
 }

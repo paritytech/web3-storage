@@ -1,38 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Plain types exchanged with the chain through [`ProviderChain`].
-//!
-//! Balances are `u128` in the chain's smallest unit, durations are `u64`
-//! block counts, byte sizes are `u64`, and keys are raw bytes. A chain
-//! implementation converts between these and its own encoding.
-//!
-//! [`ProviderChain`]: super::ProviderChain
+//! Provider settings checks and partial updates.
 
-/// A provider's pricing, acceptance and capacity settings.
-///
-/// Field semantics follow the `StorageProvider` pallet's `ProviderSettings`
-/// (see the rustdoc on `pallet-storage-provider`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProviderSettings {
-    /// Shortest agreement duration, in blocks, the provider accepts.
-    pub min_duration: u64,
-    /// Longest agreement duration, in blocks, the provider accepts.
-    pub max_duration: u64,
-    /// Price per byte per block.
-    pub price_per_byte: u128,
-    /// Whether the provider accepts new primary agreements.
-    pub accepting_primary: bool,
-    /// Price per confirmed replica sync. `None` means the provider takes no
-    /// replica agreements.
-    pub replica_sync_price: Option<u128>,
-    /// Whether the provider accepts extensions of existing agreements.
-    pub accepting_extensions: bool,
-    /// Capacity limit in bytes. `0` means unlimited.
-    pub max_capacity: u64,
-    /// Smallest agreement size in bytes the provider accepts. `0` means no
-    /// minimum.
-    pub min_agreement_bytes: u64,
-}
+use crate::ProviderSettings;
 
 /// Why the `StorageProvider` pallet rejects a [`ProviderSettings`] value.
 /// Each variant is the pallet error of the same name.
@@ -42,9 +12,9 @@ pub enum SettingsError {
     #[error("min_duration {min_duration} exceeds max_duration {max_duration}")]
     MinDurationExceedsMaxDuration {
         /// The rejected minimum.
-        min_duration: u64,
+        min_duration: u32,
         /// The rejected maximum.
-        max_duration: u64,
+        max_duration: u32,
     },
     /// A limited `max_capacity` is below the bytes already committed.
     #[error("max_capacity {max_capacity} is below the {committed_bytes} bytes already committed")]
@@ -155,9 +125,9 @@ impl ProviderSettings {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProviderSettingsUpdate {
     /// New `min_duration`, if changed.
-    pub min_duration: Option<u64>,
+    pub min_duration: Option<u32>,
     /// New `max_duration`, if changed.
-    pub max_duration: Option<u64>,
+    pub max_duration: Option<u32>,
     /// New `price_per_byte`, if changed.
     pub price_per_byte: Option<u128>,
     /// New `accepting_primary`, if changed.
@@ -192,46 +162,6 @@ impl ProviderSettingsUpdate {
                 .unwrap_or(current.min_agreement_bytes),
         }
     }
-}
-
-/// Input to a provider registration.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProviderRegistration {
-    /// Network address clients connect to, e.g. `/ip4/1.2.3.4/tcp/3333`.
-    pub multiaddr: String,
-    /// Raw public key of the provider's signing keypair: 32 bytes for
-    /// sr25519 and ed25519, 33 for compressed ecdsa.
-    pub public_key: Vec<u8>,
-    /// Stake to lock, in the chain's smallest unit.
-    pub stake: u128,
-}
-
-/// A provider's on-chain record, as far as the provider operations need it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProviderRecord {
-    /// Advertised network address.
-    pub multiaddr: String,
-    /// Registered raw public key.
-    pub public_key: Vec<u8>,
-    /// Locked stake, in the chain's smallest unit.
-    pub stake: u128,
-    /// Bytes committed across all live agreements.
-    pub committed_bytes: u64,
-    /// Current settings.
-    pub settings: ProviderSettings,
-    /// Block at which an announced deregistration can complete. `None` when
-    /// no deregistration is announced.
-    pub deregister_at: Option<u64>,
-}
-
-/// Result of a transaction that the chain accepted.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TxReceipt {
-    /// `0x`-prefixed hex hash of the block that included the transaction.
-    /// `None` when the chain client learned that the transaction landed
-    /// without observing the block, e.g. from a duplicate rejection on a
-    /// retry.
-    pub block_hash: Option<String>,
 }
 
 #[cfg(test)]

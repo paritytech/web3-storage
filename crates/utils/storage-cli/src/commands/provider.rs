@@ -5,20 +5,18 @@
 
 use std::path::Path;
 
-use crate::provider::{
-    ProviderManager, ProviderRegistration, ProviderSettings, ProviderSettingsUpdate, TxReceipt,
-};
+use crate::provider::ProviderManager;
 use anyhow::{anyhow, Context, Result};
 use clap::{Args, Subcommand};
 use provider_types::Keyfile;
 use provider_types::{KeyScheme, ProviderKeypair};
 use sp_core::crypto::{Ss58AddressFormat, Ss58Codec};
 use storage_client::substrate::SubstrateClient;
-use storage_client::{ProviderClient, Signer};
+use storage_client::{ProviderClient, ProviderSettings, ProviderSettingsUpdate, Signer};
 
 use crate::cli::GlobalArgs;
 use crate::common::{build_config, key_scheme_name, resolve_key};
-use crate::provider::{ChainError, SubstrateProviderChain, GENERIC_SS58_PREFIX};
+use crate::provider::GENERIC_SS58_PREFIX;
 
 /// `storage-cli provider`: one signed provider management transaction, then
 /// exit. The account is the global `--suri` or `--keyfile`.
@@ -139,8 +137,8 @@ impl SettingsUpdateArgs {
             self.replica_sync_price.map(Some)
         };
         ProviderSettingsUpdate {
-            min_duration: self.min_duration.map(u64::from),
-            max_duration: self.max_duration.map(u64::from),
+            min_duration: self.min_duration,
+            max_duration: self.max_duration,
             price_per_byte: self.price_per_byte,
             accepting_primary: self.accepting_primary,
             replica_sync_price,
@@ -185,7 +183,7 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
     let mut client = ProviderClient::new(build_config(global), signer.clone())?;
     client.connect().await?;
     let ss58_prefix = ss58_prefix(client.chain()?).await?;
-    let manager = ProviderManager::new(SubstrateProviderChain::new(client, &signer, ss58_prefix));
+    let manager = ProviderManager::new(client, &signer, ss58_prefix);
     let account = manager.account();
 
     match action {
@@ -195,35 +193,30 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
             let public_key = ProviderKeypair::from_seed(&key.seed, key.scheme)
                 .map_err(anyhow::Error::msg)?
                 .public_key_bytes();
-            let registration = ProviderRegistration {
-                multiaddr,
-                public_key,
-                stake,
-            };
-            let receipt = manager.register(&registration).await?;
+            let block_hash = manager
+                .register(multiaddr.clone(), public_key, stake)
+                .await?;
             println!(
-                "Registered provider {account} at {} with stake {}{}",
-                registration.multiaddr,
-                registration.stake,
-                included_in(&receipt)
+                "Registered provider {account} at {multiaddr} with stake {stake}{}",
+                included_in(&block_hash)
             );
         }
         ProviderAction::UpdateSettings(args) => {
             let outcome = manager.update_settings(&args.update()).await?;
-            match outcome.receipt {
-                Some(receipt) => println!(
+            match outcome.block_hash {
+                Some(block_hash) => println!(
                     "Updated settings of provider {account}{}",
-                    included_in(&receipt)
+                    included_in(&block_hash)
                 ),
                 None => println!("Settings of provider {account} already match; nothing submitted"),
             }
             print_settings(&outcome.settings);
         }
         ProviderAction::Deregister => {
-            let receipt = manager.deregister().await?;
+            let block_hash = manager.deregister().await?;
             println!(
                 "Announced deregistration of provider {account}{}. Call complete_deregister after the announcement period to release the stake.",
-                included_in(&receipt)
+                included_in(&block_hash)
             );
         }
     }
@@ -233,11 +226,11 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
 
 /// The chain's `System::SS58Prefix` constant: the prefix every address the
 /// subcommand prints uses, so they match the chain's own tools.
-async fn ss58_prefix(client: &SubstrateClient) -> Result<u16, ChainError> {
-    client.ss58_prefix().await.map_err(|e| ChainError::Read {
-        what: "SS58Prefix",
-        reason: e.to_string(),
-    })
+async fn ss58_prefix(client: &SubstrateClient) -> Result<u16> {
+    client
+        .ss58_prefix()
+        .await
+        .context("failed to read the chain's SS58Prefix")
 }
 
 /// The subcommand supports sr25519 only for now.
@@ -319,11 +312,11 @@ fn print_settings(settings: &ProviderSettings) {
 }
 
 /// The block that included the transaction, for the outcome line.
-fn included_in(receipt: &TxReceipt) -> String {
-    match &receipt.block_hash {
-        Some(hash) => format!(" (finalized in block {hash})"),
-        None => String::new(),
-    }
+fn included_in(block_hash: &sp_core::H256) -> String {
+    format!(
+        " (finalized in block {})",
+        array_bytes::bytes2hex("0x", block_hash.0)
+    )
 }
 
 #[cfg(test)]

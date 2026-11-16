@@ -113,6 +113,7 @@ pub mod convert;
 pub mod discovery;
 pub mod encryption;
 pub mod provider;
+pub mod settings;
 pub mod signer;
 pub mod storage_user;
 pub mod substrate;
@@ -151,6 +152,7 @@ pub use discovery::{
     DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements,
 };
 pub use provider::{ProviderClient, ProviderSettings};
+pub use settings::{ProviderSettingsUpdate, SettingsError};
 pub use signer::Signer;
 pub use storage_user::{
     CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,

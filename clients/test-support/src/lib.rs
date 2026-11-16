@@ -100,7 +100,8 @@ pub struct ChainSetup {
 ///
 /// 1. Registers Alice as a storage provider (skipped when she is already
 ///    registered — avoids burning an extrinsic on every test rerun).
-/// 2. Updates Alice's settings so she is accepting primary agreements.
+/// 2. Updates Alice's settings so she is accepting primary agreements
+///    (skipped when she already has them).
 /// 3. Creates a fresh bucket owned by Alice.
 ///
 /// Returns `None` when the chain is not reachable, allowing callers to skip
@@ -117,15 +118,16 @@ pub async fn chain_setup() -> Option<ChainSetup> {
         return None;
     }
 
-    let already_registered = matches!(
-        provider.get_provider_info(&dev_account("alice")).await,
-        Ok(Some(_))
-    );
+    let registered = provider
+        .get_provider_info(&dev_account("alice"))
+        .await
+        .ok()
+        .flatten();
 
     let alice_keypair = sp_core::sr25519::Pair::from_string("//Alice", None).unwrap();
     let alice_pubkey = alice_keypair.public().0.to_vec();
 
-    if !already_registered {
+    if registered.is_none() {
         // Idempotent: ignore "already registered" errors so tests survive races.
         let _ = provider
             .register(
@@ -134,19 +136,22 @@ pub async fn chain_setup() -> Option<ChainSetup> {
                 MIN_STAKE,
             )
             .await;
+    }
 
-        let _ = provider
-            .update_settings(ProviderSettings {
-                price_per_byte: 1_000_000,
-                min_duration: 1,
-                max_duration: 1_000_000,
-                accepting_primary: true,
-                replica_sync_price: None,
-                accepting_extensions: true,
-                max_capacity: 10 * 1024 * 1024 * 1024, // 10 GiB
-                min_agreement_bytes: 0,
-            })
-            .await;
+    // Another suite on the same chain may have left Alice with other settings,
+    // so apply these whenever they differ, not only on first registration.
+    let settings = ProviderSettings {
+        price_per_byte: 1_000_000,
+        min_duration: 1,
+        max_duration: 1_000_000,
+        accepting_primary: true,
+        replica_sync_price: None,
+        accepting_extensions: true,
+        max_capacity: 10 * 1024 * 1024 * 1024, // 10 GiB
+        min_agreement_bytes: 0,
+    };
+    if registered.map(|info| info.settings()).as_ref() != Some(&settings) {
+        let _ = provider.update_settings(settings).await;
     }
 
     // ── Create a fresh bucket as Alice via signed-terms flow ──────────────────
