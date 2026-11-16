@@ -2197,6 +2197,10 @@ Response (400 Bad Request):
 { "error": "invalid_child_count", "expected": 2, "actual": 3 }
 { "error": "chunk_too_large", "size": 300000, "max": 262144 }
 
+Response (403 Forbidden):
+{ "error": "no_agreement", "details": { "bucket_id": 1234 } }
+// the node has no storage agreement on this bucket, so it has no quota for it
+
 Response (507 Insufficient Storage):
 { "error": "quota_exceeded", "used": 1000000, "max": 1000000 }
 ```
