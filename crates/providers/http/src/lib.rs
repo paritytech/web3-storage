@@ -19,12 +19,10 @@ pub use provider_types::ChainState;
 pub use types::*;
 
 use codec::Encode;
-use provider_replica::{SyncRoots, SyncRootsSigner};
 use provider_storage::StorageBackend;
-use provider_types::{KeyScheme, ProviderKeypair, SigningRefused};
+use provider_types::{KeyScheme, ProviderKeypair, ProviderSigner, SigningRefused};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair};
-use sp_runtime::MultiSignature;
 use std::sync::Arc;
 
 /// Everything a servable [`ProviderState`] requires.
@@ -41,11 +39,9 @@ pub struct ProviderState {
     pub storage: Arc<dyn StorageBackend>,
     /// Provider account ID (SS58 encoded)
     pub provider_id: String,
-    /// Signing keypair (optional, for dev/testing)
-    pub keypair: Option<ProviderKeypair>,
-    /// `keypair`'s raw public key, derived once at construction — it is
-    /// compared against the registered on-chain key on every signed request.
-    signing_public_key: Option<Vec<u8>>,
+    /// Signs with the provider's registered key. `None` when the node runs
+    /// without a signing key; the replica sync coordinator shares it.
+    pub signer: Option<Arc<ProviderSigner>>,
     /// Verifies signed requests and enforces bucket roles.
     pub auth: Arc<provider_auth::Authenticator>,
     /// Browser origins allowed via CORS. `None` (the default) keeps the
@@ -66,15 +62,15 @@ impl ProviderState {
         keypair: Option<ProviderKeypair>,
     ) -> Self {
         let ProviderDeps { storage, auth } = deps;
+        let chain_state = Arc::new(ChainState::default());
         Self {
             storage,
             provider_id,
-            // Derived once: the guard below runs on every signed request.
-            signing_public_key: keypair.as_ref().map(ProviderKeypair::public_key_bytes),
-            keypair,
+            signer: keypair
+                .map(|keypair| Arc::new(ProviderSigner::new(keypair, Arc::clone(&chain_state)))),
             auth,
             cors_allowed_origins: None,
-            chain_state: Arc::new(ChainState::default()),
+            chain_state,
         }
     }
 
@@ -126,7 +122,7 @@ impl ProviderState {
         self
     }
 
-    /// Sign a message and return the SCALE-encoded [`MultiSignature`] as
+    /// Sign a message and return the SCALE-encoded `MultiSignature` as
     /// `0x`-prefixed hex — the same wire format `/negotiate` uses, so the
     /// scheme tag travels with every signature.
     ///
@@ -135,8 +131,8 @@ impl ProviderState {
     /// silently emitting a zeroed placeholder signature, which would be a
     /// cryptographically invalid commitment masquerading as a real one.
     pub fn sign(&self, message: &[u8]) -> Result<String, Error> {
-        let keypair = self.signing_keypair()?;
-        Ok(array_bytes::bytes2hex("0x", keypair.sign(message).encode()))
+        let signer = self.signer.as_ref().ok_or(SigningRefused::NoKey)?;
+        Ok(array_bytes::bytes2hex("0x", signer.sign(message)?.encode()))
     }
 
     /// Run `work` against the storage backend on the blocking thread pool.
@@ -154,58 +150,6 @@ impl ProviderState {
                 Error::StorageTaskFailed(join_error.to_string())
             })
     }
-
-    /// The keypair every signing path goes through, once the guard below
-    /// passes.
-    ///
-    /// Checks `keypair` before the guard: a node with no signing key at all
-    /// must report [`SigningRefused::NoKey`] (the actionable fix - configure
-    /// `--keyfile`) rather than [`SigningRefused::Unregistered`].
-    fn signing_keypair(&self) -> Result<&ProviderKeypair, SigningRefused> {
-        let keypair = self.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
-        self.ensure_signing_key_registered()?;
-        Ok(keypair)
-    }
-
-    /// Guard for every signing path: signing requires a published on-chain
-    /// registration whose key matches ours, because the pallet rejects any
-    /// other signature. Clears on the coordinator's next refresh, no restart.
-    fn ensure_signing_key_registered(&self) -> Result<(), SigningRefused> {
-        let info = self.chain_state.provider_info.read();
-        let info = info.as_ref().ok_or(SigningRefused::Unregistered)?;
-        self.ensure_signing_key_matches(info)
-    }
-
-    /// The same guard against a registration snapshot the caller already
-    /// holds: skips a second lock acquisition, and — more importantly — checks
-    /// the very snapshot the rest of the request is being served from, rather
-    /// than one that may have been refreshed in between.
-    pub fn ensure_signing_key_matches(
-        &self,
-        info: &provider_types::ProviderInfo,
-    ) -> Result<(), SigningRefused> {
-        let Some(local) = self.signing_public_key.as_ref() else {
-            return Ok(());
-        };
-        if &info.public_key != local {
-            tracing::warn!(
-                registered = %array_bytes::bytes2hex("", &info.public_key),
-                local = %array_bytes::bytes2hex("", local),
-                "local signing key does not match registered on-chain public_key"
-            );
-            return Err(SigningRefused::KeyMismatch);
-        }
-        Ok(())
-    }
-}
-
-/// Lets the replica sync coordinator attest its sync roots with the node's
-/// scheme-tagged key, under the same "must match the on-chain registration"
-/// guard every other signing path goes through.
-impl SyncRootsSigner for ProviderState {
-    fn sign_sync_roots(&self, roots: &SyncRoots) -> Result<MultiSignature, SigningRefused> {
-        Ok(self.signing_keypair()?.sign(&roots.encode()))
-    }
 }
 
 #[cfg(test)]
@@ -213,6 +157,7 @@ mod tests {
     use super::*;
     use provider_auth::Authenticator;
     use provider_storage::temp_rocksdb;
+    use sp_runtime::MultiSignature;
 
     /// Deps over a throwaway backend. Keep the returned guard bound for as
     /// long as the state is used.
@@ -255,7 +200,7 @@ mod tests {
     /// state's own signing key, as the chain-state coordinator would once
     /// the provider is registered on chain.
     fn publish_matching_registration(state: &ProviderState) {
-        let public_key = state.keypair.as_ref().unwrap().public_key_bytes();
+        let public_key = state.signer.as_ref().unwrap().public_key_bytes().to_vec();
         state
             .chain_state
             .provider_info
@@ -330,7 +275,7 @@ mod tests {
         // signatures that can never verify.
         let (deps, _dir) = test_deps();
         let state = ProviderState::with_seed(deps, "//Alice").unwrap();
-        let local_key = state.keypair.as_ref().unwrap().public_key_bytes();
+        let local_key = state.signer.as_ref().unwrap().public_key_bytes().to_vec();
 
         state
             .chain_state

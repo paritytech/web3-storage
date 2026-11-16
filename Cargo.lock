@@ -7053,7 +7053,6 @@ dependencies = [
  "parity-scale-codec",
  "provider-auth",
  "provider-negotiation",
- "provider-replica",
  "provider-storage",
  "provider-types",
  "reqwest",
@@ -7128,6 +7127,7 @@ dependencies = [
 name = "provider-types"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "clap",
  "parity-scale-codec",
  "parking_lot",
@@ -7137,6 +7137,7 @@ dependencies = [
  "sp-crypto-hashing",
  "sp-runtime",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

@@ -260,7 +260,7 @@ async fn start_replica_sync_coordinator(
         state.storage.clone(),
         state.provider_id.clone(),
         Box::new(chain_client),
-        Some(state.clone()),
+        state.signer.clone().map(|signer| signer as _),
     );
 
     match coordinator.start(events_rx, None).await {

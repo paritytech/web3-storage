@@ -97,7 +97,7 @@ impl TestServer {
 /// is registered on chain — signing endpoints refuse otherwise. Skipped for
 /// a keyless state, which has no key to register.
 pub fn publish_matching_registration(state: &ProviderState) {
-    let Some(keypair) = state.keypair.as_ref() else {
+    let Some(signer) = state.signer.as_ref() else {
         return;
     };
     state
@@ -108,7 +108,7 @@ pub fn publish_matching_registration(state: &ProviderState) {
             multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
             // Must match the server's own signing key — signing refuses when
             // the registered key differs.
-            public_key: keypair.public_key_bytes(),
+            public_key: signer.public_key_bytes().to_vec(),
             stake: 1_000_000_000_000,
             committed_bytes: 0,
             settings: provider_types::ProviderSettings {

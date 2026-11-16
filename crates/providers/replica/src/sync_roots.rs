@@ -3,7 +3,8 @@
 //! The replica's signed attestation of the sync roots it holds, and the
 //! trait that produces the signature over it.
 
-use provider_types::SigningRefused;
+use codec::Encode;
+use provider_types::{ProviderSigner, SigningRefused};
 use sp_core::H256;
 
 /// The roots array `confirm_replica_sync` takes: position 0 is the target
@@ -54,10 +55,18 @@ pub trait SyncRootsSigner: Send + Sync {
     ) -> Result<sp_runtime::MultiSignature, SigningRefused>;
 }
 
+impl SyncRootsSigner for ProviderSigner {
+    fn sign_sync_roots(
+        &self,
+        roots: &SyncRoots,
+    ) -> Result<sp_runtime::MultiSignature, SigningRefused> {
+        self.sign(&roots.encode())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codec::Encode;
     use sp_core::Pair;
     use sp_runtime::traits::{IdentifyAccount, Verify};
     use sp_runtime::MultiSigner;

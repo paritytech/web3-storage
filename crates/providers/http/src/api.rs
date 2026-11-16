@@ -170,7 +170,7 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
     Json(InfoResponse {
         provider_id: state.provider_id.clone(),
         readiness: ProviderReadiness {
-            signing_configured: state.keypair.is_some(),
+            signing_configured: state.signer.is_some(),
             provider_info_loaded: provider_registration_info.is_some(),
             deregistering: provider_registration_info
                 .as_ref()
@@ -661,7 +661,7 @@ async fn get_historical_roots(
 /// - `provider_key_mismatch` — the local signing key differs from the registered
 ///   on-chain `public_key`; signed terms would never verify. Clears on the next
 ///   provider-info refresh once the keys agree. Not specific to this endpoint:
-///   the guard sits in [`ProviderState::sign`], so `/commit`, `/commitment`,
+///   the guard is in [`provider_types::ProviderSigner::sign`], so `/commit`, `/commitment`,
 ///   `/checkpoint-signature` and deletion proofs return it too.
 /// - `provider_deregistering` — provider has announced deregistration and no longer
 ///   signs new terms.
@@ -669,7 +669,7 @@ async fn negotiate_terms(
     State(state): State<Arc<ProviderState>>,
     Json(req): Json<NegotiateRequest>,
 ) -> Result<Json<SignedTerms>, Error> {
-    let keypair = state.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
+    let signer = state.signer.as_ref().ok_or(SigningRefused::NoKey)?;
 
     // Both the anchor block and RequestTimeout must be known before we can sign
     // — otherwise we'd emit unbounded or already-expired terms.
@@ -707,7 +707,7 @@ async fn negotiate_terms(
     // never be redeemed — fail fast instead. Checked against the snapshot this
     // request is already using, so a re-registration heals it on the next
     // refresh without a restart.
-    state.ensure_signing_key_matches(&info)?;
+    signer.ensure_key_matches(&info)?;
 
     negotiate::validate_request(&req, &info)?;
 
@@ -721,7 +721,7 @@ async fn negotiate_terms(
         bucket: req.bucket.into(),
         replica_params: req.replica_params,
     };
-    Ok(Json(keypair.sign_terms(terms)))
+    Ok(Json(signer.sign_terms(&info, terms)?))
 }
 
 /// Get replica sync status for a bucket.

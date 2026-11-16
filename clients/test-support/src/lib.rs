@@ -296,10 +296,11 @@ pub async fn start_test_provider() -> String {
 /// registered on chain. Signing endpoints refuse without one.
 fn publish_matching_registration(state: &ProviderState) {
     let public_key = state
-        .keypair
+        .signer
         .as_ref()
         .expect("test provider signs with //Alice")
-        .public_key_bytes();
+        .public_key_bytes()
+        .to_vec();
     state
         .chain_state
         .provider_info
