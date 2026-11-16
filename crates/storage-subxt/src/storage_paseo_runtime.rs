@@ -4109,9 +4109,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                244u8, 248u8, 27u8, 171u8, 238u8, 10u8, 9u8, 154u8, 99u8, 30u8, 100u8, 165u8,
-                177u8, 225u8, 62u8, 51u8, 64u8, 0u8, 123u8, 177u8, 74u8, 1u8, 101u8, 5u8, 63u8,
-                56u8, 248u8, 12u8, 135u8, 38u8, 95u8, 47u8,
+                227u8, 34u8, 180u8, 211u8, 108u8, 33u8, 95u8, 181u8, 222u8, 235u8, 223u8, 242u8,
+                20u8, 68u8, 220u8, 155u8, 86u8, 9u8, 251u8, 210u8, 154u8, 206u8, 190u8, 39u8, 6u8,
+                230u8, 220u8, 187u8, 164u8, 186u8, 96u8, 153u8,
             ]
     }
     pub mod system {
@@ -20879,6 +20879,37 @@ pub mod api {
                         ],
                     )
                 }
+                #[doc = " What the open ethereum transaction has committed to its receipt, see"]
+                #[doc = " `block_storage::capture_into_receipt`. Taken when the transaction's receipt is built, so it"]
+                #[doc = " is empty between transactions."]
+                #[doc = ""]
+                #[doc = " Accessed only while a receipt is open, in an ethereum transaction or its dry run. Read on"]
+                #[doc = " every log, and written as well until a log overflows the receipt. Read for its overflow"]
+                #[doc = " flag at the successful end of every contract frame, see"]
+                #[doc = " `block_storage::ensure_receipt_within_limit`."]
+                #[doc = ""]
+                #[doc = " Whitelisted like `frame_system::Events`: accessed this often, yet never in a block's"]
+                #[doc = " pre-state, so a block pays one absence lookup for it however many logs and frames it holds."]
+                #[doc = " Without the whitelist the benchmark bills each `LOG` and each frame for that lookup as if it"]
+                #[doc = " were the first access of the block."]
+                pub fn receipt_logs_committed(
+                    &self,
+                ) -> ::subxt::storage::StaticAddress<
+                    (),
+                    receipt_logs_committed::Output,
+                    ::subxt::utils::Yes,
+                > {
+                    ::subxt::storage::StaticAddress::new_static(
+                        "Revive",
+                        "ReceiptLogsCommitted",
+                        [
+                            193u8, 202u8, 198u8, 192u8, 72u8, 109u8, 171u8, 36u8, 78u8, 67u8,
+                            131u8, 24u8, 93u8, 201u8, 126u8, 185u8, 249u8, 121u8, 230u8, 201u8,
+                            211u8, 215u8, 91u8, 158u8, 131u8, 35u8, 60u8, 159u8, 12u8, 131u8, 80u8,
+                            191u8,
+                        ],
+                    )
+                }
                 #[doc = " Incremental ethereum block builder."]
                 pub fn eth_block_builder_ir(
                     &self,
@@ -20891,10 +20922,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            8u8, 165u8, 0u8, 157u8, 161u8, 215u8, 131u8, 184u8, 249u8, 127u8,
-                            221u8, 227u8, 106u8, 29u8, 119u8, 91u8, 14u8, 233u8, 220u8, 34u8,
-                            134u8, 185u8, 169u8, 1u8, 233u8, 5u8, 236u8, 141u8, 41u8, 91u8, 251u8,
-                            144u8,
+                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
+                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
+                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
                         ],
                     )
                 }
@@ -21039,6 +21069,15 @@ pub mod api {
                 pub type Output = ::subxt::alloc::vec::Vec<
                     runtime_types::pallet_revive::evm::block_hash::ReceiptGasInfo,
                 >;
+            }
+            pub mod receipt_logs_committed {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod input {
+                    use super::runtime_types;
+                }
+                pub type Output =
+                    runtime_types::pallet_revive::evm::block_hash::receipt::CommittedReceiptLogs;
             }
             pub mod eth_block_builder_ir {
                 use super::root_mod;
@@ -23842,6 +23881,24 @@ pub mod api {
                             pub index: ::core::primitive::u64,
                         }
                     }
+                    pub mod receipt {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct CommittedReceiptLogs {
+                            pub encoded_len: ::core::primitive::u32,
+                            pub bloom: [::core::primitive::u8; 256usize],
+                            pub exceeded: ::core::primitive::bool,
+                        }
+                    }
                     #[derive(
                         :: subxt :: ext :: scale_decode :: DecodeAsType,
                         :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -24351,6 +24408,10 @@ pub mod api {
                     #[doc = "[`NativeDepositOf`] entries from a previously terminated contract that the deletion"]
                     #[doc = "queue has not yet drained."]
                     PendingDepositCleanup,
+                    #[codec(index = 69)]
+                    #[doc = "The logs of the ethereum transaction would exceed"]
+                    #[doc = "[`limits::MAX_RECEIPT_LOGS_BYTES`] in its receipt."]
+                    ReceiptTooLarge,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
