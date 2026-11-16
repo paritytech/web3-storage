@@ -41,6 +41,11 @@ impl Signer {
         &self.0
     }
 
+    /// The account this signer submits from: the sr25519 public key.
+    pub fn account_id(&self) -> sp_runtime::AccountId32 {
+        sp_runtime::AccountId32::new(self.0.public_key().0)
+    }
+
     /// The `Authorization` header value for a provider request to `bucket_id`
     /// (`method` = upper-case HTTP verb), signed with the current time. A clock
     /// before the Unix epoch gives timestamp 0, which the provider rejects.
@@ -97,6 +102,17 @@ mod tests {
         use subxt_signer::sr25519::dev;
         let seed = Signer::from_seed("//Alice").unwrap();
         assert_eq!(seed.keypair().public_key().0, dev::alice().public_key().0);
+    }
+
+    #[test]
+    fn account_id_is_the_public_key() {
+        use subxt_signer::sr25519::dev;
+        let signer = Signer::from_seed("//Alice").unwrap();
+        assert_eq!(
+            signer.account_id(),
+            sp_runtime::AccountId32::new(dev::alice().public_key().0)
+        );
+        assert_ne!(signer.account_id(), sp_runtime::AccountId32::new([0; 32]));
     }
 
     #[test]

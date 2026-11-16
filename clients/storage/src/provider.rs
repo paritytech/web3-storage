@@ -12,7 +12,7 @@
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::convert;
 use crate::discovery::ProviderInfo;
-use crate::substrate::{extrinsics, SubstrateClient};
+use crate::substrate::{extrinsics, FinalizedTx, SubstrateClient};
 use crate::Signer;
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -36,14 +36,26 @@ impl ProviderClient {
         })
     }
 
-    /// The provider account: the signer's public key.
-    fn provider_account(&self) -> AccountId32 {
-        AccountId32::new(self.signer.keypair().public_key().0)
-    }
-
     /// Create with default configuration.
     pub fn with_defaults(signer: Signer) -> ClientResult<Self> {
         Self::new(ClientConfig::default(), signer)
+    }
+
+    /// The connected chain client; a `Config` error before [`Self::connect`].
+    pub fn chain(&self) -> ClientResult<&SubstrateClient> {
+        self.base.chain()
+    }
+
+    /// The pallet's `MinStakePerByte` constant: the smallest stake per byte
+    /// of declared capacity, in the chain's smallest unit.
+    pub async fn min_stake_per_byte(&self) -> ClientResult<u128> {
+        self.base
+            .chain()?
+            .at_current_block()
+            .await?
+            .constants()
+            .entry(api::constants().storage_provider().min_stake_per_byte())
+            .map_err(|e| ClientError::Chain(format!("Failed to read MinStakePerByte: {e}")))
     }
 
     /// Connect to the blockchain and install the signer. Must be called before
@@ -85,12 +97,12 @@ impl ProviderClient {
         multiaddr: String,
         public_key: Vec<u8>,
         stake: u128,
-    ) -> ClientResult<()> {
+    ) -> ClientResult<FinalizedTx> {
         let chain = self.base.chain()?;
 
         tracing::info!(
             "Registering provider {} with stake {}",
-            self.provider_account(),
+            self.signer.account_id(),
             stake
         );
 
@@ -98,10 +110,10 @@ impl ProviderClient {
         let tx = extrinsics::register_provider(multiaddr.into_bytes(), public_key, stake);
 
         // Submit and wait for finalization
-        chain.submit(&tx).await?;
+        let finalized = chain.submit(&tx).await?;
 
         tracing::info!("Provider registered successfully");
-        Ok(())
+        Ok(finalized)
     }
 
     /// Query a provider's current info from the chain.
@@ -130,12 +142,12 @@ impl ProviderClient {
     /// Update provider settings.
     ///
     /// Change pricing, availability, or other settings.
-    pub async fn update_settings(&self, settings: ProviderSettings) -> ClientResult<()> {
+    pub async fn update_settings(&self, settings: ProviderSettings) -> ClientResult<FinalizedTx> {
         let chain = self.base.chain()?;
 
         tracing::info!(
             "Updating settings for provider {}: price_per_byte={}",
-            self.provider_account(),
+            self.signer.account_id(),
             settings.price_per_byte
         );
 
@@ -150,42 +162,42 @@ impl ProviderClient {
             settings.min_agreement_bytes,
         );
 
-        chain.submit(&tx).await?;
+        let finalized = chain.submit(&tx).await?;
 
         tracing::info!("Provider settings updated");
-        Ok(())
+        Ok(finalized)
     }
 
     /// Add more stake to your provider account.
-    pub async fn add_stake(&self, additional_stake: u128) -> ClientResult<()> {
+    pub async fn add_stake(&self, additional_stake: u128) -> ClientResult<FinalizedTx> {
         let chain = self.base.chain()?;
 
         tracing::info!(
             "Adding stake {} for provider {}",
             additional_stake,
-            self.provider_account()
+            self.signer.account_id()
         );
 
         let tx = extrinsics::add_stake(additional_stake);
 
-        chain.submit(&tx).await?;
+        let finalized = chain.submit(&tx).await?;
 
         tracing::info!("Stake added successfully");
-        Ok(())
+        Ok(finalized)
     }
 
     /// Deregister as a provider (requires no active agreements).
-    pub async fn deregister(&self) -> ClientResult<()> {
+    pub async fn deregister(&self) -> ClientResult<FinalizedTx> {
         let chain = self.base.chain()?;
 
-        tracing::info!("Deregistering provider {}", self.provider_account());
+        tracing::info!("Deregistering provider {}", self.signer.account_id());
 
         let tx = extrinsics::deregister_provider();
 
-        chain.submit(&tx).await?;
+        let finalized = chain.submit(&tx).await?;
 
         tracing::info!("Provider deregistered successfully");
-        Ok(())
+        Ok(finalized)
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -288,7 +300,7 @@ impl ProviderClient {
     /// List all active agreements for this provider.
     pub async fn list_active_agreements(&self) -> ClientResult<Vec<ActiveAgreement>> {
         let chain = self.base.chain()?;
-        let provider = convert::to_subxt_account(&self.provider_account());
+        let provider = convert::to_subxt_account(&self.signer.account_id());
 
         let at = chain.at_current_block().await?;
 
@@ -388,7 +400,7 @@ impl ProviderClient {
     /// List all active challenges against this provider.
     pub async fn list_active_challenges(&self) -> ClientResult<Vec<ChallengeInfo>> {
         let chain = self.base.chain()?;
-        let provider = convert::to_subxt_account(&self.provider_account());
+        let provider = convert::to_subxt_account(&self.signer.account_id());
 
         let at = chain.at_current_block().await?;
 
@@ -428,7 +440,7 @@ impl ProviderClient {
     /// Via the `provider_info` runtime API, so `reputation` is the chain's own
     /// number rather than a formula re-implemented here.
     pub async fn get_stats(&self) -> ClientResult<Option<ProviderStats>> {
-        let Some(info) = self.get_provider_info(&self.provider_account()).await? else {
+        let Some(info) = self.get_provider_info(&self.signer.account_id()).await? else {
             return Ok(None);
         };
 
@@ -451,7 +463,7 @@ impl ProviderClient {
     /// deregistering drops the provider record and the tally with it.
     pub async fn get_total_earnings(&self) -> ClientResult<Option<u128>> {
         Ok(self
-            .get_provider_info(&self.provider_account())
+            .get_provider_info(&self.signer.account_id())
             .await?
             .map(|info| info.lifetime_revenue))
     }
@@ -462,7 +474,7 @@ impl ProviderClient {
     /// `available_bytes` is the chain's `available_capacity`: `None` is
     /// unlimited, distinct from `Some(0)` ("full").
     pub async fn get_capacity_info(&self) -> ClientResult<Option<CapacityInfo>> {
-        let Some(info) = self.get_provider_info(&self.provider_account()).await? else {
+        let Some(info) = self.get_provider_info(&self.signer.account_id()).await? else {
             return Ok(None);
         };
 

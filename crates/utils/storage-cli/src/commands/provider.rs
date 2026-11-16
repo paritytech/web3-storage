@@ -12,14 +12,13 @@ use anyhow::{anyhow, Context, Result};
 use clap::{Args, Subcommand};
 use provider_types::Keyfile;
 use provider_types::{KeyScheme, ProviderKeypair};
-use sp_core::crypto::{AccountId32, Ss58AddressFormat, Ss58Codec};
-use sp_core::{sr25519, Pair};
+use sp_core::crypto::{Ss58AddressFormat, Ss58Codec};
 use storage_client::substrate::SubstrateClient;
-use storage_client::Signer;
+use storage_client::{ProviderClient, Signer};
 
 use crate::cli::GlobalArgs;
-use crate::common::{key_scheme_name, resolve_key};
-use crate::provider::{chain_ss58_prefix, SubstrateProviderChain, GENERIC_SS58_PREFIX};
+use crate::common::{build_config, key_scheme_name, resolve_key};
+use crate::provider::{ChainError, SubstrateProviderChain, GENERIC_SS58_PREFIX};
 
 /// `storage-cli provider`: one signed provider management transaction, then
 /// exit. The account is the global `--suri` or `--keyfile`.
@@ -165,7 +164,7 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
             // Reject an unsupported scheme before connecting anywhere.
             let scheme = supported_scheme(command.key_scheme.unwrap_or_default())?;
             let ss58_prefix = match SubstrateClient::connect(&global.chain_rpc).await {
-                Ok(client) => chain_ss58_prefix(&client).await?,
+                Ok(client) => ss58_prefix(&client).await?,
                 Err(e) => {
                     eprintln!(
                         "Cannot read the chain's SS58 prefix ({e}); the address uses prefix {GENERIC_SS58_PREFIX}"
@@ -183,11 +182,10 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
     let key = resolve_key(global, command.key_scheme)?;
     supported_scheme(key.scheme)?;
     let signer = Signer::from_seed(&key.seed).context("failed to derive keypair from SURI")?;
-    let client = SubstrateClient::connect(&global.chain_rpc)
-        .await?
-        .with_signer(signer);
-    let ss58_prefix = chain_ss58_prefix(&client).await?;
-    let manager = ProviderManager::new(SubstrateProviderChain::new(client, ss58_prefix)?);
+    let mut client = ProviderClient::new(build_config(global), signer.clone())?;
+    client.connect().await?;
+    let ss58_prefix = ss58_prefix(client.chain()?).await?;
+    let manager = ProviderManager::new(SubstrateProviderChain::new(client, &signer, ss58_prefix));
     let account = manager.account();
 
     match action {
@@ -233,6 +231,15 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
     Ok(())
 }
 
+/// The chain's `System::SS58Prefix` constant: the prefix every address the
+/// subcommand prints uses, so they match the chain's own tools.
+async fn ss58_prefix(client: &SubstrateClient) -> Result<u16, ChainError> {
+    client.ss58_prefix().await.map_err(|e| ChainError::Read {
+        what: "SS58Prefix",
+        reason: e.to_string(),
+    })
+}
+
 /// The subcommand supports sr25519 only for now.
 fn supported_scheme(scheme: KeyScheme) -> Result<KeyScheme> {
     match scheme {
@@ -259,12 +266,9 @@ fn generate_key(
     ss58_prefix: u16,
 ) -> Result<serde_json::Value> {
     let mnemonic = crate::provider::generate_mnemonic(words)?;
-    let account = AccountId32::from(
-        sr25519::Pair::from_string(&mnemonic, None)
-            .map_err(|e| anyhow!("Failed to create keypair: {e:?}"))?
-            .public()
-            .0,
-    );
+    let account = Signer::from_seed(&mnemonic)
+        .context("failed to derive keypair from mnemonic")?
+        .account_id();
     let public_key = ProviderKeypair::from_seed(&mnemonic, scheme)
         .map_err(anyhow::Error::msg)?
         .public_key_bytes();
@@ -326,6 +330,8 @@ fn included_in(receipt: &TxReceipt) -> String {
 mod tests {
     use super::*;
     use crate::common::tests::global_args;
+    use sp_core::crypto::AccountId32;
+    use sp_core::{sr25519, Pair};
 
     /// A generated mnemonic is a secret every signing scheme and the
     /// submission account derive from: the BIP39 phrase `generate_mnemonic`

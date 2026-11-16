@@ -125,7 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .register(multiaddr, signing_key, STAKE)
         .await
     {
-        Ok(()) => println!("  Provider registered"),
+        Ok(tx) => println!("  Provider registered in block {:?}", tx.block_hash),
         Err(e) => return Err(e.into()),
     }
 

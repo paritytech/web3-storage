@@ -18,7 +18,7 @@ mod types;
 pub use chain::{ChainError, ProviderChain};
 pub use keyfile::{generate_mnemonic, write_keyfile, DEFAULT_MNEMONIC_WORDS, MNEMONIC_WORD_COUNTS};
 pub use manager::ProviderManager;
-pub use substrate::{chain_ss58_prefix, SubstrateProviderChain, GENERIC_SS58_PREFIX};
+pub use substrate::{SubstrateProviderChain, GENERIC_SS58_PREFIX};
 pub use types::{
     ProviderRecord, ProviderRegistration, ProviderSettings, ProviderSettingsUpdate, TxReceipt,
 };

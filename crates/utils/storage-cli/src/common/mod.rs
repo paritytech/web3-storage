@@ -5,7 +5,6 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::ValueEnum;
 use provider_types::KeyScheme;
 use sp_core::crypto::Ss58Codec;
-use sp_runtime::AccountId32;
 use storage_client::{ClientConfig, Signer};
 
 /// Bucket identifier on chain (alias of `storage_primitives::BucketId`, a `u64`).
@@ -82,7 +81,7 @@ pub fn resolve_signer(global: &GlobalArgs) -> Result<Signer> {
 
 /// The SS58 address of the signer's account.
 pub fn account_ss58(signer: &Signer) -> String {
-    AccountId32::from(signer.keypair().public_key().0).to_ss58check()
+    signer.account_id().to_ss58check()
 }
 
 #[cfg(test)]
@@ -198,6 +197,16 @@ pub(crate) mod tests {
             assert_eq!(KeyScheme::from_str(&name, true).unwrap(), scheme);
         }
         assert_eq!(key_scheme_name(KeyScheme::Sr25519), "sr25519");
+    }
+
+    /// The printed address is the signer's account under the generic prefix.
+    #[test]
+    fn account_ss58_is_the_signer_account() {
+        let signer = Signer::from_seed("//Alice").unwrap();
+        assert_eq!(
+            account_ss58(&signer),
+            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        );
     }
 
     #[test]

@@ -12,7 +12,16 @@ use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use storage_primitives::{ChunkLocation, Commitment};
+use subxt::error::TransactionEventsError;
 use subxt::{OnlineClient, PolkadotConfig};
+
+/// A finalized, successful transaction.
+pub struct FinalizedTx {
+    /// Hash of the finalized block that includes the transaction.
+    pub block_hash: H256,
+    /// The transaction's events.
+    pub events: subxt::extrinsics::ExtrinsicEvents<PolkadotConfig>,
+}
 
 /// Substrate client for chain interactions.
 #[derive(Clone)]
@@ -61,14 +70,15 @@ impl SubstrateClient {
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))
     }
 
-    /// Sign `tx`, submit it and wait for finalized success. Returns the
-    /// extrinsic's events.
-    pub async fn submit(
-        &self,
-        tx: &impl subxt::tx::Payload,
-    ) -> Result<subxt::extrinsics::ExtrinsicEvents<PolkadotConfig>, ClientError> {
+    /// Sign `tx`, submit it and wait for it to be finalized and successful.
+    ///
+    /// A transaction that is included but fails to dispatch is
+    /// [`ClientError::TxRejected`]; any other failure is
+    /// [`ClientError::Chain`].
+    pub async fn submit(&self, tx: &impl subxt::tx::Payload) -> Result<FinalizedTx, ClientError> {
         let signer = self.signer()?;
-        self.api()
+        let in_block = self
+            .api()
             .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -76,9 +86,27 @@ impl SubstrateClient {
             .sign_and_submit_then_watch_default(tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .wait_for_finalized_success()
+            .wait_for_finalized()
             .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        let block_hash = H256::from_slice(in_block.block_hash().as_ref());
+        match in_block.wait_for_success().await {
+            Ok(events) => Ok(FinalizedTx { block_hash, events }),
+            Err(TransactionEventsError::ExtrinsicFailed(e)) => Err(ClientError::TxRejected {
+                block_hash,
+                reason: e.to_string(),
+            }),
+            Err(e) => Err(ClientError::Chain(format!("Transaction failed: {e}"))),
+        }
+    }
+
+    /// The chain's `System::SS58Prefix` constant.
+    pub async fn ss58_prefix(&self) -> Result<u16, ClientError> {
+        self.at_current_block()
+            .await?
+            .constants()
+            .entry(storage_subxt::api::constants().system().ss58_prefix())
+            .map_err(|e| ClientError::Chain(format!("Failed to read SS58Prefix: {e}")))
     }
 
     /// Get the signer if available.

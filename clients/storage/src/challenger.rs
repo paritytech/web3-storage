@@ -48,11 +48,6 @@ impl ChallengerClient {
         })
     }
 
-    /// The challenger account: the signer's public key.
-    fn challenger_account(&self) -> AccountId32 {
-        AccountId32::new(self.signer.keypair().public_key().0)
-    }
-
     /// Create with default configuration.
     pub fn with_defaults(signer: Signer) -> ClientResult<Self> {
         Self::new(ClientConfig::default(), signer)
@@ -119,7 +114,7 @@ impl ChallengerClient {
         let tx = extrinsics::challenge_checkpoint(bucket_id, provider_account, target);
 
         // Wait for finalization and extract challenge ID from events
-        let events = chain.submit(&tx).await?;
+        let events = chain.submit(&tx).await?.events;
 
         let challenge_id = Self::extract_challenge_id(&events)?;
         tracing::info!(
@@ -174,7 +169,7 @@ impl ChallengerClient {
         );
 
         // Wait for finalization and extract challenge ID from events
-        let events = chain.submit(&tx).await?;
+        let events = chain.submit(&tx).await?.events;
 
         let challenge_id = Self::extract_challenge_id(&events)?;
         tracing::info!(
@@ -209,7 +204,7 @@ impl ChallengerClient {
         let provider_account = SubstrateClient::parse_account(&provider)?;
         let tx = extrinsics::challenge_replica(bucket_id, provider_account, target);
 
-        let events = chain.submit(&tx).await?;
+        let events = chain.submit(&tx).await?.events;
 
         let challenge_id = Self::extract_challenge_id(&events)?;
         tracing::info!(
@@ -265,7 +260,7 @@ impl ChallengerClient {
     /// All open challenges created by this challenger, expired ones included.
     pub async fn list_my_challenges(&self) -> ClientResult<Vec<ChallengeInfo>> {
         let chain = self.base.chain()?;
-        let challenger = convert::to_subxt_account(&self.challenger_account());
+        let challenger = convert::to_subxt_account(&self.signer.account_id());
 
         let at = chain.at_current_block().await?;
         let anchor = fetch_current_anchor_block(&at).await?;
@@ -424,7 +419,7 @@ impl ChallengerClient {
             );
 
             match chain.submit(&tx).await {
-                Ok(events) => match Self::extract_challenge_id(&events) {
+                Ok(finalized) => match Self::extract_challenge_id(&finalized.events) {
                     Ok(id) => {
                         tracing::info!(
                             "Auto-challenge submitted for bucket {}: deadline={}, index={}",
