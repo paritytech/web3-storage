@@ -38,11 +38,10 @@ pub struct LocalBucketAgreement {
 }
 
 impl LocalBucketAgreement {
-    pub fn is_primary(&self) -> bool {
-        matches!(self.role, RuntimeProviderRole::Primary)
+    pub fn is_replica_agreement(&self) -> bool {
+        matches!(self.role, RuntimeProviderRole::Replica { .. })
     }
 }
-
 
 /// Everything access control and bucket initialization need about one
 /// bucket, resolved in one call at one block and cached as one entry.
@@ -52,7 +51,7 @@ pub struct BucketAccess {
     pub primary_providers: Vec<AccountId32>,
     pub visibility: Visibility,
     /// `None`: this node has no agreement on the bucket.
-    pub local_agreement: Option<LocalAgreement>,
+    pub local_agreement: Option<LocalBucketAgreement>,
 }
 
 impl BucketAccess {
@@ -63,6 +62,7 @@ impl BucketAccess {
             members,
             primary_providers: Vec::new(),
             visibility: Visibility::Private,
+            local_agreement: None,
         }
     }
 
@@ -72,6 +72,13 @@ impl BucketAccess {
             .iter()
             .find(|m| &m.account == account)
             .map(|m| m.role)
+    }
+
+    /// This node holds a replica agreement on the bucket.
+    pub fn serves_as_replica(&self) -> bool {
+        self.local_agreement
+            .as_ref()
+            .is_some_and(|agreement| agreement.is_replica_agreement())
     }
 }
 
@@ -89,12 +96,10 @@ pub fn role_satisfies(required: Role, granted: Role) -> bool {
 }
 
 /// Cached access entry for a bucket: the bucket's own state plus this node's
-/// standing on it. Kept as separate fields — [`BucketAccess`] is bucket state,
-/// `serves_as_replica` is the node's relationship to the bucket — but cached as one
-/// value because both resolve from the same chain read-through and expire and
-/// invalidate together. `access.visibility` always equals the chain's, so
-/// `Private` together with `serves_as_replica: true` is a valid entry: the
-/// replica of a private bucket, which the design has serve everyone.
+/// agreement on it, resolved in one chain read, so they expire and invalidate
+/// together. `access.visibility` always equals the chain's, so `Private`
+/// together with a replica agreement is a valid entry: the replica of a
+/// private bucket, which the design has serve everyone.
 #[derive(Debug, Clone)]
 pub(crate) struct CachedMembership {
     pub(crate) access: BucketAccess,
@@ -102,10 +107,9 @@ pub(crate) struct CachedMembership {
 }
 
 impl CachedMembership {
-    fn new(access: BucketAccess, serves_as_replica: bool) -> Self {
+    fn new(access: BucketAccess) -> Self {
         Self {
             access,
-            serves_as_replica,
             fetched_at: Instant::now(),
         }
     }
@@ -128,8 +132,8 @@ impl CachedMembership {
 /// tests).
 #[async_trait::async_trait]
 pub trait MembershipResolver: Send + Sync {
-    /// The members of `bucket_id` and whether its reads are member-only. An
-    /// empty member set means nobody is a member — either the bucket does not
+    /// The members of `bucket_id`, whether its reads are member-only, and this
+    /// node's agreement on it. An empty member set means nobody is a member — either the bucket does not
     /// exist, or it holds no members.
     async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError>;
 }
@@ -140,13 +144,6 @@ impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
     async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
         (**self).fetch_access(bucket_id).await
     }
-
-    async fn fetch_bucket_agreement(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<Option<LocalBucketAgreement>, MembershipError> {
-        (**self).fetch_bucket_agreement(bucket_id).await
-    }
 }
 
 /// A [`MembershipResolver`] that returns the same fixed answers for every
@@ -156,26 +153,25 @@ impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
 pub struct StaticMembershipResolver {
     /// Returned by `fetch_access` for every bucket.
     pub access: BucketAccess,
-    /// Returned by `fetch_bucket_agreement` for every bucket.
-    pub bucket_agreement: Option<LocalBucketAgreement>,
 }
 
 #[cfg(any(test, feature = "test-helpers"))]
 impl StaticMembershipResolver {
-    /// Returns `access` for every bucket, with an unlimited primary agreement.
+    /// Returns `access` for every bucket.
     pub fn new(access: BucketAccess) -> Self {
-        Self {
-            access,
-            bucket_agreement: Some(LocalBucketAgreement {
+        Self { access }
+    }
+
+    /// Member-only buckets (auth always required) with the given members and
+    /// an unlimited primary agreement.
+    pub fn private(members: Vec<Member>) -> Self {
+        Self::new(BucketAccess {
+            local_agreement: Some(LocalBucketAgreement {
                 role: RuntimeProviderRole::Primary,
                 max_bytes: u64::MAX,
             }),
-        }
-    }
-
-    /// Member-only buckets (auth always required) with the given members.
-    pub fn private(members: Vec<Member>) -> Self {
-        Self::new(BucketAccess::private(members))
+            ..BucketAccess::private(members)
+        })
     }
 
     /// Resolve every bucket with these primary provider accounts.
@@ -187,7 +183,7 @@ impl StaticMembershipResolver {
     /// Resolve every bucket as replica-held by this node. The replica's sync
     /// fields are zero: auth only reads the role.
     pub fn with_serves_as_replica(mut self) -> Self {
-        self.bucket_agreement = Some(LocalBucketAgreement {
+        self.access.local_agreement = Some(LocalBucketAgreement {
             role: RuntimeProviderRole::Replica {
                 sync_balance: 0,
                 sync_price: 0,
@@ -201,7 +197,7 @@ impl StaticMembershipResolver {
 
     /// Resolve every bucket as a primary agreement with this quota.
     pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
-        self.bucket_agreement = Some(LocalBucketAgreement {
+        self.access.local_agreement = Some(LocalBucketAgreement {
             role: RuntimeProviderRole::Primary,
             max_bytes,
         });
@@ -210,7 +206,7 @@ impl StaticMembershipResolver {
 
     /// Resolve every bucket as one this node has no agreement on.
     pub fn without_agreement(mut self) -> Self {
-        self.bucket_agreement = None;
+        self.access.local_agreement = None;
         self
     }
 }
@@ -220,13 +216,6 @@ impl StaticMembershipResolver {
 impl MembershipResolver for StaticMembershipResolver {
     async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
         Ok(self.access.clone())
-    }
-
-    async fn fetch_bucket_agreement(
-        &self,
-        _bucket_id: BucketId,
-    ) -> Result<Option<LocalBucketAgreement>, MembershipError> {
-        Ok(self.bucket_agreement.clone())
     }
 }
 
@@ -438,15 +427,6 @@ impl MembershipCache {
         Ok(self.lookup(bucket_id).await?.role_of(account))
     }
 
-    /// This node's agreement on `bucket_id`, read from the resolver directly,
-    /// bypassing the cache.
-    pub(crate) async fn fetch_bucket_agreement(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<Option<LocalBucketAgreement>, MembershipError> {
-        self.resolver.fetch_bucket_agreement(bucket_id).await
-    }
-
     /// The bucket's cached access entry, resolved on a miss or once stale.
     pub(crate) async fn lookup(
         &self,
@@ -464,24 +444,11 @@ impl MembershipCache {
         // invalidation landed while the resolver call was in flight.
         let epoch_before = self.epoch.load(Ordering::SeqCst);
 
-        // Cache miss or stale — fetch from chain. Both halves resolve or the
-        // entry does not: a failed standing lookup takes the same
-        // stale-if-error path as a failed member lookup.
-        let fetched = async {
-            let access = self.resolver.fetch_access(bucket_id).await?;
-            // Only a replica agreement serves reads to everyone; a primary
-            // agreement or none leaves reads to the visibility check.
-            let serves_as_replica = self
-                .resolver
-                .fetch_bucket_agreement(bucket_id)
-                .await?
-                .is_some_and(|agreement| !agreement.is_primary());
-            Ok::<_, MembershipError>((access, serves_as_replica))
-        }
-        .await;
+        // Cache miss or stale — fetch from chain.
+        let fetched = self.resolver.fetch_access(bucket_id).await;
         match fetched {
-            Ok((access, serves_as_replica)) => {
-                let entry = Arc::new(CachedMembership::new(access, serves_as_replica));
+            Ok(access) => {
+                let entry = Arc::new(CachedMembership::new(access));
                 // Cache it only if no invalidation landed during the fetch,
                 // then check again: no lock spans the insert, so a bump can
                 // still slip between the two lines. `invalidate` bumps
@@ -558,7 +525,9 @@ impl MembershipCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{CountingResolver, FlakyResolver, Gated, QueuedInvalidations};
+    use crate::test_support::{
+        AgreementResolver, CountingResolver, FlakyResolver, Gated, QueuedInvalidations,
+    };
 
     #[test]
     fn privilege_ladder_is_exhaustive() {
@@ -603,8 +572,26 @@ mod tests {
             (base().without_agreement(), false),
         ] {
             let entry = MembershipCache::new(resolver).lookup(1).await.unwrap();
-            assert_eq!(entry.serves_as_replica, expected);
+            assert_eq!(entry.access.serves_as_replica(), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn one_miss_makes_one_resolver_call_and_keeps_the_agreement() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let cache = MembershipCache::new(AgreementResolver {
+            max_bytes: 7,
+            calls: calls.clone(),
+        });
+
+        let entry = cache.lookup(1).await.unwrap();
+        cache.lookup(1).await.unwrap();
+
+        assert_eq!(
+            entry.access.local_agreement.as_ref().map(|a| a.max_bytes),
+            Some(7)
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -613,14 +600,11 @@ mod tests {
         let bob = AccountId32::new([2u8; 32]);
         let charlie = AccountId32::new([3u8; 32]);
 
-        let entry = CachedMembership::new(
-            BucketAccess::private(vec![
-                (alice.clone(), Role::Admin).into(),
-                (bob.clone(), Role::Writer).into(),
-                (charlie.clone(), Role::Reader).into(),
-            ]),
-            false,
-        );
+        let entry = CachedMembership::new(BucketAccess::private(vec![
+            (alice.clone(), Role::Admin).into(),
+            (bob.clone(), Role::Writer).into(),
+            (charlie.clone(), Role::Reader).into(),
+        ]));
 
         assert_eq!(entry.role_of(&alice), Some(Role::Admin));
         assert_eq!(entry.role_of(&bob), Some(Role::Writer));
@@ -632,7 +616,7 @@ mod tests {
 
     #[test]
     fn entries_go_stale_once_the_ttl_elapses() {
-        let entry = CachedMembership::new(BucketAccess::private(vec![]), false);
+        let entry = CachedMembership::new(BucketAccess::private(vec![]));
         assert!(entry.is_fresh(Duration::from_secs(60)));
         assert!(!entry.is_fresh(Duration::ZERO));
     }

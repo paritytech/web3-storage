@@ -331,7 +331,7 @@ async fn commit(
         .auth
         .bucket_agreement(request.bucket_id)
         .await?
-        .is_some_and(|agreement| !agreement.is_primary());
+        .is_some_and(|agreement| agreement.is_replica_agreement());
     if is_replica {
         return Err(provider_auth::AuthError::NotPrimary.into());
     }

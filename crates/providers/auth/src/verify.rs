@@ -206,7 +206,7 @@ impl Authenticator {
         // of the bucket, so no one else may write to it.
         if required != Role::Reader {
             if let Ok(entry) = &access {
-                if entry.serves_as_replica {
+                if entry.access.serves_as_replica() {
                     if let (Role::Writer, Some(header)) = (required, auth_header) {
                         let account = verify_signature(header, method, bucket_id, self.max_skew)?;
                         if entry.access.primary_providers.contains(&account) {
@@ -219,7 +219,7 @@ impl Authenticator {
         }
         if required == Role::Reader
             && access.as_ref().is_ok_and(|entry| {
-                entry.access.visibility == Visibility::Public || entry.serves_as_replica
+                entry.access.visibility == Visibility::Public || entry.access.serves_as_replica()
             })
         {
             return Ok(());
@@ -245,14 +245,20 @@ impl Authenticator {
         Ok(())
     }
 
-    /// This node's agreement on `bucket_id`, or `None` if it has none, read
-    /// from the chain without the membership cache. Fails when the chain cannot
-    /// be reached.
-    pub async fn bucket_agreement(
+    /// This node's agreement on `bucket_id`, or `None` if it has none, from
+    /// the access cache. Fails when the chain cannot be reached and nothing
+    /// usable is cached.
+    pub async fn local_agreement(
         &self,
         bucket_id: BucketId,
     ) -> Result<Option<LocalBucketAgreement>, AuthError> {
-        Ok(self.membership.fetch_bucket_agreement(bucket_id).await?)
+        Ok(self
+            .membership
+            .lookup(bucket_id)
+            .await?
+            .access
+            .local_agreement
+            .clone())
     }
 }
 
@@ -262,7 +268,7 @@ mod tests {
     use crate::error::MembershipError;
     use crate::http_auth::build_auth_header;
     use crate::membership::{BucketAccess, Member, MembershipResolver, StaticMembershipResolver};
-    use crate::test_support::FlakyResolver;
+    use crate::test_support::{AgreementResolver, FlakyResolver};
     use sp_core::Pair;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -366,11 +372,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bucket_agreement_reports_the_resolved_agreement() {
+    async fn local_agreement_reports_the_resolved_agreement() {
         let with_agreement =
             Authenticator::new(StaticMembershipResolver::private(vec![]).with_max_bytes(1_000));
         assert_eq!(
-            with_agreement.bucket_agreement(1).await.unwrap(),
+            with_agreement.local_agreement(1).await.unwrap(),
             Some(LocalBucketAgreement {
                 role: storage_primitives::RuntimeProviderRole::Primary,
                 max_bytes: 1_000
@@ -379,7 +385,22 @@ mod tests {
 
         let without =
             Authenticator::new(StaticMembershipResolver::private(vec![]).without_agreement());
-        assert_eq!(without.bucket_agreement(1).await.unwrap(), None);
+        assert_eq!(without.local_agreement(1).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn local_agreement_is_served_from_the_cache() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let auth = Authenticator::new(AgreementResolver {
+            max_bytes: 5,
+            calls: calls.clone(),
+        });
+
+        auth.local_agreement(1).await.unwrap();
+        let agreement = auth.local_agreement(1).await.unwrap();
+
+        assert_eq!(agreement.map(|a| a.max_bytes), Some(5));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -389,6 +410,7 @@ mod tests {
             members: vec![(AccountId32::new(alice.public().0), Role::Reader).into()],
             primary_providers: vec![],
             visibility: Visibility::Public,
+            local_agreement: None,
         }));
 
         let anonymous_read = auth.require_role(None, "GET", 1, Role::Reader).await;
