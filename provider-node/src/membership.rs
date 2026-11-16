@@ -85,60 +85,50 @@ impl MembershipResolver for ChainMembershipResolver {
             tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
         }
 
+        // Existence of the agreement is the proxy - expiry is not re-checked
+        // here, so a lapsed-but-unpruned agreement keeps serving until the
+        // entry is invalidated or falls out of the TTL, the same freshness
+        // bound the member set lives under.
+        let local_agreement = match &self.provider_account {
+            Some(own) => {
+                let agreement_address = storage_subxt::api::storage()
+                    .storage_provider()
+                    .storage_agreements()
+                    .unvalidated();
+                let result = at
+                    .storage()
+                    .try_fetch(
+                        agreement_address,
+                        (bucket_id, crate::subxt_client::subxt_account(own)),
+                    )
+                    .await
+                    .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
+                match result {
+                    Some(agreement_value) => {
+                        let agreement =
+                            agreement_value
+                                .decode()
+                                .map_err(|e| MembershipError::Decode {
+                                    bucket_id,
+                                    reason: e.to_string(),
+                                })?;
+                        Some(LocalBucketAgreement {
+                            role: agreement.role.into(),
+                            max_bytes: agreement.max_bytes,
+                        })
+                    }
+                    None => None,
+                }
+            }
+            None => None,
+        };
+
         Ok(BucketAccess {
             members,
             primary_providers: primary_provider_accounts(bucket.primary_providers.0),
             visibility: bucket.visibility.into(),
+            local_agreement,
         })
-    }
-
-    /// This node's agreement on `bucket_id`.
-    ///
-    /// Existence of the agreement is the proxy — expiry is not re-checked
-    /// here, so a lapsed-but-unpruned agreement keeps serving until the entry
-    /// is invalidated or falls out of the TTL, the same freshness bound the
-    /// member set lives under.
-    async fn fetch_bucket_agreement(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<Option<LocalBucketAgreement>, MembershipError> {
-        let Some(own) = &self.provider_account else {
-            return Ok(None);
-        };
-        let api = self.api()?;
-
-        let storage_address = storage_subxt::api::storage()
-            .storage_provider()
-            .storage_agreements()
-            .unvalidated();
-
-        let at = api
-            .at_current_block()
-            .await
-            .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
-        let result = at
-            .storage()
-            .try_fetch(
-                storage_address,
-                (bucket_id, crate::subxt_client::subxt_account(own)),
-            )
-            .await
-            .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
-
-        let Some(agreement_value) = result else {
-            return Ok(None);
-        };
-        let agreement = agreement_value
-            .decode()
-            .map_err(|e| MembershipError::Decode {
-                bucket_id,
-                reason: e.to_string(),
-            })?;
-
-        Ok(Some(LocalBucketAgreement {
-            role: agreement.role.into(),
-            max_bytes: agreement.max_bytes,
-        }))
     }
 }
 
