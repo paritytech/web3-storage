@@ -10,7 +10,6 @@
 
 use provider_auth::{build_auth_header, Authenticator, StaticMembershipResolver};
 use provider_http::{create_router, ProviderDeps, ProviderState};
-pub use provider_storage::StorageBackendSpec;
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
@@ -20,9 +19,6 @@ use storage_primitives::Role;
 use tempfile::TempDir;
 
 type AccountId32 = sp_core::crypto::AccountId32;
-
-/// Builds the storage backend spec for a given data directory.
-pub type BackendSpec = fn(std::path::PathBuf) -> StorageBackendSpec;
 
 /// Seed the provider signs with when a suite wants a signing identity. Same
 /// key as the client's: the suites only need the signatures to verify, not the
@@ -38,11 +34,8 @@ pub struct TestServer {
 
 impl TestServer {
     /// `state` picks the identity: seeded (signing) or provider-id only.
-    pub async fn start(
-        backend: BackendSpec,
-        state: impl FnOnce(ProviderDeps) -> ProviderState,
-    ) -> Self {
-        let (dir, deps) = Self::deps(backend);
+    pub async fn start(state: impl FnOnce(ProviderDeps) -> ProviderState) -> Self {
+        let (dir, deps) = Self::deps();
         let state = state(deps);
         publish_matching_registration(&state);
         Self::from_state(state, dir).await
@@ -51,24 +44,13 @@ impl TestServer {
     /// Like [`start`](Self::start), but leaves the chain-state coordinator's
     /// registration unpublished — covers the window before its first refresh,
     /// or a provider the chain does not know about.
-    pub async fn start_unregistered(
-        backend: BackendSpec,
-        state: impl FnOnce(ProviderDeps) -> ProviderState,
-    ) -> Self {
-        let (dir, deps) = Self::deps(backend);
+    pub async fn start_unregistered(state: impl FnOnce(ProviderDeps) -> ProviderState) -> Self {
+        let (dir, deps) = Self::deps();
         Self::from_state(state(deps), dir).await
     }
 
-    /// `backend` builds the spec over a fresh temp dir, since every test
-    /// server needs its own throwaway location.
-    fn deps(backend: BackendSpec) -> (TempDir, ProviderDeps) {
-        let dir = tempfile::Builder::new()
-            .prefix(provider_storage::TEMP_DIR_PREFIX)
-            .tempdir()
-            .expect("temp dir");
-        let storage = backend(dir.path().to_path_buf())
-            .build()
-            .expect("backend opens");
+    fn deps() -> (TempDir, ProviderDeps) {
+        let (storage, dir) = provider_storage::temp_rocksdb();
         let deps = ProviderDeps {
             storage,
             auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(vec![
@@ -125,44 +107,6 @@ pub fn publish_matching_registration(state: &ProviderState) {
             deregister_at: None,
         });
 }
-
-/// Declare tests that run once per backend.
-///
-/// ```ignore
-/// common::backend_tests! {
-///     async fn health(backend) {
-///         let server = TestServer::new(backend).await;
-///         // ...
-///     }
-/// }
-/// ```
-///
-/// expands to one test per backend, named after it (`health::rocksdb`), so a
-/// failure says which one it happened on.
-///
-/// Allowed as unused: the suites that never parameterize by backend (auth,
-/// negotiate, chain-state) compile this module too.
-#[allow(unused_macros)]
-macro_rules! backend_tests {
-    ($(async fn $name:ident($backend:ident) $body:block)*) => {
-        $(
-            async fn $name($backend: common::BackendSpec) $body
-
-            mod $name {
-                #[tokio::test]
-                async fn rocksdb() {
-                    super::$name(|path| {
-                        super::common::StorageBackendSpec::RocksDb { path }
-                    })
-                    .await
-                }
-            }
-        )*
-    };
-}
-
-#[allow(unused_imports)]
-pub(crate) use backend_tests;
 
 /// The account every test signs as.
 pub const TEST_MEMBER_SEED: &str = "//Alice";
