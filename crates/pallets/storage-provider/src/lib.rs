@@ -1316,6 +1316,12 @@ pub mod pallet {
         /// A frozen bucket only accepts checkpoints that keep its
         /// `frozen_start_seq`.
         SnapshotViolatesFrozen,
+        /// The checkpoint moves the bucket backwards. Its start is before the
+        /// current start, or, with the same start, its end is not past the
+        /// current end, or, with a later start, its end is before the current
+        /// end. Submit a commitment that covers new or deleted leaves; to add
+        /// signers to the current commitment, use `extend_checkpoint`.
+        SnapshotNotForward,
         /// Fewer distinct primary providers signed than the bucket's
         /// `min_providers`, or none. A repeated signature counts once.
         InsufficientSignatures,
@@ -2426,6 +2432,11 @@ pub mod pallet {
         /// `min_providers` distinct primary providers, and at least one; a
         /// repeated signature counts once. A frozen bucket only accepts
         /// commitments that keep its `frozen_start_seq`.
+        ///
+        /// A checkpoint never moves the bucket backwards. With the same start
+        /// as the current snapshot, its end must be past the current end. A
+        /// deletion moves the start forward and keeps the end, so with a later
+        /// start the end must not be before the current end.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
         pub fn checkpoint(
@@ -2453,6 +2464,13 @@ pub mod pallet {
                     ensure!(
                         commitment.start_seq == frozen_start,
                         Error::<T>::SnapshotViolatesFrozen
+                    );
+                }
+
+                if let Some(current) = bucket.snapshot.as_ref() {
+                    ensure!(
+                        commitment.moves_forward_from(&current.commitment),
+                        Error::<T>::SnapshotNotForward
                     );
                 }
 
