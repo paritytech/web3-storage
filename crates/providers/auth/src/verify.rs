@@ -379,7 +379,8 @@ mod tests {
             with_agreement.local_agreement(1).await.unwrap(),
             Some(LocalBucketAgreement {
                 role: storage_primitives::RuntimeProviderRole::Primary,
-                max_bytes: 1_000
+                max_bytes: 1_000,
+                expires_at: u32::MAX
             })
         );
 

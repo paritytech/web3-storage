@@ -45,7 +45,8 @@ pub enum BlockEvent {
     /// `StorageProvider::BucketCreated` / `MemberSet` / `MemberRemoved` /
     /// `BucketDeleted` / `BucketVisibilityChanged` / `ProviderAddedToBucket` /
     /// `PrimaryProviderRemoved` / `SlashedProviderRemoved` /
-    /// `StorageAgreementEstablished` / `AgreementToppedUp` / `AgreementEnded` -
+    /// `StorageAgreementEstablished` / `AgreementToppedUp` / `AgreementExtended` /
+    /// `AgreementEnded`
     /// the bucket's member set, visibility, primary providers or agreements
     /// changed, so any cached access for it is stale.
     /// Only the bucket id is decoded: patching in the member/role the event

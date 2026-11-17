@@ -32,6 +32,7 @@ fn is_membership_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
         || event.is::<pallet_events::StorageAgreementEstablished>()
         || event.is::<pallet_events::AgreementToppedUp>()
         || event.is::<pallet_events::AgreementEnded>()
+        || event.is::<pallet_events::AgreementExtended>()
 }
 
 /// Whether `event` is a storage-provider event that maps to a [`BlockEvent`]
@@ -151,7 +152,8 @@ fn block_event(event: StorageProviderEvent) -> Option<BlockEvent> {
         | StorageProviderEvent::SlashedProviderRemoved { bucket_id, .. }
         | StorageProviderEvent::StorageAgreementEstablished { bucket_id, .. }
         | StorageProviderEvent::AgreementToppedUp { bucket_id, .. }
-        | StorageProviderEvent::AgreementEnded { bucket_id, .. } => {
+        | StorageProviderEvent::AgreementEnded { bucket_id, .. }
+        | StorageProviderEvent::AgreementExtended { bucket_id, .. } => {
             Some(BlockEvent::BucketMembershipChanged { bucket_id })
         }
         // A new arm above also needs a check in `is_membership_event` or
@@ -372,6 +374,12 @@ mod tests {
                 provider: provider(),
                 payment_to_provider: 0,
                 burned: 0,
+            },
+            StorageProviderEvent::AgreementExtended {
+                bucket_id: 17,
+                provider: provider(),
+                new_expires_at: 300,
+                payment: 1,
             },
         ];
 

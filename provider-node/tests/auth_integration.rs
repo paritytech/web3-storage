@@ -68,6 +68,7 @@ impl AuthTestServer {
             local_agreement: Some(LocalBucketAgreement {
                 role: RuntimeProviderRole::Primary,
                 max_bytes: u64::MAX,
+                expires_at: u32::MAX,
             }),
         }))
         .await

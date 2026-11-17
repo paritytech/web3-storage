@@ -35,11 +35,18 @@ pub struct LocalBucketAgreement {
     pub role: RuntimeProviderRole,
     /// The agreement's quota, in bytes.
     pub max_bytes: u64,
+    /// Anchor block where the agreement's paid term ends.
+    pub expires_at: u32,
 }
 
 impl LocalBucketAgreement {
     pub fn is_replica_agreement(&self) -> bool {
         matches!(self.role, RuntimeProviderRole::Replica { .. })
+    }
+
+    /// Whether the node may still take writes for this agreement at `anchor_block`.
+    pub fn is_writable_at(&self, anchor_block: u32) -> bool {
+        anchor_block < self.expires_at
     }
 }
 
@@ -169,6 +176,7 @@ impl StaticMembershipResolver {
             local_agreement: Some(LocalBucketAgreement {
                 role: RuntimeProviderRole::Primary,
                 max_bytes: u64::MAX,
+                expires_at: u32::MAX,
             }),
             ..BucketAccess::private(members)
         })
@@ -191,6 +199,7 @@ impl StaticMembershipResolver {
                 last_sync: None,
             },
             max_bytes: u64::MAX,
+            expires_at: u32::MAX,
         });
         self
     }
@@ -200,7 +209,16 @@ impl StaticMembershipResolver {
         self.access.local_agreement = Some(LocalBucketAgreement {
             role: RuntimeProviderRole::Primary,
             max_bytes,
+            expires_at: u32::MAX,
         });
+        self
+    }
+
+    /// Give the resolved agreement this expiry block.
+    pub fn with_expires_at(mut self, expires_at: u32) -> Self {
+        if let Some(agreement) = self.access.local_agreement.as_mut() {
+            agreement.expires_at = expires_at;
+        }
         self
     }
 
