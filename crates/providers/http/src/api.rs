@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! HTTP API handlers for the provider node.
 
@@ -15,13 +15,12 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
-use provider_auth::RequiredRole;
 use provider_storage::{BucketInfo, ChunkTreeNode};
 use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_primitives::{AgreementTerms, BucketId};
+use storage_primitives::{AgreementTerms, BucketId, Role, MAX_READ_CHUNKS};
 use storage_primitives::{Commitment, CommitmentPayload};
 use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
@@ -144,13 +143,54 @@ async fn check_role(
     headers: &axum::http::HeaderMap,
     method: &str,
     bucket_id: u64,
-    required: RequiredRole,
+    required: Role,
 ) -> Result<(), Error> {
     state
         .auth
         .require_role(auth_header(headers), method, bucket_id, required)
         .await
         .map_err(Into::into)
+}
+
+/// Store an uploaded `node` in `bucket_id`. On the bucket's first upload,
+/// create the local bucket with the quota of this node's agreement on it.
+/// Rejects a bucket this node has no agreement on.
+async fn store_uploaded_node(
+    state: &ProviderState,
+    bucket_id: BucketId,
+    hash: H256,
+    node: ChunkTreeNode,
+) -> Result<(), Error> {
+    // The bucket check and the store share one storage task, so an upload to
+    // an existing bucket costs one blocking-pool hop. A missing bucket hands
+    // the node back for the agreement lookup.
+    let missing = state
+        .blocking_storage(
+            move |storage| -> Result<Option<ChunkTreeNode>, provider_storage::Error> {
+                if storage.get_bucket(bucket_id)?.is_none() {
+                    return Ok(Some(node));
+                }
+                storage.store_node(bucket_id, hash, node)?;
+                Ok(None)
+            },
+        )
+        .await??;
+    let Some(node) = missing else {
+        return Ok(());
+    };
+    let max_bytes = state
+        .auth
+        .local_agreement(bucket_id)
+        .await?
+        .ok_or(Error::NoAgreement(bucket_id))?
+        .max_bytes;
+    state
+        .blocking_storage(move |storage| {
+            storage.init_bucket(bucket_id, max_bytes)?;
+            storage.store_node(bucket_id, hash, node)
+        })
+        .await??;
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -170,7 +210,7 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
     Json(InfoResponse {
         provider_id: state.provider_id.clone(),
         readiness: ProviderReadiness {
-            signing_configured: state.keypair.is_some(),
+            signing_configured: state.signer.is_some(),
             provider_info_loaded: provider_registration_info.is_some(),
             deregistering: provider_registration_info
                 .as_ref()
@@ -227,14 +267,7 @@ async fn upload_node(
     headers: axum::http::HeaderMap,
     Json(request): Json<UploadNodeRequest>,
 ) -> Result<Json<UploadNodeResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "PUT",
-        request.bucket_id,
-        RequiredRole::Writer,
-    )
-    .await?;
+    check_role(&state, &headers, "PUT", request.bucket_id, Role::Writer).await?;
 
     let hash = decode_hash(&request.hash)?;
     let data = request
@@ -254,13 +287,8 @@ async fn upload_node(
         })
         .transpose()?;
     let node = ChunkTreeNode::from_wire(data, children)?;
-    let bucket_id = request.bucket_id;
-    state
-        .blocking_storage(move |storage| {
-            storage.init_bucket(bucket_id, u64::MAX)?;
-            storage.store_node(bucket_id, hash, node)
-        })
-        .await??;
+
+    store_uploaded_node(&state, request.bucket_id, hash, node).await?;
 
     Ok(Json(UploadNodeResponse { stored: true }))
 }
@@ -270,14 +298,7 @@ async fn check_exists(
     headers: axum::http::HeaderMap,
     Json(request): Json<ExistsRequest>,
 ) -> Result<Json<ExistsResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "POST",
-        request.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    check_role(&state, &headers, "POST", request.bucket_id, Role::Reader).await?;
 
     let hashes: Vec<H256> = request
         .hashes
@@ -302,14 +323,7 @@ async fn commit(
     headers: axum::http::HeaderMap,
     Json(request): Json<CommitRequest>,
 ) -> Result<Json<CommitResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "POST",
-        request.bucket_id,
-        RequiredRole::Writer,
-    )
-    .await?;
+    check_role(&state, &headers, "POST", request.bucket_id, Role::Writer).await?;
 
     let data_roots: Vec<H256> = request
         .data_roots
@@ -354,6 +368,13 @@ async fn read_chunks(
         .offset
         .saturating_add(query.length)
         .div_ceil(chunk_size);
+    let requested = end_chunk - start_chunk;
+    if requested > MAX_READ_CHUNKS {
+        return Err(Error::ReadTooLarge {
+            requested,
+            max: MAX_READ_CHUNKS,
+        });
+    }
 
     let chunks = state
         .blocking_storage(move |storage| {
@@ -380,14 +401,7 @@ async fn get_commitment(
     headers: axum::http::HeaderMap,
     Query(query): Query<CommitmentQuery>,
 ) -> Result<Json<CommitmentResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "GET",
-        query.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    check_role(&state, &headers, "GET", query.bucket_id, Role::Reader).await?;
 
     let bucket = require_bucket(&state, query.bucket_id).await?;
 
@@ -417,14 +431,7 @@ async fn get_checkpoint_signature(
     headers: axum::http::HeaderMap,
     Query(query): Query<CommitmentQuery>,
 ) -> Result<Json<CheckpointSignatureResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "GET",
-        query.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    check_role(&state, &headers, "GET", query.bucket_id, Role::Reader).await?;
 
     let bucket = require_bucket(&state, query.bucket_id).await?;
 
@@ -455,14 +462,7 @@ async fn get_mmr_proof(
     headers: axum::http::HeaderMap,
     Query(query): Query<MmrProofQuery>,
 ) -> Result<Json<storage_primitives::MmrProof>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "GET",
-        query.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    check_role(&state, &headers, "GET", query.bucket_id, Role::Reader).await?;
 
     let MmrProofQuery {
         bucket_id,
@@ -517,14 +517,7 @@ async fn delete_data(
     // Admin-only: this prune rewrites the MMR (drops every leaf below
     // `new_start_seq`) and so changes the commitment, unlike the Writer-level
     // node uploads and commits.
-    check_role(
-        &state,
-        &headers,
-        "POST",
-        request.bucket_id,
-        RequiredRole::Admin,
-    )
-    .await?;
+    check_role(&state, &headers, "POST", request.bucket_id, Role::Admin).await?;
 
     let (bucket_id, new_start_seq) = (request.bucket_id, request.new_start_seq);
     let commitment = state
@@ -556,14 +549,7 @@ async fn get_mmr_peaks(
     headers: axum::http::HeaderMap,
     Query(query): Query<MmrPeaksQuery>,
 ) -> Result<Json<MmrPeaksResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "GET",
-        query.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    check_role(&state, &headers, "GET", query.bucket_id, Role::Reader).await?;
 
     let bucket_id = query.bucket_id;
     let (mmr_root, peaks) = state
@@ -618,14 +604,7 @@ async fn get_historical_roots(
     headers: axum::http::HeaderMap,
     Query(query): Query<HistoricalRootsQuery>,
 ) -> Result<Json<HistoricalRootsResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "GET",
-        query.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    check_role(&state, &headers, "GET", query.bucket_id, Role::Reader).await?;
 
     let bucket = require_bucket(&state, query.bucket_id).await?;
 
@@ -661,7 +640,7 @@ async fn get_historical_roots(
 /// - `provider_key_mismatch` — the local signing key differs from the registered
 ///   on-chain `public_key`; signed terms would never verify. Clears on the next
 ///   provider-info refresh once the keys agree. Not specific to this endpoint:
-///   the guard sits in [`ProviderState::sign`], so `/commit`, `/commitment`,
+///   the guard is in [`provider_types::ProviderSigner::sign`], so `/commit`, `/commitment`,
 ///   `/checkpoint-signature` and deletion proofs return it too.
 /// - `provider_deregistering` — provider has announced deregistration and no longer
 ///   signs new terms.
@@ -669,7 +648,7 @@ async fn negotiate_terms(
     State(state): State<Arc<ProviderState>>,
     Json(req): Json<NegotiateRequest>,
 ) -> Result<Json<SignedTerms>, Error> {
-    let keypair = state.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
+    let signer = state.signer.as_ref().ok_or(SigningRefused::NoKey)?;
 
     // Both the anchor block and RequestTimeout must be known before we can sign
     // — otherwise we'd emit unbounded or already-expired terms.
@@ -707,7 +686,7 @@ async fn negotiate_terms(
     // never be redeemed — fail fast instead. Checked against the snapshot this
     // request is already using, so a re-registration heals it on the next
     // refresh without a restart.
-    state.ensure_signing_key_matches(&info)?;
+    signer.ensure_key_matches(&info)?;
 
     negotiate::validate_request(&req, &info)?;
 
@@ -721,7 +700,7 @@ async fn negotiate_terms(
         bucket: req.bucket.into(),
         replica_params: req.replica_params,
     };
-    Ok(Json(keypair.sign_terms(terms)))
+    Ok(Json(signer.sign_terms(&info, terms)?))
 }
 
 /// Get replica sync status for a bucket.
@@ -732,14 +711,7 @@ async fn get_replica_sync_status(
     headers: axum::http::HeaderMap,
     Query(query): Query<BucketSyncStatusQuery>,
 ) -> Result<Json<BucketSyncStatusResponse>, Error> {
-    check_role(
-        &state,
-        &headers,
-        "GET",
-        query.bucket_id,
-        RequiredRole::Reader,
-    )
-    .await?;
+    check_role(&state, &headers, "GET", query.bucket_id, Role::Reader).await?;
 
     let bucket = require_bucket(&state, query.bucket_id).await?;
 

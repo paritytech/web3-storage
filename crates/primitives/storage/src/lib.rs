@@ -24,6 +24,12 @@ pub use agreement_term::*;
 pub use merkle::*;
 pub use mmr::{bag_peaks, verify_mmr_proof, MmrLeaf, MmrProof, StorageMerge, LEAF_VERSION};
 
+/// The runtime's `Balance` type, for off-chain code that mirrors runtime types.
+pub type RuntimeBalance = u128;
+
+/// The runtime's `BlockNumber` type, for off-chain code that mirrors runtime types.
+pub type RuntimeBlockNumber = u32;
+
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
 pub type BucketId = u64;
@@ -32,6 +38,11 @@ pub type BucketId = u64;
 /// chunk of a version 1 data root has this size, except the last, which can be
 /// shorter. The provider rejects a larger chunk on upload and replica sync.
 pub const DEFAULT_CHUNK_SIZE: u32 = 256 * 1024;
+
+/// Most chunks one provider `/read` returns: 4 MiB of `DEFAULT_CHUNK_SIZE`
+/// chunks. The read is unauthenticated and the provider builds the whole
+/// response in memory, so this bounds what one request makes the node load.
+pub const MAX_READ_CHUNKS: u64 = 16;
 
 /// Prime numbers used for historical root bucketing.
 /// These provide logarithmic time coverage for replica sync validation.
@@ -125,6 +136,8 @@ pub enum ProviderRole<Balance, BlockNumber> {
         last_sync: Option<ReplicaSyncRecord<BlockNumber>>,
     },
 }
+
+pub type RuntimeProviderRole = ProviderRole<RuntimeBalance, RuntimeBlockNumber>;
 
 /// A replica's last confirmed sync: the commitment and the anchor block.
 /// `challenge_replica` targets leaves of this commitment.

@@ -13,7 +13,6 @@
 
 use provider_auth::{
     build_auth_header, Authenticator, BucketAccess, MembershipError, MembershipResolver,
-    RequiredRole,
 };
 use provider_events::BlockEvent;
 use sp_core::{sr25519, Pair};
@@ -77,7 +76,7 @@ async fn authorized_read(auth: &Authenticator, keypair: &sr25519::Pair, bucket_i
     let header = build_auth_header(&keypair.public().0, "GET", bucket_id, timestamp, |msg| {
         keypair.sign(msg).0
     });
-    auth.require_role(Some(&header), "GET", bucket_id, RequiredRole::Reader)
+    auth.require_role(Some(&header), "GET", bucket_id, Role::Reader)
         .await
         .expect("the signer is an Admin of every bucket here");
 }

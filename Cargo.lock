@@ -1823,13 +1823,13 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "provider-auth",
+ "provider-http",
  "provider-storage",
  "provider-types",
  "sp-core",
  "sp-runtime",
  "storage-client",
  "storage-primitives",
- "storage-provider-node",
  "subxt-signer",
  "tokio",
  "tracing",
@@ -7025,7 +7025,6 @@ name = "provider-coordinator"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "parking_lot",
  "provider-events",
  "provider-types",
  "sp-runtime",
@@ -7041,6 +7040,34 @@ dependencies = [
  "sp-runtime",
  "storage-primitives",
  "tokio",
+]
+
+[[package]]
+name = "provider-http"
+version = "0.1.0"
+dependencies = [
+ "array-bytes 6.2.3",
+ "async-trait",
+ "axum",
+ "base64",
+ "parity-scale-codec",
+ "provider-auth",
+ "provider-negotiation",
+ "provider-storage",
+ "provider-types",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sp-core",
+ "sp-crypto-hashing",
+ "sp-runtime",
+ "storage-primitives",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rate-limit",
+ "tower-http",
+ "tracing",
 ]
 
 [[package]]
@@ -7100,14 +7127,17 @@ dependencies = [
 name = "provider-types"
 version = "0.1.0"
 dependencies = [
+ "array-bytes 6.2.3",
  "clap",
  "parity-scale-codec",
+ "parking_lot",
  "provider-negotiation",
  "serde",
  "sp-core",
  "sp-crypto-hashing",
  "sp-runtime",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -9978,7 +10008,6 @@ dependencies = [
  "array-bytes 6.2.3",
  "async-trait",
  "axum",
- "base64",
  "clap",
  "parity-scale-codec",
  "parking_lot",
@@ -9986,13 +10015,11 @@ dependencies = [
  "provider-challenge",
  "provider-coordinator",
  "provider-events",
- "provider-negotiation",
+ "provider-http",
  "provider-replica",
  "provider-storage",
  "provider-types",
- "reqwest",
  "scale-info",
- "serde",
  "serde_json",
  "sp-core",
  "sp-crypto-hashing",
@@ -10005,8 +10032,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "tokio-rate-limit",
- "tower-http",
  "tracing",
  "tracing-subscriber 0.3.23",
 ]
