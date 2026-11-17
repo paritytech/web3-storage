@@ -460,6 +460,73 @@ async fn topped_up_quota_applies_after_the_block_event() {
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
 
+/// A top-up raises the quota of an existing bucket.
+#[tokio::test]
+async fn topped_up_quota_applies_to_an_existing_bucket() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let member = || {
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Writer).into()
+        ])
+    };
+    let (server, access, calls, changed) =
+        switchable_server(member().with_max_bytes(10).access).await;
+    let put = |data: &'static [u8]| {
+        put_node(
+            &server,
+            Some(make_auth_header(&alice, "PUT", 1, current_timestamp())),
+            data,
+        )
+    };
+
+    assert_eq!(put(&[1u8; 10]).await.status(), StatusCode::OK);
+    assert_eq!(
+        put(&[2u8; 10]).await.status(),
+        StatusCode::INSUFFICIENT_STORAGE
+    );
+
+    *access.lock().unwrap() = member().with_max_bytes(20).access;
+    changed.mark(1);
+
+    assert_eq!(put(&[2u8; 10]).await.status(), StatusCode::OK);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        put(&[3u8; 10]).await.status(),
+        StatusCode::INSUFFICIENT_STORAGE
+    );
+}
+
+/// An upload to an existing bucket is rejected once the agreement is gone.
+#[tokio::test]
+async fn upload_to_existing_bucket_without_agreement_is_rejected() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let member = || {
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Writer).into()
+        ])
+    };
+    let (server, access, _, changed) = switchable_server(member().with_max_bytes(100).access).await;
+    let put = |data: &'static [u8]| {
+        put_node(
+            &server,
+            Some(make_auth_header(&alice, "PUT", 1, current_timestamp())),
+            data,
+        )
+    };
+
+    assert_eq!(put(&[1u8; 10]).await.status(), StatusCode::OK);
+    let stats_before = server.storage.stats();
+
+    *access.lock().unwrap() = member().without_agreement().access;
+    changed.mark(1);
+
+    let resp = put(&[2u8; 10]).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "no_agreement");
+    assert_eq!(server.storage.stats(), stats_before);
+}
+
 /// The agreement's `max_bytes` bounds what the bucket stores: a node that
 /// would pass it is answered `507` and nothing is written.
 #[tokio::test]

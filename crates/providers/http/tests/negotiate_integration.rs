@@ -54,13 +54,13 @@ impl TestServer {
         // constants, then provider_info. Together these satisfy every
         // `/negotiate` prerequisite.
         state
-            .chain_state
+            .chain_state()
             .current_anchor_block
             .store(100, std::sync::atomic::Ordering::Relaxed);
-        *state.chain_state.constants.write() = Some(PalletConstants {
+        *state.chain_state().constants.write() = Some(PalletConstants {
             request_timeout: 200,
         });
-        *state.chain_state.provider_info.write() = Some(info);
+        *state.chain_state().provider_info.write() = Some(info);
         Self::serve(Arc::new(state), dir).await
     }
 
@@ -202,13 +202,13 @@ async fn negotiate_valid_until_is_anchor_block_plus_request_timeout() {
     let (deps, dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
-        .chain_state
+        .chain_state()
         .current_anchor_block
         .store(29_123_456, std::sync::atomic::Ordering::Relaxed);
-    *state.chain_state.constants.write() = Some(PalletConstants {
+    *state.chain_state().constants.write() = Some(PalletConstants {
         request_timeout: 3_600,
     });
-    *state.chain_state.provider_info.write() = Some(provider_info());
+    *state.chain_state().provider_info.write() = Some(provider_info());
     let server = TestServer::serve(Arc::new(state), dir).await;
 
     let resp = server.negotiate(&primary_request()).await;
@@ -225,10 +225,10 @@ async fn negotiate_503_when_anchor_block_unknown() {
     // the pallet's clock, so the handler must refuse.
     let (deps, dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
-    *state.chain_state.constants.write() = Some(PalletConstants {
+    *state.chain_state().constants.write() = Some(PalletConstants {
         request_timeout: 200,
     });
-    *state.chain_state.provider_info.write() = Some(provider_info());
+    *state.chain_state().provider_info.write() = Some(provider_info());
     let server = TestServer::serve(Arc::new(state), dir).await;
 
     let resp = server.negotiate(&primary_request()).await;
@@ -244,10 +244,10 @@ async fn negotiate_503_when_request_timeout_unknown() {
     let (deps, dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
-        .chain_state
+        .chain_state()
         .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
-    *state.chain_state.provider_info.write() = Some(provider_info());
+    *state.chain_state().provider_info.write() = Some(provider_info());
     let server = TestServer::serve(Arc::new(state), dir).await;
 
     let resp = server.negotiate(&primary_request()).await;
@@ -350,10 +350,10 @@ async fn negotiate_503_when_provider_info_unavailable() {
     let (deps, dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
-        .chain_state
+        .chain_state()
         .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
-    *state.chain_state.constants.write() = Some(PalletConstants {
+    *state.chain_state().constants.write() = Some(PalletConstants {
         request_timeout: 200,
     });
     // provider_info intentionally left None.
@@ -366,7 +366,7 @@ async fn negotiate_503_when_provider_info_unavailable() {
     assert_eq!(body["error"], "provider_info_unavailable");
 
     // Once on-chain info lands (mirroring the coordinator), negotiation succeeds.
-    *state.chain_state.provider_info.write() = Some(provider_info());
+    *state.chain_state().provider_info.write() = Some(provider_info());
     let resp = server.negotiate(&primary_request()).await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
@@ -446,16 +446,16 @@ async fn negotiate_transitions_to_info_unavailable_after_complete_deregister() {
     let (deps, dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
-        .chain_state
+        .chain_state()
         .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
-    *state.chain_state.constants.write() = Some(PalletConstants {
+    *state.chain_state().constants.write() = Some(PalletConstants {
         request_timeout: 200,
     });
     // Phase 1: deregistration announced.
     let mut deregistering = provider_info();
     deregistering.deregister_at = Some(150);
-    *state.chain_state.provider_info.write() = Some(deregistering);
+    *state.chain_state().provider_info.write() = Some(deregistering);
     let state = Arc::new(state);
     let server = TestServer::serve(state.clone(), dir).await;
 
@@ -468,7 +468,7 @@ async fn negotiate_transitions_to_info_unavailable_after_complete_deregister() {
 
     // Phase 2: complete_deregister — coordinator clears provider_info
     // (same as when the storage query returns None).
-    *state.chain_state.provider_info.write() = None;
+    *state.chain_state().provider_info.write() = None;
 
     let resp = server.negotiate(&primary_request()).await;
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -493,15 +493,15 @@ async fn negotiate_recovers_after_deregister_cancelled() {
     let (deps, dir) = test_deps();
     let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
-        .chain_state
+        .chain_state()
         .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
-    *state.chain_state.constants.write() = Some(PalletConstants {
+    *state.chain_state().constants.write() = Some(PalletConstants {
         request_timeout: 200,
     });
     let mut deregistering = provider_info();
     deregistering.deregister_at = Some(150);
-    *state.chain_state.provider_info.write() = Some(deregistering);
+    *state.chain_state().provider_info.write() = Some(deregistering);
     let state = Arc::new(state);
     let server = TestServer::serve(state.clone(), dir).await;
 
@@ -514,7 +514,7 @@ async fn negotiate_recovers_after_deregister_cancelled() {
     );
 
     // Cancelled: coordinator re-publishes info with deregister_at back to None.
-    *state.chain_state.provider_info.write() = Some(provider_info());
+    *state.chain_state().provider_info.write() = Some(provider_info());
 
     let resp = server.negotiate(&primary_request()).await;
     assert_eq!(resp.status(), StatusCode::OK);

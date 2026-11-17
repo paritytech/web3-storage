@@ -664,17 +664,23 @@ impl DiskStorage {
         Ok(commitment_of(&bucket))
     }
 
-    /// Set/refresh the bucket quota learned from the chain agreement.
-    pub fn set_bucket_quota(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
+    /// Set the quota of `bucket_id`, creating the bucket if it does not exist.
+    pub fn init_bucket_or_set_quota(
+        &self,
+        bucket_id: BucketId,
+        max_bytes: u64,
+    ) -> Result<(), Error> {
         let txn = self.transaction();
-        let mut bucket = self
-            .bucket_for_update(&txn, bucket_id)?
-            .ok_or(Error::BucketNotFound(bucket_id))?;
-        if bucket.max_bytes != max_bytes {
-            bucket.max_bytes = max_bytes;
-            self.put_bucket(&txn, bucket_id, &bucket)?;
-            txn.commit()?;
-        }
+        let bucket = match self.bucket_for_update(&txn, bucket_id)? {
+            Some(bucket) if bucket.max_bytes == max_bytes => return Ok(()),
+            Some(mut bucket) => {
+                bucket.max_bytes = max_bytes;
+                bucket
+            }
+            None => BucketState::new(max_bytes),
+        };
+        self.put_bucket(&txn, bucket_id, &bucket)?;
+        txn.commit()?;
         Ok(())
     }
 
@@ -1094,8 +1100,8 @@ impl StorageBackend for DiskStorage {
         self.deletion_receipt_covering(bucket_id, seq)
     }
 
-    fn set_bucket_quota(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
-        self.set_bucket_quota(bucket_id, max_bytes)
+    fn init_bucket_or_set_quota(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
+        self.init_bucket_or_set_quota(bucket_id, max_bytes)
     }
 
     fn pruned_ranges(&self, bucket_id: BucketId) -> Result<Vec<PrunedRangeInfo>, Error> {
@@ -1208,7 +1214,7 @@ mod tests {
         ) -> Result<Option<DeletionReceipt>, Error> {
             unreachable!("read-only")
         }
-        fn set_bucket_quota(&self, _: BucketId, _: u64) -> Result<(), Error> {
+        fn init_bucket_or_set_quota(&self, _: BucketId, _: u64) -> Result<(), Error> {
             unreachable!("read-only")
         }
         fn pruned_ranges(&self, _: BucketId) -> Result<Vec<PrunedRangeInfo>, Error> {
@@ -2688,11 +2694,11 @@ mod tests {
     }
 
     #[test]
-    fn set_bucket_quota_enforced_on_next_store() {
+    fn init_bucket_or_set_quota_enforced_on_next_store() {
         let (storage, _dir) = storage_with_bucket(u64::MAX);
         store_chunk_of_len(&storage, 1, 8);
 
-        storage.set_bucket_quota(BUCKET, 10).unwrap();
+        storage.init_bucket_or_set_quota(BUCKET, 10).unwrap();
         let data = vec![2u8; 8];
         let hash = hash_leaf(&data);
         let err = storage
@@ -2702,8 +2708,15 @@ mod tests {
             matches!(err, Error::QuotaExceeded { used: 8, max: 10 }),
             "got {err:?}"
         );
-        // Unknown bucket errors instead of creating state.
-        assert!(storage.set_bucket_quota(99, 10).is_err());
+        // An unknown bucket is created with the quota.
+        storage.init_bucket_or_set_quota(99, 10).unwrap();
+        assert!(storage.get_bucket(99).unwrap().is_some());
+        let data = vec![3u8; 11];
+        let hash = hash_leaf(&data);
+        assert!(matches!(
+            storage.store_node(99, hash, ChunkTreeNode::Chunk(data)),
+            Err(Error::QuotaExceeded { used: 0, max: 10 })
+        ));
     }
 
     /// A quota synced from the chain agreement must remain after a node
@@ -2714,7 +2727,7 @@ mod tests {
         {
             let storage = DiskStorage::new(dir.path()).unwrap();
             storage.init_bucket(1, u64::MAX).unwrap();
-            storage.set_bucket_quota(1, 100).unwrap();
+            storage.init_bucket_or_set_quota(1, 100).unwrap();
         }
 
         let storage = DiskStorage::new(dir.path()).unwrap();

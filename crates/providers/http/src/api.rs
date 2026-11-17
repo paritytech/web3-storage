@@ -152,32 +152,15 @@ async fn check_role(
         .map_err(Into::into)
 }
 
-/// Store an uploaded `node` in `bucket_id`. On the bucket's first upload,
-/// create the local bucket with the quota of this node's agreement on it.
-/// Rejects a bucket this node has no agreement on.
+/// Store an uploaded `node` in `bucket_id` under the quota of this node's
+/// agreement. Rejects a bucket without an agreement.
 async fn store_uploaded_node(
     state: &ProviderState,
     bucket_id: BucketId,
     hash: H256,
     node: ChunkTreeNode,
 ) -> Result<(), Error> {
-    // The bucket check and the store share one storage task, so an upload to
-    // an existing bucket costs one blocking-pool hop. A missing bucket hands
-    // the node back for the agreement lookup.
-    let missing = state
-        .blocking_storage(
-            move |storage| -> Result<Option<ChunkTreeNode>, provider_storage::Error> {
-                if storage.get_bucket(bucket_id)?.is_none() {
-                    return Ok(Some(node));
-                }
-                storage.store_node(bucket_id, hash, node)?;
-                Ok(None)
-            },
-        )
-        .await??;
-    let Some(node) = missing else {
-        return Ok(());
-    };
+    // Applied on every upload, so a top-up takes effect.
     let max_bytes = state
         .auth
         .local_agreement(bucket_id)
@@ -186,7 +169,7 @@ async fn store_uploaded_node(
         .max_bytes;
     state
         .blocking_storage(move |storage| {
-            storage.init_bucket(bucket_id, max_bytes)?;
+            storage.init_bucket_or_set_quota(bucket_id, max_bytes)?;
             storage.store_node(bucket_id, hash, node)
         })
         .await??;
