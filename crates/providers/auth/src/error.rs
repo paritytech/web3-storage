@@ -27,6 +27,9 @@ pub enum AuthError {
     #[error("Insufficient role")]
     InsufficientRole,
 
+    #[error("This node is a replica for the bucket and does not accept writes")]
+    NotPrimary,
+
     #[error("Membership lookup failed: {0}")]
     MembershipLookup(#[from] MembershipError),
 }

@@ -179,16 +179,18 @@ impl Authenticator {
         self
     }
 
-    /// Reader-level requests are served without authentication on a `Public`
-    /// bucket (an honest primary serves public-bucket reads to anyone) and on
-    /// a bucket this node holds as a **replica** (replicas serve everyone —
-    /// visibility gates primaries only; this is the design's anti-censorship
-    /// rule). Everything else (any request on a `Private` bucket, and every
-    /// Writer/Admin request) needs a valid signed `Authorization` header whose
-    /// account holds `required` for the bucket — or is the node's own provider
-    /// account, which passes any Reader check (see
-    /// [`Self::with_provider_account`]). A bucket whose visibility cannot be
-    /// established gates like `Private`.
+    /// Checks that a request may access `bucket_id` with role `required`.
+    ///
+    /// - Writer or Admin on a bucket this node serves as a replica: fails with
+    ///   [`AuthError::NotPrimary`], whoever signs it. A replica takes data only
+    ///   by sync.
+    /// - Reader on a `Public` bucket or a replica bucket: passes without
+    ///   authentication (replicas serve everyone, per the design's
+    ///   anti-censorship rule).
+    /// - Otherwise: needs a signed `Authorization` header from an account with
+    ///   `required` on the bucket. The node's own provider account passes any
+    ///   Reader check (see [`Self::with_provider_account`]). A bucket with
+    ///   unknown visibility counts as `Private`.
     pub async fn require_role(
         &self,
         auth_header: Option<&str>,
@@ -199,9 +201,16 @@ impl Authenticator {
         // One lookup serves both gates; its failure only matters once the
         // request has proven it needs a role.
         let access = self.membership.lookup(bucket_id).await;
+        if required != Role::Reader
+            && access
+                .as_ref()
+                .is_ok_and(|entry| entry.access.serves_as_replica())
+        {
+            return Err(AuthError::NotPrimary);
+        }
         if required == Role::Reader
             && access.as_ref().is_ok_and(|entry| {
-                entry.access.visibility == Visibility::Public || entry.serves_as_replica
+                entry.access.visibility == Visibility::Public || entry.access.serves_as_replica()
             })
         {
             return Ok(());
@@ -227,14 +236,20 @@ impl Authenticator {
         Ok(())
     }
 
-    /// This node's agreement on `bucket_id`, or `None` if it has none, read
-    /// from the chain without the membership cache. Fails when the chain cannot
-    /// be reached.
-    pub async fn bucket_agreement(
+    /// This node's agreement on `bucket_id`, or `None` if it has none, from
+    /// the access cache. Fails when the chain cannot be reached and nothing
+    /// usable is cached.
+    pub async fn local_agreement(
         &self,
         bucket_id: BucketId,
     ) -> Result<Option<LocalBucketAgreement>, AuthError> {
-        Ok(self.membership.fetch_bucket_agreement(bucket_id).await?)
+        Ok(self
+            .membership
+            .lookup(bucket_id)
+            .await?
+            .access
+            .local_agreement
+            .clone())
     }
 }
 
@@ -244,7 +259,7 @@ mod tests {
     use crate::error::MembershipError;
     use crate::http_auth::build_auth_header;
     use crate::membership::{BucketAccess, Member, MembershipResolver, StaticMembershipResolver};
-    use crate::test_support::FlakyResolver;
+    use crate::test_support::{AgreementResolver, FlakyResolver};
     use sp_core::Pair;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -348,11 +363,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bucket_agreement_reports_the_resolved_agreement() {
+    async fn local_agreement_reports_the_resolved_agreement() {
         let with_agreement =
             Authenticator::new(StaticMembershipResolver::private(vec![]).with_max_bytes(1_000));
         assert_eq!(
-            with_agreement.bucket_agreement(1).await.unwrap(),
+            with_agreement.local_agreement(1).await.unwrap(),
             Some(LocalBucketAgreement {
                 role: storage_primitives::RuntimeProviderRole::Primary,
                 max_bytes: 1_000
@@ -361,7 +376,22 @@ mod tests {
 
         let without =
             Authenticator::new(StaticMembershipResolver::private(vec![]).without_agreement());
-        assert_eq!(without.bucket_agreement(1).await.unwrap(), None);
+        assert_eq!(without.local_agreement(1).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn local_agreement_is_served_from_the_cache() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let auth = Authenticator::new(AgreementResolver {
+            max_bytes: 5,
+            calls: calls.clone(),
+        });
+
+        auth.local_agreement(1).await.unwrap();
+        let agreement = auth.local_agreement(1).await.unwrap();
+
+        assert_eq!(agreement.map(|a| a.max_bytes), Some(5));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -370,6 +400,7 @@ mod tests {
         let auth = Authenticator::new(StaticMembershipResolver::new(BucketAccess {
             members: vec![(AccountId32::new(alice.public().0), Role::Reader).into()],
             visibility: Visibility::Public,
+            local_agreement: None,
         }));
 
         let anonymous_read = auth.require_role(None, "GET", 1, Role::Reader).await;
@@ -389,7 +420,7 @@ mod tests {
     async fn replica_served_bucket_reads_anonymously_but_writes_stay_gated() {
         // Design rule: replicas serve everyone — visibility gates primaries
         // only. A private bucket this node replicates must answer anonymous
-        // reads, while writes keep demanding a role (which nobody holds here).
+        // reads, while writes are rejected because a replica takes data by sync.
         let auth =
             Authenticator::new(StaticMembershipResolver::private(vec![]).with_serves_as_replica());
 
@@ -397,7 +428,49 @@ mod tests {
         assert!(anonymous_read.is_ok(), "got {anonymous_read:?}");
 
         let anonymous_write = auth.require_role(None, "PUT", 1, Role::Writer).await;
-        assert!(matches!(anonymous_write, Err(AuthError::AuthRequired)));
+        assert!(matches!(anonymous_write, Err(AuthError::NotPrimary)));
+    }
+
+    #[tokio::test]
+    async fn replica_bucket_rejects_writer_and_admin_requests_even_from_members() {
+        let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let alice_account = AccountId32::new(alice.public().0);
+        let members = |role| vec![(alice_account.clone(), role).into()];
+
+        for (role, required) in [
+            (Role::Writer, Role::Writer),
+            (Role::Admin, Role::Writer),
+            (Role::Admin, Role::Admin),
+        ] {
+            let auth = Authenticator::new(
+                StaticMembershipResolver::private(members(role)).with_serves_as_replica(),
+            );
+            let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+            let signed = auth.require_role(Some(&header), "PUT", 1, required).await;
+            assert!(
+                matches!(signed, Err(AuthError::NotPrimary)),
+                "{role:?} as {required:?}: got {signed:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn primary_bucket_still_accepts_member_writes() {
+        let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let auth = Authenticator::new(
+            StaticMembershipResolver::private(vec![(
+                AccountId32::new(alice.public().0),
+                Role::Writer,
+            )
+                .into()])
+            .with_max_bytes(1_000),
+        );
+        let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+
+        let write = auth
+            .require_role(Some(&header), "PUT", 1, Role::Writer)
+            .await;
+        assert!(write.is_ok(), "got {write:?}");
     }
 
     #[tokio::test]

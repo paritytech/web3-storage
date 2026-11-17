@@ -180,7 +180,7 @@ async fn store_uploaded_node(
     };
     let max_bytes = state
         .auth
-        .bucket_agreement(bucket_id)
+        .local_agreement(bucket_id)
         .await?
         .ok_or(Error::NoAgreement(bucket_id))?
         .max_bytes;
