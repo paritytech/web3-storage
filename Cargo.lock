@@ -9796,7 +9796,6 @@ dependencies = [
  "parity-scale-codec",
  "provider-auth",
  "provider-negotiation",
- "provider-types",
  "rand 0.8.8",
  "reqwest",
  "serde",
