@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! API types for the provider node.
 
@@ -296,7 +296,7 @@ pub struct MmrPeaksResponse {
 }
 
 /// Request to fetch multiple nodes of a bucket. Like `GET /node`, the hash is
-/// the read capability (see the L0 read-access rules in the design doc's
+/// the read capability (see the read-access rules in the design doc's
 /// "Bucket Visibility & Access").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchNodesRequest {

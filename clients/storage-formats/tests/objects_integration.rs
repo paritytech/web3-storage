@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! S3 object operations against an in-process provider node, over Layer 0
+//! S3 object operations against an in-process provider node, over the blob
 //! routes only. No chain is needed.
 
 use client_test_support::{make_client, start_test_provider};
 use std::collections::HashMap;
 use storage_client::StorageUserClient;
-use storage_formats::s3::{ListObjectsParams, Objects, PutObjectOptions, S3ClientError};
+use storage_formats::s3::{ListObjectsParams, PutObjectOptions, S3Bucket, S3ClientError};
 use storage_formats::Tree;
 
 const BUCKET: u64 = 1;
 
-fn client(url: &str) -> Objects<StorageUserClient> {
-    Objects::new(Tree::new(make_client(url.to_string()), BUCKET))
+fn client(url: &str) -> S3Bucket<StorageUserClient> {
+    S3Bucket::new(Tree::new(make_client(url.to_string()), BUCKET))
 }
 
 #[tokio::test]

@@ -338,7 +338,7 @@ sc-coverage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob
 sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/sc-team-drive.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
-# Photos dApp (Layer 1) — namespaced module. Run `just photos` to list its recipes;
+# Photos dApp — namespaced module. Run `just photos` to list its recipes;
 # e.g. `just photos build`, `just photos deploy`, `just photos flow`.
 mod photos 'user-interfaces/photos/photos.just'
 
@@ -411,7 +411,7 @@ papi-provider-discovery BYTES="1073741824" DURATION="100" MAX_PRICE="10": papi-s
 # ============================================================
 
 # Run comprehensive E2E test suite (all workflows sequentially). Needs the
-# provider node (`just start-provider`) and, for workflows 01 and 15, the second
+# provider node (`just start-provider`) and, for workflows 01, 15 and 16, the second
 # provider node (`just start-second-provider`).
 e2e PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL: papi-setup
     npx c8 --reporter=text --reporter=json --report-dir=examples/papi/coverage \

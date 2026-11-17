@@ -5,11 +5,11 @@
  *
  * Accounts: //Alice (provider), //Bob (owner), //Ferdie (member)
  *
- * Tests: a drive on a plain Layer 0 bucket through `Web3Storage`: create,
+ * Tests: a drive on a plain bucket through `Web3Storage`: create,
  * file and directory ops, add/change/remove members, and failure cases. The
  * chain stores no drive name or drive record: a drive is its bucket id. The
  * directory tree is stored in the bucket and read and written through the
- * provider's Layer 0 routes only.
+ * provider's blob routes only.
  *
  * Usage: node e2e/09-drive-lifecycle.js [chain_ws] [provider_url]
  */

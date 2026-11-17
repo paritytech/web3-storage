@@ -5,10 +5,10 @@
  *
  * Accounts: //Alice (provider), //Bob (owner), //Charlie (member)
  *
- * Tests: S3 object CRUD on a plain Layer 0 bucket through `Web3Storage`, member
+ * Tests: S3 object CRUD on a plain bucket through `Web3Storage`, member
  * writes, and failure cases. The chain stores no bucket name and no object
  * metadata: the client keeps the key -> content tree in the bucket itself and
- * uses the provider's Layer 0 routes only.
+ * uses the provider's blob routes only.
  *
  * Usage: node e2e/03-s3-bucket-and-objects.js [chain_ws] [provider_url]
  */
@@ -19,7 +19,7 @@ import {
   makeSigner,
   sameAddress,
   setMember,
-  type Objects,
+  type S3Bucket,
 } from "@web3-storage/sdk";
 import { ensureSoleAcceptingProvider } from "../support.js";
 import { eventually, INSUFFICIENT_ROLE, runSuite, setupChain, storageFor } from "./helpers.js";
@@ -49,8 +49,8 @@ async function main() {
 
   let bucketId: bigint;
   /** The bucket's objects as the owner and as the member, opened by 3.1. */
-  let ownerS3: Objects;
-  let memberS3: Objects;
+  let ownerS3: S3Bucket;
+  let memberS3: S3Bucket;
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 

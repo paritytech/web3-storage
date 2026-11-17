@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Integration tests for the off-chain term negotiation endpoint.
 //!
@@ -10,8 +10,9 @@
 
 use axum::http::StatusCode;
 use provider_auth::{Authenticator, StaticMembershipResolver};
+use provider_http::{create_router, NegotiateRequest, ProviderDeps, ProviderState, SignedTerms};
 use provider_storage::temp_rocksdb;
-use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
+use provider_types::{PalletConstants, ProviderInfo, ProviderSettings, ProviderStats};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
@@ -19,9 +20,6 @@ use sp_runtime::{AccountId32, MultiSignature};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage_primitives::{BucketTarget, ReplicaTerms};
-use storage_provider_node::{
-    create_router, NegotiateRequest, PalletConstants, ProviderDeps, ProviderState, SignedTerms,
-};
 use tokio::net::TcpListener;
 
 const PROVIDER_SEED: &str = "//Alice";
