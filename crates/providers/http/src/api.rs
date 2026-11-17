@@ -153,21 +153,14 @@ async fn check_role(
 }
 
 /// Store an uploaded `node` in `bucket_id` under the quota of this node's
-/// agreement on it. Creates the local bucket on the first upload, and applies
-/// the agreement's current `max_bytes` to an existing one, so a quota raised
-/// by `top_up_agreement` takes effect. Rejects a bucket this node has no
-/// agreement on.
+/// agreement. Rejects a bucket without an agreement.
 async fn store_uploaded_node(
     state: &ProviderState,
     bucket_id: BucketId,
     hash: H256,
     node: ChunkTreeNode,
 ) -> Result<(), Error> {
-    // Served from the access cache that `check_role` filled. The
-    // `AgreementToppedUp` event drops the cached entry, so the next upload
-    // reads the raised quota from the chain. An upload that read the old
-    // quota before the event can still write it after a newer upload wrote
-    // the new one; the next upload writes the new quota again.
+    // Applied on every upload, so a top-up takes effect.
     let max_bytes = state
         .auth
         .local_agreement(bucket_id)

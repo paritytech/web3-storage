@@ -664,9 +664,7 @@ impl DiskStorage {
         Ok(commitment_of(&bucket))
     }
 
-    /// Set the quota of `bucket_id` to `max_bytes`, the agreement's quota,
-    /// creating the bucket if it does not exist. One transaction does the
-    /// check and the write, so concurrent callers cannot both create it.
+    /// Set the quota of `bucket_id`, creating the bucket if it does not exist.
     pub fn init_bucket_or_set_quota(
         &self,
         bucket_id: BucketId,

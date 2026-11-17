@@ -460,9 +460,7 @@ async fn topped_up_quota_applies_after_the_block_event() {
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
 
-/// A top-up raises the quota of a local bucket that already holds data: once
-/// `AgreementToppedUp` drops the cached entry, an upload that failed under the
-/// old quota succeeds.
+/// A top-up raises the quota of an existing bucket.
 #[tokio::test]
 async fn topped_up_quota_applies_to_an_existing_bucket() {
     let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
@@ -498,8 +496,7 @@ async fn topped_up_quota_applies_to_an_existing_bucket() {
     );
 }
 
-/// An upload to a local bucket that already holds data is rejected once the
-/// node's agreement on it is gone, and nothing is written.
+/// An upload to an existing bucket is rejected once the agreement is gone.
 #[tokio::test]
 async fn upload_to_existing_bucket_without_agreement_is_rejected() {
     let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
