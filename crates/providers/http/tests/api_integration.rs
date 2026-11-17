@@ -1093,40 +1093,8 @@ async fn test_chunk_proofs_verify_for_every_chunk_of_an_uneven_tree() {
         vec![b'b'; chunk_size],
         vec![b'c'; 1000],
     ];
-    let leaves: Vec<H256> = chunks
-        .iter()
-        .map(|c| storage_primitives::hash_leaf(c))
-        .collect();
-
-    // Chunks first, then the internal nodes in the clients' canonical
-    // shape, children before parents.
-    let (root, internal) = storage_primitives::merkle_tree(&leaves);
-    let chunk_nodes = chunks
-        .iter()
-        .zip(&leaves)
-        .map(|(chunk, hash)| (*hash, json!(BASE64.encode(chunk)), Value::Null));
-    let internal_nodes = internal.iter().map(|n| {
-        (
-            n.hash,
-            Value::Null,
-            json!([format!("{:#x}", n.left), format!("{:#x}", n.right)]),
-        )
-    });
-    for (hash, data, children) in chunk_nodes.chain(internal_nodes) {
-        let resp = server
-            .client
-            .request_bucket(Method::PUT, server.url("/node"), 1)
-            .json(&json!({
-                "bucket_id": 1,
-                "hash": format!("{hash:#x}"),
-                "data": data,
-                "children": children,
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-    }
+    let chunk_refs: Vec<&[u8]> = chunks.iter().map(Vec::as_slice).collect();
+    let (root, leaves) = upload_chunk_tree(&server, &chunk_refs).await;
 
     let root_hex = format!("{root:#x}");
     let commit = server
@@ -1742,42 +1710,43 @@ async fn test_read_chunks_invalid_hex() {
 /// 1. Returns the root and the chunk hashes.
 async fn upload_three_chunks(server: &TestServer) -> (H256, Vec<H256>) {
     // Two 8-byte chunks and a shorter last one.
-    let chunks: [&[u8]; 3] = [b"chunk-01", b"chunk-02", b"end"];
+    upload_chunk_tree(server, &[&b"chunk-01"[..], &b"chunk-02"[..], &b"end"[..]]).await
+}
+
+/// Upload `chunks` and the internal nodes of their canonical tree to bucket
+/// 1, children before parents. Returns the root and the chunk hashes.
+async fn upload_chunk_tree(server: &TestServer, chunks: &[&[u8]]) -> (H256, Vec<H256>) {
     let leaves: Vec<H256> = chunks
         .iter()
         .map(|c| storage_primitives::hash_leaf(c))
         .collect();
-    for (data, hash) in chunks.iter().zip(&leaves) {
+    let (root, internal) = storage_primitives::merkle_tree(&leaves);
+    let chunk_nodes = chunks
+        .iter()
+        .zip(&leaves)
+        .map(|(chunk, hash)| (*hash, json!(BASE64.encode(chunk)), Value::Null));
+    let internal_nodes = internal.iter().map(|n| {
+        (
+            n.hash,
+            Value::Null,
+            json!([format!("{:#x}", n.left), format!("{:#x}", n.right)]),
+        )
+    });
+    for (hash, data, children) in chunk_nodes.chain(internal_nodes) {
         let resp = server
             .client
-            .put(server.url("/node"))
+            .request_bucket(Method::PUT, server.url("/node"), 1)
             .json(&json!({
                 "bucket_id": 1,
                 "hash": format!("{hash:#x}"),
-                "data": BASE64.encode(data),
-                "children": null
+                "data": data,
+                "children": children,
             }))
             .send()
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
-    let (root, nodes) = storage_primitives::merkle_tree(&leaves);
-    for node in nodes {
-        let resp = server
-            .client
-            .put(server.url("/node"))
-            .json(&json!({
-                "bucket_id": 1,
-                "hash": format!("{:#x}", node.hash),
-                "children": [format!("{:#x}", node.left), format!("{:#x}", node.right)]
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-    }
-
     (root, leaves)
 }
 

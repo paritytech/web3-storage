@@ -270,7 +270,11 @@ impl StorageUserClient {
         data.truncate(end);
         data.drain(..start);
 
-        // Decrypt after reassembly if encryption is enabled
+        self.decrypt(data)
+    }
+
+    /// Decrypt reassembled data if encryption is enabled.
+    fn decrypt(&self, data: Vec<u8>) -> ClientResult<Vec<u8>> {
         match &self.cipher {
             Some(cipher) => cipher.decrypt(&data),
             None => Ok(data),
@@ -291,10 +295,7 @@ impl StorageUserClient {
         if hashes.is_empty() || merkle_root(&hashes) != *data_root {
             return Err(ClientError::VerificationFailed);
         }
-        match &self.cipher {
-            Some(cipher) => cipher.decrypt(&data),
-            None => Ok(data),
-        }
+        self.decrypt(data)
     }
 
     /// Read chunks `start_chunk..end_chunk` of `data_root` in as many `/read`
@@ -319,14 +320,14 @@ impl StorageUserClient {
         let mut end = end_chunk;
         // The caller's count, or the first response's.
         let mut chunk_count = chunk_count;
-        let mut expected_start = None;
+        // A read from byte 0 starts at chunk 0.
+        let mut expected_start = (start_chunk == 0).then_some(0);
         while length > 0 {
             let page = self
                 .read_page(bucket_id, data_root, offset, length, &mut data, &mut hashes)
                 .await?;
             if *chunk_count.get_or_insert(page.chunk_count) != page.chunk_count
                 || expected_start.is_some_and(|start| start != page.start_chunk)
-                || (offset == 0 && page.start_chunk != 0)
             {
                 return Err(ClientError::VerificationFailed);
             }

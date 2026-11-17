@@ -236,9 +236,9 @@ export class FakeProvider {
     const chunks = [];
     let bytes = 0;
     for (let i = start; i < end; i++) {
-      const size = this.nodes.get(hashes[i])!.data.length;
-      if (chunks.length > 0 && bytes + size > MAX_READ_BYTES) break;
-      bytes += size;
+      const data = this.nodes.get(hashes[i])!.data;
+      if (chunks.length > 0 && bytes + data.length > MAX_READ_BYTES) break;
+      bytes += data.length;
       const proof: string[] = [];
       let idx = i;
       for (const level of tree.slice(0, -1)) {
@@ -246,7 +246,6 @@ export class FakeProvider {
         if ((idx ^ 1) < level.length) proof.push(toHex(level[idx ^ 1]));
         idx >>= 1;
       }
-      const data = this.nodes.get(hashes[i])!.data;
       chunks.push({ hash: toHex(hashLeaf(data)), data: bytesToBase64(data), proof });
     }
     return json(200, { start_chunk: start, chunk_count: hashes.length, chunks });

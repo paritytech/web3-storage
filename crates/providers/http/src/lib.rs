@@ -34,8 +34,6 @@ pub struct ProviderDeps {
 }
 
 /// Limits on one `/read` response, which the provider builds in memory.
-/// With the `clap` feature, the options `--read-max-bytes` and
-/// `--read-max-chunks`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::Args))]
 pub struct ReadLimits {

@@ -1992,8 +1992,8 @@ mod tests {
         assert_eq!(
             reads
                 .read_chunks(root, 1, 3, u64::MAX)
-                .map(|read| read.chunks)
                 .unwrap()
+                .chunks
                 .len(),
             3
         );
@@ -2006,10 +2006,7 @@ mod tests {
         let (data, proof) = storage.get_chunk_at_index(root, 3).unwrap();
         assert_eq!(data, vec![4u8; DEFAULT_CHUNK_SIZE as usize]);
         assert!(verify_merkle_proof(leaves[3], 3, 5, &proof, &root));
-        let range = storage
-            .read_chunks(root, 3, 1, u64::MAX)
-            .map(|read| read.chunks)
-            .unwrap();
+        let range = storage.read_chunks(root, 3, 1, u64::MAX).unwrap().chunks;
         assert_eq!(range.len(), 1);
         assert_eq!(range[0].0, leaves[3]);
     }
@@ -2875,10 +2872,7 @@ mod tests {
         let chunk = hash_leaf(&vec![0u8; DEFAULT_CHUNK_SIZE as usize]);
 
         let reads = CountingReads::new(&storage);
-        let range = reads
-            .read_chunks(root, 0, 1, u64::MAX)
-            .map(|read| read.chunks)
-            .unwrap();
+        let range = reads.read_chunks(root, 0, 1, u64::MAX).unwrap().chunks;
         assert!(reads.get_node_calls.swap(0, Ordering::Relaxed) < 1000);
         assert_eq!(range.len(), 1);
         assert!(verify_merkle_proof(chunk, 0, count, &range[0].2, &root));
@@ -2906,9 +2900,7 @@ mod tests {
 
             let reads = CountingReads::new(&storage);
             assert!(matches!(
-                reads
-                    .read_chunks(root, 0, 1, u64::MAX)
-                    .map(|read| read.chunks),
+                reads.read_chunks(root, 0, 1, u64::MAX),
                 Err(Error::NonCanonicalTree(_))
             ));
             assert!(
@@ -2929,9 +2921,7 @@ mod tests {
 
         delete(leaves[1]);
         assert!(matches!(
-            storage
-                .read_chunks(root, 0, 3, u64::MAX)
-                .map(|read| read.chunks),
+            storage.read_chunks(root, 0, 3, u64::MAX),
             Err(Error::NodeNotFound(_))
         ));
         assert!(matches!(
@@ -2946,9 +2936,7 @@ mod tests {
             Err(Error::NodeNotFound(_))
         ));
         assert!(matches!(
-            storage
-                .read_chunks(root, 0, 1, u64::MAX)
-                .map(|read| read.chunks),
+            storage.read_chunks(root, 0, 1, u64::MAX),
             Err(Error::NodeNotFound(_))
         ));
     }
@@ -2966,9 +2954,7 @@ mod tests {
             Err(Error::NodeNotFound(_))
         ));
         assert!(matches!(
-            storage
-                .read_chunks(missing, 0, 1, u64::MAX)
-                .map(|read| read.chunks),
+            storage.read_chunks(missing, 0, 1, u64::MAX),
             Err(Error::NodeNotFound(_))
         ));
     }

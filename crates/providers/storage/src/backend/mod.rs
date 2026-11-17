@@ -296,8 +296,8 @@ pub trait StorageBackend: Send + Sync {
                 chunk_count,
             });
         }
-        let (_, data, proof) = chunk_with_proof(self, data_root, chunk_count, chunk_index)?;
-        Ok((data, proof))
+        let (hash, _, proof) = locate_chunk(self, data_root, chunk_count, chunk_index)?;
+        Ok((chunk_data(self, data_root, &hash)?, proof))
     }
 
     /// Chunks of `data_root` from index `start`, with their proofs. Stops
@@ -311,23 +311,7 @@ pub trait StorageBackend: Send + Sync {
         max_bytes: u64,
     ) -> Result<ChunkRead, Error> {
         let chunk_count = chunk_count(self, data_root)?;
-        let end = start.saturating_add(max_chunks).min(chunk_count);
-        let mut chunks = Vec::new();
-        let mut bytes = 0u64;
-        for index in start..end {
-            let (hash, size, proof) = locate_chunk(self, data_root, chunk_count, index)?;
-            let total = bytes.saturating_add(size);
-            if !chunks.is_empty() && total > max_bytes {
-                break;
-            }
-            chunks.push((hash, chunk_data(self, data_root, &hash)?, proof));
-            bytes = total;
-        }
-        Ok(ChunkRead {
-            start_chunk: start,
-            chunk_count,
-            chunks,
-        })
+        read_chunks_of(self, data_root, chunk_count, start, max_chunks, max_bytes)
     }
 
     /// Whole chunks of `data_root` that cover `offset..offset + length`, with
@@ -341,8 +325,9 @@ pub trait StorageBackend: Send + Sync {
         max_chunks: u64,
         max_bytes: u64,
     ) -> Result<ChunkRead, Error> {
+        let chunk_count = chunk_count(self, data_root)?;
         let chunk_size = first_chunk_size(self, data_root)?;
-        if chunk_size == 0 && chunk_count(self, data_root)? > 1 {
+        if chunk_size == 0 && chunk_count > 1 {
             return Err(Error::NonCanonicalTree(format!("{:#x}", data_root)));
         }
         let chunk_size = chunk_size.max(1);
@@ -351,8 +336,10 @@ pub trait StorageBackend: Send + Sync {
             0 => start,
             _ => offset.saturating_add(length).div_ceil(chunk_size),
         };
-        self.read_chunks(
+        read_chunks_of(
+            self,
             data_root,
+            chunk_count,
             start,
             end.saturating_sub(start).min(max_chunks),
             max_bytes,
@@ -518,16 +505,32 @@ fn left_child_chunks<B: StorageBackend + ?Sized>(
     Err(Error::NonCanonicalTree(format!("{:#x}", root)))
 }
 
-/// Hash, data and Merkle proof of chunk `index` in the tree of `chunk_count`
-/// chunks under `root`. Only the proven chunk's data is read.
-fn chunk_with_proof<B: StorageBackend + ?Sized>(
+/// [`StorageBackend::read_chunks`] for a tree of `chunk_count` chunks.
+fn read_chunks_of<B: StorageBackend + ?Sized>(
     backend: &B,
     root: H256,
     chunk_count: u64,
-    index: u64,
-) -> Result<ProvenChunk, Error> {
-    let (hash, _, proof) = locate_chunk(backend, root, chunk_count, index)?;
-    Ok((hash, chunk_data(backend, root, &hash)?, proof))
+    start: u64,
+    max_chunks: u64,
+    max_bytes: u64,
+) -> Result<ChunkRead, Error> {
+    let end = start.saturating_add(max_chunks).min(chunk_count);
+    let mut chunks = Vec::new();
+    let mut bytes = 0u64;
+    for index in start..end {
+        let (hash, size, proof) = locate_chunk(backend, root, chunk_count, index)?;
+        let total = bytes.saturating_add(size);
+        if !chunks.is_empty() && total > max_bytes {
+            break;
+        }
+        chunks.push((hash, chunk_data(backend, root, &hash)?, proof));
+        bytes = total;
+    }
+    Ok(ChunkRead {
+        start_chunk: start,
+        chunk_count,
+        chunks,
+    })
 }
 
 /// Hash, size and Merkle proof of chunk `index` in the tree of `chunk_count`
@@ -728,10 +731,7 @@ mod tests {
         let (_dir, storage, leaves) = storage_with_chunks(1024 * 1024, &chunks);
         let root = build_merkle_tree(&storage, 1, &leaves).unwrap();
 
-        let range = storage
-            .read_chunks(root, 1, 3, u64::MAX)
-            .map(|read| read.chunks)
-            .unwrap();
+        let range = storage.read_chunks(root, 1, 3, u64::MAX).unwrap().chunks;
         assert_eq!(range.len(), 3);
         for (index, (hash, data, proof)) in (1..4).zip(&range) {
             assert_eq!(*data, chunks[index as usize]);
@@ -746,16 +746,16 @@ mod tests {
 
         let clipped: Vec<Vec<u8>> = storage
             .read_chunks(root, 3, 7, u64::MAX)
-            .map(|read| read.chunks)
             .unwrap()
+            .chunks
             .into_iter()
             .map(|(_, data, _)| data)
             .collect();
         assert_eq!(clipped, chunks[3..]);
         assert!(storage
             .read_chunks(root, 7, 2, u64::MAX)
-            .map(|read| read.chunks)
             .unwrap()
+            .chunks
             .is_empty());
         assert!(storage
             .read_chunks(root, 3, 0, u64::MAX)
