@@ -211,11 +211,15 @@ impl MembershipInvalidations for BlockEventInvalidations {
                 }
             }
         }
+        // Released before logging, so the lock covers only the receive loop.
+        drop(events);
         if all {
+            tracing::info!("membership feed: every bucket changed or was missed");
             Invalidation::All
         } else if buckets.is_empty() {
             Invalidation::None
         } else {
+            tracing::debug!(?buckets, "membership feed: drained bucket changes");
             Invalidation::Buckets(buckets)
         }
     }

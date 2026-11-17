@@ -462,8 +462,20 @@ impl MembershipCache {
                     self.cache.insert(bucket_id, entry.clone()).await;
                     if self.epoch.load(Ordering::SeqCst) != epoch_before {
                         self.cache.invalidate(&bucket_id).await;
+                        tracing::debug!(
+                            bucket_id,
+                            "membership cache: dropped a fetch that raced an invalidation"
+                        );
                     }
                 }
+                tracing::debug!(
+                    bucket_id,
+                    members = entry.access.members.len(),
+                    primary_providers = entry.access.primary_providers.len(),
+                    local_agreement = entry.access.local_agreement.is_some(),
+                    replica = entry.access.serves_as_replica(),
+                    "membership cache: resolved bucket access"
+                );
                 Ok(entry)
             }
             Err(e) => {
@@ -510,6 +522,7 @@ impl MembershipCache {
     async fn invalidate(&self, bucket_id: BucketId) {
         self.epoch.fetch_add(1, Ordering::SeqCst);
         self.cache.invalidate(&bucket_id).await;
+        tracing::debug!(bucket_id, "membership cache: invalidated bucket");
     }
 
     /// Drop every cached membership. `moka`'s `invalidate_all` is O(1) - it
@@ -519,6 +532,7 @@ impl MembershipCache {
     fn invalidate_all(&self) {
         self.epoch.fetch_add(1, Ordering::SeqCst);
         self.cache.invalidate_all();
+        tracing::info!("membership cache: invalidated every bucket");
     }
 }
 
