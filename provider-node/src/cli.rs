@@ -141,6 +141,24 @@ pub struct RpcParams {
         value_delimiter = ','
     )]
     pub cors_allowed_origins: Option<Vec<String>>,
+
+    /// Most bytes of chunk data in one `/read` response.
+    #[arg(
+        long,
+        env = "READ_MAX_BYTES",
+        default_value_t = provider_http::ReadLimits::DEFAULT_MAX_BYTES,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    pub read_max_bytes: u64,
+
+    /// Most chunks in one `/read` response.
+    #[arg(
+        long,
+        env = "READ_MAX_CHUNKS",
+        default_value_t = provider_http::ReadLimits::DEFAULT_MAX_CHUNKS,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    pub read_max_chunks: u64,
 }
 
 /// Chain transport selection for `--chain-transport`.

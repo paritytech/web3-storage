@@ -1738,13 +1738,9 @@ async fn test_read_chunks_invalid_hex() {
     assert_eq!(body["error"], "invalid_hash");
 }
 
-/// `/read` returns the whole chunks that cover a byte range, the index of
-/// the first one and the chunk count of the whole data root. The chunk size
-/// is the size of the root's first chunk. A range past the end returns no
-/// chunks.
-#[tokio::test]
-async fn test_read_chunks_maps_bytes_to_chunks() {
-    let server = TestServer::new().await;
+/// Upload a data root of two 8-byte chunks and a shorter last one to bucket
+/// 1. Returns the root and the chunk hashes.
+async fn upload_three_chunks(server: &TestServer) -> (H256, Vec<H256>) {
     // Two 8-byte chunks and a shorter last one.
     let chunks: [&[u8]; 3] = [b"chunk-01", b"chunk-02", b"end"];
     let leaves: Vec<H256> = chunks
@@ -1782,6 +1778,18 @@ async fn test_read_chunks_maps_bytes_to_chunks() {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
+    (root, leaves)
+}
+
+/// `/read` returns the whole chunks that cover a byte range, the index of
+/// the first one and the chunk count of the whole data root. The chunk size
+/// is the size of the root's first chunk. A range past the end returns no
+/// chunks.
+#[tokio::test]
+async fn test_read_chunks_maps_bytes_to_chunks() {
+    let server = TestServer::new().await;
+    let (root, leaves) = upload_three_chunks(&server).await;
+
     for (query, start, expected) in [
         ("offset=8&length=8", 1, vec![leaves[1]]),
         ("offset=9&length=100", 1, vec![leaves[1], leaves[2]]),
@@ -1812,8 +1820,42 @@ async fn test_read_chunks_maps_bytes_to_chunks() {
     }
 }
 
+/// A provider's own read limits cut the response: by chunk count, and by
+/// bytes before the chunk that would pass them.
+#[tokio::test]
+async fn test_read_chunks_respects_configured_limits() {
+    for (limits, expected) in [((u64::MAX, 2), 2), ((12, u64::MAX), 1)] {
+        let server = TestServer::start(|deps| {
+            ProviderState::with_seed(deps, common::PROVIDER_SEED)
+                .unwrap()
+                .with_read_limits(provider_http::ReadLimits {
+                    max_bytes: limits.0,
+                    max_chunks: limits.1,
+                })
+        })
+        .await;
+        let (root, _) = upload_three_chunks(&server).await;
+        let resp = server
+            .client
+            .get(server.url(&format!(
+                "/read?bucket_id=1&data_root={root:#x}&offset=0&length=100"
+            )))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(
+            body["chunks"].as_array().unwrap().len(),
+            expected,
+            "{limits:?}"
+        );
+        assert_eq!(body["chunk_count"], 3);
+    }
+}
+
 /// A tree of 1-byte chunks gets no help from the byte limit: `/read` stops
-/// at `MAX_READ_CHUNKS`.
+/// at the default chunk limit.
 #[tokio::test]
 async fn test_read_chunks_stops_at_the_chunk_limit() {
     let server = TestServer::new().await;
@@ -1856,7 +1898,7 @@ async fn test_read_chunks_stops_at_the_chunk_limit() {
     assert_eq!(body["chunk_count"], 2048);
     assert_eq!(
         body["chunks"].as_array().unwrap().len() as u64,
-        provider_http::MAX_READ_CHUNKS
+        provider_http::ReadLimits::DEFAULT_MAX_CHUNKS
     );
 }
 

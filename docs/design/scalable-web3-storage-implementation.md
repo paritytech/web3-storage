@@ -2281,8 +2281,8 @@ node does not store (see Authentication & RBAC).
 
 Returns the whole chunks that cover offset..offset + length, each with its
 proof. The chunk size is the size of the first chunk; only the last chunk can
-be shorter. The provider builds the response in memory and limits it (4 MiB
-or 1024 chunks in the reference node).
+be shorter. The provider builds the response in memory and limits it (by
+default 4 MiB or 1024 chunks in the reference node).
 
 The client takes the chunk count from the leaf's data_size, not from
 chunk_count, checks each proof against data_root, and continues from the byte

@@ -24,7 +24,7 @@ import {
   toHex,
 } from "@web3-storage/core";
 
-/** The provider's `MAX_READ_BYTES` and `MAX_READ_CHUNKS` (`crates/providers/http/src/api.rs`). */
+/** The provider's default read limits (`ReadLimits` in `crates/providers/http/src/lib.rs`). */
 const MAX_READ_BYTES = 4 * 1024 * 1024;
 const MAX_READ_CHUNKS = 1024;
 

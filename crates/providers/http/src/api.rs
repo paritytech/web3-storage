@@ -26,13 +26,6 @@ use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-/// Most bytes of chunk data in one `/read` response. A response has at
-/// least one chunk.
-pub const MAX_READ_BYTES: u64 = 4 * 1024 * 1024;
-
-/// Most chunks in one `/read` response, for small chunks.
-pub const MAX_READ_CHUNKS: u64 = 1024;
-
 /// Sustained `/negotiate` requests allowed per-IP / second (token refill rate).
 const NEGOTIATE_RATE_LIMIT_PER_SEC: u64 = 5;
 /// Per-IP token-bucket capacity: a single client may burst up to this many
@@ -352,10 +345,16 @@ async fn read_chunks(
     let data_root = decode_hash(&query.data_root)?;
     require_bucket(&state, query.bucket_id).await?;
 
-    let (offset, length) = (query.offset, query.length);
+    let (offset, length, limits) = (query.offset, query.length, state.read_limits);
     let read = state
         .blocking_storage(move |storage| {
-            storage.read_range(data_root, offset, length, MAX_READ_CHUNKS, MAX_READ_BYTES)
+            storage.read_range(
+                data_root,
+                offset,
+                length,
+                limits.max_chunks,
+                limits.max_bytes,
+            )
         })
         .await??;
     let chunks = read

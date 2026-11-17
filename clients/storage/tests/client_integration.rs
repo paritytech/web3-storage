@@ -12,7 +12,8 @@ use storage_client::{ChunkingStrategy, ClientError, EncryptionKey, Node, ENCRYPT
 use storage_primitives::DEFAULT_CHUNK_SIZE;
 
 /// Chunks in one full `/read` response of the test provider.
-const PAGE_CHUNKS: usize = (provider_http::MAX_READ_BYTES / DEFAULT_CHUNK_SIZE as u64) as usize;
+const PAGE_CHUNKS: usize =
+    (provider_http::ReadLimits::DEFAULT_MAX_BYTES / DEFAULT_CHUNK_SIZE as u64) as usize;
 
 // ============================================================================
 // Health
@@ -318,7 +319,7 @@ async fn test_download_full_of_small_chunks_over_several_pages() {
     let url = start_test_provider().await;
     let client = make_client(url);
 
-    let chunks = provider_http::MAX_READ_CHUNKS as usize + 10;
+    let chunks = provider_http::ReadLimits::DEFAULT_MAX_CHUNKS as usize + 10;
     let data: Vec<u8> = (0..chunks * 32).map(|i| (i % 251) as u8).collect();
     let data_root = client
         .upload(1, &data, ChunkingStrategy::Fixed(32))
