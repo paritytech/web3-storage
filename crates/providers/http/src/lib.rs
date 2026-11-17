@@ -35,22 +35,15 @@ pub struct ProviderDeps {
 
 /// Provider node state shared across handlers.
 pub struct ProviderState {
-    /// Local storage backend
-    pub storage: Arc<dyn StorageBackend>,
-    /// Provider account ID (SS58 encoded)
-    pub provider_id: String,
-    /// Signs with the provider's registered key. `None` when the node runs
-    /// without a signing key; the replica sync coordinator shares it.
-    pub signer: Option<Arc<ProviderSigner>>,
+    storage: Arc<dyn StorageBackend>,
+    provider_id: String,
+    signer: Option<Arc<ProviderSigner>>,
     /// Verifies signed requests and enforces bucket roles.
-    pub auth: Arc<provider_auth::Authenticator>,
+    auth: Arc<provider_auth::Authenticator>,
     /// Browser origins allowed via CORS. `None` (the default) keeps the
     /// permissive policy; `Some(list)` restricts to exactly those origins.
-    pub cors_allowed_origins: Option<Vec<String>>,
-    /// Live chain state kept in sync by the chain-state coordinator — the single
-    /// writer for `current_anchor_block`, `constants`, and `provider_info`.
-    /// `/negotiate` gates on all three before signing.
-    pub chain_state: Arc<ChainState>,
+    cors_allowed_origins: Option<Vec<String>>,
+    chain_state: Arc<ChainState>,
 }
 
 impl ProviderState {
@@ -113,6 +106,32 @@ impl ProviderState {
         let account = sr25519::Pair::from_string(seed, None)
             .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
         Ok(account.public().to_ss58check())
+    }
+
+    /// Local storage backend.
+    pub fn storage(&self) -> &Arc<dyn StorageBackend> {
+        &self.storage
+    }
+
+    /// Provider account ID, SS58-encoded.
+    pub fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
+    /// Signer for the provider's registered key. `None` when the node runs
+    /// without a signing key. The replica sync coordinator uses the same
+    /// signer.
+    pub fn signer(&self) -> Option<&Arc<ProviderSigner>> {
+        self.signer.as_ref()
+    }
+
+    /// Live chain state. The chain-state coordinator is the intended writer of
+    /// `current_anchor_block`, `constants` and `provider_info`; `/negotiate`
+    /// requires all three before it signs. The `ChainState` fields are public,
+    /// so this getter does not prevent writes; it only prevents replacing the
+    /// shared `Arc` after construction.
+    pub fn chain_state(&self) -> &Arc<ChainState> {
+        &self.chain_state
     }
 
     /// Restrict the browser origins allowed via CORS. `None` (the default) keeps

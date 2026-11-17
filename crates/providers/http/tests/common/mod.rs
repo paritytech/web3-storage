@@ -79,11 +79,11 @@ impl TestServer {
 /// is registered on chain — signing endpoints refuse otherwise. Skipped for
 /// a keyless state, which has no key to register.
 pub fn publish_matching_registration(state: &ProviderState) {
-    let Some(signer) = state.signer.as_ref() else {
+    let Some(signer) = state.signer() else {
         return;
     };
     state
-        .chain_state
+        .chain_state()
         .provider_info
         .write()
         .replace(provider_types::ProviderInfo {
