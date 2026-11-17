@@ -996,6 +996,10 @@ pub mod api {
             #[doc = " preventing collators from skipping slots."]
             #[doc = " See: <https://github.com/paritytech/polkadot-sdk/issues/8893>"]
             #[doc = ""]
+            #[doc = " WARNING: collators call these methods in the on-chain context, which resolves"]
+            #[doc = " `:pending_code`: while an upgrade is pending the answer comes from the new blob, before its"]
+            #[doc = " migrations have run. Implementations must NOT read state that a migration changes."]
+            #[doc = ""]
             #[doc = " Version history:"]
             #[doc = " - Version 1: Initial version with `relay_parent_offset` only"]
             #[doc = " - Version 2: Added `max_claim_queue_offset` method"]
@@ -1099,6 +1103,10 @@ pub mod api {
             #[doc = " This is mutually exclusive with relay parent offset (building on older"]
             #[doc = " relay parents). A parachain enables V3 when it wants low-latency block"]
             #[doc = " production with the dual-parent model."]
+            #[doc = ""]
+            #[doc = " WARNING: collators call this in the on-chain context, which resolves `:pending_code`: while"]
+            #[doc = " an upgrade is pending the answer comes from the new blob, before its migrations have run."]
+            #[doc = " Implementations must NOT read state that a migration changes."]
             pub struct SchedulingV3EnabledApi;
             impl SchedulingV3EnabledApi {
                 #[doc = " Returns true if V3 scheduling is enabled for this parachain."]
@@ -2580,7 +2588,6 @@ pub mod api {
                 }
                 #[doc = " Perform an Ethereum call."]
                 #[doc = ""]
-                #[doc = " Deprecated use `v2` version instead."]
                 #[doc = " See [`crate::Pallet::dry_run_eth_transact`]"]
                 pub fn eth_transact(
                     &self,
@@ -2763,10 +2770,10 @@ pub mod api {
                         "trace_block",
                         (block, config),
                         [
-                            151u8, 114u8, 192u8, 251u8, 126u8, 140u8, 39u8, 80u8, 85u8, 88u8,
-                            254u8, 82u8, 212u8, 92u8, 27u8, 10u8, 92u8, 165u8, 186u8, 62u8, 91u8,
-                            226u8, 239u8, 108u8, 40u8, 243u8, 53u8, 168u8, 82u8, 130u8, 89u8,
-                            201u8,
+                            41u8, 244u8, 156u8, 240u8, 223u8, 20u8, 169u8, 93u8, 67u8, 130u8,
+                            115u8, 17u8, 106u8, 232u8, 235u8, 25u8, 10u8, 251u8, 25u8, 251u8,
+                            189u8, 8u8, 239u8, 3u8, 97u8, 253u8, 86u8, 16u8, 191u8, 128u8, 3u8,
+                            157u8,
                         ],
                     )
                 }
@@ -2790,10 +2797,9 @@ pub mod api {
                         "trace_tx",
                         (block, tx_index, config),
                         [
-                            240u8, 209u8, 116u8, 149u8, 99u8, 16u8, 102u8, 102u8, 204u8, 151u8,
-                            142u8, 124u8, 110u8, 118u8, 94u8, 101u8, 100u8, 95u8, 158u8, 174u8,
-                            231u8, 135u8, 64u8, 77u8, 25u8, 223u8, 180u8, 118u8, 230u8, 49u8, 99u8,
-                            237u8,
+                            45u8, 61u8, 192u8, 219u8, 225u8, 172u8, 91u8, 84u8, 169u8, 50u8, 229u8,
+                            157u8, 159u8, 200u8, 93u8, 229u8, 204u8, 254u8, 92u8, 51u8, 203u8,
+                            93u8, 153u8, 164u8, 44u8, 65u8, 70u8, 56u8, 42u8, 56u8, 54u8, 74u8,
                         ],
                     )
                 }
@@ -2813,17 +2819,17 @@ pub mod api {
                         "trace_call",
                         (tx, config),
                         [
-                            241u8, 57u8, 157u8, 180u8, 25u8, 8u8, 238u8, 160u8, 179u8, 246u8, 40u8,
-                            18u8, 127u8, 197u8, 135u8, 72u8, 94u8, 149u8, 4u8, 176u8, 188u8, 128u8,
-                            203u8, 87u8, 182u8, 57u8, 123u8, 102u8, 226u8, 64u8, 227u8, 24u8,
+                            137u8, 88u8, 134u8, 73u8, 255u8, 182u8, 157u8, 180u8, 202u8, 160u8,
+                            154u8, 252u8, 209u8, 108u8, 248u8, 196u8, 186u8, 96u8, 18u8, 168u8,
+                            191u8, 125u8, 244u8, 224u8, 170u8, 143u8, 245u8, 117u8, 206u8, 21u8,
+                            193u8, 213u8,
                         ],
                     )
                 }
                 #[doc = " Dry run and return the trace of the given call with additional configuration."]
                 #[doc = ""]
-                #[doc = " Like [`Self::trace_call`], but accepts a [`TracingConfig`] that can carry state"]
-                #[doc = " overrides and future extensibility. The config must be the **last argument** for"]
-                #[doc = " backwards compatibility — see [`TracingConfig`] documentation."]
+                #[doc = " Like [`Self::trace_call`], but accepts a [`TracingConfigV1`] that can carry state"]
+                #[doc = " overrides. The config must be the **last argument** for backwards compatibility."]
                 pub fn trace_call_with_config(
                     &self,
                     tx: trace_call_with_config::Tx,
@@ -2842,9 +2848,9 @@ pub mod api {
                         "trace_call_with_config",
                         (tx, tracer_type, config),
                         [
-                            86u8, 8u8, 47u8, 109u8, 136u8, 137u8, 46u8, 225u8, 101u8, 245u8, 14u8,
-                            125u8, 178u8, 77u8, 3u8, 212u8, 178u8, 36u8, 106u8, 186u8, 190u8, 94u8,
-                            64u8, 91u8, 234u8, 49u8, 130u8, 158u8, 189u8, 43u8, 124u8, 213u8,
+                            249u8, 97u8, 163u8, 57u8, 75u8, 70u8, 66u8, 99u8, 51u8, 230u8, 73u8,
+                            149u8, 20u8, 56u8, 13u8, 216u8, 163u8, 129u8, 246u8, 65u8, 217u8, 18u8,
+                            179u8, 87u8, 137u8, 43u8, 45u8, 104u8, 96u8, 8u8, 238u8, 162u8,
                         ],
                     )
                 }
@@ -2954,13 +2960,471 @@ pub mod api {
                         ],
                     )
                 }
+                pub fn version_declarations(
+                    &self,
+                ) -> ::subxt::runtime_apis::StaticPayload<(), version_declarations::output::Output>
+                {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "version_declarations",
+                        (),
+                        [
+                            204u8, 167u8, 157u8, 0u8, 50u8, 187u8, 135u8, 27u8, 133u8, 96u8, 167u8,
+                            22u8, 29u8, 19u8, 210u8, 242u8, 41u8, 30u8, 41u8, 133u8, 188u8, 206u8,
+                            220u8, 154u8, 49u8, 187u8, 247u8, 113u8, 212u8, 78u8, 176u8, 34u8,
+                        ],
+                    )
+                }
+                pub fn eth_block_versioned(
+                    &self,
+                    input: eth_block_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (eth_block_versioned::Input,),
+                    eth_block_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "eth_block_versioned",
+                        (input,),
+                        [
+                            37u8, 149u8, 216u8, 255u8, 104u8, 126u8, 104u8, 223u8, 255u8, 210u8,
+                            253u8, 201u8, 199u8, 16u8, 117u8, 241u8, 227u8, 11u8, 155u8, 187u8,
+                            160u8, 38u8, 193u8, 184u8, 83u8, 83u8, 203u8, 171u8, 35u8, 186u8, 29u8,
+                            75u8,
+                        ],
+                    )
+                }
+                pub fn eth_block_hash_versioned(
+                    &self,
+                    input: eth_block_hash_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (eth_block_hash_versioned::Input,),
+                    eth_block_hash_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "eth_block_hash_versioned",
+                        (input,),
+                        [
+                            58u8, 102u8, 22u8, 39u8, 146u8, 66u8, 191u8, 160u8, 102u8, 74u8, 122u8,
+                            46u8, 232u8, 167u8, 252u8, 202u8, 61u8, 114u8, 98u8, 54u8, 82u8, 253u8,
+                            155u8, 214u8, 206u8, 245u8, 85u8, 23u8, 189u8, 230u8, 210u8, 186u8,
+                        ],
+                    )
+                }
+                pub fn eth_receipt_data_versioned(
+                    &self,
+                    input: eth_receipt_data_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (eth_receipt_data_versioned::Input,),
+                    eth_receipt_data_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "eth_receipt_data_versioned",
+                        (input,),
+                        [
+                            141u8, 14u8, 176u8, 55u8, 1u8, 222u8, 9u8, 227u8, 245u8, 162u8, 21u8,
+                            35u8, 254u8, 74u8, 24u8, 9u8, 87u8, 11u8, 120u8, 134u8, 209u8, 106u8,
+                            225u8, 87u8, 114u8, 94u8, 51u8, 2u8, 13u8, 1u8, 54u8, 109u8,
+                        ],
+                    )
+                }
+                pub fn block_gas_limit_versioned(
+                    &self,
+                    input: block_gas_limit_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (block_gas_limit_versioned::Input,),
+                    block_gas_limit_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "block_gas_limit_versioned",
+                        (input,),
+                        [
+                            132u8, 144u8, 203u8, 139u8, 106u8, 133u8, 167u8, 155u8, 130u8, 134u8,
+                            97u8, 45u8, 127u8, 147u8, 144u8, 255u8, 103u8, 51u8, 174u8, 104u8,
+                            249u8, 219u8, 198u8, 42u8, 92u8, 194u8, 178u8, 11u8, 217u8, 179u8,
+                            222u8, 202u8,
+                        ],
+                    )
+                }
+                pub fn max_extrinsic_weight_in_gas_versioned(
+                    &self,
+                    input: max_extrinsic_weight_in_gas_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (max_extrinsic_weight_in_gas_versioned::Input,),
+                    max_extrinsic_weight_in_gas_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "max_extrinsic_weight_in_gas_versioned",
+                        (input,),
+                        [
+                            180u8, 137u8, 227u8, 75u8, 205u8, 175u8, 201u8, 143u8, 216u8, 21u8,
+                            48u8, 193u8, 31u8, 241u8, 217u8, 100u8, 78u8, 5u8, 81u8, 194u8, 27u8,
+                            76u8, 120u8, 230u8, 55u8, 157u8, 50u8, 54u8, 73u8, 100u8, 196u8, 143u8,
+                        ],
+                    )
+                }
+                pub fn balance_versioned(
+                    &self,
+                    input: balance_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (balance_versioned::Input,),
+                    balance_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "balance_versioned",
+                        (input,),
+                        [
+                            141u8, 42u8, 89u8, 46u8, 196u8, 9u8, 12u8, 36u8, 191u8, 76u8, 65u8,
+                            234u8, 114u8, 177u8, 248u8, 122u8, 149u8, 73u8, 66u8, 43u8, 5u8, 15u8,
+                            40u8, 207u8, 161u8, 25u8, 80u8, 232u8, 153u8, 112u8, 250u8, 175u8,
+                        ],
+                    )
+                }
+                pub fn gas_price_versioned(
+                    &self,
+                    input: gas_price_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (gas_price_versioned::Input,),
+                    gas_price_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "gas_price_versioned",
+                        (input,),
+                        [
+                            192u8, 253u8, 246u8, 91u8, 44u8, 164u8, 238u8, 247u8, 182u8, 19u8,
+                            22u8, 76u8, 245u8, 97u8, 98u8, 56u8, 172u8, 37u8, 23u8, 184u8, 112u8,
+                            53u8, 1u8, 69u8, 4u8, 98u8, 126u8, 163u8, 169u8, 93u8, 240u8, 98u8,
+                        ],
+                    )
+                }
+                pub fn nonce_versioned(
+                    &self,
+                    input: nonce_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (nonce_versioned::Input,),
+                    nonce_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "nonce_versioned",
+                        (input,),
+                        [
+                            172u8, 231u8, 244u8, 117u8, 17u8, 110u8, 115u8, 182u8, 208u8, 37u8,
+                            181u8, 62u8, 77u8, 67u8, 114u8, 159u8, 126u8, 179u8, 71u8, 251u8,
+                            137u8, 74u8, 209u8, 255u8, 226u8, 149u8, 130u8, 242u8, 191u8, 252u8,
+                            74u8, 204u8,
+                        ],
+                    )
+                }
+                pub fn call_versioned(
+                    &self,
+                    input: call_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (call_versioned::Input,),
+                    call_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "call_versioned",
+                        (input,),
+                        [
+                            33u8, 149u8, 222u8, 109u8, 216u8, 13u8, 94u8, 30u8, 219u8, 127u8,
+                            179u8, 251u8, 81u8, 64u8, 113u8, 215u8, 194u8, 106u8, 238u8, 20u8,
+                            42u8, 21u8, 97u8, 194u8, 31u8, 107u8, 219u8, 42u8, 194u8, 41u8, 163u8,
+                            8u8,
+                        ],
+                    )
+                }
+                pub fn instantiate_versioned(
+                    &self,
+                    input: instantiate_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (instantiate_versioned::Input,),
+                    instantiate_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "instantiate_versioned",
+                        (input,),
+                        [
+                            237u8, 87u8, 227u8, 154u8, 207u8, 56u8, 86u8, 86u8, 3u8, 159u8, 14u8,
+                            178u8, 106u8, 199u8, 168u8, 150u8, 60u8, 4u8, 137u8, 114u8, 62u8,
+                            191u8, 166u8, 151u8, 52u8, 8u8, 90u8, 43u8, 68u8, 190u8, 155u8, 59u8,
+                        ],
+                    )
+                }
+                pub fn eth_transact_versioned(
+                    &self,
+                    input: eth_transact_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (eth_transact_versioned::Input,),
+                    eth_transact_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "eth_transact_versioned",
+                        (input,),
+                        [
+                            42u8, 98u8, 237u8, 73u8, 210u8, 195u8, 239u8, 104u8, 90u8, 79u8, 33u8,
+                            88u8, 208u8, 113u8, 240u8, 247u8, 206u8, 152u8, 121u8, 31u8, 128u8,
+                            82u8, 35u8, 87u8, 245u8, 247u8, 10u8, 117u8, 193u8, 152u8, 139u8,
+                            150u8,
+                        ],
+                    )
+                }
+                pub fn eth_estimate_gas_versioned(
+                    &self,
+                    input: eth_estimate_gas_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (eth_estimate_gas_versioned::Input,),
+                    eth_estimate_gas_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "eth_estimate_gas_versioned",
+                        (input,),
+                        [
+                            140u8, 182u8, 136u8, 7u8, 231u8, 24u8, 44u8, 72u8, 25u8, 62u8, 208u8,
+                            182u8, 55u8, 155u8, 67u8, 76u8, 20u8, 78u8, 63u8, 53u8, 137u8, 137u8,
+                            161u8, 171u8, 87u8, 221u8, 97u8, 7u8, 215u8, 10u8, 196u8, 232u8,
+                        ],
+                    )
+                }
+                pub fn eth_pre_dispatch_weight_versioned(
+                    &self,
+                    input: eth_pre_dispatch_weight_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (eth_pre_dispatch_weight_versioned::Input,),
+                    eth_pre_dispatch_weight_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "eth_pre_dispatch_weight_versioned",
+                        (input,),
+                        [
+                            143u8, 206u8, 142u8, 93u8, 86u8, 231u8, 215u8, 112u8, 54u8, 117u8,
+                            192u8, 136u8, 123u8, 121u8, 117u8, 253u8, 53u8, 196u8, 99u8, 63u8,
+                            12u8, 109u8, 129u8, 16u8, 177u8, 194u8, 234u8, 186u8, 27u8, 205u8, 0u8,
+                            206u8,
+                        ],
+                    )
+                }
+                pub fn upload_code_versioned(
+                    &self,
+                    input: upload_code_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (upload_code_versioned::Input,),
+                    upload_code_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "upload_code_versioned",
+                        (input,),
+                        [
+                            199u8, 9u8, 125u8, 222u8, 24u8, 165u8, 123u8, 45u8, 41u8, 217u8, 161u8,
+                            31u8, 75u8, 100u8, 190u8, 67u8, 166u8, 239u8, 188u8, 51u8, 152u8,
+                            194u8, 179u8, 84u8, 41u8, 87u8, 81u8, 99u8, 81u8, 18u8, 246u8, 144u8,
+                        ],
+                    )
+                }
+                pub fn get_storage_versioned(
+                    &self,
+                    input: get_storage_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (get_storage_versioned::Input,),
+                    get_storage_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "get_storage_versioned",
+                        (input,),
+                        [
+                            184u8, 61u8, 8u8, 120u8, 241u8, 241u8, 103u8, 235u8, 127u8, 20u8,
+                            210u8, 248u8, 14u8, 41u8, 225u8, 74u8, 61u8, 54u8, 225u8, 34u8, 120u8,
+                            24u8, 6u8, 186u8, 211u8, 168u8, 100u8, 164u8, 74u8, 1u8, 205u8, 189u8,
+                        ],
+                    )
+                }
+                pub fn runtime_pallets_address_versioned(
+                    &self,
+                    input: runtime_pallets_address_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (runtime_pallets_address_versioned::Input,),
+                    runtime_pallets_address_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "runtime_pallets_address_versioned",
+                        (input,),
+                        [
+                            51u8, 139u8, 160u8, 57u8, 154u8, 103u8, 159u8, 61u8, 247u8, 129u8,
+                            175u8, 225u8, 48u8, 127u8, 34u8, 32u8, 107u8, 124u8, 50u8, 89u8, 80u8,
+                            187u8, 201u8, 120u8, 208u8, 35u8, 181u8, 203u8, 193u8, 168u8, 2u8,
+                            56u8,
+                        ],
+                    )
+                }
+                pub fn code_versioned(
+                    &self,
+                    input: code_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (code_versioned::Input,),
+                    code_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "code_versioned",
+                        (input,),
+                        [
+                            233u8, 23u8, 173u8, 128u8, 208u8, 176u8, 252u8, 57u8, 125u8, 82u8,
+                            112u8, 233u8, 244u8, 93u8, 134u8, 35u8, 67u8, 212u8, 236u8, 255u8,
+                            58u8, 33u8, 37u8, 220u8, 238u8, 193u8, 19u8, 28u8, 225u8, 213u8, 62u8,
+                            195u8,
+                        ],
+                    )
+                }
+                pub fn account_id_versioned(
+                    &self,
+                    input: account_id_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (account_id_versioned::Input,),
+                    account_id_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "account_id_versioned",
+                        (input,),
+                        [
+                            112u8, 194u8, 173u8, 105u8, 111u8, 198u8, 52u8, 55u8, 143u8, 22u8,
+                            160u8, 79u8, 86u8, 52u8, 103u8, 193u8, 180u8, 183u8, 173u8, 188u8,
+                            19u8, 125u8, 198u8, 63u8, 39u8, 53u8, 139u8, 106u8, 67u8, 151u8, 182u8,
+                            251u8,
+                        ],
+                    )
+                }
+                pub fn new_balance_with_dust_versioned(
+                    &self,
+                    input: new_balance_with_dust_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (new_balance_with_dust_versioned::Input,),
+                    new_balance_with_dust_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "new_balance_with_dust_versioned",
+                        (input,),
+                        [
+                            218u8, 120u8, 47u8, 120u8, 154u8, 110u8, 121u8, 20u8, 139u8, 63u8,
+                            197u8, 170u8, 15u8, 181u8, 221u8, 215u8, 53u8, 71u8, 57u8, 17u8, 66u8,
+                            52u8, 111u8, 112u8, 152u8, 143u8, 1u8, 235u8, 95u8, 102u8, 193u8,
+                            184u8,
+                        ],
+                    )
+                }
+                pub fn block_author_versioned(
+                    &self,
+                    input: block_author_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (block_author_versioned::Input,),
+                    block_author_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "block_author_versioned",
+                        (input,),
+                        [
+                            200u8, 15u8, 130u8, 230u8, 174u8, 99u8, 220u8, 221u8, 207u8, 4u8, 54u8,
+                            78u8, 25u8, 117u8, 159u8, 95u8, 215u8, 98u8, 38u8, 38u8, 247u8, 6u8,
+                            93u8, 94u8, 192u8, 107u8, 58u8, 87u8, 191u8, 52u8, 85u8, 151u8,
+                        ],
+                    )
+                }
+                pub fn address_versioned(
+                    &self,
+                    input: address_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (address_versioned::Input,),
+                    address_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "address_versioned",
+                        (input,),
+                        [
+                            106u8, 70u8, 2u8, 6u8, 225u8, 166u8, 61u8, 127u8, 24u8, 89u8, 150u8,
+                            18u8, 203u8, 227u8, 3u8, 244u8, 83u8, 83u8, 89u8, 66u8, 84u8, 233u8,
+                            29u8, 167u8, 196u8, 114u8, 184u8, 107u8, 227u8, 24u8, 21u8, 95u8,
+                        ],
+                    )
+                }
+                pub fn trace_block_versioned(
+                    &self,
+                    input: trace_block_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (trace_block_versioned::Input,),
+                    trace_block_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "trace_block_versioned",
+                        (input,),
+                        [
+                            148u8, 205u8, 236u8, 223u8, 89u8, 205u8, 221u8, 42u8, 93u8, 135u8,
+                            165u8, 19u8, 227u8, 7u8, 144u8, 87u8, 7u8, 148u8, 167u8, 187u8, 119u8,
+                            111u8, 211u8, 117u8, 9u8, 136u8, 29u8, 93u8, 28u8, 150u8, 65u8, 239u8,
+                        ],
+                    )
+                }
+                pub fn trace_tx_versioned(
+                    &self,
+                    input: trace_tx_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (trace_tx_versioned::Input,),
+                    trace_tx_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "trace_tx_versioned",
+                        (input,),
+                        [
+                            44u8, 51u8, 81u8, 164u8, 17u8, 23u8, 115u8, 38u8, 156u8, 31u8, 52u8,
+                            18u8, 8u8, 44u8, 110u8, 12u8, 217u8, 157u8, 106u8, 104u8, 43u8, 181u8,
+                            18u8, 54u8, 5u8, 184u8, 148u8, 250u8, 79u8, 249u8, 56u8, 172u8,
+                        ],
+                    )
+                }
+                pub fn trace_call_versioned(
+                    &self,
+                    input: trace_call_versioned::Input,
+                ) -> ::subxt::runtime_apis::StaticPayload<
+                    (trace_call_versioned::Input,),
+                    trace_call_versioned::output::Output,
+                > {
+                    ::subxt::runtime_apis::StaticPayload::new_static(
+                        "ReviveApi",
+                        "trace_call_versioned",
+                        (input,),
+                        [
+                            58u8, 210u8, 166u8, 73u8, 48u8, 58u8, 175u8, 166u8, 18u8, 31u8, 124u8,
+                            100u8, 242u8, 11u8, 29u8, 163u8, 70u8, 189u8, 198u8, 220u8, 170u8,
+                            136u8, 99u8, 92u8, 16u8, 143u8, 229u8, 150u8, 21u8, 177u8, 68u8, 147u8,
+                        ],
+                    )
+                }
             }
             pub mod eth_block {
                 use super::root_mod;
                 use super::runtime_types;
                 pub mod output {
                     use super::runtime_types;
-                    pub type Output = runtime_types::pallet_revive::evm::api::rpc_types_gen::Block;
+                    pub type Output =
+                        runtime_types::pallet_revive_types::runtime_api::types::block::BlockV1;
                 }
             }
             pub mod eth_block_hash {
@@ -2977,9 +3441,7 @@ pub mod api {
                 use super::runtime_types;
                 pub mod output {
                     use super::runtime_types;
-                    pub type Output = ::subxt::alloc::vec::Vec<
-                        runtime_types::pallet_revive::evm::block_hash::ReceiptGasInfo,
-                    >;
+                    pub type Output = :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: receipt :: ReceiptGasInfoV1 > ;
                 }
             }
             pub mod block_gas_limit {
@@ -3036,10 +3498,7 @@ pub mod api {
                 pub type InputData = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
                 pub mod output {
                     use super::runtime_types;
-                    pub type Output = runtime_types::pallet_revive::primitives::ContractResult<
-                        runtime_types::pallet_revive::primitives::ExecReturnValue,
-                        ::core::primitive::u128,
-                    >;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: types :: contract :: ContractResultV1 < runtime_types :: pallet_revive_types :: runtime_api :: types :: contract :: ExecReturnValueV1 , :: core :: primitive :: u128 > ;
                 }
             }
             pub mod instantiate {
@@ -3050,58 +3509,45 @@ pub mod api {
                 pub type GasLimit =
                     ::core::option::Option<runtime_types::sp_weights::weight_v2::Weight>;
                 pub type StorageDepositLimit = ::core::option::Option<::core::primitive::u128>;
-                pub type Code = runtime_types::pallet_revive::primitives::Code;
+                pub type Code =
+                    runtime_types::pallet_revive_types::runtime_api::types::contract::CodeV1;
                 pub type Data = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
                 pub type Salt = ::core::option::Option<[::core::primitive::u8; 32usize]>;
                 pub mod output {
                     use super::runtime_types;
-                    pub type Output = runtime_types::pallet_revive::primitives::ContractResult<
-                        runtime_types::pallet_revive::primitives::InstantiateReturnValue,
-                        ::core::primitive::u128,
-                    >;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: types :: contract :: ContractResultV1 < runtime_types :: pallet_revive_types :: runtime_api :: types :: contract :: InstantiateReturnValueV1 , :: core :: primitive :: u128 > ;
                 }
             }
             pub mod eth_transact {
                 use super::root_mod;
                 use super::runtime_types;
-                pub type Tx =
-                    runtime_types::pallet_revive::evm::api::rpc_types_gen::GenericTransaction;
+                pub type Tx = runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: GenericTransactionV1 ;
                 pub mod output {
                     use super::runtime_types;
-                    pub type Output = ::core::result::Result<
-                        runtime_types::pallet_revive::primitives::EthTransactInfo<
-                            ::core::primitive::u128,
-                        >,
-                        runtime_types::pallet_revive::primitives::EthTransactError,
-                    >;
+                    pub type Output = :: core :: result :: Result < runtime_types :: pallet_revive_types :: runtime_api :: types :: dry_run :: EthTransactInfoV1 < :: core :: primitive :: u128 > , runtime_types :: pallet_revive :: primitives :: EthTransactError > ;
                 }
             }
             pub mod eth_transact_with_config {
                 use super::root_mod;
                 use super::runtime_types;
-                pub type Tx =
-                    runtime_types::pallet_revive::evm::api::rpc_types_gen::GenericTransaction;
-                pub type Config = runtime_types::pallet_revive::evm::api::rpc_types::DryRunConfig<
-                    ::core::primitive::u64,
-                >;
+                pub type Tx = runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: GenericTransactionV1 ;
+                pub type Config =
+                    runtime_types::pallet_revive_types::runtime_api::types::dry_run::DryRunConfigV1<
+                        ::core::primitive::u64,
+                    >;
                 pub mod output {
                     use super::runtime_types;
-                    pub type Output = ::core::result::Result<
-                        runtime_types::pallet_revive::primitives::EthTransactInfo<
-                            ::core::primitive::u128,
-                        >,
-                        runtime_types::pallet_revive::primitives::EthTransactError,
-                    >;
+                    pub type Output = :: core :: result :: Result < runtime_types :: pallet_revive_types :: runtime_api :: types :: dry_run :: EthTransactInfoV1 < :: core :: primitive :: u128 > , runtime_types :: pallet_revive :: primitives :: EthTransactError > ;
                 }
             }
             pub mod eth_estimate_gas {
                 use super::root_mod;
                 use super::runtime_types;
-                pub type Tx =
-                    runtime_types::pallet_revive::evm::api::rpc_types_gen::GenericTransaction;
-                pub type Config = runtime_types::pallet_revive::evm::api::rpc_types::DryRunConfig<
-                    ::core::primitive::u64,
-                >;
+                pub type Tx = runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: GenericTransactionV1 ;
+                pub type Config =
+                    runtime_types::pallet_revive_types::runtime_api::types::dry_run::DryRunConfigV1<
+                        ::core::primitive::u64,
+                    >;
                 pub mod output {
                     use super::runtime_types;
                     pub type Output = ::core::result::Result<
@@ -3130,12 +3576,7 @@ pub mod api {
                 pub type StorageDepositLimit = ::core::option::Option<::core::primitive::u128>;
                 pub mod output {
                     use super::runtime_types;
-                    pub type Output = ::core::result::Result<
-                        runtime_types::pallet_revive::primitives::CodeUploadReturnValue<
-                            ::core::primitive::u128,
-                        >,
-                        runtime_types::sp_runtime::DispatchError,
-                    >;
+                    pub type Output = :: core :: result :: Result < runtime_types :: pallet_revive_types :: runtime_api :: types :: upload :: CodeUploadReturnValueV1 < :: core :: primitive :: u128 > , runtime_types :: sp_runtime :: DispatchError > ;
                 }
             }
             pub mod get_storage {
@@ -3169,12 +3610,12 @@ pub mod api {
                 use super::runtime_types;
                 pub type Block = runtime_types :: sp_runtime :: generic :: block :: Block < runtime_types :: sp_runtime :: generic :: header :: Header < :: core :: primitive :: u32 > , :: subxt :: utils :: UncheckedExtrinsic < :: subxt :: utils :: MultiAddress < :: subxt :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > ;
                 pub type Config =
-                    runtime_types::pallet_revive::evm::api::debug_rpc_types::TracerType;
+                    runtime_types::pallet_revive_types::runtime_api::types::tracer::TracerTypeV1;
                 pub mod output {
                     use super::runtime_types;
                     pub type Output = ::subxt::alloc::vec::Vec<(
                         ::core::primitive::u32,
-                        runtime_types::pallet_revive::evm::api::debug_rpc_types::Trace,
+                        runtime_types::pallet_revive_types::runtime_api::types::traces::TraceV1,
                     )>;
                 }
             }
@@ -3184,25 +3625,24 @@ pub mod api {
                 pub type Block = runtime_types :: sp_runtime :: generic :: block :: Block < runtime_types :: sp_runtime :: generic :: header :: Header < :: core :: primitive :: u32 > , :: subxt :: utils :: UncheckedExtrinsic < :: subxt :: utils :: MultiAddress < :: subxt :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > ;
                 pub type TxIndex = ::core::primitive::u32;
                 pub type Config =
-                    runtime_types::pallet_revive::evm::api::debug_rpc_types::TracerType;
+                    runtime_types::pallet_revive_types::runtime_api::types::tracer::TracerTypeV1;
                 pub mod output {
                     use super::runtime_types;
                     pub type Output = ::core::option::Option<
-                        runtime_types::pallet_revive::evm::api::debug_rpc_types::Trace,
+                        runtime_types::pallet_revive_types::runtime_api::types::traces::TraceV1,
                     >;
                 }
             }
             pub mod trace_call {
                 use super::root_mod;
                 use super::runtime_types;
-                pub type Tx =
-                    runtime_types::pallet_revive::evm::api::rpc_types_gen::GenericTransaction;
+                pub type Tx = runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: GenericTransactionV1 ;
                 pub type Config =
-                    runtime_types::pallet_revive::evm::api::debug_rpc_types::TracerType;
+                    runtime_types::pallet_revive_types::runtime_api::types::tracer::TracerTypeV1;
                 pub mod output {
                     use super::runtime_types;
                     pub type Output = ::core::result::Result<
-                        runtime_types::pallet_revive::evm::api::debug_rpc_types::Trace,
+                        runtime_types::pallet_revive_types::runtime_api::types::traces::TraceV1,
                         runtime_types::pallet_revive::primitives::EthTransactError,
                     >;
                 }
@@ -3210,15 +3650,14 @@ pub mod api {
             pub mod trace_call_with_config {
                 use super::root_mod;
                 use super::runtime_types;
-                pub type Tx =
-                    runtime_types::pallet_revive::evm::api::rpc_types_gen::GenericTransaction;
+                pub type Tx = runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: GenericTransactionV1 ;
                 pub type TracerType =
-                    runtime_types::pallet_revive::evm::api::debug_rpc_types::TracerType;
-                pub type Config = runtime_types::pallet_revive::evm::api::rpc_types::TracingConfig;
+                    runtime_types::pallet_revive_types::runtime_api::types::tracer::TracerTypeV1;
+                pub type Config = runtime_types :: pallet_revive_types :: runtime_api :: types :: state_overrides :: TracingConfigV1 ;
                 pub mod output {
                     use super::runtime_types;
                     pub type Output = ::core::result::Result<
-                        runtime_types::pallet_revive::evm::api::debug_rpc_types::Trace,
+                        runtime_types::pallet_revive_types::runtime_api::types::traces::TraceV1,
                         runtime_types::pallet_revive::primitives::EthTransactError,
                     >;
                 }
@@ -3276,6 +3715,230 @@ pub mod api {
                         (::core::primitive::u128, ::core::primitive::u32),
                         runtime_types::pallet_revive::primitives::BalanceConversionError,
                     >;
+                }
+            }
+            pub mod version_declarations {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: declaration :: ReviveRuntimeApiVersionDeclarations ;
+                }
+            }
+            pub mod eth_block_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_block :: BlockVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_block :: BlockVersionedOutputPayload ;
+                }
+            }
+            pub mod eth_block_hash_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: block_hash :: BlockHashVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: block_hash :: BlockHashVersionedOutputPayload ;
+                }
+            }
+            pub mod eth_receipt_data_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: receipt_data :: ReceiptDataVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: receipt_data :: ReceiptDataVersionedOutputPayload ;
+                }
+            }
+            pub mod block_gas_limit_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: block_gas_limit :: BlockGasLimitVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: block_gas_limit :: BlockGasLimitVersionedOutputPayload ;
+                }
+            }
+            pub mod max_extrinsic_weight_in_gas_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: max_extrinsic_weight_in_gas :: MaxExtrinsicWeightInGasVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: max_extrinsic_weight_in_gas :: MaxExtrinsicWeightInGasVersionedOutputPayload ;
+                }
+            }
+            pub mod balance_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: balance :: BalanceVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: balance :: BalanceVersionedOutputPayload ;
+                }
+            }
+            pub mod gas_price_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: gas_price :: GasPriceVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: gas_price :: GasPriceVersionedOutputPayload ;
+                }
+            }
+            pub mod nonce_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: nonce :: NonceVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: nonce :: NonceVersionedOutputPayload < :: core :: primitive :: u32 > ;
+                }
+            }
+            pub mod call_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: call :: CallVersionedInputPayload < :: subxt :: utils :: AccountId32 , :: core :: primitive :: u128 > ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: call :: CallVersionedOutputPayload < :: core :: primitive :: u128 > ;
+                }
+            }
+            pub mod instantiate_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: instantiate :: InstantiateVersionedInputPayload < :: subxt :: utils :: AccountId32 , :: core :: primitive :: u128 > ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: instantiate :: InstantiateVersionedOutputPayload < :: core :: primitive :: u128 > ;
+                }
+            }
+            pub mod eth_transact_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_transact :: TransactVersionedInputPayload < :: core :: primitive :: u64 > ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = :: core :: result :: Result < runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_transact :: TransactVersionedOutputPayload < :: core :: primitive :: u128 > , runtime_types :: pallet_revive :: primitives :: EthTransactError > ;
+                }
+            }
+            pub mod eth_estimate_gas_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_estimate_gas :: EstimateGasVersionedInputPayload < :: core :: primitive :: u64 > ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = :: core :: result :: Result < runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_estimate_gas :: EstimateGasVersionedOutputPayload , runtime_types :: pallet_revive :: primitives :: EthTransactError > ;
+                }
+            }
+            pub mod eth_pre_dispatch_weight_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_pre_dispatch_weight :: PreDispatchWeightVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = :: core :: result :: Result < runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_pre_dispatch_weight :: PreDispatchWeightVersionedOutputPayload , runtime_types :: pallet_revive :: primitives :: EthTransactError > ;
+                }
+            }
+            pub mod upload_code_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: upload_code :: UploadCodeVersionedInputPayload < :: subxt :: utils :: AccountId32 , :: core :: primitive :: u128 > ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = :: core :: result :: Result < runtime_types :: pallet_revive_types :: runtime_api :: payloads :: upload_code :: UploadCodeVersionedOutputPayload < :: core :: primitive :: u128 > , runtime_types :: sp_runtime :: DispatchError > ;
+                }
+            }
+            pub mod get_storage_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: get_storage :: GetStorageVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = :: core :: result :: Result < runtime_types :: pallet_revive_types :: runtime_api :: payloads :: get_storage :: GetStorageVersionedOutputPayload , runtime_types :: pallet_revive :: primitives :: ContractAccessError > ;
+                }
+            }
+            pub mod runtime_pallets_address_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: runtime_pallets_address :: RuntimePalletsAddressVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: runtime_pallets_address :: RuntimePalletsAddressVersionedOutputPayload ;
+                }
+            }
+            pub mod code_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: code :: CodeVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: code :: CodeVersionedOutputPayload ;
+                }
+            }
+            pub mod account_id_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: account_id :: AccountIdVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: account_id :: AccountIdVersionedOutputPayload < :: subxt :: utils :: AccountId32 > ;
+                }
+            }
+            pub mod new_balance_with_dust_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: new_balance_with_dust :: NewBalanceWithDustVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = :: core :: result :: Result < runtime_types :: pallet_revive_types :: runtime_api :: payloads :: new_balance_with_dust :: NewBalanceWithDustVersionedOutputPayload < :: core :: primitive :: u128 > , runtime_types :: pallet_revive :: primitives :: BalanceConversionError > ;
+                }
+            }
+            pub mod block_author_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: block_author :: BlockAuthorVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: block_author :: BlockAuthorVersionedOutputPayload ;
+                }
+            }
+            pub mod address_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: address :: AddressVersionedInputPayload < :: subxt :: utils :: AccountId32 > ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: address :: AddressVersionedOutputPayload ;
+                }
+            }
+            pub mod trace_block_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_block :: TraceBlockVersionedInputPayload < runtime_types :: sp_runtime :: generic :: block :: Block < runtime_types :: sp_runtime :: generic :: header :: Header < :: core :: primitive :: u32 > , :: subxt :: utils :: UncheckedExtrinsic < :: subxt :: utils :: MultiAddress < :: subxt :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > > ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_block :: TraceBlockVersionedOutputPayload ;
+                }
+            }
+            pub mod trace_tx_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_tx :: TraceTxVersionedInputPayload < runtime_types :: sp_runtime :: generic :: block :: Block < runtime_types :: sp_runtime :: generic :: header :: Header < :: core :: primitive :: u32 > , :: subxt :: utils :: UncheckedExtrinsic < :: subxt :: utils :: MultiAddress < :: subxt :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > > ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_tx :: TraceTxVersionedOutputPayload ;
+                }
+            }
+            pub mod trace_call_versioned {
+                use super::root_mod;
+                use super::runtime_types;
+                pub type Input = runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_call :: TraceCallVersionedInputPayload ;
+                pub mod output {
+                    use super::runtime_types;
+                    pub type Output = :: core :: result :: Result < runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_call :: TraceCallVersionedOutputPayload , runtime_types :: pallet_revive :: primitives :: EthTransactError > ;
                 }
             }
         }
@@ -3446,9 +4109,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                243u8, 225u8, 8u8, 187u8, 138u8, 16u8, 221u8, 31u8, 30u8, 151u8, 218u8, 173u8,
-                161u8, 11u8, 219u8, 80u8, 30u8, 109u8, 34u8, 18u8, 102u8, 130u8, 231u8, 29u8,
-                110u8, 13u8, 144u8, 25u8, 178u8, 138u8, 198u8, 7u8,
+                227u8, 34u8, 180u8, 211u8, 108u8, 33u8, 95u8, 181u8, 222u8, 235u8, 223u8, 242u8,
+                20u8, 68u8, 220u8, 155u8, 86u8, 9u8, 251u8, 210u8, 154u8, 206u8, 190u8, 39u8, 6u8,
+                230u8, 220u8, 187u8, 164u8, 186u8, 96u8, 153u8,
             ]
     }
     pub mod system {
@@ -7800,6 +8463,10 @@ pub mod api {
                     )
                 }
                 #[doc = " The total units of outstanding deactivated balance in the system."]
+                #[doc = ""]
+                #[doc = " This is not guaranteed to be less than or equal to [`TotalIssuance`]. Total issuance may be"]
+                #[doc = " reduced independently of this value, including while a reversible imbalance is outstanding."]
+                #[doc = " Active issuance is therefore derived using saturating subtraction."]
                 pub fn inactive_issuance(
                     &self,
                 ) -> ::subxt::storage::StaticAddress<
@@ -11522,6 +12189,8 @@ pub mod api {
             #[doc = "- `assets`: The exact assets that were trapped. Use the version to specify what version"]
             #[doc = "was the latest when they were trapped."]
             #[doc = "- `beneficiary`: The location/account where the claimed assets will be deposited."]
+            #[doc = ""]
+            #[doc = "The weight of this call is linear in the number of assets claimed."]
             pub struct ClaimAssets {
                 pub assets: ::subxt::alloc::boxed::Box<claim_assets::Assets>,
                 pub beneficiary: ::subxt::alloc::boxed::Box<claim_assets::Beneficiary>,
@@ -12159,6 +12828,8 @@ pub mod api {
                     #[doc = "- `assets`: The exact assets that were trapped. Use the version to specify what version"]
                     #[doc = "was the latest when they were trapped."]
                     #[doc = "- `beneficiary`: The location/account where the claimed assets will be deposited."]
+                    #[doc = ""]
+                    #[doc = "The weight of this call is linear in the number of assets claimed."]
                     pub fn claim_assets(
                         &self,
                         assets: super::claim_assets::Assets,
@@ -20208,6 +20879,37 @@ pub mod api {
                         ],
                     )
                 }
+                #[doc = " What the open ethereum transaction has committed to its receipt, see"]
+                #[doc = " `block_storage::capture_into_receipt`. Taken when the transaction's receipt is built, so it"]
+                #[doc = " is empty between transactions."]
+                #[doc = ""]
+                #[doc = " Accessed only while a receipt is open, in an ethereum transaction or its dry run. Read on"]
+                #[doc = " every log, and written as well until a log overflows the receipt. Read for its overflow"]
+                #[doc = " flag at the successful end of every contract frame, see"]
+                #[doc = " `block_storage::ensure_receipt_within_limit`."]
+                #[doc = ""]
+                #[doc = " Whitelisted like `frame_system::Events`: accessed this often, yet never in a block's"]
+                #[doc = " pre-state, so a block pays one absence lookup for it however many logs and frames it holds."]
+                #[doc = " Without the whitelist the benchmark bills each `LOG` and each frame for that lookup as if it"]
+                #[doc = " were the first access of the block."]
+                pub fn receipt_logs_committed(
+                    &self,
+                ) -> ::subxt::storage::StaticAddress<
+                    (),
+                    receipt_logs_committed::Output,
+                    ::subxt::utils::Yes,
+                > {
+                    ::subxt::storage::StaticAddress::new_static(
+                        "Revive",
+                        "ReceiptLogsCommitted",
+                        [
+                            193u8, 202u8, 198u8, 192u8, 72u8, 109u8, 171u8, 36u8, 78u8, 67u8,
+                            131u8, 24u8, 93u8, 201u8, 126u8, 185u8, 249u8, 121u8, 230u8, 201u8,
+                            211u8, 215u8, 91u8, 158u8, 131u8, 35u8, 60u8, 159u8, 12u8, 131u8, 80u8,
+                            191u8,
+                        ],
+                    )
+                }
                 #[doc = " Incremental ethereum block builder."]
                 pub fn eth_block_builder_ir(
                     &self,
@@ -20220,10 +20922,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            63u8, 180u8, 254u8, 53u8, 142u8, 204u8, 117u8, 56u8, 53u8, 80u8, 79u8,
-                            160u8, 95u8, 126u8, 115u8, 33u8, 84u8, 206u8, 111u8, 141u8, 129u8,
-                            11u8, 129u8, 7u8, 207u8, 139u8, 139u8, 101u8, 185u8, 181u8, 14u8,
-                            111u8,
+                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
+                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
+                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
                         ],
                     )
                 }
@@ -20348,7 +21049,7 @@ pub mod api {
                 pub mod input {
                     use super::runtime_types;
                 }
-                pub type Output = runtime_types::pallet_revive::evm::api::rpc_types_gen::Block;
+                pub type Output = runtime_types::pallet_revive::evm::api::block::Block;
             }
             pub mod block_hash {
                 use super::root_mod;
@@ -20368,6 +21069,15 @@ pub mod api {
                 pub type Output = ::subxt::alloc::vec::Vec<
                     runtime_types::pallet_revive::evm::block_hash::ReceiptGasInfo,
                 >;
+            }
+            pub mod receipt_logs_committed {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod input {
+                    use super::runtime_types;
+                }
+                pub type Output =
+                    runtime_types::pallet_revive::evm::block_hash::receipt::CommittedReceiptLogs;
             }
             pub mod eth_block_builder_ir {
                 use super::root_mod;
@@ -22907,7 +23617,7 @@ pub mod api {
                 use super::runtime_types;
                 pub mod api {
                     use super::runtime_types;
-                    pub mod byte {
+                    pub mod block {
                         use super::runtime_types;
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -22919,7 +23629,7 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Byte(pub ::core::primitive::u8);
+                        pub struct Block { pub base_fee_per_gas : runtime_types :: primitive_types :: U256 , pub blob_gas_used : runtime_types :: primitive_types :: U256 , pub difficulty : runtime_types :: primitive_types :: U256 , pub excess_blob_gas : runtime_types :: primitive_types :: U256 , pub extra_data : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub gas_limit : runtime_types :: primitive_types :: U256 , pub gas_used : runtime_types :: primitive_types :: U256 , pub hash : :: subxt :: utils :: H256 , pub logs_bloom : runtime_types :: pallet_revive_types :: common :: byte :: Bytes256 , pub miner : :: subxt :: utils :: H160 , pub mix_hash : :: subxt :: utils :: H256 , pub nonce : runtime_types :: pallet_revive_types :: common :: byte :: Bytes8 , pub number : runtime_types :: primitive_types :: U256 , pub parent_beacon_block_root : :: core :: option :: Option < :: subxt :: utils :: H256 > , pub parent_hash : :: subxt :: utils :: H256 , pub receipts_root : :: subxt :: utils :: H256 , pub requests_hash : :: core :: option :: Option < :: subxt :: utils :: H256 > , pub sha_3_uncles : :: subxt :: utils :: H256 , pub size : runtime_types :: primitive_types :: U256 , pub state_root : :: subxt :: utils :: H256 , pub timestamp : runtime_types :: primitive_types :: U256 , pub total_difficulty : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub transactions : runtime_types :: pallet_revive :: evm :: api :: transaction :: HashesOrTransactionInfos , pub transactions_root : :: subxt :: utils :: H256 , pub uncles : :: subxt :: alloc :: vec :: Vec < :: subxt :: utils :: H256 > , pub withdrawals : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: block :: Withdrawal > , pub withdrawals_root : :: subxt :: utils :: H256 , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -22930,296 +23640,14 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Bytes(pub ::subxt::alloc::vec::Vec<::core::primitive::u8>);
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Bytes256(pub [::core::primitive::u8; 256usize]);
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Bytes8(pub [::core::primitive::u8; 8usize]);
-                    }
-                    pub mod debug_rpc_types {
-                        use super::runtime_types;
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct CallLog {
+                        pub struct Withdrawal {
                             pub address: ::subxt::utils::H160,
-                            pub topics: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
-                            pub data: runtime_types::pallet_revive::evm::api::byte::Bytes,
-                            pub position: ::core::primitive::u32,
+                            pub amount: runtime_types::primitive_types::U256,
+                            pub index: runtime_types::primitive_types::U256,
+                            pub validator_index: runtime_types::primitive_types::U256,
                         }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct CallTrace {
-                            pub from: ::subxt::utils::H160,
-                            pub gas: ::core::primitive::u64,
-                            pub gas_used: ::core::primitive::u64,
-                            pub to: ::subxt::utils::H160,
-                            pub input: runtime_types::pallet_revive::evm::api::byte::Bytes,
-                            pub output: runtime_types::pallet_revive::evm::api::byte::Bytes,
-                            pub error: ::core::option::Option<::subxt::alloc::string::String>,
-                            pub revert_reason:
-                                ::core::option::Option<::subxt::alloc::string::String>,
-                            pub calls: ::subxt::alloc::vec::Vec<
-                                runtime_types::pallet_revive::evm::api::debug_rpc_types::CallTrace,
-                            >,
-                            pub logs: ::subxt::alloc::vec::Vec<
-                                runtime_types::pallet_revive::evm::api::debug_rpc_types::CallLog,
-                            >,
-                            pub value: ::core::option::Option<runtime_types::primitive_types::U256>,
-                            pub call_type:
-                                runtime_types::pallet_revive::evm::api::debug_rpc_types::CallType,
-                            pub child_call_count: ::core::primitive::u32,
-                        }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct CallTracerConfig {
-                            pub with_logs: ::core::primitive::bool,
-                            pub only_top_call: ::core::primitive::bool,
-                        }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub enum CallType {
-                            #[codec(index = 0)]
-                            Call,
-                            #[codec(index = 1)]
-                            StaticCall,
-                            #[codec(index = 2)]
-                            DelegateCall,
-                            #[codec(index = 3)]
-                            Create,
-                            #[codec(index = 4)]
-                            Create2,
-                            #[codec(index = 5)]
-                            Selfdestruct,
-                        }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct ExecutionStep { # [codec (compact)] pub gas : :: core :: primitive :: u64 , # [codec (compact)] pub gas_cost : :: core :: primitive :: u64 , pub weight_cost : runtime_types :: sp_weights :: weight_v2 :: Weight , pub depth : :: core :: primitive :: u16 , pub return_data : runtime_types :: pallet_revive :: evm :: api :: byte :: Bytes , pub error : :: core :: option :: Option < :: subxt :: alloc :: string :: String > , pub kind : runtime_types :: pallet_revive :: evm :: api :: debug_rpc_types :: ExecutionStepKind , }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub enum ExecutionStepKind {
-                            #[codec(index = 0)]
-                            EVMOpcode {
-                                #[codec(compact)]
-                                pc: ::core::primitive::u32,
-                                op: ::core::primitive::u8,
-                                stack: ::subxt::alloc::vec::Vec<
-                                    runtime_types::pallet_revive::evm::api::byte::Bytes,
-                                >,
-                                memory: ::subxt::alloc::vec::Vec<
-                                    runtime_types::pallet_revive::evm::api::byte::Bytes,
-                                >,
-                                storage: ::core::option::Option<
-                                    ::subxt::utils::KeyedVec<
-                                        runtime_types::pallet_revive::evm::api::byte::Bytes,
-                                        runtime_types::pallet_revive::evm::api::byte::Bytes,
-                                    >,
-                                >,
-                            },
-                            #[codec(index = 1)]
-                            PVMSyscall {
-                                op: ::core::primitive::u8,
-                                args: ::subxt::alloc::vec::Vec<::core::primitive::u64>,
-                                returned: ::core::option::Option<::core::primitive::u64>,
-                            },
-                        }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct ExecutionTrace { pub gas : :: core :: primitive :: u64 , pub weight_consumed : runtime_types :: sp_weights :: weight_v2 :: Weight , pub base_call_weight : runtime_types :: sp_weights :: weight_v2 :: Weight , pub failed : :: core :: primitive :: bool , pub return_value : runtime_types :: pallet_revive :: evm :: api :: byte :: Bytes , pub struct_logs : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: debug_rpc_types :: ExecutionStep > , }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct ExecutionTracerConfig {
-                            pub enable_memory: ::core::primitive::bool,
-                            pub disable_stack: ::core::primitive::bool,
-                            pub disable_storage: ::core::primitive::bool,
-                            pub enable_return_data: ::core::primitive::bool,
-                            pub disable_syscall_details: ::core::primitive::bool,
-                            pub limit: ::core::option::Option<::core::primitive::u64>,
-                            pub memory_word_limit: ::core::primitive::u32,
-                        }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub enum PrestateTrace {
-                            # [codec (index = 0)] Prestate (:: subxt :: utils :: KeyedVec < :: subxt :: utils :: H160 , runtime_types :: pallet_revive :: evm :: api :: debug_rpc_types :: PrestateTraceInfo > ,) , # [codec (index = 1)] DiffMode { pre : :: subxt :: utils :: KeyedVec < :: subxt :: utils :: H160 , runtime_types :: pallet_revive :: evm :: api :: debug_rpc_types :: PrestateTraceInfo > , post : :: subxt :: utils :: KeyedVec < :: subxt :: utils :: H160 , runtime_types :: pallet_revive :: evm :: api :: debug_rpc_types :: PrestateTraceInfo > , } , }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct PrestateTraceInfo {
-                            pub balance:
-                                ::core::option::Option<runtime_types::primitive_types::U256>,
-                            pub nonce: ::core::option::Option<::core::primitive::u32>,
-                            pub code: ::core::option::Option<
-                                runtime_types::pallet_revive::evm::api::byte::Bytes,
-                            >,
-                            pub storage: ::subxt::utils::KeyedVec<
-                                runtime_types::pallet_revive::evm::api::byte::Bytes,
-                                ::core::option::Option<
-                                    runtime_types::pallet_revive::evm::api::byte::Bytes,
-                                >,
-                            >,
-                        }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct PrestateTracerConfig {
-                            pub diff_mode: ::core::primitive::bool,
-                            pub disable_storage: ::core::primitive::bool,
-                            pub disable_code: ::core::primitive::bool,
-                        }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub enum Trace {
-                            # [codec (index = 0)] Call (runtime_types :: pallet_revive :: evm :: api :: debug_rpc_types :: CallTrace ,) , # [codec (index = 1)] Prestate (runtime_types :: pallet_revive :: evm :: api :: debug_rpc_types :: PrestateTrace ,) , # [codec (index = 2)] Execution (runtime_types :: pallet_revive :: evm :: api :: debug_rpc_types :: ExecutionTrace ,) , }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub enum TracerType {
-                            # [codec (index = 0)] CallTracer (:: core :: option :: Option < runtime_types :: pallet_revive :: evm :: api :: debug_rpc_types :: CallTracerConfig > ,) , # [codec (index = 1)] PrestateTracer (:: core :: option :: Option < runtime_types :: pallet_revive :: evm :: api :: debug_rpc_types :: PrestateTracerConfig > ,) , # [codec (index = 2)] ExecutionTracer (:: core :: option :: Option < runtime_types :: pallet_revive :: evm :: api :: debug_rpc_types :: ExecutionTracerConfig > ,) , }
                     }
-                    pub mod rpc_types {
-                        use super::runtime_types;
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct DryRunConfig < _0 > { pub timestamp_override : :: core :: option :: Option < _0 > , pub perform_balance_checks : :: core :: option :: Option < :: core :: primitive :: bool > , pub state_overrides : :: core :: option :: Option < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: StateOverrideSet > , }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct TracingConfig { pub state_overrides : :: core :: option :: Option < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: StateOverrideSet > , }
-                    }
-                    pub mod rpc_types_gen {
+                    pub mod transaction {
                         use super::runtime_types;
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -23263,30 +23691,8 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Block { pub base_fee_per_gas : runtime_types :: primitive_types :: U256 , pub blob_gas_used : runtime_types :: primitive_types :: U256 , pub difficulty : runtime_types :: primitive_types :: U256 , pub excess_blob_gas : runtime_types :: primitive_types :: U256 , pub extra_data : runtime_types :: pallet_revive :: evm :: api :: byte :: Bytes , pub gas_limit : runtime_types :: primitive_types :: U256 , pub gas_used : runtime_types :: primitive_types :: U256 , pub hash : :: subxt :: utils :: H256 , pub logs_bloom : runtime_types :: pallet_revive :: evm :: api :: byte :: Bytes256 , pub miner : :: subxt :: utils :: H160 , pub mix_hash : :: subxt :: utils :: H256 , pub nonce : runtime_types :: pallet_revive :: evm :: api :: byte :: Bytes8 , pub number : runtime_types :: primitive_types :: U256 , pub parent_beacon_block_root : :: core :: option :: Option < :: subxt :: utils :: H256 > , pub parent_hash : :: subxt :: utils :: H256 , pub receipts_root : :: subxt :: utils :: H256 , pub requests_hash : :: core :: option :: Option < :: subxt :: utils :: H256 > , pub sha_3_uncles : :: subxt :: utils :: H256 , pub size : runtime_types :: primitive_types :: U256 , pub state_root : :: subxt :: utils :: H256 , pub timestamp : runtime_types :: primitive_types :: U256 , pub total_difficulty : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub transactions : runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: HashesOrTransactionInfos , pub transactions_root : :: subxt :: utils :: H256 , pub uncles : :: subxt :: alloc :: vec :: Vec < :: subxt :: utils :: H256 > , pub withdrawals : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: Withdrawal > , pub withdrawals_root : :: subxt :: utils :: H256 , }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct GenericTransaction { pub access_list : :: core :: option :: Option < :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: AccessListEntry > > , pub authorization_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: AuthorizationListEntry > , pub blob_versioned_hashes : :: subxt :: alloc :: vec :: Vec < :: subxt :: utils :: H256 > , pub blobs : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: byte :: Bytes > , pub chain_id : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub from : :: core :: option :: Option < :: subxt :: utils :: H160 > , pub gas : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub gas_price : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub input : runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: InputOrData , pub max_fee_per_blob_gas : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub max_fee_per_gas : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub max_priority_fee_per_gas : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub nonce : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub to : :: core :: option :: Option < :: subxt :: utils :: H160 > , pub r#type : :: core :: option :: Option < runtime_types :: pallet_revive :: evm :: api :: byte :: Byte > , pub value : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                         pub enum HashesOrTransactionInfos {
-                            # [codec (index = 0)] Hashes (:: subxt :: alloc :: vec :: Vec < :: subxt :: utils :: H256 > ,) , # [codec (index = 1)] TransactionInfos (:: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: TransactionInfo > ,) , }
+                            # [codec (index = 0)] Hashes (:: subxt :: alloc :: vec :: Vec < :: subxt :: utils :: H256 > ,) , # [codec (index = 1)] TransactionInfos (:: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: transaction :: TransactionInfo > ,) , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -23297,14 +23703,7 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct InputOrData {
-                            pub input: ::core::option::Option<
-                                runtime_types::pallet_revive::evm::api::byte::Bytes,
-                            >,
-                            pub data: ::core::option::Option<
-                                runtime_types::pallet_revive::evm::api::byte::Bytes,
-                            >,
-                        }
+                        pub struct Transaction1559Signed { pub transaction_1559_unsigned : runtime_types :: pallet_revive :: evm :: api :: transaction :: Transaction1559Unsigned , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub v : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub y_parity : runtime_types :: primitive_types :: U256 , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -23315,7 +23714,7 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct StateOverride { pub balance : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub nonce : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub code : :: core :: option :: Option < runtime_types :: pallet_revive :: evm :: api :: byte :: Bytes > , pub storage : :: core :: option :: Option < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: StorageOverride > , pub move_precompile_to_address : :: core :: option :: Option < :: subxt :: utils :: H160 > , }
+                        pub struct Transaction1559Unsigned { pub access_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: transaction :: AccessListEntry > , pub chain_id : runtime_types :: primitive_types :: U256 , pub gas : runtime_types :: primitive_types :: U256 , pub gas_price : runtime_types :: primitive_types :: U256 , pub input : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub max_fee_per_gas : runtime_types :: primitive_types :: U256 , pub max_priority_fee_per_gas : runtime_types :: primitive_types :: U256 , pub nonce : runtime_types :: primitive_types :: U256 , pub to : :: core :: option :: Option < :: subxt :: utils :: H160 > , pub r#type : :: core :: primitive :: u8 , pub value : runtime_types :: primitive_types :: U256 , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -23326,7 +23725,7 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct StateOverrideSet (pub :: subxt :: utils :: KeyedVec < :: subxt :: utils :: H160 , runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: StateOverride > ,) ;
+                        pub struct Transaction2930Signed { pub transaction_2930_unsigned : runtime_types :: pallet_revive :: evm :: api :: transaction :: Transaction2930Unsigned , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub v : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub y_parity : runtime_types :: primitive_types :: U256 , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -23337,22 +23736,7 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub enum StorageOverride {
-                            #[codec(index = 0)]
-                            State(
-                                ::subxt::utils::KeyedVec<
-                                    ::subxt::utils::H256,
-                                    ::subxt::utils::H256,
-                                >,
-                            ),
-                            #[codec(index = 1)]
-                            StateDiff(
-                                ::subxt::utils::KeyedVec<
-                                    ::subxt::utils::H256,
-                                    ::subxt::utils::H256,
-                                >,
-                            ),
-                        }
+                        pub struct Transaction2930Unsigned { pub access_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: transaction :: AccessListEntry > , pub chain_id : runtime_types :: primitive_types :: U256 , pub gas : runtime_types :: primitive_types :: U256 , pub gas_price : runtime_types :: primitive_types :: U256 , pub input : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub nonce : runtime_types :: primitive_types :: U256 , pub to : :: core :: option :: Option < :: subxt :: utils :: H160 > , pub r#type : :: core :: primitive :: u8 , pub value : runtime_types :: primitive_types :: U256 , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -23363,7 +23747,7 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Transaction1559Signed { pub transaction_1559_unsigned : runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: Transaction1559Unsigned , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub v : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub y_parity : runtime_types :: primitive_types :: U256 , }
+                        pub struct Transaction4844Signed { pub transaction_4844_unsigned : runtime_types :: pallet_revive :: evm :: api :: transaction :: Transaction4844Unsigned , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub y_parity : runtime_types :: primitive_types :: U256 , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -23374,7 +23758,7 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Transaction1559Unsigned { pub access_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: AccessListEntry > , pub chain_id : runtime_types :: primitive_types :: U256 , pub gas : runtime_types :: primitive_types :: U256 , pub gas_price : runtime_types :: primitive_types :: U256 , pub input : runtime_types :: pallet_revive :: evm :: api :: byte :: Bytes , pub max_fee_per_gas : runtime_types :: primitive_types :: U256 , pub max_priority_fee_per_gas : runtime_types :: primitive_types :: U256 , pub nonce : runtime_types :: primitive_types :: U256 , pub to : :: core :: option :: Option < :: subxt :: utils :: H160 > , pub r#type : :: core :: primitive :: u8 , pub value : runtime_types :: primitive_types :: U256 , }
+                        pub struct Transaction4844Unsigned { pub access_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: transaction :: AccessListEntry > , pub blob_versioned_hashes : :: subxt :: alloc :: vec :: Vec < :: subxt :: utils :: H256 > , pub chain_id : runtime_types :: primitive_types :: U256 , pub gas : runtime_types :: primitive_types :: U256 , pub input : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub max_fee_per_blob_gas : runtime_types :: primitive_types :: U256 , pub max_fee_per_gas : runtime_types :: primitive_types :: U256 , pub max_priority_fee_per_gas : runtime_types :: primitive_types :: U256 , pub nonce : runtime_types :: primitive_types :: U256 , pub to : :: subxt :: utils :: H160 , pub r#type : :: core :: primitive :: u8 , pub value : runtime_types :: primitive_types :: U256 , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -23385,7 +23769,7 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Transaction2930Signed { pub transaction_2930_unsigned : runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: Transaction2930Unsigned , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub v : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub y_parity : runtime_types :: primitive_types :: U256 , }
+                        pub struct Transaction7702Signed { pub transaction_7702_unsigned : runtime_types :: pallet_revive :: evm :: api :: transaction :: Transaction7702Unsigned , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub v : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub y_parity : runtime_types :: primitive_types :: U256 , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -23396,7 +23780,7 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Transaction2930Unsigned { pub access_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: AccessListEntry > , pub chain_id : runtime_types :: primitive_types :: U256 , pub gas : runtime_types :: primitive_types :: U256 , pub gas_price : runtime_types :: primitive_types :: U256 , pub input : runtime_types :: pallet_revive :: evm :: api :: byte :: Bytes , pub nonce : runtime_types :: primitive_types :: U256 , pub to : :: core :: option :: Option < :: subxt :: utils :: H160 > , pub r#type : :: core :: primitive :: u8 , pub value : runtime_types :: primitive_types :: U256 , }
+                        pub struct Transaction7702Unsigned { pub access_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: transaction :: AccessListEntry > , pub authorization_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: transaction :: AuthorizationListEntry > , pub chain_id : runtime_types :: primitive_types :: U256 , pub gas : runtime_types :: primitive_types :: U256 , pub input : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub max_fee_per_gas : runtime_types :: primitive_types :: U256 , pub max_priority_fee_per_gas : runtime_types :: primitive_types :: U256 , pub nonce : runtime_types :: primitive_types :: U256 , pub to : :: subxt :: utils :: H160 , pub r#type : :: core :: primitive :: u8 , pub value : runtime_types :: primitive_types :: U256 , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -23407,7 +23791,7 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Transaction4844Signed { pub transaction_4844_unsigned : runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: Transaction4844Unsigned , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub y_parity : runtime_types :: primitive_types :: U256 , }
+                        pub struct TransactionInfo { pub block_hash : :: subxt :: utils :: H256 , pub block_number : runtime_types :: primitive_types :: U256 , pub from : :: subxt :: utils :: H160 , pub hash : :: subxt :: utils :: H256 , pub transaction_index : runtime_types :: primitive_types :: U256 , pub transaction_signed : runtime_types :: pallet_revive :: evm :: api :: transaction :: TransactionSigned , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -23418,51 +23802,7 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Transaction4844Unsigned { pub access_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: AccessListEntry > , pub blob_versioned_hashes : :: subxt :: alloc :: vec :: Vec < :: subxt :: utils :: H256 > , pub chain_id : runtime_types :: primitive_types :: U256 , pub gas : runtime_types :: primitive_types :: U256 , pub input : runtime_types :: pallet_revive :: evm :: api :: byte :: Bytes , pub max_fee_per_blob_gas : runtime_types :: primitive_types :: U256 , pub max_fee_per_gas : runtime_types :: primitive_types :: U256 , pub max_priority_fee_per_gas : runtime_types :: primitive_types :: U256 , pub nonce : runtime_types :: primitive_types :: U256 , pub to : :: subxt :: utils :: H160 , pub r#type : :: core :: primitive :: u8 , pub value : runtime_types :: primitive_types :: U256 , }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Transaction7702Signed { pub transaction_7702_unsigned : runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: Transaction7702Unsigned , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub v : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub y_parity : runtime_types :: primitive_types :: U256 , }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Transaction7702Unsigned { pub access_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: AccessListEntry > , pub authorization_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: AuthorizationListEntry > , pub chain_id : runtime_types :: primitive_types :: U256 , pub gas : runtime_types :: primitive_types :: U256 , pub input : runtime_types :: pallet_revive :: evm :: api :: byte :: Bytes , pub max_fee_per_gas : runtime_types :: primitive_types :: U256 , pub max_priority_fee_per_gas : runtime_types :: primitive_types :: U256 , pub nonce : runtime_types :: primitive_types :: U256 , pub to : :: subxt :: utils :: H160 , pub r#type : :: core :: primitive :: u8 , pub value : runtime_types :: primitive_types :: U256 , }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct TransactionInfo { pub block_hash : :: subxt :: utils :: H256 , pub block_number : runtime_types :: primitive_types :: U256 , pub from : :: subxt :: utils :: H160 , pub hash : :: subxt :: utils :: H256 , pub transaction_index : runtime_types :: primitive_types :: U256 , pub transaction_signed : runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: TransactionSigned , }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct TransactionLegacySigned { pub transaction_legacy_unsigned : runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: TransactionLegacyUnsigned , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub v : runtime_types :: primitive_types :: U256 , }
+                        pub struct TransactionLegacySigned { pub transaction_legacy_unsigned : runtime_types :: pallet_revive :: evm :: api :: transaction :: TransactionLegacyUnsigned , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub v : runtime_types :: primitive_types :: U256 , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -23478,7 +23818,7 @@ pub mod api {
                                 ::core::option::Option<runtime_types::primitive_types::U256>,
                             pub gas: runtime_types::primitive_types::U256,
                             pub gas_price: runtime_types::primitive_types::U256,
-                            pub input: runtime_types::pallet_revive::evm::api::byte::Bytes,
+                            pub input: runtime_types::pallet_revive_types::common::byte::Bytes,
                             pub nonce: runtime_types::primitive_types::U256,
                             pub to: ::core::option::Option<::subxt::utils::H160>,
                             pub r#type: ::core::primitive::u8,
@@ -23495,23 +23835,7 @@ pub mod api {
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                         pub enum TransactionSigned {
-                            # [codec (index = 0)] Transaction7702Signed (runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: Transaction7702Signed ,) , # [codec (index = 1)] Transaction4844Signed (runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: Transaction4844Signed ,) , # [codec (index = 2)] Transaction1559Signed (runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: Transaction1559Signed ,) , # [codec (index = 3)] Transaction2930Signed (runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: Transaction2930Signed ,) , # [codec (index = 4)] TransactionLegacySigned (runtime_types :: pallet_revive :: evm :: api :: rpc_types_gen :: TransactionLegacySigned ,) , }
-                        #[derive(
-                            :: subxt :: ext :: scale_decode :: DecodeAsType,
-                            :: subxt :: ext :: scale_encode :: EncodeAsType,
-                            Clone,
-                            Debug,
-                            Eq,
-                            PartialEq,
-                        )]
-                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                        pub struct Withdrawal {
-                            pub address: ::subxt::utils::H160,
-                            pub amount: runtime_types::primitive_types::U256,
-                            pub index: runtime_types::primitive_types::U256,
-                            pub validator_index: runtime_types::primitive_types::U256,
-                        }
+                            # [codec (index = 0)] Transaction7702Signed (runtime_types :: pallet_revive :: evm :: api :: transaction :: Transaction7702Signed ,) , # [codec (index = 1)] Transaction4844Signed (runtime_types :: pallet_revive :: evm :: api :: transaction :: Transaction4844Signed ,) , # [codec (index = 2)] Transaction1559Signed (runtime_types :: pallet_revive :: evm :: api :: transaction :: Transaction1559Signed ,) , # [codec (index = 3)] Transaction2930Signed (runtime_types :: pallet_revive :: evm :: api :: transaction :: Transaction2930Signed ,) , # [codec (index = 4)] TransactionLegacySigned (runtime_types :: pallet_revive :: evm :: api :: transaction :: TransactionLegacySigned ,) , }
                     }
                 }
                 pub mod block_hash {
@@ -23555,6 +23879,24 @@ pub mod api {
                             pub stored_in_database: ::core::primitive::bool,
                             pub rlp_buf: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
                             pub index: ::core::primitive::u64,
+                        }
+                    }
+                    pub mod receipt {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct CommittedReceiptLogs {
+                            pub encoded_len: ::core::primitive::u32,
+                            pub bloom: [::core::primitive::u8; 256usize],
+                            pub exceeded: ::core::primitive::bool,
                         }
                     }
                     #[derive(
@@ -24066,6 +24408,10 @@ pub mod api {
                     #[doc = "[`NativeDepositOf`] entries from a previously terminated contract that the deletion"]
                     #[doc = "queue has not yet drained."]
                     PendingDepositCleanup,
+                    #[codec(index = 69)]
+                    #[doc = "The logs of the ethereum transaction would exceed"]
+                    #[doc = "[`limits::MAX_RECEIPT_LOGS_BYTES`] in its receipt."]
+                    ReceiptTooLarge,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -24179,36 +24525,6 @@ pub mod api {
                 )]
                 #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                pub enum Code {
-                    #[codec(index = 0)]
-                    Upload(::subxt::alloc::vec::Vec<::core::primitive::u8>),
-                    #[codec(index = 1)]
-                    Existing(::subxt::utils::H256),
-                }
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                pub struct CodeUploadReturnValue<_0> {
-                    pub code_hash: ::subxt::utils::H256,
-                    pub deposit: _0,
-                }
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                 pub enum ContractAccessError {
                     #[codec(index = 0)]
                     DoesntExist,
@@ -24227,93 +24543,11 @@ pub mod api {
                 )]
                 #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                pub struct ContractResult<_0, _1> {
-                    pub weight_consumed: runtime_types::sp_weights::weight_v2::Weight,
-                    pub weight_required: runtime_types::sp_weights::weight_v2::Weight,
-                    pub storage_deposit:
-                        runtime_types::pallet_revive::primitives::StorageDeposit<_1>,
-                    pub max_storage_deposit:
-                        runtime_types::pallet_revive::primitives::StorageDeposit<_1>,
-                    pub gas_consumed: _1,
-                    pub result:
-                        ::core::result::Result<_0, runtime_types::sp_runtime::DispatchError>,
-                }
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                 pub enum EthTransactError {
                     #[codec(index = 0)]
                     Data(::subxt::alloc::vec::Vec<::core::primitive::u8>),
                     #[codec(index = 1)]
                     Message(::subxt::alloc::string::String),
-                }
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                pub struct EthTransactInfo<_0> {
-                    pub weight_required: runtime_types::sp_weights::weight_v2::Weight,
-                    pub storage_deposit: _0,
-                    pub max_storage_deposit: _0,
-                    pub eth_gas: runtime_types::primitive_types::U256,
-                    pub data: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                }
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                pub struct ExecReturnValue {
-                    pub flags: runtime_types::pallet_revive_uapi::flags::ReturnFlags,
-                    pub data: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                }
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                pub struct InstantiateReturnValue {
-                    pub result: runtime_types::pallet_revive::primitives::ExecReturnValue,
-                    pub addr: ::subxt::utils::H160,
-                }
-                #[derive(
-                    :: subxt :: ext :: scale_decode :: DecodeAsType,
-                    :: subxt :: ext :: scale_encode :: EncodeAsType,
-                    Clone,
-                    Debug,
-                    Eq,
-                    PartialEq,
-                )]
-                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-                pub enum StorageDeposit<_0> {
-                    #[codec(index = 0)]
-                    Refund(_0),
-                    #[codec(index = 1)]
-                    Charge(_0),
                 }
             }
             pub mod storage {
@@ -24438,6 +24672,2215 @@ pub mod api {
                     pub code_len: ::core::primitive::u32,
                     pub code_type: runtime_types::pallet_revive::vm::BytecodeType,
                     pub behaviour_version: ::core::primitive::u32,
+                }
+            }
+        }
+        pub mod pallet_revive_types {
+            use super::runtime_types;
+            pub mod common {
+                use super::runtime_types;
+                pub mod byte {
+                    use super::runtime_types;
+                    #[derive(
+                        :: subxt :: ext :: scale_decode :: DecodeAsType,
+                        :: subxt :: ext :: scale_encode :: EncodeAsType,
+                        Clone,
+                        Debug,
+                        Eq,
+                        PartialEq,
+                    )]
+                    #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                    #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                    pub struct Byte(pub ::core::primitive::u8);
+                    #[derive(
+                        :: subxt :: ext :: scale_decode :: DecodeAsType,
+                        :: subxt :: ext :: scale_encode :: EncodeAsType,
+                        Clone,
+                        Debug,
+                        Eq,
+                        PartialEq,
+                    )]
+                    #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                    #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                    pub struct Bytes(pub ::subxt::alloc::vec::Vec<::core::primitive::u8>);
+                    #[derive(
+                        :: subxt :: ext :: scale_decode :: DecodeAsType,
+                        :: subxt :: ext :: scale_encode :: EncodeAsType,
+                        Clone,
+                        Debug,
+                        Eq,
+                        PartialEq,
+                    )]
+                    #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                    #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                    pub struct Bytes256(pub [::core::primitive::u8; 256usize]);
+                    #[derive(
+                        :: subxt :: ext :: scale_decode :: DecodeAsType,
+                        :: subxt :: ext :: scale_encode :: EncodeAsType,
+                        Clone,
+                        Debug,
+                        Eq,
+                        PartialEq,
+                    )]
+                    #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                    #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                    pub struct Bytes8(pub [::core::primitive::u8; 8usize]);
+                }
+            }
+            pub mod runtime_api {
+                use super::runtime_types;
+                pub mod declaration {
+                    use super::runtime_types;
+                    #[derive(
+                        :: subxt :: ext :: scale_decode :: DecodeAsType,
+                        :: subxt :: ext :: scale_encode :: EncodeAsType,
+                        Clone,
+                        Debug,
+                        Eq,
+                        PartialEq,
+                    )]
+                    #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                    #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                    pub struct ReviveRuntimeApiVersionDeclarations(
+                        pub  ::subxt::utils::KeyedVec<
+                            ::subxt::alloc::string::String,
+                            ::core::primitive::u8,
+                        >,
+                    );
+                }
+                pub mod payloads {
+                    use super::runtime_types;
+                    pub mod account_id {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct AccountIdInputPayloadV1 {
+                            pub address: ::subxt::utils::H160,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct AccountIdOutputPayloadV1<_0> {
+                            pub account_id: _0,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum AccountIdVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: account_id :: AccountIdInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum AccountIdVersionedOutputPayload<_0> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: account_id :: AccountIdOutputPayloadV1 < _0 > ,) , }
+                    }
+                    pub mod address {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct AddressInputPayloadV1<_0> {
+                            pub account_id: _0,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct AddressOutputPayloadV1 {
+                            pub address: ::subxt::utils::H160,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum AddressVersionedInputPayload<_0> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: address :: AddressInputPayloadV1 < _0 > ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum AddressVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: address :: AddressOutputPayloadV1 ,) , }
+                    }
+                    pub mod balance {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct BalanceInputPayloadV1 {
+                            pub address: ::subxt::utils::H160,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct BalanceOutputPayloadV1 {
+                            pub balance: runtime_types::primitive_types::U256,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum BalanceVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: balance :: BalanceInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum BalanceVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: balance :: BalanceOutputPayloadV1 ,) , }
+                    }
+                    pub mod block_author {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct BlockAuthorInputPayloadV1;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct BlockAuthorOutputPayloadV1 {
+                            pub block_author: ::subxt::utils::H160,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum BlockAuthorVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: block_author :: BlockAuthorInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum BlockAuthorVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: block_author :: BlockAuthorOutputPayloadV1 ,) , }
+                    }
+                    pub mod block_gas_limit {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct BlockGasLimitInputPayloadV1;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct BlockGasLimitOutputPayloadV1 {
+                            pub block_gas_limit: runtime_types::primitive_types::U256,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum BlockGasLimitVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: block_gas_limit :: BlockGasLimitInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum BlockGasLimitVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: block_gas_limit :: BlockGasLimitOutputPayloadV1 ,) , }
+                    }
+                    pub mod block_hash {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct BlockHashInputPayloadV1 {
+                            pub block_number: runtime_types::primitive_types::U256,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct BlockHashOutputPayloadV1 {
+                            pub block_hash: ::core::option::Option<::subxt::utils::H256>,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum BlockHashVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: block_hash :: BlockHashInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum BlockHashVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: block_hash :: BlockHashOutputPayloadV1 ,) , }
+                    }
+                    pub mod call {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct CallInputPayloadV1<_0, _1> {
+                            pub origin: _0,
+                            pub dest: ::subxt::utils::H160,
+                            pub value: _1,
+                            pub gas_limit: ::core::option::Option<
+                                runtime_types::sp_weights::weight_v2::Weight,
+                            >,
+                            pub storage_deposit_limit: ::core::option::Option<_1>,
+                            pub input_data: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct CallOutputPayloadV1 < _0 > { pub contract_result : runtime_types :: pallet_revive_types :: runtime_api :: types :: contract :: ContractResultV1 < runtime_types :: pallet_revive_types :: runtime_api :: types :: contract :: ExecReturnValueV1 , _0 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum CallVersionedInputPayload<_0, _1> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: call :: CallInputPayloadV1 < _0 , _1 > ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum CallVersionedOutputPayload<_0> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: call :: CallOutputPayloadV1 < _0 > ,) , }
+                    }
+                    pub mod code {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct CodeInputPayloadV1 {
+                            pub address: ::subxt::utils::H160,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct CodeOutputPayloadV1 {
+                            pub code: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum CodeVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: code :: CodeInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum CodeVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: code :: CodeOutputPayloadV1 ,) , }
+                    }
+                    pub mod eth_block {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct BlockInputPayloadV1;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct BlockOutputPayloadV1 { pub block : runtime_types :: pallet_revive_types :: runtime_api :: types :: block :: BlockV1 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum BlockVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_block :: BlockInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum BlockVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_block :: BlockOutputPayloadV1 ,) , }
+                    }
+                    pub mod eth_estimate_gas {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct EstimateGasInputPayloadV1 < _0 > { pub tx : runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: GenericTransactionV1 , pub timestamp_override : :: core :: option :: Option < _0 > , pub state_overrides : :: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: state_overrides :: StateOverrideSetV1 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct EstimateGasOutputPayloadV1 {
+                            pub gas_estimate: runtime_types::primitive_types::U256,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum EstimateGasVersionedInputPayload<_0> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_estimate_gas :: EstimateGasInputPayloadV1 < _0 > ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum EstimateGasVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_estimate_gas :: EstimateGasOutputPayloadV1 ,) , }
+                    }
+                    pub mod eth_pre_dispatch_weight {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct PreDispatchWeightInputPayloadV1 {
+                            pub tx: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct PreDispatchWeightOutputPayloadV1 {
+                            pub weight: runtime_types::sp_weights::weight_v2::Weight,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum PreDispatchWeightVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_pre_dispatch_weight :: PreDispatchWeightInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum PreDispatchWeightVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_pre_dispatch_weight :: PreDispatchWeightOutputPayloadV1 ,) , }
+                    }
+                    pub mod eth_transact {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TransactInputPayloadV1 < _0 > { pub tx : runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: GenericTransactionV1 , pub timestamp_override : :: core :: option :: Option < _0 > , pub perform_balance_checks : :: core :: primitive :: bool , pub state_overrides : :: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: state_overrides :: StateOverrideSetV1 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TransactOutputPayloadV1 < _0 > { pub transact_info : runtime_types :: pallet_revive_types :: runtime_api :: types :: dry_run :: EthTransactInfoV1 < _0 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TransactVersionedInputPayload<_0> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_transact :: TransactInputPayloadV1 < _0 > ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TransactVersionedOutputPayload<_0> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: eth_transact :: TransactOutputPayloadV1 < _0 > ,) , }
+                    }
+                    pub mod gas_price {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct GasPriceInputPayloadV1;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct GasPriceOutputPayloadV1 {
+                            pub gas_price: runtime_types::primitive_types::U256,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum GasPriceVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: gas_price :: GasPriceInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum GasPriceVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: gas_price :: GasPriceOutputPayloadV1 ,) , }
+                    }
+                    pub mod get_storage {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct GetStorageInputPayloadV1 { pub address : :: subxt :: utils :: H160 , pub key : runtime_types :: pallet_revive_types :: runtime_api :: types :: storage :: StorageKeyV1 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct GetStorageOutputPayloadV1 {
+                            pub storage: ::core::option::Option<
+                                ::subxt::alloc::vec::Vec<::core::primitive::u8>,
+                            >,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum GetStorageVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: get_storage :: GetStorageInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum GetStorageVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: get_storage :: GetStorageOutputPayloadV1 ,) , }
+                    }
+                    pub mod instantiate {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct InstantiateInputPayloadV1 < _0 , _1 > { pub origin : _0 , pub value : _1 , pub gas_limit : :: core :: option :: Option < runtime_types :: sp_weights :: weight_v2 :: Weight > , pub storage_deposit_limit : :: core :: option :: Option < _1 > , pub code : runtime_types :: pallet_revive_types :: runtime_api :: types :: contract :: CodeV1 , pub data : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , pub salt : :: core :: option :: Option < [:: core :: primitive :: u8 ; 32usize] > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct InstantiateOutputPayloadV1 < _0 > { pub contract_result : runtime_types :: pallet_revive_types :: runtime_api :: types :: contract :: ContractResultV1 < runtime_types :: pallet_revive_types :: runtime_api :: types :: contract :: InstantiateReturnValueV1 , _0 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum InstantiateVersionedInputPayload<_0, _1> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: instantiate :: InstantiateInputPayloadV1 < _0 , _1 > ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum InstantiateVersionedOutputPayload<_0> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: instantiate :: InstantiateOutputPayloadV1 < _0 > ,) , }
+                    }
+                    pub mod max_extrinsic_weight_in_gas {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct MaxExtrinsicWeightInGasInputPayloadV1;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct MaxExtrinsicWeightInGasOutputPayloadV1 {
+                            pub max_extrinsic_weight_in_gas: runtime_types::primitive_types::U256,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum MaxExtrinsicWeightInGasVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: max_extrinsic_weight_in_gas :: MaxExtrinsicWeightInGasInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum MaxExtrinsicWeightInGasVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: max_extrinsic_weight_in_gas :: MaxExtrinsicWeightInGasOutputPayloadV1 ,) , }
+                    }
+                    pub mod new_balance_with_dust {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct NewBalanceWithDustInputPayloadV1 {
+                            pub balance: runtime_types::primitive_types::U256,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct NewBalanceWithDustOutputPayloadV1<_0> {
+                            pub new_balance: _0,
+                            pub dust: ::core::primitive::u32,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum NewBalanceWithDustVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: new_balance_with_dust :: NewBalanceWithDustInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum NewBalanceWithDustVersionedOutputPayload<_0> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: new_balance_with_dust :: NewBalanceWithDustOutputPayloadV1 < _0 > ,) , }
+                    }
+                    pub mod nonce {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct NonceInputPayloadV1 {
+                            pub address: ::subxt::utils::H160,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct NonceOutputPayloadV1<_0> {
+                            pub nonce: _0,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum NonceVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: nonce :: NonceInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum NonceVersionedOutputPayload<_0> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: nonce :: NonceOutputPayloadV1 < _0 > ,) , }
+                    }
+                    pub mod receipt_data {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct ReceiptDataInputPayloadV1;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct ReceiptDataOutputPayloadV1 { pub receipt_data : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: receipt :: ReceiptGasInfoV1 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum ReceiptDataVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: receipt_data :: ReceiptDataInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum ReceiptDataVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: receipt_data :: ReceiptDataOutputPayloadV1 ,) , }
+                    }
+                    pub mod runtime_pallets_address {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct RuntimePalletsAddressInputPayloadV1;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct RuntimePalletsAddressOutputPayloadV1 {
+                            pub runtime_pallets_address: ::subxt::utils::H160,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum RuntimePalletsAddressVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: runtime_pallets_address :: RuntimePalletsAddressInputPayloadV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum RuntimePalletsAddressVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: runtime_pallets_address :: RuntimePalletsAddressOutputPayloadV1 ,) , }
+                    }
+                    pub mod trace_block {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TraceBlockInputPayloadV1 < _0 > { pub block : _0 , pub config : runtime_types :: pallet_revive_types :: runtime_api :: types :: tracer :: TracerTypeV1 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TraceBlockInputPayloadV2 < _0 > { pub block : _0 , pub config : runtime_types :: pallet_revive_types :: runtime_api :: types :: tracer :: TracerTypeV1 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TraceBlockOutputPayloadV1 { pub traces : :: subxt :: alloc :: vec :: Vec < (:: core :: primitive :: u32 , runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: TraceV1 ,) > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TraceBlockOutputPayloadV2 { pub entries : :: subxt :: alloc :: vec :: Vec < (:: core :: primitive :: u32 , runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: TraceEntryV1 ,) > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TraceBlockVersionedInputPayload<_0> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_block :: TraceBlockInputPayloadV1 < _0 > ,) , # [codec (index = 1)] V2 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_block :: TraceBlockInputPayloadV2 < _0 > ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TraceBlockVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_block :: TraceBlockOutputPayloadV1 ,) , # [codec (index = 1)] V2 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_block :: TraceBlockOutputPayloadV2 ,) , }
+                    }
+                    pub mod trace_call {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TraceCallInputPayloadV1 { pub tx : runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: GenericTransactionV1 , pub config : runtime_types :: pallet_revive_types :: runtime_api :: types :: tracer :: TracerTypeV1 , pub state_overrides : :: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: state_overrides :: StateOverrideSetV1 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TraceCallInputPayloadV2 { pub tx : runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: GenericTransactionV1 , pub config : runtime_types :: pallet_revive_types :: runtime_api :: types :: tracer :: TracerTypeV1 , pub state_overrides : :: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: state_overrides :: StateOverrideSetV1 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TraceCallOutputPayloadV1 { pub trace : runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: TraceV1 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TraceCallOutputPayloadV2 { pub trace : runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: TraceV2 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TraceCallVersionedInputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_call :: TraceCallInputPayloadV1 ,) , # [codec (index = 1)] V2 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_call :: TraceCallInputPayloadV2 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TraceCallVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_call :: TraceCallOutputPayloadV1 ,) , # [codec (index = 1)] V2 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_call :: TraceCallOutputPayloadV2 ,) , }
+                    }
+                    pub mod trace_tx {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TraceTxInputPayloadV1 < _0 > { pub block : _0 , pub tx_index : :: core :: primitive :: u32 , pub config : runtime_types :: pallet_revive_types :: runtime_api :: types :: tracer :: TracerTypeV1 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TraceTxInputPayloadV2 < _0 > { pub block : _0 , pub tx_index : :: core :: primitive :: u32 , pub config : runtime_types :: pallet_revive_types :: runtime_api :: types :: tracer :: TracerTypeV1 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TraceTxOutputPayloadV1 { pub trace : :: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: TraceV1 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TraceTxOutputPayloadV2 { pub entry : :: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: TraceEntryV1 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TraceTxVersionedInputPayload<_0> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_tx :: TraceTxInputPayloadV1 < _0 > ,) , # [codec (index = 1)] V2 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_tx :: TraceTxInputPayloadV2 < _0 > ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TraceTxVersionedOutputPayload {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_tx :: TraceTxOutputPayloadV1 ,) , # [codec (index = 1)] V2 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: trace_tx :: TraceTxOutputPayloadV2 ,) , }
+                    }
+                    pub mod upload_code {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct UploadCodeInputPayloadV1<_0, _1> {
+                            pub origin: _0,
+                            pub code: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
+                            pub storage_deposit_limit: ::core::option::Option<_1>,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct UploadCodeOutputPayloadV1 < _0 > { pub code_upload_return_value : runtime_types :: pallet_revive_types :: runtime_api :: types :: upload :: CodeUploadReturnValueV1 < _0 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum UploadCodeVersionedInputPayload<_0, _1> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: upload_code :: UploadCodeInputPayloadV1 < _0 , _1 > ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum UploadCodeVersionedOutputPayload<_0> {
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: upload_code :: UploadCodeOutputPayloadV1 < _0 > ,) , }
+                    }
+                }
+                pub mod types {
+                    use super::runtime_types;
+                    pub mod block {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct BlockV1 { pub base_fee_per_gas : runtime_types :: primitive_types :: U256 , pub blob_gas_used : runtime_types :: primitive_types :: U256 , pub difficulty : runtime_types :: primitive_types :: U256 , pub excess_blob_gas : runtime_types :: primitive_types :: U256 , pub extra_data : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub gas_limit : runtime_types :: primitive_types :: U256 , pub gas_used : runtime_types :: primitive_types :: U256 , pub hash : :: subxt :: utils :: H256 , pub logs_bloom : runtime_types :: pallet_revive_types :: common :: byte :: Bytes256 , pub miner : :: subxt :: utils :: H160 , pub mix_hash : :: subxt :: utils :: H256 , pub nonce : runtime_types :: pallet_revive_types :: common :: byte :: Bytes8 , pub number : runtime_types :: primitive_types :: U256 , pub parent_beacon_block_root : :: core :: option :: Option < :: subxt :: utils :: H256 > , pub parent_hash : :: subxt :: utils :: H256 , pub receipts_root : :: subxt :: utils :: H256 , pub requests_hash : :: core :: option :: Option < :: subxt :: utils :: H256 > , pub sha_3_uncles : :: subxt :: utils :: H256 , pub size : runtime_types :: primitive_types :: U256 , pub state_root : :: subxt :: utils :: H256 , pub timestamp : runtime_types :: primitive_types :: U256 , pub total_difficulty : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub transactions : runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: HashesOrTransactionInfosV1 , pub transactions_root : :: subxt :: utils :: H256 , pub uncles : :: subxt :: alloc :: vec :: Vec < :: subxt :: utils :: H256 > , pub withdrawals : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: block :: WithdrawalV1 > , pub withdrawals_root : :: subxt :: utils :: H256 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct WithdrawalV1 {
+                            pub address: ::subxt::utils::H160,
+                            pub amount: runtime_types::primitive_types::U256,
+                            pub index: runtime_types::primitive_types::U256,
+                            pub validator_index: runtime_types::primitive_types::U256,
+                        }
+                    }
+                    pub mod contract {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum CodeV1 {
+                            #[codec(index = 0)]
+                            Upload(::subxt::alloc::vec::Vec<::core::primitive::u8>),
+                            #[codec(index = 1)]
+                            Existing(::subxt::utils::H256),
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct ContractResultV1 < _0 , _1 > { pub weight_consumed : runtime_types :: sp_weights :: weight_v2 :: Weight , pub weight_required : runtime_types :: sp_weights :: weight_v2 :: Weight , pub storage_deposit : runtime_types :: pallet_revive_types :: runtime_api :: types :: contract :: StorageDepositV1 < _1 > , pub max_storage_deposit : runtime_types :: pallet_revive_types :: runtime_api :: types :: contract :: StorageDepositV1 < _1 > , pub gas_consumed : _1 , pub result : :: core :: result :: Result < _0 , runtime_types :: sp_runtime :: DispatchError > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct ExecReturnValueV1 {
+                            pub flags: runtime_types::pallet_revive_uapi::flags::ReturnFlags,
+                            pub data: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct InstantiateReturnValueV1 { pub result : runtime_types :: pallet_revive_types :: runtime_api :: types :: contract :: ExecReturnValueV1 , pub addr : :: subxt :: utils :: H160 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum StorageDepositV1<_0> {
+                            #[codec(index = 0)]
+                            Refund(_0),
+                            #[codec(index = 1)]
+                            Charge(_0),
+                        }
+                    }
+                    pub mod dry_run {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct DryRunConfigV1 < _0 > { pub timestamp_override : :: core :: option :: Option < _0 > , pub perform_balance_checks : :: core :: option :: Option < :: core :: primitive :: bool > , pub state_overrides : :: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: state_overrides :: StateOverrideSetV1 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct EthTransactInfoV1<_0> {
+                            pub weight_required: runtime_types::sp_weights::weight_v2::Weight,
+                            pub storage_deposit: _0,
+                            pub max_storage_deposit: _0,
+                            pub eth_gas: runtime_types::primitive_types::U256,
+                            pub data: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
+                        }
+                    }
+                    pub mod receipt {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct ReceiptGasInfoV1 {
+                            pub gas_used: runtime_types::primitive_types::U256,
+                            pub effective_gas_price: runtime_types::primitive_types::U256,
+                        }
+                    }
+                    pub mod state_overrides {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct StateOverrideSetV1 (pub :: subxt :: utils :: KeyedVec < :: subxt :: utils :: H160 , runtime_types :: pallet_revive_types :: runtime_api :: types :: state_overrides :: StateOverrideV1 > ,) ;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct StateOverrideV1 { pub balance : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub nonce : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub code : :: core :: option :: Option < runtime_types :: pallet_revive_types :: common :: byte :: Bytes > , pub storage : :: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: state_overrides :: StorageOverrideV1 > , pub move_precompile_to_address : :: core :: option :: Option < :: subxt :: utils :: H160 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum StorageOverrideV1 {
+                            #[codec(index = 0)]
+                            State(
+                                ::subxt::utils::KeyedVec<
+                                    ::subxt::utils::H256,
+                                    ::subxt::utils::H256,
+                                >,
+                            ),
+                            #[codec(index = 1)]
+                            StateDiff(
+                                ::subxt::utils::KeyedVec<
+                                    ::subxt::utils::H256,
+                                    ::subxt::utils::H256,
+                                >,
+                            ),
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TracingConfigV1 { pub state_overrides : :: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: state_overrides :: StateOverrideSetV1 > , }
+                    }
+                    pub mod storage {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum StorageKeyV1 {
+                            #[codec(index = 0)]
+                            Fixed([::core::primitive::u8; 32usize]),
+                            #[codec(index = 1)]
+                            Variable(::subxt::alloc::vec::Vec<::core::primitive::u8>),
+                        }
+                    }
+                    pub mod tracer {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct CallTracerConfigV1 {
+                            pub with_logs: ::core::primitive::bool,
+                            pub only_top_call: ::core::primitive::bool,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct ExecutionTracerConfigV1 {
+                            pub enable_memory: ::core::primitive::bool,
+                            pub disable_stack: ::core::primitive::bool,
+                            pub disable_storage: ::core::primitive::bool,
+                            pub enable_return_data: ::core::primitive::bool,
+                            pub disable_syscall_details: ::core::primitive::bool,
+                            pub limit: ::core::option::Option<::core::primitive::u64>,
+                            pub memory_word_limit: ::core::primitive::u32,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct PrestateTracerConfigV1 {
+                            pub diff_mode: ::core::primitive::bool,
+                            pub disable_storage: ::core::primitive::bool,
+                            pub disable_code: ::core::primitive::bool,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TracerTypeV1 {
+                            # [codec (index = 0)] CallTracer (:: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: tracer :: CallTracerConfigV1 > ,) , # [codec (index = 1)] PrestateTracer (:: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: tracer :: PrestateTracerConfigV1 > ,) , # [codec (index = 2)] ExecutionTracer (:: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: tracer :: ExecutionTracerConfigV1 > ,) , }
+                    }
+                    pub mod traces {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct CallLogV1 {
+                            pub address: ::subxt::utils::H160,
+                            pub topics: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
+                            pub data: runtime_types::pallet_revive_types::common::byte::Bytes,
+                            pub position: ::core::primitive::u32,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct CallLogV2 {
+                            pub address: ::subxt::utils::H160,
+                            pub topics: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
+                            pub data: runtime_types::pallet_revive_types::common::byte::Bytes,
+                            pub position: ::core::primitive::u32,
+                            pub index: ::core::primitive::u32,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct CallTraceV1 { pub from : :: subxt :: utils :: H160 , pub gas : :: core :: primitive :: u64 , pub gas_used : :: core :: primitive :: u64 , pub to : :: subxt :: utils :: H160 , pub input : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub output : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub error : :: core :: option :: Option < :: subxt :: alloc :: string :: String > , pub revert_reason : :: core :: option :: Option < :: subxt :: alloc :: string :: String > , pub calls : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: CallTraceV1 > , pub logs : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: CallLogV1 > , pub value : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub call_type : runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: CallTypeV1 , pub child_call_count : :: core :: primitive :: u32 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct CallTraceV2 { pub from : :: subxt :: utils :: H160 , pub gas : :: core :: primitive :: u64 , pub gas_used : :: core :: primitive :: u64 , pub to : :: subxt :: utils :: H160 , pub input : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub output : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub error : :: core :: option :: Option < :: subxt :: alloc :: string :: String > , pub revert_reason : :: core :: option :: Option < :: subxt :: alloc :: string :: String > , pub calls : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: CallTraceV2 > , pub logs : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: CallLogV2 > , pub value : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub call_type : runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: CallTypeV1 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum CallTypeV1 {
+                            #[codec(index = 0)]
+                            Call,
+                            #[codec(index = 1)]
+                            StaticCall,
+                            #[codec(index = 2)]
+                            DelegateCall,
+                            #[codec(index = 3)]
+                            Create,
+                            #[codec(index = 4)]
+                            Create2,
+                            #[codec(index = 5)]
+                            Selfdestruct,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct EvmOpcodeV1(pub ::core::primitive::u8);
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum ExecutionStepKindV1 {
+                            # [codec (index = 0)] EVMOpcode { # [codec (compact)] pc : :: core :: primitive :: u32 , op : runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: EvmOpcodeV1 , stack : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: common :: byte :: Bytes > , memory : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: common :: byte :: Bytes > , storage : :: core :: option :: Option < :: subxt :: utils :: KeyedVec < runtime_types :: pallet_revive_types :: common :: byte :: Bytes , runtime_types :: pallet_revive_types :: common :: byte :: Bytes > > , } , # [codec (index = 1)] PVMSyscall { op : runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: PolkavmSyscallV1 , args : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u64 > , returned : :: core :: option :: Option < :: core :: primitive :: u64 > , } , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct ExecutionStepV1 { # [codec (compact)] pub gas : :: core :: primitive :: u64 , # [codec (compact)] pub gas_cost : :: core :: primitive :: u64 , pub weight_cost : runtime_types :: sp_weights :: weight_v2 :: Weight , pub depth : :: core :: primitive :: u16 , pub return_data : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub error : :: core :: option :: Option < :: subxt :: alloc :: string :: String > , pub kind : runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: ExecutionStepKindV1 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct ExecutionTraceV1 { pub gas : :: core :: primitive :: u64 , pub weight_consumed : runtime_types :: sp_weights :: weight_v2 :: Weight , pub base_call_weight : runtime_types :: sp_weights :: weight_v2 :: Weight , pub failed : :: core :: primitive :: bool , pub return_value : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub struct_logs : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: ExecutionStepV1 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum PolkavmSyscallV1 {
+                            #[codec(index = 0)]
+                            Noop,
+                            #[codec(index = 1)]
+                            SetStorage,
+                            #[codec(index = 2)]
+                            SetStorageOrClear,
+                            #[codec(index = 3)]
+                            GetStorage,
+                            #[codec(index = 4)]
+                            GetStorageOrZero,
+                            #[codec(index = 5)]
+                            Call,
+                            #[codec(index = 6)]
+                            CallEvm,
+                            #[codec(index = 7)]
+                            DelegateCall,
+                            #[codec(index = 8)]
+                            DelegateCallEvm,
+                            #[codec(index = 9)]
+                            Instantiate,
+                            #[codec(index = 10)]
+                            CallDataSize,
+                            #[codec(index = 11)]
+                            CallDataCopy,
+                            #[codec(index = 12)]
+                            CallDataLoad,
+                            #[codec(index = 13)]
+                            SealReturn,
+                            #[codec(index = 14)]
+                            Caller,
+                            #[codec(index = 15)]
+                            Origin,
+                            #[codec(index = 16)]
+                            CodeHash,
+                            #[codec(index = 17)]
+                            CodeSize,
+                            #[codec(index = 18)]
+                            Address,
+                            #[codec(index = 19)]
+                            GetImmutableData,
+                            #[codec(index = 20)]
+                            SetImmutableData,
+                            #[codec(index = 21)]
+                            Balance,
+                            #[codec(index = 22)]
+                            BalanceOf,
+                            #[codec(index = 23)]
+                            ChainId,
+                            #[codec(index = 24)]
+                            GasLimit,
+                            #[codec(index = 25)]
+                            ValueTransferred,
+                            #[codec(index = 26)]
+                            GasPrice,
+                            #[codec(index = 27)]
+                            BaseFee,
+                            #[codec(index = 28)]
+                            Now,
+                            #[codec(index = 29)]
+                            DepositEvent,
+                            #[codec(index = 30)]
+                            BlockNumber,
+                            #[codec(index = 31)]
+                            BlockHash,
+                            #[codec(index = 32)]
+                            BlockAuthor,
+                            #[codec(index = 33)]
+                            HashKeccak256,
+                            #[codec(index = 34)]
+                            ReturnDataSize,
+                            #[codec(index = 35)]
+                            ReturnDataCopy,
+                            #[codec(index = 36)]
+                            RefTimeLeft,
+                            #[codec(index = 37)]
+                            ConsumeAllGas,
+                            #[codec(index = 38)]
+                            EcdsaToEthAddress,
+                            #[codec(index = 39)]
+                            Sr25519Verify,
+                            #[codec(index = 40)]
+                            Terminate,
+                            #[codec(index = 41)]
+                            PvmFuel,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct PrestateTraceInfoV1 {
+                            pub balance:
+                                ::core::option::Option<runtime_types::primitive_types::U256>,
+                            pub nonce: ::core::option::Option<::core::primitive::u32>,
+                            pub code: ::core::option::Option<
+                                runtime_types::pallet_revive_types::common::byte::Bytes,
+                            >,
+                            pub storage: ::subxt::utils::KeyedVec<
+                                runtime_types::pallet_revive_types::common::byte::Bytes,
+                                ::core::option::Option<
+                                    runtime_types::pallet_revive_types::common::byte::Bytes,
+                                >,
+                            >,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum PrestateTraceV1 {
+                            # [codec (index = 0)] Prestate (:: subxt :: utils :: KeyedVec < :: subxt :: utils :: H160 , runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: PrestateTraceInfoV1 > ,) , # [codec (index = 1)] DiffMode { pre : :: subxt :: utils :: KeyedVec < :: subxt :: utils :: H160 , runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: PrestateTraceInfoV1 > , post : :: subxt :: utils :: KeyedVec < :: subxt :: utils :: H160 , runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: PrestateTraceInfoV1 > , } , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TraceEntryV1 {
+                            # [codec (index = 0)] Traced (runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: TraceV2 ,) , # [codec (index = 1)] NotTraced , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TraceV1 {
+                            # [codec (index = 0)] Call (runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: CallTraceV1 ,) , # [codec (index = 1)] Prestate (runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: PrestateTraceV1 ,) , # [codec (index = 2)] Execution (runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: ExecutionTraceV1 ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TraceV2 {
+                            # [codec (index = 0)] Call (runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: CallTraceV2 ,) , # [codec (index = 1)] Prestate (runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: PrestateTraceV1 ,) , # [codec (index = 2)] Execution (runtime_types :: pallet_revive_types :: runtime_api :: types :: traces :: ExecutionTraceV1 ,) , }
+                    }
+                    pub mod transaction {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct AccessListEntryV1 {
+                            pub address: ::subxt::utils::H160,
+                            pub storage_keys: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct AuthorizationListEntryV1 {
+                            pub chain_id: runtime_types::primitive_types::U256,
+                            pub address: ::subxt::utils::H160,
+                            pub nonce: runtime_types::primitive_types::U256,
+                            pub y_parity: runtime_types::primitive_types::U256,
+                            pub r: runtime_types::primitive_types::U256,
+                            pub s: runtime_types::primitive_types::U256,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct GenericTransactionV1 { pub access_list : :: core :: option :: Option < :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: AccessListEntryV1 > > , pub authorization_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: AuthorizationListEntryV1 > , pub blob_versioned_hashes : :: subxt :: alloc :: vec :: Vec < :: subxt :: utils :: H256 > , pub blobs : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: common :: byte :: Bytes > , pub chain_id : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub from : :: core :: option :: Option < :: subxt :: utils :: H160 > , pub gas : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub gas_price : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub input : runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: InputOrDataV1 , pub max_fee_per_blob_gas : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub max_fee_per_gas : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub max_priority_fee_per_gas : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub nonce : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub to : :: core :: option :: Option < :: subxt :: utils :: H160 > , pub r#type : :: core :: option :: Option < runtime_types :: pallet_revive_types :: common :: byte :: Byte > , pub value : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum HashesOrTransactionInfosV1 {
+                            # [codec (index = 0)] Hashes (:: subxt :: alloc :: vec :: Vec < :: subxt :: utils :: H256 > ,) , # [codec (index = 1)] TransactionInfos (:: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: TransactionInfoV1 > ,) , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct InputOrDataV1 {
+                            pub input: ::core::option::Option<
+                                runtime_types::pallet_revive_types::common::byte::Bytes,
+                            >,
+                            pub data: ::core::option::Option<
+                                runtime_types::pallet_revive_types::common::byte::Bytes,
+                            >,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct Transaction1559SignedV1 { pub transaction_1559_unsigned : runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: Transaction1559UnsignedV1 , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub v : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub y_parity : runtime_types :: primitive_types :: U256 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct Transaction1559UnsignedV1 { pub access_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: AccessListEntryV1 > , pub chain_id : runtime_types :: primitive_types :: U256 , pub gas : runtime_types :: primitive_types :: U256 , pub gas_price : runtime_types :: primitive_types :: U256 , pub input : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub max_fee_per_gas : runtime_types :: primitive_types :: U256 , pub max_priority_fee_per_gas : runtime_types :: primitive_types :: U256 , pub nonce : runtime_types :: primitive_types :: U256 , pub to : :: core :: option :: Option < :: subxt :: utils :: H160 > , pub r#type : :: core :: primitive :: u8 , pub value : runtime_types :: primitive_types :: U256 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct Transaction2930SignedV1 { pub transaction_2930_unsigned : runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: Transaction2930UnsignedV1 , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub v : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub y_parity : runtime_types :: primitive_types :: U256 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct Transaction2930UnsignedV1 { pub access_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: AccessListEntryV1 > , pub chain_id : runtime_types :: primitive_types :: U256 , pub gas : runtime_types :: primitive_types :: U256 , pub gas_price : runtime_types :: primitive_types :: U256 , pub input : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub nonce : runtime_types :: primitive_types :: U256 , pub to : :: core :: option :: Option < :: subxt :: utils :: H160 > , pub r#type : :: core :: primitive :: u8 , pub value : runtime_types :: primitive_types :: U256 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct Transaction4844SignedV1 { pub transaction_4844_unsigned : runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: Transaction4844UnsignedV1 , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub y_parity : runtime_types :: primitive_types :: U256 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct Transaction4844UnsignedV1 { pub access_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: AccessListEntryV1 > , pub blob_versioned_hashes : :: subxt :: alloc :: vec :: Vec < :: subxt :: utils :: H256 > , pub chain_id : runtime_types :: primitive_types :: U256 , pub gas : runtime_types :: primitive_types :: U256 , pub input : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub max_fee_per_blob_gas : runtime_types :: primitive_types :: U256 , pub max_fee_per_gas : runtime_types :: primitive_types :: U256 , pub max_priority_fee_per_gas : runtime_types :: primitive_types :: U256 , pub nonce : runtime_types :: primitive_types :: U256 , pub to : :: subxt :: utils :: H160 , pub r#type : :: core :: primitive :: u8 , pub value : runtime_types :: primitive_types :: U256 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct Transaction7702SignedV1 { pub transaction_7702_unsigned : runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: Transaction7702UnsignedV1 , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub v : :: core :: option :: Option < runtime_types :: primitive_types :: U256 > , pub y_parity : runtime_types :: primitive_types :: U256 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct Transaction7702UnsignedV1 { pub access_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: AccessListEntryV1 > , pub authorization_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: AuthorizationListEntryV1 > , pub chain_id : runtime_types :: primitive_types :: U256 , pub gas : runtime_types :: primitive_types :: U256 , pub input : runtime_types :: pallet_revive_types :: common :: byte :: Bytes , pub max_fee_per_gas : runtime_types :: primitive_types :: U256 , pub max_priority_fee_per_gas : runtime_types :: primitive_types :: U256 , pub nonce : runtime_types :: primitive_types :: U256 , pub to : :: subxt :: utils :: H160 , pub r#type : :: core :: primitive :: u8 , pub value : runtime_types :: primitive_types :: U256 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TransactionInfoV1 { pub block_hash : :: subxt :: utils :: H256 , pub block_number : runtime_types :: primitive_types :: U256 , pub from : :: subxt :: utils :: H160 , pub hash : :: subxt :: utils :: H256 , pub transaction_index : runtime_types :: primitive_types :: U256 , pub transaction_signed : runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: TransactionSignedV1 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TransactionLegacySignedV1 { pub transaction_legacy_unsigned : runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: TransactionLegacyUnsignedV1 , pub r : runtime_types :: primitive_types :: U256 , pub s : runtime_types :: primitive_types :: U256 , pub v : runtime_types :: primitive_types :: U256 , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct TransactionLegacyUnsignedV1 {
+                            pub chain_id:
+                                ::core::option::Option<runtime_types::primitive_types::U256>,
+                            pub gas: runtime_types::primitive_types::U256,
+                            pub gas_price: runtime_types::primitive_types::U256,
+                            pub input: runtime_types::pallet_revive_types::common::byte::Bytes,
+                            pub nonce: runtime_types::primitive_types::U256,
+                            pub to: ::core::option::Option<::subxt::utils::H160>,
+                            pub r#type: ::core::primitive::u8,
+                            pub value: runtime_types::primitive_types::U256,
+                        }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub enum TransactionSignedV1 {
+                            # [codec (index = 0)] Transaction7702Signed (runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: Transaction7702SignedV1 ,) , # [codec (index = 1)] Transaction4844Signed (runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: Transaction4844SignedV1 ,) , # [codec (index = 2)] Transaction1559Signed (runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: Transaction1559SignedV1 ,) , # [codec (index = 3)] Transaction2930Signed (runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: Transaction2930SignedV1 ,) , # [codec (index = 4)] TransactionLegacySigned (runtime_types :: pallet_revive_types :: runtime_api :: types :: transaction :: TransactionLegacySignedV1 ,) , }
+                    }
+                    pub mod upload {
+                        use super::runtime_types;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct CodeUploadReturnValueV1<_0> {
+                            pub code_hash: ::subxt::utils::H256,
+                            pub deposit: _0,
+                        }
+                    }
                 }
             }
         }
@@ -26638,7 +29081,7 @@ pub mod api {
                 #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                 #[doc = "Contains a variant per dispatchable extrinsic that this pallet has."]
                 pub enum Call {
-                    # [codec (index = 0)] send { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , message : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedXcm > , } , # [codec (index = 1)] # [doc = "Teleport some assets from the local chain to some destination chain."] # [doc = ""] # [doc = "**This function is deprecated: Use `limited_teleport_assets` instead.**"] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`. The weight limit for fees is not provided and thus is unlimited,"] # [doc = "with all fees taken as needed from the asset."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` chain."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] teleport_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , } , # [codec (index = 2)] # [doc = "Transfer some assets from the local chain to the destination chain through their local,"] # [doc = "destination or remote reserve."] # [doc = ""] # [doc = "`assets` must have same reserve location and may not be teleportable to `dest`."] # [doc = " - `assets` have local reserve: transfer assets to sovereign account of destination"] # [doc = "   chain and forward a notification XCM to `dest` to mint and deposit reserve-based"] # [doc = "   assets to `beneficiary`."] # [doc = " - `assets` have destination reserve: burn local assets and forward a notification to"] # [doc = "   `dest` chain to withdraw the reserve assets from this chain's sovereign account and"] # [doc = "   deposit them to `beneficiary`."] # [doc = " - `assets` have remote reserve: burn local assets, forward XCM to reserve chain to move"] # [doc = "   reserves from this chain's SA to `dest` chain's SA, and forward another XCM to `dest`"] # [doc = "   to mint and deposit reserve-based assets to `beneficiary`."] # [doc = ""] # [doc = "**This function is deprecated: Use `limited_reserve_transfer_assets` instead.**"] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`. The weight limit for fees is not provided and thus is unlimited,"] # [doc = "with all fees taken as needed from the asset."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] reserve_transfer_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , } , # [codec (index = 3)] # [doc = "Execute an XCM message from a local, signed, origin."] # [doc = ""] # [doc = "An event is deposited indicating whether `msg` could be executed completely or only"] # [doc = "partially."] # [doc = ""] # [doc = "No more than `max_weight` will be used in its attempted execution. If this is less than"] # [doc = "the maximum amount of weight that the message could take to be executed, then no"] # [doc = "execution attempt will be made."] execute { message : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedXcm > , max_weight : runtime_types :: sp_weights :: weight_v2 :: Weight , } , # [codec (index = 4)] # [doc = "Extoll that a particular destination can be communicated with through a particular"] # [doc = "version of XCM."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `location`: The destination that is being described."] # [doc = "- `xcm_version`: The latest version of XCM that `location` supports."] force_xcm_version { location : :: subxt :: alloc :: boxed :: Box < runtime_types :: staging_xcm :: v5 :: location :: Location > , version : :: core :: primitive :: u32 , } , # [codec (index = 5)] # [doc = "Set a safe XCM version (the version that XCM should be encoded with if the most recent"] # [doc = "version a destination can accept is unknown)."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `maybe_xcm_version`: The default XCM encoding version, or `None` to disable."] force_default_xcm_version { maybe_xcm_version : :: core :: option :: Option < :: core :: primitive :: u32 > , } , # [codec (index = 6)] # [doc = "Ask a location to notify us regarding their XCM version and any changes to it."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `location`: The location to which we should subscribe for XCM version notifications."] force_subscribe_version_notify { location : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 7)] # [doc = "Require that a particular destination should no longer notify us regarding any XCM"] # [doc = "version changes."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `location`: The location to which we are currently subscribed for XCM version"] # [doc = "  notifications which we no longer desire."] force_unsubscribe_version_notify { location : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 8)] # [doc = "Transfer some assets from the local chain to the destination chain through their local,"] # [doc = "destination or remote reserve."] # [doc = ""] # [doc = "`assets` must have same reserve location and may not be teleportable to `dest`."] # [doc = " - `assets` have local reserve: transfer assets to sovereign account of destination"] # [doc = "   chain and forward a notification XCM to `dest` to mint and deposit reserve-based"] # [doc = "   assets to `beneficiary`."] # [doc = " - `assets` have destination reserve: burn local assets and forward a notification to"] # [doc = "   `dest` chain to withdraw the reserve assets from this chain's sovereign account and"] # [doc = "   deposit them to `beneficiary`."] # [doc = " - `assets` have remote reserve: burn local assets, forward XCM to reserve chain to move"] # [doc = "   reserves from this chain's SA to `dest` chain's SA, and forward another XCM to `dest`"] # [doc = "   to mint and deposit reserve-based assets to `beneficiary`."] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`, up to enough to pay for `weight_limit` of weight. If more weight"] # [doc = "is needed than `weight_limit`, then the operation will fail and the sent assets may be"] # [doc = "at risk."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] limited_reserve_transfer_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 9)] # [doc = "Teleport some assets from the local chain to some destination chain."] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`, up to enough to pay for `weight_limit` of weight. If more weight"] # [doc = "is needed than `weight_limit`, then the operation will fail and the sent assets may be"] # [doc = "at risk."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` chain."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] limited_teleport_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 10)] # [doc = "Set or unset the global suspension state of the XCM executor."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `suspended`: `true` to suspend, `false` to resume."] force_suspension { suspended : :: core :: primitive :: bool , } , # [codec (index = 11)] # [doc = "Transfer some assets from the local chain to the destination chain through their local,"] # [doc = "destination or remote reserve, or through teleports."] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item` (hence referred to as `fees`), up to enough to pay for"] # [doc = "`weight_limit` of weight. If more weight is needed than `weight_limit`, then the"] # [doc = "operation will fail and the sent assets may be at risk."] # [doc = ""] # [doc = "`assets` (excluding `fees`) must have same reserve location or otherwise be teleportable"] # [doc = "to `dest`, no limitations imposed on `fees`."] # [doc = " - for local reserve: transfer assets to sovereign account of destination chain and"] # [doc = "   forward a notification XCM to `dest` to mint and deposit reserve-based assets to"] # [doc = "   `beneficiary`."] # [doc = " - for destination reserve: burn local assets and forward a notification to `dest` chain"] # [doc = "   to withdraw the reserve assets from this chain's sovereign account and deposit them"] # [doc = "   to `beneficiary`."] # [doc = " - for remote reserve: burn local assets, forward XCM to reserve chain to move reserves"] # [doc = "   from this chain's SA to `dest` chain's SA, and forward another XCM to `dest` to mint"] # [doc = "   and deposit reserve-based assets to `beneficiary`."] # [doc = " - for teleports: burn local assets and forward XCM to `dest` chain to mint/teleport"] # [doc = "   assets and deposit them to `beneficiary`."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `X2(Parent,"] # [doc = "  Parachain(..))` to send from parachain to parachain, or `X1(Parachain(..))` to send"] # [doc = "  from relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] transfer_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 12)] # [doc = "Claims assets trapped on this pallet because of leftover assets during XCM execution."] # [doc = ""] # [doc = "- `origin`: Anyone can call this extrinsic."] # [doc = "- `assets`: The exact assets that were trapped. Use the version to specify what version"] # [doc = "was the latest when they were trapped."] # [doc = "- `beneficiary`: The location/account where the claimed assets will be deposited."] claim_assets { assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 13)] # [doc = "Transfer assets from the local chain to the destination chain using explicit transfer"] # [doc = "types for assets and fees."] # [doc = ""] # [doc = "`assets` must have same reserve location or may be teleportable to `dest`. Caller must"] # [doc = "provide the `assets_transfer_type` to be used for `assets`:"] # [doc = " - `TransferType::LocalReserve`: transfer assets to sovereign account of destination"] # [doc = "   chain and forward a notification XCM to `dest` to mint and deposit reserve-based"] # [doc = "   assets to `beneficiary`."] # [doc = " - `TransferType::DestinationReserve`: burn local assets and forward a notification to"] # [doc = "   `dest` chain to withdraw the reserve assets from this chain's sovereign account and"] # [doc = "   deposit them to `beneficiary`."] # [doc = " - `TransferType::RemoteReserve(reserve)`: burn local assets, forward XCM to `reserve`"] # [doc = "   chain to move reserves from this chain's SA to `dest` chain's SA, and forward another"] # [doc = "   XCM to `dest` to mint and deposit reserve-based assets to `beneficiary`. Typically"] # [doc = "   the remote `reserve` is Asset Hub."] # [doc = " - `TransferType::Teleport`: burn local assets and forward XCM to `dest` chain to"] # [doc = "   mint/teleport assets and deposit them to `beneficiary`."] # [doc = ""] # [doc = "On the destination chain, as well as any intermediary hops, `BuyExecution` is used to"] # [doc = "buy execution using transferred `assets` identified by `remote_fees_id`."] # [doc = "Make sure enough of the specified `remote_fees_id` asset is included in the given list"] # [doc = "of `assets`. `remote_fees_id` should be enough to pay for `weight_limit`. If more weight"] # [doc = "is needed than `weight_limit`, then the operation will fail and the sent assets may be"] # [doc = "at risk."] # [doc = ""] # [doc = "`remote_fees_id` may use different transfer type than rest of `assets` and can be"] # [doc = "specified through `fees_transfer_type`."] # [doc = ""] # [doc = "The caller needs to specify what should happen to the transferred assets once they reach"] # [doc = "the `dest` chain. This is done through the `custom_xcm_on_dest` parameter, which"] # [doc = "contains the instructions to execute on `dest` as a final step."] # [doc = "  This is usually as simple as:"] # [doc = "  `Xcm(vec![DepositAsset { assets: Wild(AllCounted(assets.len())), beneficiary }])`,"] # [doc = "  but could be something more exotic like sending the `assets` even further."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain, or `(parents: 2, (GlobalConsensus(..), ..))` to send from"] # [doc = "  parachain across a bridge to another ecosystem destination."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `assets_transfer_type`: The XCM `TransferType` used to transfer the `assets`."] # [doc = "- `remote_fees_id`: One of the included `assets` to be used to pay fees."] # [doc = "- `fees_transfer_type`: The XCM `TransferType` used to transfer the `fees` assets."] # [doc = "- `custom_xcm_on_dest`: The XCM to be executed on `dest` chain as the last step of the"] # [doc = "  transfer, which also determines what happens to the assets on the destination chain."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] transfer_assets_using_type_and_then { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , assets_transfer_type : :: subxt :: alloc :: boxed :: Box < runtime_types :: staging_xcm_executor :: traits :: asset_transfer :: TransferType > , remote_fees_id : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssetId > , fees_transfer_type : :: subxt :: alloc :: boxed :: Box < runtime_types :: staging_xcm_executor :: traits :: asset_transfer :: TransferType > , custom_xcm_on_dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedXcm > , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 14)] # [doc = "Authorize another `aliaser` location to alias into the local `origin` making this call."] # [doc = "The `aliaser` is only authorized until the provided `expiry` block number."] # [doc = "The call can also be used for a previously authorized alias in order to update its"] # [doc = "`expiry` block number."] # [doc = ""] # [doc = "Usually useful to allow your local account to be aliased into from a remote location"] # [doc = "also under your control (like your account on another chain)."] # [doc = ""] # [doc = "WARNING: make sure the caller `origin` (you) trusts the `aliaser` location to act in"] # [doc = "their/your name. Once authorized using this call, the `aliaser` can freely impersonate"] # [doc = "`origin` in XCM programs executed on the local chain."] add_authorized_alias { aliaser : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , expires : :: core :: option :: Option < :: core :: primitive :: u64 > , } , # [codec (index = 15)] # [doc = "Remove a previously authorized `aliaser` from the list of locations that can alias into"] # [doc = "the local `origin` making this call."] remove_authorized_alias { aliaser : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 16)] # [doc = "Remove all previously authorized `aliaser`s that can alias into the local `origin`"] # [doc = "making this call."] remove_all_authorized_aliases , }
+                    # [codec (index = 0)] send { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , message : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedXcm > , } , # [codec (index = 1)] # [doc = "Teleport some assets from the local chain to some destination chain."] # [doc = ""] # [doc = "**This function is deprecated: Use `limited_teleport_assets` instead.**"] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`. The weight limit for fees is not provided and thus is unlimited,"] # [doc = "with all fees taken as needed from the asset."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` chain."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] teleport_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , } , # [codec (index = 2)] # [doc = "Transfer some assets from the local chain to the destination chain through their local,"] # [doc = "destination or remote reserve."] # [doc = ""] # [doc = "`assets` must have same reserve location and may not be teleportable to `dest`."] # [doc = " - `assets` have local reserve: transfer assets to sovereign account of destination"] # [doc = "   chain and forward a notification XCM to `dest` to mint and deposit reserve-based"] # [doc = "   assets to `beneficiary`."] # [doc = " - `assets` have destination reserve: burn local assets and forward a notification to"] # [doc = "   `dest` chain to withdraw the reserve assets from this chain's sovereign account and"] # [doc = "   deposit them to `beneficiary`."] # [doc = " - `assets` have remote reserve: burn local assets, forward XCM to reserve chain to move"] # [doc = "   reserves from this chain's SA to `dest` chain's SA, and forward another XCM to `dest`"] # [doc = "   to mint and deposit reserve-based assets to `beneficiary`."] # [doc = ""] # [doc = "**This function is deprecated: Use `limited_reserve_transfer_assets` instead.**"] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`. The weight limit for fees is not provided and thus is unlimited,"] # [doc = "with all fees taken as needed from the asset."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] reserve_transfer_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , } , # [codec (index = 3)] # [doc = "Execute an XCM message from a local, signed, origin."] # [doc = ""] # [doc = "An event is deposited indicating whether `msg` could be executed completely or only"] # [doc = "partially."] # [doc = ""] # [doc = "No more than `max_weight` will be used in its attempted execution. If this is less than"] # [doc = "the maximum amount of weight that the message could take to be executed, then no"] # [doc = "execution attempt will be made."] execute { message : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedXcm > , max_weight : runtime_types :: sp_weights :: weight_v2 :: Weight , } , # [codec (index = 4)] # [doc = "Extoll that a particular destination can be communicated with through a particular"] # [doc = "version of XCM."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `location`: The destination that is being described."] # [doc = "- `xcm_version`: The latest version of XCM that `location` supports."] force_xcm_version { location : :: subxt :: alloc :: boxed :: Box < runtime_types :: staging_xcm :: v5 :: location :: Location > , version : :: core :: primitive :: u32 , } , # [codec (index = 5)] # [doc = "Set a safe XCM version (the version that XCM should be encoded with if the most recent"] # [doc = "version a destination can accept is unknown)."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `maybe_xcm_version`: The default XCM encoding version, or `None` to disable."] force_default_xcm_version { maybe_xcm_version : :: core :: option :: Option < :: core :: primitive :: u32 > , } , # [codec (index = 6)] # [doc = "Ask a location to notify us regarding their XCM version and any changes to it."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `location`: The location to which we should subscribe for XCM version notifications."] force_subscribe_version_notify { location : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 7)] # [doc = "Require that a particular destination should no longer notify us regarding any XCM"] # [doc = "version changes."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `location`: The location to which we are currently subscribed for XCM version"] # [doc = "  notifications which we no longer desire."] force_unsubscribe_version_notify { location : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 8)] # [doc = "Transfer some assets from the local chain to the destination chain through their local,"] # [doc = "destination or remote reserve."] # [doc = ""] # [doc = "`assets` must have same reserve location and may not be teleportable to `dest`."] # [doc = " - `assets` have local reserve: transfer assets to sovereign account of destination"] # [doc = "   chain and forward a notification XCM to `dest` to mint and deposit reserve-based"] # [doc = "   assets to `beneficiary`."] # [doc = " - `assets` have destination reserve: burn local assets and forward a notification to"] # [doc = "   `dest` chain to withdraw the reserve assets from this chain's sovereign account and"] # [doc = "   deposit them to `beneficiary`."] # [doc = " - `assets` have remote reserve: burn local assets, forward XCM to reserve chain to move"] # [doc = "   reserves from this chain's SA to `dest` chain's SA, and forward another XCM to `dest`"] # [doc = "   to mint and deposit reserve-based assets to `beneficiary`."] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`, up to enough to pay for `weight_limit` of weight. If more weight"] # [doc = "is needed than `weight_limit`, then the operation will fail and the sent assets may be"] # [doc = "at risk."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] limited_reserve_transfer_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 9)] # [doc = "Teleport some assets from the local chain to some destination chain."] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item`, up to enough to pay for `weight_limit` of weight. If more weight"] # [doc = "is needed than `weight_limit`, then the operation will fail and the sent assets may be"] # [doc = "at risk."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` chain."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] limited_teleport_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 10)] # [doc = "Set or unset the global suspension state of the XCM executor."] # [doc = ""] # [doc = "- `origin`: Must be an origin specified by AdminOrigin."] # [doc = "- `suspended`: `true` to suspend, `false` to resume."] force_suspension { suspended : :: core :: primitive :: bool , } , # [codec (index = 11)] # [doc = "Transfer some assets from the local chain to the destination chain through their local,"] # [doc = "destination or remote reserve, or through teleports."] # [doc = ""] # [doc = "Fee payment on the destination side is made from the asset in the `assets` vector of"] # [doc = "index `fee_asset_item` (hence referred to as `fees`), up to enough to pay for"] # [doc = "`weight_limit` of weight. If more weight is needed than `weight_limit`, then the"] # [doc = "operation will fail and the sent assets may be at risk."] # [doc = ""] # [doc = "`assets` (excluding `fees`) must have same reserve location or otherwise be teleportable"] # [doc = "to `dest`, no limitations imposed on `fees`."] # [doc = " - for local reserve: transfer assets to sovereign account of destination chain and"] # [doc = "   forward a notification XCM to `dest` to mint and deposit reserve-based assets to"] # [doc = "   `beneficiary`."] # [doc = " - for destination reserve: burn local assets and forward a notification to `dest` chain"] # [doc = "   to withdraw the reserve assets from this chain's sovereign account and deposit them"] # [doc = "   to `beneficiary`."] # [doc = " - for remote reserve: burn local assets, forward XCM to reserve chain to move reserves"] # [doc = "   from this chain's SA to `dest` chain's SA, and forward another XCM to `dest` to mint"] # [doc = "   and deposit reserve-based assets to `beneficiary`."] # [doc = " - for teleports: burn local assets and forward XCM to `dest` chain to mint/teleport"] # [doc = "   assets and deposit them to `beneficiary`."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `X2(Parent,"] # [doc = "  Parachain(..))` to send from parachain to parachain, or `X1(Parachain(..))` to send"] # [doc = "  from relay to parachain."] # [doc = "- `beneficiary`: A beneficiary location for the assets in the context of `dest`. Will"] # [doc = "  generally be an `AccountId32` value."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `fee_asset_item`: The index into `assets` of the item which should be used to pay"] # [doc = "  fees."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] transfer_assets { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , fee_asset_item : :: core :: primitive :: u32 , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 12)] # [doc = "Claims assets trapped on this pallet because of leftover assets during XCM execution."] # [doc = ""] # [doc = "- `origin`: Anyone can call this extrinsic."] # [doc = "- `assets`: The exact assets that were trapped. Use the version to specify what version"] # [doc = "was the latest when they were trapped."] # [doc = "- `beneficiary`: The location/account where the claimed assets will be deposited."] # [doc = ""] # [doc = "The weight of this call is linear in the number of assets claimed."] claim_assets { assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , beneficiary : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 13)] # [doc = "Transfer assets from the local chain to the destination chain using explicit transfer"] # [doc = "types for assets and fees."] # [doc = ""] # [doc = "`assets` must have same reserve location or may be teleportable to `dest`. Caller must"] # [doc = "provide the `assets_transfer_type` to be used for `assets`:"] # [doc = " - `TransferType::LocalReserve`: transfer assets to sovereign account of destination"] # [doc = "   chain and forward a notification XCM to `dest` to mint and deposit reserve-based"] # [doc = "   assets to `beneficiary`."] # [doc = " - `TransferType::DestinationReserve`: burn local assets and forward a notification to"] # [doc = "   `dest` chain to withdraw the reserve assets from this chain's sovereign account and"] # [doc = "   deposit them to `beneficiary`."] # [doc = " - `TransferType::RemoteReserve(reserve)`: burn local assets, forward XCM to `reserve`"] # [doc = "   chain to move reserves from this chain's SA to `dest` chain's SA, and forward another"] # [doc = "   XCM to `dest` to mint and deposit reserve-based assets to `beneficiary`. Typically"] # [doc = "   the remote `reserve` is Asset Hub."] # [doc = " - `TransferType::Teleport`: burn local assets and forward XCM to `dest` chain to"] # [doc = "   mint/teleport assets and deposit them to `beneficiary`."] # [doc = ""] # [doc = "On the destination chain, as well as any intermediary hops, `BuyExecution` is used to"] # [doc = "buy execution using transferred `assets` identified by `remote_fees_id`."] # [doc = "Make sure enough of the specified `remote_fees_id` asset is included in the given list"] # [doc = "of `assets`. `remote_fees_id` should be enough to pay for `weight_limit`. If more weight"] # [doc = "is needed than `weight_limit`, then the operation will fail and the sent assets may be"] # [doc = "at risk."] # [doc = ""] # [doc = "`remote_fees_id` may use different transfer type than rest of `assets` and can be"] # [doc = "specified through `fees_transfer_type`."] # [doc = ""] # [doc = "The caller needs to specify what should happen to the transferred assets once they reach"] # [doc = "the `dest` chain. This is done through the `custom_xcm_on_dest` parameter, which"] # [doc = "contains the instructions to execute on `dest` as a final step."] # [doc = "  This is usually as simple as:"] # [doc = "  `Xcm(vec![DepositAsset { assets: Wild(AllCounted(assets.len())), beneficiary }])`,"] # [doc = "  but could be something more exotic like sending the `assets` even further."] # [doc = ""] # [doc = "- `origin`: Must be capable of withdrawing the `assets` and executing XCM."] # [doc = "- `dest`: Destination context for the assets. Will typically be `[Parent,"] # [doc = "  Parachain(..)]` to send from parachain to parachain, or `[Parachain(..)]` to send from"] # [doc = "  relay to parachain, or `(parents: 2, (GlobalConsensus(..), ..))` to send from"] # [doc = "  parachain across a bridge to another ecosystem destination."] # [doc = "- `assets`: The assets to be withdrawn. This should include the assets used to pay the"] # [doc = "  fee on the `dest` (and possibly reserve) chains."] # [doc = "- `assets_transfer_type`: The XCM `TransferType` used to transfer the `assets`."] # [doc = "- `remote_fees_id`: One of the included `assets` to be used to pay fees."] # [doc = "- `fees_transfer_type`: The XCM `TransferType` used to transfer the `fees` assets."] # [doc = "- `custom_xcm_on_dest`: The XCM to be executed on `dest` chain as the last step of the"] # [doc = "  transfer, which also determines what happens to the assets on the destination chain."] # [doc = "- `weight_limit`: The remote-side weight limit, if any, for the XCM fee purchase."] transfer_assets_using_type_and_then { dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , assets : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssets > , assets_transfer_type : :: subxt :: alloc :: boxed :: Box < runtime_types :: staging_xcm_executor :: traits :: asset_transfer :: TransferType > , remote_fees_id : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedAssetId > , fees_transfer_type : :: subxt :: alloc :: boxed :: Box < runtime_types :: staging_xcm_executor :: traits :: asset_transfer :: TransferType > , custom_xcm_on_dest : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedXcm > , weight_limit : runtime_types :: xcm :: v3 :: WeightLimit , } , # [codec (index = 14)] # [doc = "Authorize another `aliaser` location to alias into the local `origin` making this call."] # [doc = "The `aliaser` is only authorized until the provided `expiry` block number."] # [doc = "The call can also be used for a previously authorized alias in order to update its"] # [doc = "`expiry` block number."] # [doc = ""] # [doc = "Usually useful to allow your local account to be aliased into from a remote location"] # [doc = "also under your control (like your account on another chain)."] # [doc = ""] # [doc = "WARNING: make sure the caller `origin` (you) trusts the `aliaser` location to act in"] # [doc = "their/your name. Once authorized using this call, the `aliaser` can freely impersonate"] # [doc = "`origin` in XCM programs executed on the local chain."] add_authorized_alias { aliaser : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , expires : :: core :: option :: Option < :: core :: primitive :: u64 > , } , # [codec (index = 15)] # [doc = "Remove a previously authorized `aliaser` from the list of locations that can alias into"] # [doc = "the local `origin` making this call."] remove_authorized_alias { aliaser : :: subxt :: alloc :: boxed :: Box < runtime_types :: xcm :: VersionedLocation > , } , # [codec (index = 16)] # [doc = "Remove all previously authorized `aliaser`s that can alias into the local `origin`"] # [doc = "making this call."] remove_all_authorized_aliases , }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
                     :: subxt :: ext :: scale_encode :: EncodeAsType,
