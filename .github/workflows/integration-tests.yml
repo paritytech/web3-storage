@@ -700,8 +700,8 @@ jobs:
       - name: storage-cli provider register
         run: |
           cargo run --release -p storage-cli -- \
-            --suri //Alice \
             provider register \
+            --provider-suri //Alice \
             --multiaddr /ip4/127.0.0.1/tcp/3333
 
       - name: Start provider (Alice)
@@ -715,9 +715,9 @@ jobs:
       - name: storage-cli stress-test upload
         run: |
           cargo run --release -p storage-cli -- \
-            --suri //Bob \
             stress-test upload \
-            --provider 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
+            --client-suri //Bob \
+            --provider-account 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
             --prepare-buckets 2 \
             --users 2 \
             --uploads-per-user 5 \

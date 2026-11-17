@@ -9,7 +9,7 @@ use sp_runtime::AccountId32;
 use storage_client::{ProviderClient, ProviderSettings};
 
 use crate::cli::GlobalArgs;
-use crate::common::{account_ss58, build_config, resolve_signer, resolve_suri};
+use crate::common::{account_ss58, build_config, signer_from_suri, ProviderKey};
 
 /// Stake locked at registration: `MinProviderStake` of the bundled runtimes
 /// (1000 tokens at 12 decimals).
@@ -17,15 +17,18 @@ const STAKE: u128 = 1_000_000_000_000_000;
 
 #[derive(Debug, Subcommand)]
 pub enum Provider {
-    /// Register the account as a storage provider that accepts primary
-    /// agreements at 1 per byte-block. Does nothing if the account is already
-    /// registered with the same signing key. The provider node can start
+    /// Register the provider account as a storage provider that accepts
+    /// primary agreements at 1 per byte-block. Does nothing if the account is
+    /// already registered with the same signing key. The provider node can start
     /// before or after this command.
     Register(RegisterArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct RegisterArgs {
+    #[command(flatten)]
+    pub provider: ProviderKey,
+
     /// Multiaddr at which clients reach the provider node.
     #[arg(long, value_name = "MULTIADDR")]
     pub multiaddr: String,
@@ -37,13 +40,14 @@ pub struct RegisterArgs {
     pub key_scheme: KeyScheme,
 }
 
-/// Register the `--suri`/`--keyfile` account as a provider and open it for
-/// primary agreements.
+/// Register the `--provider-suri`/`--provider-keyfile` account as a provider
+/// and open it for primary agreements.
 pub async fn register(global: &GlobalArgs, args: &RegisterArgs) -> Result<()> {
-    let signer = resolve_signer(global)?;
+    let suri = args.provider.suri()?;
+    let signer = signer_from_suri(&suri)?;
     let provider_ss58 = account_ss58(&signer);
     let provider_account = AccountId32::from(signer.keypair().public_key().0);
-    let signing_key = ProviderKeypair::from_seed(&resolve_suri(global)?, args.key_scheme)
+    let signing_key = ProviderKeypair::from_seed(&suri, args.key_scheme)
         .map_err(|error| {
             anyhow!(
                 "failed to derive the {:?} signing key: {error}",
