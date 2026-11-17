@@ -23,6 +23,7 @@ COV_PACKAGES=(
 	pallet-storage-provider
 	storage-provider-node
 	provider-coordinator
+	provider-http
 	provider-negotiation
 	provider-auth
 	provider-replica

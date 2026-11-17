@@ -27,12 +27,11 @@ pub use chain::{
     FinalizedBlocks,
 };
 
-use parking_lot::RwLock;
 use provider_events::{BlockEvent, BlockEventTx};
-use provider_types::{ChainClientError, ProviderInfo};
+use provider_types::ChainClientError;
+pub use provider_types::{ChainState, PalletConstants};
 use sp_runtime::AccountId32;
 use std::future::Future;
-use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -75,36 +74,6 @@ async fn with_timeout<T>(
             secs: budget.as_secs(),
         }),
     }
-}
-
-// ── ChainState ────────────────────────────────────────────────────────────────
-
-/// Live chain state kept in sync with the runtime by the chain-state coordinator.
-///
-/// Held behind `Arc` inside the provider node's `ProviderState` so the coordinator can hold
-/// its own handle without a back-reference to the whole node state.
-#[derive(Default)]
-pub struct ChainState {
-    /// The pallet's anchor block — the clock all on-chain durations (timeouts,
-    /// `valid_until`) are measured against — read via the
-    /// `StorageProviderApi::current_anchor_block` runtime API at the latest
-    /// finalized block. Whether that anchor is a relay, parachain, or other
-    /// block number is the pallet's concern, not the provider's. `0` means not
-    /// yet known.
-    pub current_anchor_block: AtomicU32,
-    /// Pallet constants fetched once per connection. `None` until the first
-    /// successful fetch; `/negotiate` returns 503 until this is `Some`.
-    pub constants: RwLock<Option<PalletConstants>>,
-    /// Provider's on-chain registration info. `None` until registered on chain;
-    /// re-fetched (full) on every relevant provider event so `committed_bytes`,
-    /// `stake`, and all settings stay current.
-    pub provider_info: RwLock<Option<ProviderInfo>>,
-}
-
-/// Pallet constants that only change across runtime upgrades.
-pub struct PalletConstants {
-    /// Chain-enforced validity window (in blocks) for provider-signed terms.
-    pub request_timeout: u32,
 }
 
 // ── ChainStateCoordinator ─────────────────────────────────────────────────────
@@ -377,7 +346,7 @@ fn escalate_block_read_failure(events_tx: &BlockEventTx, block_number: u32) {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use provider_types::{ProviderSettings, ProviderStats};
+    use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn provider_account() -> AccountId32 {

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Integration tests for auth-enabled HTTP endpoints.
 //!
@@ -14,10 +14,10 @@ use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use common::{current_timestamp, make_auth_header, test_member_pair};
 use provider_auth::{
-    Authenticator, BucketAccess, LocalBucketAgreement, MembershipError, MembershipResolver,
-    StaticMembershipResolver,
+    Authenticator, BucketAccess, Invalidation, LocalBucketAgreement, MembershipError,
+    MembershipInvalidations, MembershipResolver, StaticMembershipResolver,
 };
-use provider_events::BlockEvent;
+use provider_http::{ProviderDeps, ProviderState};
 use provider_storage::{temp_rocksdb, ChunkTreeNode, StorageBackend};
 use reqwest::Client;
 use serde_json::Value;
@@ -26,9 +26,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::{BucketId, Commitment, Role, RuntimeProviderRole, Visibility};
-use storage_provider_node::membership::BlockEventInvalidations;
-use storage_provider_node::{ProviderDeps, ProviderState};
-use tokio::sync::broadcast;
 
 type AccountId32 = sp_core::crypto::AccountId32;
 
@@ -285,28 +282,51 @@ impl MembershipResolver for SwitchableResolver {
     }
 }
 
+/// Buckets a test marks as changed on chain. The membership cache drains them
+/// like the node's block-event feed, which turns each agreement and
+/// membership event into its bucket id.
+#[derive(Clone, Default)]
+struct ChangedBuckets(Arc<Mutex<Vec<BucketId>>>);
+
+impl ChangedBuckets {
+    fn mark(&self, bucket_id: BucketId) {
+        self.0.lock().unwrap().push(bucket_id);
+    }
+}
+
+impl MembershipInvalidations for ChangedBuckets {
+    fn drain(&self) -> Invalidation {
+        let buckets = std::mem::take(&mut *self.0.lock().unwrap());
+        if buckets.is_empty() {
+            Invalidation::None
+        } else {
+            Invalidation::Buckets(buckets)
+        }
+    }
+}
+
 /// A server over a [`SwitchableResolver`] that starts with `access`, with the
-/// membership cache fed by the returned sender. The 300s TTL is long enough
-/// that only an event can cause a re-resolve within a test.
+/// membership cache fed by the returned [`ChangedBuckets`]. The 300s TTL is
+/// long enough that only an invalidation can cause a re-resolve within a test.
 async fn switchable_server(
     access: BucketAccess,
 ) -> (
     AuthTestServer,
     Arc<Mutex<BucketAccess>>,
     Arc<AtomicUsize>,
-    broadcast::Sender<BlockEvent>,
+    ChangedBuckets,
 ) {
     let access = Arc::new(Mutex::new(access));
     let calls = Arc::new(AtomicUsize::new(0));
-    let (tx, rx) = broadcast::channel(16);
+    let changed = ChangedBuckets::default();
     let auth = Authenticator::new(SwitchableResolver {
         access: access.clone(),
         calls: calls.clone(),
     })
     .with_ttl(Duration::from_secs(300))
-    .with_invalidations(BlockEventInvalidations::new(rx));
+    .with_invalidations(changed.clone());
     let server = AuthTestServer::with_authenticator(auth).await;
-    (server, access, calls, tx)
+    (server, access, calls, changed)
 }
 
 /// The first upload to a bucket reads the chain once: the role check and the
@@ -341,7 +361,8 @@ async fn new_agreement_is_honoured_after_the_block_event() {
             (AccountId32::new(alice.public().0), Role::Writer).into()
         ])
     };
-    let (server, access, calls, tx) = switchable_server(member().without_agreement().access).await;
+    let (server, access, calls, changed) =
+        switchable_server(member().without_agreement().access).await;
     let put = |data: &'static [u8]| {
         put_node(
             &server,
@@ -355,7 +376,7 @@ async fn new_agreement_is_honoured_after_the_block_event() {
     assert_eq!(calls.load(Ordering::SeqCst), 1, "the refusal is cached");
 
     *access.lock().unwrap() = member().with_max_bytes(10).access;
-    let _ = tx.send(BlockEvent::BucketMembershipChanged { bucket_id: 1 });
+    changed.mark(1);
 
     assert_eq!(put(&[1u8; 10]).await.status(), StatusCode::OK);
     assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -377,7 +398,7 @@ async fn ended_agreement_is_refused_after_the_block_event() {
             (AccountId32::new(alice.public().0), Role::Admin).into()
         ])
     };
-    let (server, access, calls, tx) = switchable_server(member().access).await;
+    let (server, access, calls, changed) = switchable_server(member().access).await;
 
     // A bucket-bound read caches the entry without creating the local bucket.
     let header = make_auth_header(&alice, "GET", 1, current_timestamp());
@@ -392,7 +413,7 @@ async fn ended_agreement_is_refused_after_the_block_event() {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     *access.lock().unwrap() = member().without_agreement().access;
-    let _ = tx.send(BlockEvent::BucketMembershipChanged { bucket_id: 1 });
+    changed.mark(1);
 
     let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
     let resp = put_node(&server, Some(header), b"after the agreement ended").await;
@@ -413,7 +434,8 @@ async fn topped_up_quota_applies_after_the_block_event() {
             (AccountId32::new(alice.public().0), Role::Admin).into()
         ])
     };
-    let (server, access, calls, tx) = switchable_server(member().with_max_bytes(10).access).await;
+    let (server, access, calls, changed) =
+        switchable_server(member().with_max_bytes(10).access).await;
 
     let header = make_auth_header(&alice, "GET", 1, current_timestamp());
     let resp = server
@@ -427,7 +449,7 @@ async fn topped_up_quota_applies_after_the_block_event() {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     *access.lock().unwrap() = member().with_max_bytes(20).access;
-    let _ = tx.send(BlockEvent::BucketMembershipChanged { bucket_id: 1 });
+    changed.mark(1);
 
     // 20 bytes fit the topped-up quota and not the cached one.
     let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
