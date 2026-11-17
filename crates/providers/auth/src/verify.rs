@@ -245,20 +245,31 @@ impl Authenticator {
         Ok(())
     }
 
-    /// This node's agreement on `bucket_id`, or `None` if it has none, from
-    /// the access cache. Fails when the chain cannot be reached and nothing
-    /// usable is cached.
-    pub async fn local_agreement(
+    /// Checks that this node's agreement on `bucket_id` allows a request
+    /// with role `required` at `anchor_block`, and returns the agreement.
+    ///
+    /// - No agreement on the bucket: fails with [`AuthError::NoAgreement`].
+    /// - Writer or Admin once the agreement has expired: fails with
+    ///   [`AuthError::AgreementExpired`]. Reader passes until the agreement
+    ///   is removed from chain.
+    pub async fn require_agreement(
         &self,
         bucket_id: BucketId,
-    ) -> Result<Option<LocalBucketAgreement>, AuthError> {
-        Ok(self
+        required: Role,
+        anchor_block: u32,
+    ) -> Result<LocalBucketAgreement, AuthError> {
+        let agreement = self
             .membership
             .lookup(bucket_id)
             .await?
             .access
             .local_agreement
-            .clone())
+            .clone()
+            .ok_or(AuthError::NoAgreement(bucket_id))?;
+        if required != Role::Reader && !agreement.is_writable_at(anchor_block) {
+            return Err(AuthError::AgreementExpired(bucket_id));
+        }
+        Ok(agreement)
     }
 }
 
@@ -372,35 +383,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_agreement_reports_the_resolved_agreement() {
+    async fn require_agreement_reports_the_resolved_agreement() {
         let with_agreement =
             Authenticator::new(StaticMembershipResolver::private(vec![]).with_max_bytes(1_000));
         assert_eq!(
-            with_agreement.local_agreement(1).await.unwrap(),
-            Some(LocalBucketAgreement {
+            with_agreement
+                .require_agreement(1, Role::Reader, 0)
+                .await
+                .unwrap(),
+            LocalBucketAgreement {
                 role: storage_primitives::RuntimeProviderRole::Primary,
                 max_bytes: 1_000,
                 expires_at: u32::MAX
-            })
+            }
         );
 
         let without =
             Authenticator::new(StaticMembershipResolver::private(vec![]).without_agreement());
-        assert_eq!(without.local_agreement(1).await.unwrap(), None);
+        assert!(matches!(
+            without.require_agreement(1, Role::Reader, 0).await,
+            Err(AuthError::NoAgreement(1))
+        ));
+    }
+
+    /// Expiry stops writes only: a read at or past `expires_at` still gets
+    /// the agreement.
+    #[tokio::test]
+    async fn require_agreement_rejects_writes_once_expired() {
+        let auth =
+            Authenticator::new(StaticMembershipResolver::private(vec![]).with_expires_at(100));
+
+        assert!(auth.require_agreement(1, Role::Writer, 99).await.is_ok());
+        assert!(matches!(
+            auth.require_agreement(1, Role::Writer, 100).await,
+            Err(AuthError::AgreementExpired(1))
+        ));
+        assert!(matches!(
+            auth.require_agreement(1, Role::Admin, 101).await,
+            Err(AuthError::AgreementExpired(1))
+        ));
+        assert!(auth.require_agreement(1, Role::Reader, 101).await.is_ok());
     }
 
     #[tokio::test]
-    async fn local_agreement_is_served_from_the_cache() {
+    async fn require_agreement_is_served_from_the_cache() {
         let calls = Arc::new(AtomicUsize::new(0));
         let auth = Authenticator::new(AgreementResolver {
             max_bytes: 5,
             calls: calls.clone(),
         });
 
-        auth.local_agreement(1).await.unwrap();
-        let agreement = auth.local_agreement(1).await.unwrap();
+        auth.require_agreement(1, Role::Reader, 0).await.unwrap();
+        let agreement = auth.require_agreement(1, Role::Reader, 0).await.unwrap();
 
-        assert_eq!(agreement.map(|a| a.max_bytes), Some(5));
+        assert_eq!(agreement.max_bytes, 5);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 

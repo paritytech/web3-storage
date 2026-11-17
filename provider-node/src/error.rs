@@ -11,7 +11,6 @@ use provider_auth::{AuthError, MembershipError};
 use provider_types::{ChainClientError, SigningRefused};
 use serde::Serialize;
 use std::fmt;
-use storage_primitives::BucketId;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -53,11 +52,6 @@ pub enum Error {
 
     #[error(transparent)]
     Auth(#[from] AuthError),
-
-    /// An upload targets a bucket this provider has no storage agreement on.
-    /// Open an agreement with this provider for the bucket, then retry.
-    #[error("This provider has no agreement for bucket {0}")]
-    NoAgreement(BucketId),
 
     /// A `/read` covers more chunks than one request may return. Split the
     /// range into requests of at most `max` chunks.
@@ -346,13 +340,6 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": e.to_string() })),
                 },
             ),
-            Error::NoAgreement(bucket_id) => (
-                StatusCode::FORBIDDEN,
-                ErrorResponse {
-                    error: "no_agreement".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
-                },
-            ),
             Error::ReadTooLarge { requested, max } => (
                 StatusCode::BAD_REQUEST,
                 ErrorResponse {
@@ -381,6 +368,20 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({
                         "message": "this node serves this bucket as a replica and rejects writes to it."
                     })),
+                },
+            ),
+            Error::Auth(AuthError::NoAgreement(bucket_id)) => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "no_agreement".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
+                },
+            ),
+            Error::Auth(AuthError::AgreementExpired(bucket_id)) => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "agreement_expired".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
                 },
             ),
             // Transient and worth retrying, unlike a decode failure.

@@ -10,6 +10,7 @@
 //! - Syncing data between providers (for replicas)
 
 pub mod api;
+mod auth;
 pub(crate) mod chain_connection;
 pub(crate) mod chain_follower;
 pub mod challenge_proofs;
