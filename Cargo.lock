@@ -9795,6 +9795,7 @@ dependencies = [
  "futures",
  "parity-scale-codec",
  "provider-auth",
+ "provider-http",
  "provider-negotiation",
  "rand 0.8.8",
  "reqwest",

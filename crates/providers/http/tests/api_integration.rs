@@ -1738,39 +1738,126 @@ async fn test_read_chunks_invalid_hex() {
     assert_eq!(body["error"], "invalid_hash");
 }
 
+/// `/read` returns the whole chunks that cover a byte range, the index of
+/// the first one and the chunk count of the whole data root. The chunk size
+/// is the size of the root's first chunk. A range past the end returns no
+/// chunks.
 #[tokio::test]
-async fn test_read_chunks_beyond_the_limit_is_rejected() {
+async fn test_read_chunks_maps_bytes_to_chunks() {
     let server = TestServer::new().await;
-    let (data_root, _) = upload_and_commit(&server, 1).await;
-    let unknown_root = "0x0000000000000000000000000000000000000000000000000000000000000001";
-    let limit =
-        storage_primitives::MAX_READ_CHUNKS * u64::from(storage_primitives::DEFAULT_CHUNK_SIZE);
-
-    // One byte past the limit needs one chunk more than allowed, and
-    // `u64::MAX` must not overflow `offset + length`. The limit check runs
-    // before the root lookup, so these use an unknown root. Within the
-    // limit, including an offset at the top of the range, the read
-    // reaches the root lookup and needs a committed root.
-    for (root, offset, length, status) in [
-        (unknown_root, 0, limit + 1, StatusCode::BAD_REQUEST),
-        (unknown_root, 1, u64::MAX, StatusCode::BAD_REQUEST),
-        (data_root.as_str(), 0, limit, StatusCode::OK),
-        (data_root.as_str(), u64::MAX, u64::MAX, StatusCode::OK),
-    ] {
+    // Two 8-byte chunks and a shorter last one.
+    let chunks: [&[u8]; 3] = [b"chunk-01", b"chunk-02", b"end"];
+    let leaves: Vec<H256> = chunks
+        .iter()
+        .map(|c| storage_primitives::hash_leaf(c))
+        .collect();
+    for (data, hash) in chunks.iter().zip(&leaves) {
         let resp = server
             .client
-            .get(server.url(&format!(
-                "/read?bucket_id=1&data_root={root}&offset={offset}&length={length}"
-            )))
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": format!("{hash:#x}"),
+                "data": BASE64.encode(data),
+                "children": null
+            }))
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), status, "{offset} {length}");
-        if status == StatusCode::BAD_REQUEST {
-            let body: Value = resp.json().await.unwrap();
-            assert_eq!(body["error"], "read_too_large");
-        }
+        assert_eq!(resp.status(), StatusCode::OK);
     }
+    let (root, nodes) = storage_primitives::merkle_tree(&leaves);
+    for node in nodes {
+        let resp = server
+            .client
+            .put(server.url("/node"))
+            .json(&json!({
+                "bucket_id": 1,
+                "hash": format!("{:#x}", node.hash),
+                "children": [format!("{:#x}", node.left), format!("{:#x}", node.right)]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    for (query, start, expected) in [
+        ("offset=8&length=8", 1, vec![leaves[1]]),
+        ("offset=9&length=100", 1, vec![leaves[1], leaves[2]]),
+        ("offset=0&length=0", 0, vec![]),
+        (
+            &*format!("offset={}&length={}", u64::MAX, u64::MAX),
+            u64::MAX / 8,
+            vec![],
+        ),
+    ] {
+        let resp = server
+            .client
+            .get(server.url(&format!("/read?bucket_id=1&data_root={root:#x}&{query}")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{query}");
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["chunk_count"], 3, "{query}");
+        assert_eq!(body["start_chunk"], start, "{query}");
+        let hashes: Vec<H256> = body["chunks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| serde_json::from_value(c["hash"].clone()).unwrap())
+            .collect();
+        assert_eq!(hashes, expected, "{query}");
+    }
+}
+
+/// A tree of 1-byte chunks gets no help from the byte limit: `/read` stops
+/// at `MAX_READ_CHUNKS`.
+#[tokio::test]
+async fn test_read_chunks_stops_at_the_chunk_limit() {
+    let server = TestServer::new().await;
+    let put = |body: Value| server.client.put(server.url("/node")).json(&body).send();
+    let byte = storage_primitives::hash_leaf(&[7]);
+    let resp = put(json!({
+        "bucket_id": 1,
+        "hash": format!("{byte:#x}"),
+        "data": BASE64.encode([7u8]),
+        "children": null
+    }))
+    .await
+    .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    // Each level repeats the node below as both children: 2^11 chunks.
+    let mut root = byte;
+    for _ in 0..11 {
+        let parent = storage_primitives::hash_children(root, root);
+        let resp = put(json!({
+            "bucket_id": 1,
+            "hash": format!("{parent:#x}"),
+            "children": [format!("{root:#x}"), format!("{root:#x}")]
+        }))
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        root = parent;
+    }
+
+    let resp = server
+        .client
+        .get(server.url(&format!(
+            "/read?bucket_id=1&data_root={root:#x}&offset=0&length=2048"
+        )))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["chunk_count"], 2048);
+    assert_eq!(
+        body["chunks"].as_array().unwrap().len() as u64,
+        provider_http::MAX_READ_CHUNKS
+    );
 }
 
 #[tokio::test]

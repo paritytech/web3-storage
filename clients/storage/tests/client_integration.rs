@@ -9,7 +9,10 @@
 use client_test_support::{make_client, start_test_provider};
 use sp_core::H256;
 use storage_client::{ChunkingStrategy, ClientError, EncryptionKey, Node, ENCRYPTION_OVERHEAD};
-use storage_primitives::{DEFAULT_CHUNK_SIZE, MAX_READ_CHUNKS};
+use storage_primitives::DEFAULT_CHUNK_SIZE;
+
+/// Chunks in one full `/read` response of the test provider.
+const PAGE_CHUNKS: usize = (provider_http::MAX_READ_BYTES / DEFAULT_CHUNK_SIZE as u64) as usize;
 
 // ============================================================================
 // Health
@@ -290,7 +293,7 @@ async fn test_download_more_than_one_read_page() {
     let client = make_client(url);
 
     let chunk_size = DEFAULT_CHUNK_SIZE as usize;
-    let len = chunk_size * MAX_READ_CHUNKS as usize + 100;
+    let len = chunk_size * PAGE_CHUNKS + 100;
     let data: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
     let data_root = client
         .upload(1, &data, ChunkingStrategy::default())
@@ -308,14 +311,31 @@ async fn test_download_more_than_one_read_page() {
     assert_eq!(range, &data[10..len - 10]);
 }
 
-/// Data of exactly one `/read` page: the read after the last full page
-/// returns no chunks and ends the download.
+/// A root of 32-byte chunks that takes more than one `/read` response: the
+/// client continues with the provider's chunk size, not 256 KiB.
+#[tokio::test]
+async fn test_download_full_of_small_chunks_over_several_pages() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let chunks = provider_http::MAX_READ_CHUNKS as usize + 10;
+    let data: Vec<u8> = (0..chunks * 32).map(|i| (i % 251) as u8).collect();
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::Fixed(32))
+        .await
+        .unwrap();
+
+    let full = client.download_full(1, &data_root).await.unwrap();
+    assert_eq!(full, data);
+}
+
+/// Data of exactly one `/read` page: the chunk count ends the download.
 #[tokio::test]
 async fn test_download_exact_read_page() {
     let url = start_test_provider().await;
     let client = make_client(url);
 
-    let page_len = DEFAULT_CHUNK_SIZE as usize * MAX_READ_CHUNKS as usize;
+    let page_len = DEFAULT_CHUNK_SIZE as usize * PAGE_CHUNKS;
     let data: Vec<u8> = (0..page_len).map(|i| (i % 251) as u8).collect();
     let data_root = client
         .upload(1, &data, ChunkingStrategy::default())
@@ -334,7 +354,7 @@ async fn test_download_range_in_second_read_page() {
     let client = make_client(url);
 
     let chunk_size = DEFAULT_CHUNK_SIZE as usize;
-    let page_len = chunk_size * MAX_READ_CHUNKS as usize;
+    let page_len = chunk_size * PAGE_CHUNKS;
     let len = page_len + chunk_size * 2;
     let data: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
     let data_root = client

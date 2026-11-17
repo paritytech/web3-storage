@@ -12,7 +12,7 @@ pub mod error;
 pub mod negotiate;
 pub mod types;
 
-pub use api::create_router;
+pub use api::{create_router, MAX_READ_BYTES, MAX_READ_CHUNKS};
 pub use error::Error;
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
 pub use provider_types::ChainState;

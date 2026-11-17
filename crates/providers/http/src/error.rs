@@ -59,11 +59,6 @@ pub enum Error {
     #[error("This provider has no agreement for bucket {0}")]
     NoAgreement(BucketId),
 
-    /// A `/read` covers more chunks than one request may return. Split the
-    /// range into requests of at most `max` chunks.
-    #[error("Read of {requested} chunks exceeds the limit of {max} chunks per request")]
-    ReadTooLarge { requested: u64, max: u64 },
-
     #[error("Provider is not accepting new primary agreements")]
     NotAcceptingPrimary,
 
@@ -347,13 +342,6 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "no_agreement".to_string(),
                     details: Some(serde_json::json!({ "bucket_id": bucket_id })),
-                },
-            ),
-            Error::ReadTooLarge { requested, max } => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "read_too_large".to_string(),
-                    details: Some(serde_json::json!({ "requested": requested, "max": max })),
                 },
             ),
             Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
