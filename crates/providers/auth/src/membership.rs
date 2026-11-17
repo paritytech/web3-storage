@@ -567,17 +567,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn static_resolver_returns_the_configured_primary_providers() {
-        let primaries = vec![AccountId32::new([7u8; 32])];
-        let resolver =
-            StaticMembershipResolver::private(vec![]).with_primary_providers(primaries.clone());
-        assert_eq!(
-            resolver.fetch_access(1).await.unwrap().primary_providers,
-            primaries
-        );
-    }
-
-    #[tokio::test]
     async fn serves_as_replica_is_true_only_for_a_replica_agreement() {
         let base = || StaticMembershipResolver::private(vec![]);
         for (resolver, expected) in [

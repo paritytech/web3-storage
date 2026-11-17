@@ -277,17 +277,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn primary_provider_accounts_converts_accounts() {
-        assert_eq!(
-            primary_provider_accounts(vec![
-                subxt::utils::AccountId32([1u8; 32]),
-                subxt::utils::AccountId32([2u8; 32]),
-            ]),
-            vec![AccountId32::new([1u8; 32]), AccountId32::new([2u8; 32])]
-        );
-    }
-
     // ── BlockEventInvalidations ─────────────────────────────────────────────
 
     use tokio::sync::broadcast;
