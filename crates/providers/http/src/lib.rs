@@ -118,18 +118,12 @@ impl ProviderState {
         &self.provider_id
     }
 
-    /// Signer for the provider's registered key. `None` when the node runs
-    /// without a signing key. The replica sync coordinator uses the same
-    /// signer.
+    /// Signer for the provider's registered key. `None` without a signing key.
     pub fn signer(&self) -> Option<&Arc<ProviderSigner>> {
         self.signer.as_ref()
     }
 
-    /// Live chain state. The chain-state coordinator is the intended writer of
-    /// `current_anchor_block`, `constants` and `provider_info`; `/negotiate`
-    /// requires all three before it signs. The `ChainState` fields are public,
-    /// so this getter does not prevent writes; it only prevents replacing the
-    /// shared `Arc` after construction.
+    /// Chain state, updated by the chain-state coordinator.
     pub fn chain_state(&self) -> &Arc<ChainState> {
         &self.chain_state
     }
@@ -244,8 +238,7 @@ mod tests {
         ));
     }
 
-    /// The getters return the same backend and chain state `Arc`s the
-    /// constructor stored, and the signer only when a key was given.
+    /// The getters return what the constructor stored.
     #[test]
     fn getters_return_the_constructed_parts() {
         let (deps, _dir) = test_deps();
@@ -261,8 +254,7 @@ mod tests {
             signing.provider_id(),
             ProviderState::provider_id_from_seed("//Alice").unwrap()
         );
-        // The signer reads the same chain state: it rejects signing until a
-        // matching registration exists in `chain_state()`.
+        // The signer signs once its registration is in `chain_state()`.
         let signer = signing.signer().unwrap();
         assert!(signer.sign(b"msg").is_err());
         signing
