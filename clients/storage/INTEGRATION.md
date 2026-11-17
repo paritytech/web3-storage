@@ -71,7 +71,7 @@ let keypair = Keypair::from_uri("//Alice")?;
 
 // Any subxt sr25519 keypair converts into a Signer. This is the
 // extrinsic-submission account; the provider's registered `public_key` may
-// use any scheme (see the register_provider example).
+// use any scheme (see `provider register` in crates/utils/storage-cli).
 let mut client = AdminClient::new(config, Signer::from(keypair))?;
 client.connect().await?;
 ```

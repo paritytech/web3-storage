@@ -4,7 +4,7 @@
 //!
 //!   1. Start the chain:        just start-chain
 //!   2. Start the provider:     just start-provider          (defaults to the //Alice key)
-//!   3. Register the provider:  cargo run --example register_provider
+//!   3. Register the provider:  just register-provider
 //!
 //! With those running, this example exercises only the user-facing flow against
 //! the live chain + provider node:

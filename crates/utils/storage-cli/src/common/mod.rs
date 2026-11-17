@@ -2,17 +2,62 @@
 
 use crate::cli::GlobalArgs;
 use anyhow::{bail, Context, Result};
+use clap::Args;
 use sp_core::crypto::Ss58Codec;
 use sp_runtime::AccountId32;
+use std::path::{Path, PathBuf};
 use storage_client::{ClientConfig, Signer};
 
 /// Bucket identifier on chain (alias of `storage_primitives::BucketId`, a `u64`).
 pub type BucketId = u64;
 
-/// Resolve the SURI from either `--suri` or `--keyfile` (exactly one is required)
-pub fn resolve_suri(global: &GlobalArgs) -> Result<String> {
-    match (&global.suri, &global.keyfile) {
-        (Some(suri), _) => Ok(suri.clone()),
+/// Secret of the client account: it owns or is a member of the target buckets,
+/// pays for prepared agreements and signs every provider request.
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+pub struct ClientKey {
+    /// Secret URI (SURI) of the client account, e.g. "//Bob".
+    #[arg(long, value_name = "SURI")]
+    pub client_suri: Option<String>,
+
+    /// File whose contents are the client account's SURI.
+    #[arg(long, value_name = "FILE")]
+    pub client_keyfile: Option<PathBuf>,
+}
+
+impl ClientKey {
+    pub fn suri(&self) -> Result<String> {
+        resolve_suri(self.client_suri.as_deref(), self.client_keyfile.as_deref())
+    }
+}
+
+/// Secret of the provider account.
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+pub struct ProviderKey {
+    /// Secret URI (SURI) of the provider account, e.g. "//Alice".
+    #[arg(long, value_name = "SURI")]
+    pub provider_suri: Option<String>,
+
+    /// File whose contents are the provider account's SURI: the file the
+    /// provider node's `--keyfile` reads.
+    #[arg(long, value_name = "FILE")]
+    pub provider_keyfile: Option<PathBuf>,
+}
+
+impl ProviderKey {
+    pub fn suri(&self) -> Result<String> {
+        resolve_suri(
+            self.provider_suri.as_deref(),
+            self.provider_keyfile.as_deref(),
+        )
+    }
+}
+
+/// The SURI given inline, or else the trimmed contents of the keyfile.
+fn resolve_suri(suri: Option<&str>, keyfile: Option<&Path>) -> Result<String> {
+    match (suri, keyfile) {
+        (Some(suri), _) => Ok(suri.to_string()),
         (None, Some(path)) => {
             let contents = std::fs::read_to_string(path)
                 .with_context(|| format!("failed to read keyfile {}", path.display()))?;
@@ -22,7 +67,7 @@ pub fn resolve_suri(global: &GlobalArgs) -> Result<String> {
             }
             Ok(suri)
         }
-        (None, None) => bail!("one of --suri or --keyfile is required"),
+        (None, None) => bail!("no SURI or keyfile given"),
     }
 }
 
@@ -35,11 +80,9 @@ pub fn build_config(global: &GlobalArgs) -> ClientConfig {
     }
 }
 
-/// Derive the signer from `--suri`/`--keyfile`. It both identifies the account
-/// being operated on and authenticates every provider request.
-pub fn resolve_signer(global: &GlobalArgs) -> Result<Signer> {
-    let suri = resolve_suri(global)?;
-    Signer::from_seed(&suri).context("failed to derive keypair from SURI")
+/// The sr25519 account signer for a SURI.
+pub fn signer_from_suri(suri: &str) -> Result<Signer> {
+    Signer::from_seed(suri).context("failed to derive keypair from SURI")
 }
 
 /// The SS58 address of the signer's account.
@@ -51,74 +94,55 @@ pub fn account_ss58(signer: &Signer) -> String {
 mod tests {
     use super::*;
     use std::io::Write;
-    use std::path::PathBuf;
-
-    /// Build `GlobalArgs` with placeholder connection flags and the given
-    /// identity inputs — only `suri`/`keyfile` matter for `resolve_suri`.
-    fn make_args(suri: Option<String>, keyfile: Option<PathBuf>) -> GlobalArgs {
-        GlobalArgs {
-            chain_rpc: "ws://127.0.0.1:2222".to_string(),
-            provider_url: "http://127.0.0.1:3333".to_string(),
-            suri,
-            keyfile,
-            output: crate::metrics::OutputFormat::Text,
-        }
-    }
 
     #[test]
     fn returns_inline_suri() {
-        let args = make_args(Some("//Alice".to_string()), None);
-        assert_eq!(resolve_suri(&args).unwrap(), "//Alice");
+        assert_eq!(resolve_suri(Some("//Alice"), None).unwrap(), "//Alice");
     }
 
     #[test]
     fn reads_and_trims_keyfile() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(file, "  //Bob").unwrap();
-        let args = make_args(None, Some(file.path().to_path_buf()));
-        assert_eq!(resolve_suri(&args).unwrap(), "//Bob");
+        assert_eq!(resolve_suri(None, Some(file.path())).unwrap(), "//Bob");
     }
 
     #[test]
     fn rejects_empty_keyfile() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(file, "   ").unwrap();
-        let args = make_args(None, Some(file.path().to_path_buf()));
-        let err = resolve_suri(&args).unwrap_err().to_string();
+        let err = resolve_suri(None, Some(file.path()))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("is empty"), "unexpected error: {err}");
     }
 
     #[test]
     fn errors_on_missing_keyfile() {
         let path = std::env::temp_dir().join("storage-cli-resolve-suri-does-not-exist");
-        let args = make_args(None, Some(path));
-        let err = resolve_suri(&args).unwrap_err().to_string();
+        let err = resolve_suri(None, Some(&path)).unwrap_err().to_string();
         assert!(
             err.contains("failed to read keyfile"),
             "unexpected error: {err}"
         );
     }
 
+    /// Each command requires exactly one of its SURI and keyfile flags, so a
+    /// run never signs as an account the operator did not pick.
     #[test]
-    fn errors_when_neither_provided() {
-        let args = make_args(None, None);
-        let err = resolve_suri(&args).unwrap_err().to_string();
-        assert!(
-            err.contains("--suri or --keyfile"),
-            "unexpected error: {err}"
-        );
-    }
+    fn key_flags_require_exactly_one_source() {
+        use clap::Parser;
 
-    #[test]
-    fn inline_suri_wins_over_keyfile() {
-        // clap's `conflicts_with` blocks this at parse time; this only pins
-        // the `(Some, _)` arm's precedence within the function itself.
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        write!(file, "//FromFile").unwrap();
-        let args = make_args(
-            Some("//Inline".to_string()),
-            Some(file.path().to_path_buf()),
-        );
-        assert_eq!(resolve_suri(&args).unwrap(), "//Inline");
+        #[derive(Debug, Parser)]
+        struct Wrapper {
+            #[command(flatten)]
+            key: ProviderKey,
+        }
+
+        let parse = |args: &[&str]| Wrapper::try_parse_from([&["cmd"], args].concat());
+        assert!(parse(&[]).is_err());
+        assert!(parse(&["--provider-suri", "//Alice", "--provider-keyfile", "k"]).is_err());
+        let wrapper = parse(&["--provider-suri", "//Alice"]).unwrap();
+        assert_eq!(wrapper.key.suri().unwrap(), "//Alice");
     }
 }
