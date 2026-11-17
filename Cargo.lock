@@ -7050,6 +7050,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64",
+ "clap",
  "parity-scale-codec",
  "provider-auth",
  "provider-negotiation",

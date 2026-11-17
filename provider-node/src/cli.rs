@@ -43,6 +43,9 @@ pub struct Cli {
     pub rpc: RpcParams,
 
     #[clap(flatten)]
+    pub read_limits: provider_http::ReadLimits,
+
+    #[clap(flatten)]
     pub key: KeyParams,
 
     #[clap(flatten)]
@@ -141,24 +144,6 @@ pub struct RpcParams {
         value_delimiter = ','
     )]
     pub cors_allowed_origins: Option<Vec<String>>,
-
-    /// Most bytes of chunk data in one `/read` response.
-    #[arg(
-        long,
-        env = "READ_MAX_BYTES",
-        default_value_t = provider_http::ReadLimits::DEFAULT_MAX_BYTES,
-        value_parser = clap::value_parser!(u64).range(1..)
-    )]
-    pub read_max_bytes: u64,
-
-    /// Most chunks in one `/read` response.
-    #[arg(
-        long,
-        env = "READ_MAX_CHUNKS",
-        default_value_t = provider_http::ReadLimits::DEFAULT_MAX_CHUNKS,
-        value_parser = clap::value_parser!(u64).range(1..)
-    )]
-    pub read_max_chunks: u64,
 }
 
 /// Chain transport selection for `--chain-transport`.
@@ -407,6 +392,29 @@ mod tests {
         assert_eq!(cli.replica_sync.replica_max_concurrent, 3);
         assert!(!cli.challenge_responder.enable_challenge_responder);
         assert_eq!(cli.challenge_responder.challenge_poll_interval, 300);
+        assert_eq!(cli.read_limits, provider_http::ReadLimits::default());
+    }
+
+    #[test]
+    fn read_limits_parse_and_reject_zero() {
+        let cli = Cli::try_parse_from([
+            "storage-provider-node",
+            "--read-max-bytes",
+            "1048576",
+            "--read-max-chunks",
+            "64",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.read_limits,
+            provider_http::ReadLimits {
+                max_bytes: 1 << 20,
+                max_chunks: 64,
+            }
+        );
+        for flag in ["--read-max-bytes", "--read-max-chunks"] {
+            assert!(Cli::try_parse_from(["storage-provider-node", flag, "0"]).is_err());
+        }
     }
 
     #[test]

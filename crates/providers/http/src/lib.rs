@@ -34,12 +34,34 @@ pub struct ProviderDeps {
 }
 
 /// Limits on one `/read` response, which the provider builds in memory.
+/// With the `clap` feature, the options `--read-max-bytes` and
+/// `--read-max-chunks`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "clap", derive(clap::Args))]
 pub struct ReadLimits {
-    /// Most bytes of chunk data. A response has at least one chunk.
+    /// Most bytes of chunk data in one `/read` response. A response has at
+    /// least one chunk.
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long = "read-max-bytes",
+            env = "READ_MAX_BYTES",
+            default_value_t = ReadLimits::DEFAULT_MAX_BYTES,
+            value_parser = clap::value_parser!(u64).range(1..)
+        )
+    )]
     pub max_bytes: u64,
-    /// Most chunks. Applies when chunks are small enough that `max_bytes`
-    /// does not stop the response first.
+    /// Most chunks in one `/read` response. Applies when chunks are small
+    /// enough that the byte limit does not stop the response first.
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long = "read-max-chunks",
+            env = "READ_MAX_CHUNKS",
+            default_value_t = ReadLimits::DEFAULT_MAX_CHUNKS,
+            value_parser = clap::value_parser!(u64).range(1..)
+        )
+    )]
     pub max_chunks: u64,
 }
 

@@ -16,7 +16,7 @@ use crate::{
 use clap::Parser;
 use provider_auth::Authenticator;
 use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
-use provider_http::{create_router, ProviderDeps, ProviderState, ReadLimits};
+use provider_http::{create_router, ProviderDeps, ProviderState};
 use sp_core::crypto::{AccountId32, Ss58Codec};
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -132,10 +132,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     .with_cors_origins(cli.rpc.cors_allowed_origins.clone())
-    .with_read_limits(ReadLimits {
-        max_bytes: cli.rpc.read_max_bytes,
-        max_chunks: cli.rpc.read_max_chunks,
-    });
+    .with_read_limits(cli.read_limits);
 
     let state = Arc::new(state);
 
