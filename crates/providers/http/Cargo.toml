@@ -28,6 +28,7 @@ tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 async-trait = { workspace = true }
+provider-auth = { workspace = true, features = ["test-helpers"] }
 provider-storage = { workspace = true, features = ["test-helpers"] }
 reqwest = { workspace = true }
 sp-crypto-hashing = { workspace = true, features = ["std"] }

@@ -2197,6 +2197,10 @@ Response (400 Bad Request):
 { "error": "invalid_child_count", "expected": 2, "actual": 3 }
 { "error": "chunk_too_large", "size": 300000, "max": 262144 }
 
+Response (403 Forbidden):
+{ "error": "no_agreement", "details": { "bucket_id": 1234 } }
+// the node has no storage agreement on this bucket, so it has no quota for it
+
 Response (507 Insufficient Storage):
 { "error": "quota_exceeded", "used": 1000000, "max": 1000000 }
 ```
@@ -2274,6 +2278,12 @@ GET /read?bucket_id=1&data_root=0x...&offset=0&length=2097152
 Capability read: keyed by data root, unauthenticated; 404 for a bucket the
 node does not store (see Authentication & RBAC).
 
+One request returns at most MAX_READ_CHUNKS = 16 chunks (4 MiB at the
+256 KiB CHUNK_SIZE). The read is unauthenticated and the provider builds the
+whole response in memory, so the bound limits what one request can make the
+node load. A client reads a longer range in consecutive requests. The
+provider computes offset + length with saturating addition.
+
 Response:
 {
   "chunks": [
@@ -2281,6 +2291,9 @@ Response:
     ...
   ]
 }
+
+Response (400 Bad Request):
+{ "error": "read_too_large", "details": { "requested": 20, "max": 16 } }
 ```
 
 ### Other Endpoints

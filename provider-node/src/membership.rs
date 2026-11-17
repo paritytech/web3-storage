@@ -4,15 +4,14 @@
 
 use crate::chain_connection::{self, ChainWatch};
 use provider_auth::{
-    BucketAccess, Invalidation, Member, MembershipError, MembershipInvalidations,
-    MembershipResolver,
+    BucketAccess, Invalidation, LocalBucketAgreement, Member, MembershipError,
+    MembershipInvalidations, MembershipResolver,
 };
 use provider_events::{BlockEvent, BlockEventRx};
 use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;
-use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::broadcast::error::TryRecvError;
 
@@ -20,10 +19,11 @@ use tokio::sync::broadcast::error::TryRecvError;
 /// follow reconnects instead of pinning their own socket.
 pub struct ChainMembershipResolver {
     chain_rx: ChainWatch,
-    /// `provider_id` parsed to an account, for resolving whether this node
-    /// holds the bucket as a replica (replicas serve reads to everyone). A
-    /// provider id that is not an SS58 account (the chainless dev
-    /// placeholder) makes every bucket resolve as not replica-held.
+    /// `provider_id` parsed to an account, for resolving this node's own
+    /// agreement on a bucket (replicas serve reads to everyone, and the
+    /// agreement's quota bounds uploads). A provider id that is not an SS58
+    /// account (the chainless dev placeholder) makes every bucket resolve as
+    /// having no agreement.
     provider_account: Option<AccountId32>,
 }
 
@@ -91,15 +91,18 @@ impl MembershipResolver for ChainMembershipResolver {
         })
     }
 
-    /// Whether this node holds `bucket_id` under a replica agreement.
+    /// This node's agreement on `bucket_id`.
     ///
-    /// Existence of a `Replica` agreement is the proxy — expiry is not
-    /// re-checked here, so a lapsed-but-unpruned agreement keeps serving until
-    /// the entry is invalidated or falls out of the TTL, the same freshness
-    /// bound the member set lives under.
-    async fn fetch_serves_as_replica(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
+    /// Existence of the agreement is the proxy — expiry is not re-checked
+    /// here, so a lapsed-but-unpruned agreement keeps serving until the entry
+    /// is invalidated or falls out of the TTL, the same freshness bound the
+    /// member set lives under.
+    async fn fetch_bucket_agreement(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<LocalBucketAgreement>, MembershipError> {
         let Some(own) = &self.provider_account else {
-            return Ok(false);
+            return Ok(None);
         };
         let api = self.api()?;
 
@@ -122,7 +125,7 @@ impl MembershipResolver for ChainMembershipResolver {
             .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
 
         let Some(agreement_value) = result else {
-            return Ok(false);
+            return Ok(None);
         };
         let agreement = agreement_value
             .decode()
@@ -131,7 +134,10 @@ impl MembershipResolver for ChainMembershipResolver {
                 reason: e.to_string(),
             })?;
 
-        Ok(matches!(agreement.role, ProviderRole::Replica { .. }))
+        Ok(Some(LocalBucketAgreement {
+            role: agreement.role.into(),
+            max_bytes: agreement.max_bytes,
+        }))
     }
 }
 
