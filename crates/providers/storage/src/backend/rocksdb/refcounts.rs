@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The CF_REFCOUNTS value format.
+//! The CF_NODE_REFS value format.
 //!
 //! One entry per stored node: how many committed leaves (live or stashed,
 //! across all buckets) reach it, plus which bucket's `used_bytes` was
@@ -28,12 +28,10 @@ pub(super) struct RefcountEntry {
     pub kind: NodeKind,
 }
 
-/// Encode a CF_REFCOUNTS value.
 pub(super) fn encode_refcount(entry: &RefcountEntry) -> Vec<u8> {
     entry.encode()
 }
 
-/// Decode a CF_REFCOUNTS value.
 pub(super) fn decode_refcount(value: &[u8]) -> Result<RefcountEntry, Error> {
     Ok(RefcountEntry::decode_all(&mut &value[..])?)
 }

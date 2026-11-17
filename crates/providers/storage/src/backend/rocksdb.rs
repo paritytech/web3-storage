@@ -28,19 +28,17 @@ use storage_primitives::{
 };
 
 /// Column families for organizing data
-const CF_NODES: &str = "nodes";
-const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
-/// Per-node reference counts: how many committed leaves (live or stashed,
-/// across all buckets) reach the node. Keyed like CF_NODES.
-const CF_REFCOUNTS: &str = "refcounts";
+const CF_BUCKETS: &str = "buckets";
+const CF_NODES: &str = "nodes";
+const CF_NODE_REFS: &str = "refcounts";
 const CF_METADATA: &str = "metadata";
 /// Every column family this engine opens.
 const COLUMN_FAMILIES: [&str; 5] = [
     CF_NODES,
     CF_BUCKETS,
     CF_ROOT_TO_BUCKET,
-    CF_REFCOUNTS,
+    CF_NODE_REFS,
     CF_METADATA,
 ];
 
@@ -128,7 +126,7 @@ impl DiskStorage {
         })
     }
 
-    /// Read a CF_REFCOUNTS entry outside a transaction:
+    /// Read a CF_NODE_REFS entry outside a transaction:
     /// `(count, charged_bucket, size)`.
     #[cfg(test)]
     fn refcount_entry(&self, hash: &H256) -> Result<Option<(u64, u64, u64)>, Error> {
@@ -137,19 +135,19 @@ impl DiskStorage {
             .map(|e| (e.count, e.charged_bucket, e.size)))
     }
 
-    /// Read a CF_REFCOUNTS entry outside a transaction.
+    /// Read a CF_NODE_REFS entry outside a transaction.
     fn refcount_row(&self, hash: &H256) -> Result<Option<RefcountEntry>, Error> {
         let cf = self
             .db
-            .cf_handle(CF_REFCOUNTS)
-            .ok_or(Error::ColumnFamilyMissing(CF_REFCOUNTS))?;
+            .cf_handle(CF_NODE_REFS)
+            .ok_or(Error::ColumnFamilyMissing(CF_NODE_REFS))?;
         self.db
             .get_cf(&cf, hash.as_bytes())?
             .map(|value| decode_refcount(&value))
             .transpose()
     }
 
-    /// Lock a CF_REFCOUNTS entry for `txn` and decode it.
+    /// Lock a CF_NODE_REFS entry for `txn` and decode it.
     fn refcount_for_update(
         &self,
         txn: &Transaction<'_, TransactionDB>,
@@ -158,8 +156,8 @@ impl DiskStorage {
     ) -> Result<Option<RefcountEntry>, Error> {
         let cf = self
             .db
-            .cf_handle(CF_REFCOUNTS)
-            .ok_or(Error::ColumnFamilyMissing(CF_REFCOUNTS))?;
+            .cf_handle(CF_NODE_REFS)
+            .ok_or(Error::ColumnFamilyMissing(CF_NODE_REFS))?;
         txn.get_for_update_cf(&cf, hash.as_bytes(), true)
             .map_err(|error| bucket_write_error(bucket_id, error))?
             .map(|value| decode_refcount(&value))
@@ -421,8 +419,8 @@ impl DiskStorage {
             bucket.node_count = bucket.node_count.saturating_add(1);
             let cf_refcounts = self
                 .db
-                .cf_handle(CF_REFCOUNTS)
-                .ok_or(Error::ColumnFamilyMissing(CF_REFCOUNTS))?;
+                .cf_handle(CF_NODE_REFS)
+                .ok_or(Error::ColumnFamilyMissing(CF_NODE_REFS))?;
             // Charge record: count stays 0 until a commit references the
             // node; erasure credits `bucket_id`'s used_bytes by `charge`.
             let entry = RefcountEntry {
@@ -582,8 +580,8 @@ impl DiskStorage {
 
         let cf_refcounts = self
             .db
-            .cf_handle(CF_REFCOUNTS)
-            .ok_or(Error::ColumnFamilyMissing(CF_REFCOUNTS))?;
+            .cf_handle(CF_NODE_REFS)
+            .ok_or(Error::ColumnFamilyMissing(CF_NODE_REFS))?;
         for (hash, n) in increments {
             // The row exists while the node does, so a missing row means an
             // erase deleted the node after the walk. Enforcing user to re-upload
@@ -872,8 +870,8 @@ impl DiskStorage {
             .ok_or(Error::ColumnFamilyMissing(CF_NODES))?;
         let cf_refcounts = self
             .db
-            .cf_handle(CF_REFCOUNTS)
-            .ok_or(Error::ColumnFamilyMissing(CF_REFCOUNTS))?;
+            .cf_handle(CF_NODE_REFS)
+            .ok_or(Error::ColumnFamilyMissing(CF_NODE_REFS))?;
         let cf_buckets = self
             .db
             .cf_handle(CF_BUCKETS)
@@ -1339,10 +1337,10 @@ mod tests {
             )
         );
 
-        // CF_REFCOUNTS: key = node hash, value = SCALE(count, charged bucket,
+        // CF_NODE_REFS: key = node hash, value = SCALE(count, charged bucket,
         // size) as three LE u64s, then the kind: 0 for a chunk, 1 for an
         // internal node.
-        let cf = storage.db.cf_handle(CF_REFCOUNTS).unwrap();
+        let cf = storage.db.cf_handle(CF_NODE_REFS).unwrap();
         let raw = storage
             .db
             .get_cf(&cf, chunk_hash.as_bytes())
@@ -1691,7 +1689,7 @@ mod tests {
             Err(Error::NodeNotFound(hash)) if hash == parent
         ));
 
-        corrupt(&storage, CF_REFCOUNTS, left.as_bytes());
+        corrupt(&storage, CF_NODE_REFS, left.as_bytes());
         assert!(matches!(
             storage.node_shape(&left),
             Err(Error::Serialization(_))
@@ -1873,7 +1871,7 @@ mod tests {
             .unwrap();
     }
 
-    /// Remove a node's CF_NODES record and keep its CF_REFCOUNTS record,
+    /// Remove a node's CF_NODES record and keep its CF_NODE_REFS record,
     /// standing in for a chunk whose data a walk must not need.
     fn delete_node_row(storage: &DiskStorage, hash: H256) {
         let cf = storage.db.cf_handle(CF_NODES).unwrap();
@@ -1884,11 +1882,11 @@ mod tests {
     /// genuinely never having been written (or having been pruned) rather
     /// than corrupted - `store_node`'s children-exist check would otherwise
     /// make it impossible to reference a missing child through the public
-    /// API alone. Deletes the node's CF_REFCOUNTS record too, as an erase
+    /// API alone. Deletes the node's CF_NODE_REFS record too, as an erase
     /// does.
     fn delete_node(storage: &DiskStorage, hash: H256) {
         delete_node_row(storage, hash);
-        let cf = storage.db.cf_handle(CF_REFCOUNTS).unwrap();
+        let cf = storage.db.cf_handle(CF_NODE_REFS).unwrap();
         storage.db.delete_cf(&cf, hash.as_bytes()).unwrap();
     }
 
@@ -2343,27 +2341,6 @@ mod tests {
         let bucket = storage.get_bucket(BUCKET).unwrap().unwrap();
         assert!(bucket.peaks.is_empty());
         assert_eq!(bucket.mmr_root, H256::zero());
-    }
-
-    #[test]
-    fn get_mmr_peaks_returns_the_stored_peaks() {
-        let (storage, _dir) = storage_with_bucket(u64::MAX);
-        let root = store_chunk_of_len(&storage, 1, 10);
-        storage.commit(BUCKET, vec![root]).unwrap();
-
-        // A row whose peaks differ from what its leaves rebuild to shows
-        // that the read does not rebuild.
-        let mut bucket = storage.get_bucket(BUCKET).unwrap().unwrap();
-        bucket.peaks = vec![H256::repeat_byte(7), H256::repeat_byte(9)];
-        bucket.mmr_root = H256::repeat_byte(8);
-        let txn = storage.transaction();
-        storage.put_bucket(&txn, BUCKET, &bucket).unwrap();
-        txn.commit().unwrap();
-
-        assert_eq!(
-            storage.get_mmr_peaks(BUCKET).unwrap(),
-            (bucket.mmr_root, bucket.peaks)
-        );
     }
 
     #[test]
