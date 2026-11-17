@@ -9,6 +9,7 @@ built on top of the [`storage-client`](../../../clients/storage) SDK.
 
 ```bash
 cargo run -p storage-cli -- --help
+cargo run -p storage-cli -- provider register --help
 cargo run -p storage-cli -- stress-test upload --help
 ```
 
@@ -25,6 +26,30 @@ cargo run -p storage-cli -- stress-test upload --help
 `--suri` and `--keyfile` are mutually exclusive; exactly one is required. The
 account they resolve to signs the `Authorization` header on every provider
 request, so it must be a member of the buckets being written to.
+
+## `provider register`
+
+Registers the `--suri`/`--keyfile` account as a storage provider, locking the
+1000-token minimum stake, and sets it to accept primary agreements at 1 per
+byte-block for 10 to 100,000 anchor blocks. If the account is already
+registered with the same signing key, it does nothing; with a different key, it
+exits with an error.
+
+```bash
+cargo run -p storage-cli -- \
+  --suri //Alice \
+  provider register \
+  --multiaddr /ip4/127.0.0.1/tcp/3333
+```
+
+| Param                    | Default   | Description                                                           |
+| ------------------------ | --------- | --------------------------------------------------------------------- |
+| `--multiaddr <ADDR>`     | required  | Multiaddr at which clients reach the provider node.                   |
+| `--key-scheme <SCHEME>`  | `sr25519` | Signing key to register: `sr25519`, `ed25519`, `ecdsa` or `eth`. Must match the node's `--key-scheme`. |
+
+The extrinsics are always signed by the sr25519 account. The provider node can
+start before or after registration. If it starts after, it reads the
+registration when it connects and can sign terms on its first request.
 
 ## `stress-test upload`
 
@@ -118,7 +143,7 @@ summary.
 ### Required on-chain setup
 
 The provider must be registered on-chain and its node running (`just start-chain`,
-`just start-provider`, `cargo run -p storage-client --example register_provider`).
+`storage-cli provider register`, `just start-provider`).
 Buckets and agreements either exist already (default `discover` mode) or the run
 opens them with `--prepare-buckets N`. The signing account pays for the prepared
 agreements at the provider's listed price.
