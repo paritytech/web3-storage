@@ -329,9 +329,10 @@ pub trait StorageBackend: Send + Sync {
         seq: u64,
     ) -> Result<Option<DeletionReceipt>, Error>;
 
-    /// Set/refresh the bucket quota learned from the chain agreement.
-    /// Never creates a bucket; errors if it does not exist.
-    fn set_bucket_quota(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
+    /// Set the quota of `bucket_id` to `max_bytes`, the agreement's quota,
+    /// creating the bucket if it does not exist. The check and the write are
+    /// atomic.
+    fn init_bucket_or_set_quota(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
 
     /// Pruned ranges awaiting physical erasure, oldest first.
     fn pruned_ranges(&self, bucket_id: BucketId) -> Result<Vec<PrunedRangeInfo>, Error>;
