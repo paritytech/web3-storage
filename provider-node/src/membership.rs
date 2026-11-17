@@ -178,9 +178,9 @@ impl MembershipInvalidations for BlockEventInvalidations {
                 Ok(BlockEvent::BucketMembershipChanged { bucket_id }) if !all => {
                     buckets.push(bucket_id)
                 }
-                // A new replica agreement changes the resolver's `serves_as_replica`
-                // answer for the bucket, whoever the replica is (cheaper to
-                // drop the entry than to check whether it is us).
+                // A new replica agreement changes the cached agreement of the
+                // bucket, whoever the replica is (cheaper to drop the entry
+                // than to check whether it is us).
                 Ok(BlockEvent::ReplicaAgreementEstablished { bucket_id, .. }) if !all => {
                     buckets.push(bucket_id)
                 }
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn a_replica_agreement_invalidates_its_bucket() {
-        // `serves_as_replica` is resolved into the bucket's cached entry, so a
+        // The node's agreement is resolved into the bucket's cached entry, so a
         // new replica agreement must drop it like a member change does.
         let (tx, rx) = broadcast::channel(4);
         let _ = tx.send(BlockEvent::ReplicaAgreementEstablished {

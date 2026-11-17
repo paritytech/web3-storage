@@ -180,7 +180,7 @@ async fn store_uploaded_node(
     };
     let max_bytes = state
         .auth
-        .bucket_agreement(bucket_id)
+        .local_agreement(bucket_id)
         .await?
         .ok_or(Error::NoAgreement(bucket_id))?
         .max_bytes;
@@ -329,7 +329,7 @@ async fn commit(
     // even from a primary provider that may push nodes to it.
     let is_replica = state
         .auth
-        .bucket_agreement(request.bucket_id)
+        .local_agreement(request.bucket_id)
         .await?
         .is_some_and(|agreement| agreement.is_replica_agreement());
     if is_replica {
