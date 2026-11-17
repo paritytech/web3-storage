@@ -126,7 +126,8 @@ signs a checkpoint while the old one is still bound.
 2. Anyone calls `add_replica_provider` with the signed terms on an
    existing bucket → `StorageAgreement` created with `ProviderRole::Replica`
 3. Replica syncs data autonomously from primaries or other replicas.
-   A replica takes no client writes or commits, and never signs a commitment
+   A replica accepts no writes, commits or deletes from anyone, and never
+   signs a commitment
 4. Replica calls `confirm_replica_sync` on-chain → receives per-sync payment, becomes challengeable
 
 **Binding contract:**
