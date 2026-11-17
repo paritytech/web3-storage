@@ -244,6 +244,35 @@ mod tests {
         ));
     }
 
+    /// The getters return the same backend and chain state `Arc`s the
+    /// constructor stored, and the signer only when a key was given.
+    #[test]
+    fn getters_return_the_constructed_parts() {
+        let (deps, _dir) = test_deps();
+        let storage = Arc::clone(&deps.storage);
+        let keyless = ProviderState::with_provider_id(deps, "provider".to_string());
+        assert_eq!(keyless.provider_id(), "provider");
+        assert!(Arc::ptr_eq(keyless.storage(), &storage));
+        assert!(keyless.signer().is_none());
+
+        let (deps, _dir) = test_deps();
+        let signing = ProviderState::with_seed(deps, "//Alice").unwrap();
+        assert_eq!(
+            signing.provider_id(),
+            ProviderState::provider_id_from_seed("//Alice").unwrap()
+        );
+        // The signer reads the same chain state: it rejects signing until a
+        // matching registration exists in `chain_state()`.
+        let signer = signing.signer().unwrap();
+        assert!(signer.sign(b"msg").is_err());
+        signing
+            .chain_state()
+            .provider_info
+            .write()
+            .replace(registration(signer.public_key_bytes().to_vec()));
+        assert!(signer.sign(b"msg").is_ok());
+    }
+
     #[test]
     fn sign_without_keypair_refuses_with_signing_unavailable() {
         // The pre-fix behaviour silently returned 64 zero bytes. The new
