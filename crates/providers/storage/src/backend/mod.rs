@@ -36,6 +36,16 @@ pub const MAX_TREE_WALK_VISITS: u64 = 1 << 22;
 /// cannot belong to a valid tree.
 pub const MAX_TREE_DEPTH: u32 = 63;
 
+/// What a tree walk needs to know about a node: a chunk's byte size, or an
+/// internal node's children. Reading it does not read a chunk's data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeShape {
+    /// A chunk of `size` bytes.
+    Chunk { size: u64 },
+    /// An internal node over two children.
+    Internal { left: H256, right: H256 },
+}
+
 /// Which backend to build, and what that backend needs.
 ///
 /// Each engine carries its own configuration, so adding one does not add a
@@ -158,6 +168,12 @@ pub trait StorageBackend: Send + Sync {
     /// backend itself failed - the node may still be there.
     fn get_node(&self, hash: &H256) -> Result<Option<ChunkTreeNode>, Error>;
 
+    /// Get a node's shape by hash, without reading a chunk's data.
+    ///
+    /// `Ok(None)` means the node genuinely does not exist. `Err` means the
+    /// backend itself failed - the node may still be there.
+    fn node_shape(&self, hash: &H256) -> Result<Option<NodeShape>, Error>;
+
     /// Split `hashes` into those stored and those missing. `Err` means a
     /// read failed, not that a node is absent.
     fn check_exists(
@@ -177,12 +193,9 @@ pub trait StorageBackend: Send + Sync {
     /// Visit every node under `root` in DFS order, once per path that reaches
     /// it. Fails with [`Error::NodeNotFound`] on a missing node and with
     /// [`Error::TreeTooLarge`] once the visit count passes
-    /// [`Self::max_tree_walk_visits`].
-    fn walk_tree(
-        &self,
-        root: H256,
-        visit: &mut dyn FnMut(H256, &ChunkTreeNode),
-    ) -> Result<(), Error> {
+    /// [`Self::max_tree_walk_visits`]. A chunk is visited by its size and is
+    /// not read.
+    fn walk_tree(&self, root: H256, visit: &mut dyn FnMut(H256, &NodeShape)) -> Result<(), Error> {
         let max_nodes = self.max_tree_walk_visits();
         let mut visited = 0u64;
         let mut stack = vec![root];
@@ -191,12 +204,12 @@ pub trait StorageBackend: Send + Sync {
             if visited > max_nodes {
                 return Err(Error::TreeTooLarge { max_nodes });
             }
-            let node = self.get_node(&hash)?.ok_or(Error::NodeNotFound(hash))?;
-            if let ChunkTreeNode::Internal { left, right } = node {
+            let shape = self.node_shape(&hash)?.ok_or(Error::NodeNotFound(hash))?;
+            if let NodeShape::Internal { left, right } = shape {
                 stack.push(right);
                 stack.push(left);
             }
-            visit(hash, &node);
+            visit(hash, &shape);
         }
         Ok(())
     }
@@ -246,9 +259,9 @@ pub trait StorageBackend: Send + Sync {
     /// indistinguishable from the chunk actually being missing.
     fn collect_leaves(&self, root: H256) -> Result<Vec<(H256, usize)>, Error> {
         let mut leaves = Vec::new();
-        self.walk_tree(root, &mut |hash, node| {
-            if let ChunkTreeNode::Chunk(data) = node {
-                leaves.push((hash, data.len()));
+        self.walk_tree(root, &mut |hash, shape| {
+            if let NodeShape::Chunk { size } = shape {
+                leaves.push((hash, *size as usize));
             }
         })?;
         Ok(leaves)
@@ -390,23 +403,27 @@ fn node_at<B: StorageBackend + ?Sized>(backend: &B, hash: &H256) -> Result<Chunk
     backend.get_node(hash)?.ok_or(Error::NodeNotFound(*hash))
 }
 
+fn shape_at<B: StorageBackend + ?Sized>(backend: &B, hash: &H256) -> Result<NodeShape, Error> {
+    backend.node_shape(hash)?.ok_or(Error::NodeNotFound(*hash))
+}
+
 /// Number of chunks under `root`, from the nodes down its right edge.
 ///
 /// In the chunk tree the left child of a node spans a power of two of chunks,
 /// so each node on the right edge adds the size of its left child, and the
 /// last chunk adds one. An edge deeper than [`MAX_TREE_DEPTH`] is not a chunk
-/// tree.
+/// tree. Reads no chunk data.
 fn chunk_count<B: StorageBackend + ?Sized>(backend: &B, root: H256) -> Result<u64, Error> {
     let mut count = 0u64;
     let mut hash = root;
     for _ in 0..=MAX_TREE_DEPTH {
-        match node_at(backend, &hash)? {
-            ChunkTreeNode::Chunk(_) => {
+        match shape_at(backend, &hash)? {
+            NodeShape::Chunk { .. } => {
                 return count
                     .checked_add(1)
                     .ok_or_else(|| Error::NonCanonicalTree(format!("{:#x}", root)))
             }
-            ChunkTreeNode::Internal { left, right } => {
+            NodeShape::Internal { left, right } => {
                 count = count
                     .checked_add(left_child_chunks(backend, left, root)?)
                     .ok_or_else(|| Error::NonCanonicalTree(format!("{:#x}", root)))?;
@@ -425,9 +442,9 @@ fn left_child_chunks<B: StorageBackend + ?Sized>(
 ) -> Result<u64, Error> {
     let mut hash = left;
     for height in 0..=MAX_TREE_DEPTH {
-        match node_at(backend, &hash)? {
-            ChunkTreeNode::Chunk(_) => return Ok(1u64 << height),
-            ChunkTreeNode::Internal { left, .. } => hash = left,
+        match shape_at(backend, &hash)? {
+            NodeShape::Chunk { .. } => return Ok(1u64 << height),
+            NodeShape::Internal { left, .. } => hash = left,
         }
     }
     Err(Error::NonCanonicalTree(format!("{:#x}", root)))
@@ -436,7 +453,8 @@ fn left_child_chunks<B: StorageBackend + ?Sized>(
 /// Hash, data and Merkle proof of chunk `index` in the tree of `chunk_count`
 /// chunks under `root`. A tree over `n > 1` chunks splits into the largest
 /// power of two below `n` on the left and the rest on the right, and the
-/// proof lists the sibling at each split, from the chunk up.
+/// proof lists the sibling at each split, from the chunk up. Only the proven
+/// chunk's data is read.
 fn chunk_with_proof<B: StorageBackend + ?Sized>(
     backend: &B,
     root: H256,
@@ -446,12 +464,15 @@ fn chunk_with_proof<B: StorageBackend + ?Sized>(
     let (mut hash, mut count, mut index) = (root, chunk_count, index);
     let mut siblings = Vec::new();
     loop {
-        match node_at(backend, &hash)? {
-            ChunkTreeNode::Chunk(data) if count == 1 => {
+        match shape_at(backend, &hash)? {
+            NodeShape::Chunk { .. } if count == 1 => {
+                let ChunkTreeNode::Chunk(data) = node_at(backend, &hash)? else {
+                    return Err(Error::NonCanonicalTree(format!("{:#x}", root)));
+                };
                 siblings.reverse();
                 return Ok((hash, data, siblings));
             }
-            ChunkTreeNode::Internal { left, right } if count > 1 => {
+            NodeShape::Internal { left, right } if count > 1 => {
                 let split = 1u64 << (count - 1).ilog2();
                 if index < split {
                     siblings.push(right);
