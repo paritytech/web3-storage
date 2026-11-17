@@ -63,7 +63,6 @@ impl AuthTestServer {
         let alice_account = common::test_member_account();
         Self::with_resolver(StaticMembershipResolver::new(BucketAccess {
             members: vec![(alice_account, alice_role).into()],
-            primary_providers: vec![],
             visibility: Visibility::Public,
             local_agreement: Some(LocalBucketAgreement {
                 role: RuntimeProviderRole::Primary,
@@ -436,65 +435,6 @@ async fn topped_up_quota_applies_after_the_block_event() {
         put_node(&server, Some(header), &[1u8; 20]).await.status(),
         StatusCode::OK
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
-}
-
-/// The bucket's primary providers are part of the cached access entry, so
-/// `ProviderAddedToBucket` (decoded to `BucketMembershipChanged`) must drop
-/// it: a push to a replica refused as not-primary succeeds once the pusher is
-/// a primary on chain.
-#[tokio::test]
-async fn added_primary_provider_may_push_after_the_block_event() {
-    let primary = sr25519::Pair::from_string("//Charlie", None).unwrap();
-    let replica = || StaticMembershipResolver::private(vec![]).with_serves_as_replica();
-    let (server, access, calls, tx) = switchable_server(replica().access).await;
-    let put = || {
-        put_node(
-            &server,
-            Some(make_auth_header(&primary, "PUT", 1, current_timestamp())),
-            b"pushed by a primary",
-        )
-    };
-
-    assert_not_primary(put().await).await;
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-
-    *access.lock().unwrap() = replica()
-        .with_primary_providers(vec![AccountId32::new(primary.public().0)])
-        .access;
-    let _ = tx.send(BlockEvent::BucketMembershipChanged { bucket_id: 1 });
-
-    assert_eq!(put().await.status(), StatusCode::OK);
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
-}
-
-/// The reverse of the above: `PrimaryProviderRemoved` must drop the entry so
-/// a former primary can no longer push to the replica.
-#[tokio::test]
-async fn removed_primary_provider_is_refused_after_the_block_event() {
-    let primary = sr25519::Pair::from_string("//Charlie", None).unwrap();
-    let replica = || StaticMembershipResolver::private(vec![]).with_serves_as_replica();
-    let (server, access, calls, tx) = switchable_server(
-        replica()
-            .with_primary_providers(vec![AccountId32::new(primary.public().0)])
-            .access,
-    )
-    .await;
-    let put = || {
-        put_node(
-            &server,
-            Some(make_auth_header(&primary, "PUT", 1, current_timestamp())),
-            b"pushed by a primary",
-        )
-    };
-
-    assert_eq!(put().await.status(), StatusCode::OK);
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-
-    *access.lock().unwrap() = replica().access;
-    let _ = tx.send(BlockEvent::BucketMembershipChanged { bucket_id: 1 });
-
-    assert_not_primary(put().await).await;
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
 
@@ -921,42 +861,4 @@ async fn replica_rejects_delete() {
         .await
         .unwrap();
     assert_not_primary(resp).await;
-}
-
-/// A primary provider may push nodes to a replica, but `POST /commit` on a
-/// replica is rejected for everyone, including a primary provider.
-#[tokio::test]
-async fn replica_rejects_commit_from_a_primary_provider() {
-    let primary = sr25519::Pair::from_string("//Charlie", None).unwrap();
-    let server = AuthTestServer::with_resolver(
-        StaticMembershipResolver::private(vec![])
-            .with_primary_providers(vec![AccountId32::new(primary.public().0)])
-            .with_serves_as_replica(),
-    )
-    .await;
-    let data = b"pushed by the primary";
-
-    let header = make_auth_header(&primary, "PUT", 1, current_timestamp());
-    assert_eq!(
-        put_node(&server, Some(header), data).await.status(),
-        StatusCode::OK
-    );
-
-    let header = make_auth_header(&primary, "POST", 1, current_timestamp());
-    let hash_hex = format!("{:#x}", storage_primitives::hash_leaf(data));
-    let resp = server
-        .client
-        .post(server.url("/commit"))
-        .header("Authorization", &header)
-        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
-        .send()
-        .await
-        .unwrap();
-    assert_not_primary(resp).await;
-
-    let bucket = server.storage.get_bucket(1).unwrap().unwrap();
-    assert_eq!(
-        bucket.leaf_count, 0,
-        "a rejected commit must not change the bucket"
-    );
 }

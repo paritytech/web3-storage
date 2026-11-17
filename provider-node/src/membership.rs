@@ -125,7 +125,6 @@ impl MembershipResolver for ChainMembershipResolver {
 
         Ok(BucketAccess {
             members,
-            primary_providers: primary_provider_accounts(bucket.primary_providers.0),
             visibility: bucket.visibility.into(),
             local_agreement,
         })
@@ -136,13 +135,6 @@ fn member_roles(members: Vec<RuntimeMember>) -> Vec<Member> {
     members
         .into_iter()
         .map(|m| (AccountId32::new(m.account.0), m.role.into()).into())
-        .collect()
-}
-
-fn primary_provider_accounts(providers: Vec<subxt::utils::AccountId32>) -> Vec<AccountId32> {
-    providers
-        .into_iter()
-        .map(|account| AccountId32::new(account.0))
         .collect()
 }
 

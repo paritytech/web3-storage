@@ -48,7 +48,6 @@ impl LocalBucketAgreement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BucketAccess {
     pub members: Vec<Member>,
-    pub primary_providers: Vec<AccountId32>,
     pub visibility: Visibility,
     /// `None`: this node has no agreement on the bucket.
     pub local_agreement: Option<LocalBucketAgreement>,
@@ -60,7 +59,6 @@ impl BucketAccess {
     pub fn private(members: Vec<Member>) -> Self {
         Self {
             members,
-            primary_providers: Vec::new(),
             visibility: Visibility::Private,
             local_agreement: None,
         }
@@ -172,12 +170,6 @@ impl StaticMembershipResolver {
             }),
             ..BucketAccess::private(members)
         })
-    }
-
-    /// Resolve every bucket with these primary provider accounts.
-    pub fn with_primary_providers(mut self, primary_providers: Vec<AccountId32>) -> Self {
-        self.access.primary_providers = primary_providers;
-        self
     }
 
     /// Resolve every bucket as replica-held by this node. The replica's sync
@@ -471,7 +463,6 @@ impl MembershipCache {
                 tracing::debug!(
                     bucket_id,
                     members = entry.access.members.len(),
-                    primary_providers = entry.access.primary_providers.len(),
                     local_agreement = entry.access.local_agreement.is_some(),
                     replica = entry.access.serves_as_replica(),
                     "membership cache: resolved bucket access"
