@@ -31,6 +31,7 @@ use storage_primitives::{
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
 const CF_BUCKETS: &str = "buckets";
 const CF_NODES: &str = "nodes";
+/// One [`RefcountEntry`] row per stored node, keyed like `CF_NODES`.
 const CF_NODE_REFS: &str = "refcounts";
 const CF_METADATA: &str = "metadata";
 /// Every column family this engine opens.

@@ -1,14 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The CF_NODE_REFS value format.
-//!
-//! One entry per stored node: how many committed leaves (live or stashed,
-//! across all buckets) reach it, plus which bucket's `used_bytes` was
-//! charged when the node was first stored — so erasure credits the exact
-//! payer, and whether the node is a chunk or an internal node, so a tree walk
-//! learns a chunk's size and kind without reading the chunk. SCALE-encoded
-//! like every other value in this backend (three fixed-width LE u64s and the
-//! kind tag, 25 bytes).
+//! The `CF_NODE_REFS` value format. SCALE-encoded like every other value in
+//! this backend: three little-endian u64s and a one-byte kind, 25 bytes.
 
 use crate::error::Error;
 use codec::{Decode, DecodeAll, Encode};
@@ -20,11 +13,22 @@ pub(super) enum NodeKind {
     Internal,
 }
 
+/// What the store records about a node besides its body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub(super) struct RefcountEntry {
+    /// How many paths from committed leaves, live or stashed, across all
+    /// buckets, reach the node. Commit adds one per path and erasure subtracts
+    /// one per path; at zero, erasure deletes the node and this row.
     pub count: u64,
+    /// The bucket charged for the node when it was first stored. When erasure
+    /// deletes the node, it subtracts `size` from this bucket's `used_bytes`
+    /// and 1 from its `node_count`.
     pub charged_bucket: u64,
+    /// The bytes charged for the node: the data length for a chunk, 64 (two
+    /// child hashes) for an internal node.
     pub size: u64,
+    /// Chunk or internal node. A tree walk reads a chunk's size from this row
+    /// and does not read the chunk.
     pub kind: NodeKind,
 }
 
