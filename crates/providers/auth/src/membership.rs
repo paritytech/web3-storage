@@ -11,7 +11,7 @@ use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use storage_primitives::{BucketId, Role, Visibility};
+use storage_primitives::{BucketId, Role, RuntimeProviderRole, Visibility};
 
 /// A bucket member and the role they hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,29 +47,31 @@ impl BucketAccess {
     }
 }
 
-/// Required role for an endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RequiredRole {
-    /// Any member of the bucket.
-    Reader,
-    /// `Writer` or `Admin`.
-    Writer,
-    /// `Admin` only.
-    Admin,
+/// Whether `granted` meets `required`: `Admin` > `Writer` > `Reader`.
+/// Matched over the pair so a new [`Role`] fails to compile here.
+pub fn role_satisfies(required: Role, granted: Role) -> bool {
+    match (required, granted) {
+        // Any member of the bucket can read.
+        (Role::Reader, Role::Reader | Role::Writer | Role::Admin) => true,
+        (Role::Writer, Role::Writer | Role::Admin) => true,
+        (Role::Writer, Role::Reader) => false,
+        (Role::Admin, Role::Admin) => true,
+        (Role::Admin, Role::Reader | Role::Writer) => false,
+    }
 }
 
-impl RequiredRole {
-    /// Matched over the pair, not on `self` alone, so a new [`Role`] fails to
-    /// compile here until it is given an explicit answer.
-    pub fn is_satisfied_by(self, granted: Role) -> bool {
-        match (self, granted) {
-            // Any member of the bucket can read.
-            (RequiredRole::Reader, Role::Reader | Role::Writer | Role::Admin) => true,
-            (RequiredRole::Writer, Role::Writer | Role::Admin) => true,
-            (RequiredRole::Writer, Role::Reader) => false,
-            (RequiredRole::Admin, Role::Admin) => true,
-            (RequiredRole::Admin, Role::Reader | Role::Writer) => false,
-        }
+/// This node's own storage agreement on a bucket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalBucketAgreement {
+    /// The agreement's role, as stored on chain.
+    pub role: RuntimeProviderRole,
+    /// The agreement's quota, in bytes.
+    pub max_bytes: u64,
+}
+
+impl LocalBucketAgreement {
+    pub fn is_primary(&self) -> bool {
+        matches!(self.role, RuntimeProviderRole::Primary)
     }
 }
 
@@ -126,12 +128,14 @@ pub trait MembershipResolver: Send + Sync {
     /// exist, or it holds no members.
     async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError>;
 
-    /// Whether *this node* holds `bucket_id` under a replica agreement.
-    /// Replicas serve reads to everyone — visibility gates primaries only —
-    /// so `true` passes Reader checks without auth. Defaults to `false`, the
-    /// right answer for a resolver with no node identity.
-    async fn fetch_serves_as_replica(&self, _bucket_id: BucketId) -> Result<bool, MembershipError> {
-        Ok(false)
+    /// *This node's* agreement on `bucket_id`, or `None` if it has none.
+    /// Defaults to `None`, the right answer for a resolver with no node
+    /// identity.
+    async fn fetch_bucket_agreement(
+        &self,
+        _bucket_id: BucketId,
+    ) -> Result<Option<LocalBucketAgreement>, MembershipError> {
+        Ok(None)
     }
 }
 
@@ -142,27 +146,35 @@ impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
         (**self).fetch_access(bucket_id).await
     }
 
-    async fn fetch_serves_as_replica(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
-        (**self).fetch_serves_as_replica(bucket_id).await
+    async fn fetch_bucket_agreement(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<LocalBucketAgreement>, MembershipError> {
+        (**self).fetch_bucket_agreement(bucket_id).await
     }
 }
 
 /// A [`MembershipResolver`] that returns the same fixed answers for every
 /// bucket. Used by tests across crates; [`Self::private`] is the fail-safe
 /// member-only shape.
+#[cfg(any(test, feature = "test-helpers"))]
 pub struct StaticMembershipResolver {
     /// Returned by `fetch_access` for every bucket.
     pub access: BucketAccess,
-    /// Returned by `fetch_serves_as_replica` for every bucket.
-    pub serves_as_replica: bool,
+    /// Returned by `fetch_bucket_agreement` for every bucket.
+    pub bucket_agreement: Option<LocalBucketAgreement>,
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 impl StaticMembershipResolver {
-    /// Returns `access` for every bucket, with `serves_as_replica` false.
+    /// Returns `access` for every bucket, with an unlimited primary agreement.
     pub fn new(access: BucketAccess) -> Self {
         Self {
             access,
-            serves_as_replica: false,
+            bucket_agreement: Some(LocalBucketAgreement {
+                role: RuntimeProviderRole::Primary,
+                max_bytes: u64::MAX,
+            }),
         }
     }
 
@@ -171,21 +183,49 @@ impl StaticMembershipResolver {
         Self::new(BucketAccess::private(members))
     }
 
-    /// Resolve every bucket as replica-held by this node.
+    /// Resolve every bucket as replica-held by this node. The replica's sync
+    /// fields are zero: auth only reads the role.
     pub fn with_serves_as_replica(mut self) -> Self {
-        self.serves_as_replica = true;
+        self.bucket_agreement = Some(LocalBucketAgreement {
+            role: RuntimeProviderRole::Replica {
+                sync_balance: 0,
+                sync_price: 0,
+                min_sync_interval: 0,
+                last_sync: None,
+            },
+            max_bytes: u64::MAX,
+        });
+        self
+    }
+
+    /// Resolve every bucket as a primary agreement with this quota.
+    pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
+        self.bucket_agreement = Some(LocalBucketAgreement {
+            role: RuntimeProviderRole::Primary,
+            max_bytes,
+        });
+        self
+    }
+
+    /// Resolve every bucket as one this node has no agreement on.
+    pub fn without_agreement(mut self) -> Self {
+        self.bucket_agreement = None;
         self
     }
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 #[async_trait::async_trait]
 impl MembershipResolver for StaticMembershipResolver {
     async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
         Ok(self.access.clone())
     }
 
-    async fn fetch_serves_as_replica(&self, _bucket_id: BucketId) -> Result<bool, MembershipError> {
-        Ok(self.serves_as_replica)
+    async fn fetch_bucket_agreement(
+        &self,
+        _bucket_id: BucketId,
+    ) -> Result<Option<LocalBucketAgreement>, MembershipError> {
+        Ok(self.bucket_agreement.clone())
     }
 }
 
@@ -397,6 +437,15 @@ impl MembershipCache {
         Ok(self.lookup(bucket_id).await?.role_of(account))
     }
 
+    /// This node's agreement on `bucket_id`, read from the resolver directly,
+    /// bypassing the cache.
+    pub(crate) async fn fetch_bucket_agreement(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<LocalBucketAgreement>, MembershipError> {
+        self.resolver.fetch_bucket_agreement(bucket_id).await
+    }
+
     /// The bucket's cached access entry, resolved on a miss or once stale.
     pub(crate) async fn lookup(
         &self,
@@ -419,7 +468,13 @@ impl MembershipCache {
         // stale-if-error path as a failed member lookup.
         let fetched = async {
             let access = self.resolver.fetch_access(bucket_id).await?;
-            let serves_as_replica = self.resolver.fetch_serves_as_replica(bucket_id).await?;
+            // Only a replica agreement serves reads to everyone; a primary
+            // agreement or none leaves reads to the visibility check.
+            let serves_as_replica = self
+                .resolver
+                .fetch_bucket_agreement(bucket_id)
+                .await?
+                .is_some_and(|agreement| !agreement.is_primary());
             Ok::<_, MembershipError>((access, serves_as_replica))
         }
         .await;
@@ -509,21 +564,34 @@ mod tests {
         // Every (required, granted) pair, so the ladder cannot be widened
         // without a test failing.
         for (required, granted, expected) in [
-            (RequiredRole::Reader, Role::Reader, true),
-            (RequiredRole::Reader, Role::Writer, true),
-            (RequiredRole::Reader, Role::Admin, true),
-            (RequiredRole::Writer, Role::Reader, false),
-            (RequiredRole::Writer, Role::Writer, true),
-            (RequiredRole::Writer, Role::Admin, true),
-            (RequiredRole::Admin, Role::Reader, false),
-            (RequiredRole::Admin, Role::Writer, false),
-            (RequiredRole::Admin, Role::Admin, true),
+            (Role::Reader, Role::Reader, true),
+            (Role::Reader, Role::Writer, true),
+            (Role::Reader, Role::Admin, true),
+            (Role::Writer, Role::Reader, false),
+            (Role::Writer, Role::Writer, true),
+            (Role::Writer, Role::Admin, true),
+            (Role::Admin, Role::Reader, false),
+            (Role::Admin, Role::Writer, false),
+            (Role::Admin, Role::Admin, true),
         ] {
             assert_eq!(
-                required.is_satisfied_by(granted),
+                role_satisfies(required, granted),
                 expected,
                 "{granted:?} vs required {required:?}"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn serves_as_replica_is_true_only_for_a_replica_agreement() {
+        let base = || StaticMembershipResolver::private(vec![]);
+        for (resolver, expected) in [
+            (base().with_serves_as_replica(), true),
+            (base().with_max_bytes(10), false),
+            (base().without_agreement(), false),
+        ] {
+            let entry = MembershipCache::new(resolver).lookup(1).await.unwrap();
+            assert_eq!(entry.serves_as_replica, expected);
         }
     }
 
