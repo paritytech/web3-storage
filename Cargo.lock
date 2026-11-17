@@ -9770,6 +9770,7 @@ dependencies = [
  "anyhow",
  "array-bytes 6.2.3",
  "clap",
+ "provider-types",
  "rand 0.8.8",
  "serde",
  "serde_json",

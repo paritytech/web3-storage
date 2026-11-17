@@ -2,6 +2,7 @@
 
 //! Command-line argument parsing for the storage CLI.
 
+use crate::commands::provider::Provider;
 use crate::commands::stress_test::StressTest;
 use crate::metrics::OutputFormat;
 use clap::{Args, Parser, Subcommand};
@@ -50,7 +51,8 @@ pub struct GlobalArgs {
     #[arg(long, value_name = "FILE", conflicts_with = "suri")]
     pub keyfile: Option<PathBuf>,
 
-    /// Format for the final metrics summary printed to stdout.
+    /// Format for the final metrics summary printed to stdout. Commands
+    /// without metrics ignore it.
     #[arg(long, value_enum, value_name = "FORMAT", default_value_t = OutputFormat::Text)]
     pub output: OutputFormat,
 }
@@ -60,4 +62,8 @@ pub enum Command {
     /// Stress-test operations against a provider.
     #[command(subcommand)]
     StressTest(StressTest),
+
+    /// Provider registration.
+    #[command(subcommand)]
+    Provider(Provider),
 }
