@@ -9,6 +9,7 @@
 use parking_lot::Mutex;
 use provider_events::EVENT_CHANNEL_CAPACITY;
 use provider_garbage_collector::{CanonicalBucketState, GcChainClient, GcError};
+use provider_garbage_collector::{GcCoordinator, GcCoordinatorConfig, GcCoordinatorHandle};
 use provider_http::ProviderState;
 use provider_storage::{ChunkTreeNode, GarbageCollectorConfiguration};
 use sp_core::H256;
@@ -17,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{hash_leaf, BucketId};
-use storage_provider_node::{GcCoordinator, GcCoordinatorConfig};
+use storage_provider_node::{BackendGcStorage, BlockEventGcSource};
 
 use super::{signed_receipt, test_state, wait_for};
 
@@ -157,7 +158,7 @@ fn start_gc(
     state: Arc<ProviderState>,
     mock: MockGcChainClient,
 ) -> (
-    storage_provider_node::GcCoordinatorHandle,
+    GcCoordinatorHandle,
     tokio::sync::broadcast::Sender<provider_events::BlockEvent>,
 ) {
     let (handle, tx, _mock) = start_gc_shared(state, Arc::new(mock));
@@ -170,7 +171,7 @@ fn start_gc_shared(
     state: Arc<ProviderState>,
     mock: Arc<MockGcChainClient>,
 ) -> (
-    storage_provider_node::GcCoordinatorHandle,
+    GcCoordinatorHandle,
     tokio::sync::broadcast::Sender<provider_events::BlockEvent>,
     Arc<MockGcChainClient>,
 ) {
@@ -178,7 +179,12 @@ fn start_gc_shared(
     let config = GcCoordinatorConfig {
         scan_interval: Duration::from_millis(50),
     };
-    let handle = GcCoordinator::new(config, state, Arc::clone(&mock) as Arc<_>).start(rx);
+    let handle = GcCoordinator::new(
+        config,
+        Arc::new(BackendGcStorage(state.storage().clone())),
+        Arc::clone(&mock) as Arc<_>,
+    )
+    .start(Box::new(BlockEventGcSource(rx)));
     (handle, tx, mock)
 }
 

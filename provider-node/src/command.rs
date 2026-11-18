@@ -9,14 +9,14 @@ use crate::{
     cli::{Cli, DEFAULT_PROVIDER_ID},
     membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
-    ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponderHandle, GcCoordinator, GcCoordinatorConfig, GcCoordinatorHandle,
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
-    StorageProofSource,
+    BackendGcStorage, BlockEventGcSource, ChainStateCoordinatorHandle, ChallengeResponder,
+    ChallengeResponderConfig, ChallengeResponderHandle, ReplicaSyncCoordinator,
+    ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, StorageProofSource,
 };
 use clap::Parser;
 use provider_auth::Authenticator;
 use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
+use provider_garbage_collector::{GcCoordinator, GcCoordinatorConfig, GcCoordinatorHandle};
 use provider_http::{create_router, ProviderDeps, ProviderState};
 use sp_core::crypto::{AccountId32, Ss58Codec};
 use std::net::SocketAddr;
@@ -251,11 +251,11 @@ fn start_gc_coordinator(
 
     let coordinator = GcCoordinator::new(
         GcCoordinatorConfig::default(),
-        state,
+        Arc::new(BackendGcStorage(state.storage().clone())),
         Arc::new(chain_client),
     );
     tracing::info!("GC coordinator started");
-    Some(coordinator.start(events_rx))
+    Some(coordinator.start(Box::new(BlockEventGcSource(events_rx))))
 }
 
 async fn start_replica_sync_coordinator(

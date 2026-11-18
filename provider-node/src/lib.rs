@@ -14,12 +14,12 @@ pub mod challenge_proofs;
 pub mod cli;
 pub mod command;
 pub(crate) mod event_decoding;
-pub mod gc_coordinator;
+pub mod garbage_collector;
 pub mod membership;
 pub(crate) mod subxt_client;
 
 pub use challenge_proofs::StorageProofSource;
-pub use gc_coordinator::{GcCoordinator, GcCoordinatorConfig, GcCoordinatorHandle};
+pub use garbage_collector::{BackendGcStorage, BlockEventGcSource};
 pub use provider_challenge::{
     self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
     ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle, ChallengeResponse,

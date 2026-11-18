@@ -7047,8 +7047,11 @@ name = "provider-garbage-collector"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "parking_lot",
  "storage-primitives",
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

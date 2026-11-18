@@ -9,5 +9,8 @@ description = "Garbage collector: erases pruned and torn-down bucket data once o
 
 [dependencies]
 async-trait = { workspace = true }
+parking_lot = { workspace = true }
 storage-primitives = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
