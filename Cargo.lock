@@ -9923,7 +9923,7 @@ dependencies = [
 
 [[package]]
 name = "storage-paseo-runtime"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "cumulus-pallet-aura-ext",
  "cumulus-pallet-parachain-system",
@@ -10005,7 +10005,7 @@ dependencies = [
 
 [[package]]
 name = "storage-provider-node"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "array-bytes 6.2.3",
  "async-trait",
