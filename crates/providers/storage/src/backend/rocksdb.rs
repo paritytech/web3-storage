@@ -44,10 +44,13 @@ const CF_PRUNED_RANGES: &str = "pruned_ranges";
 /// Admin deletion receipts, keyed by [`seq_key`] with the receipt's
 /// `new_start_seq`. Value: SCALE(`DeletionReceipt`).
 const CF_DELETION_RECEIPTS: &str = "deletion_receipts";
+/// Post-prune MMR root of each pruned range, keyed by [`seq_key`] with the
+/// range's `new_start_seq`. Value: the raw 32-byte root.
+const CF_PRUNED_ROOTS: &str = "pruned_roots";
 /// Settings and progress of the garbage collector, one key per value.
 const CF_GC_CONFIGURATION: &str = "garbage_collector_configuration";
 /// Every column family this engine opens.
-const COLUMN_FAMILIES: [&str; 9] = [
+const COLUMN_FAMILIES: [&str; 10] = [
     CF_NODES,
     CF_BUCKETS,
     CF_ROOT_TO_BUCKET,
@@ -56,6 +59,7 @@ const COLUMN_FAMILIES: [&str; 9] = [
     CF_LEAVES,
     CF_PRUNED_RANGES,
     CF_DELETION_RECEIPTS,
+    CF_PRUNED_ROOTS,
     CF_GC_CONFIGURATION,
 ];
 
@@ -399,6 +403,21 @@ impl DiskStorage {
             .next()
             .transpose()?;
         Ok(first.is_some_and(|(key, _)| seq_of(bucket_id, &key).is_some()))
+    }
+
+    /// The post-prune root recorded for the range of `bucket_id` ending at
+    /// `new_start_seq`, as `txn` sees it. `None` for a range pruned before
+    /// roots were recorded.
+    fn pruned_root(
+        &self,
+        txn: &Transaction<'_, TransactionDB>,
+        bucket_id: BucketId,
+        new_start_seq: u64,
+    ) -> Result<Option<H256>, Error> {
+        let raw = txn
+            .get_cf(self.cf(CF_PRUNED_ROOTS)?, seq_key(bucket_id, new_start_seq))
+            .map_err(|error| bucket_write_error(bucket_id, error))?;
+        Ok(raw.map(|bytes| H256::from_slice(&bytes)))
     }
 
     /// Whether a pruned range of the bucket ends at `new_start_seq`, as `txn` sees
@@ -845,7 +864,14 @@ impl DiskStorage {
             if leaves.len() as u64 != bucket.leaf_count {
                 return Err(leaves_not_held(&bucket, new_start_seq, bucket.leaf_count));
             }
+            // TODO(enhancement): turn this into background job for large MMR tree
             (bucket.mmr_root, bucket.peaks) = mmr::peaks(&leaves)?;
+            txn.put_cf(
+                self.cf(CF_PRUNED_ROOTS)?,
+                seq_key(bucket_id, new_start_seq),
+                bucket.mmr_root.as_bytes(),
+            )
+            .map_err(|error| bucket_write_error(bucket_id, error))?;
 
             self.put_bucket(&txn, bucket_id, &bucket)?;
             txn.commit()?;
@@ -972,6 +998,15 @@ impl DiskStorage {
                 end: bucket.end_seq(),
             });
         }
+        if let Some(expected) = self.pruned_root(&txn, bucket_id, receipt.new_start_seq)? {
+            if expected != receipt.mmr_root {
+                return Err(Error::DeletionRootMismatch {
+                    bucket_id,
+                    expected,
+                    actual: receipt.mmr_root,
+                });
+            }
+        }
         txn.put_cf(cf_receipts, key, receipt.encode())
             .map_err(|error| bucket_write_error(bucket_id, error))?;
         txn.commit()?;
@@ -1068,7 +1103,7 @@ impl DiskStorage {
 
         let mut doomed = Vec::new();
         let mut more = false;
-        'scan: for name in [CF_LEAVES, CF_DELETION_RECEIPTS] {
+        'scan: for name in [CF_LEAVES, CF_DELETION_RECEIPTS, CF_PRUNED_ROOTS] {
             for item in txn.iterator_cf(
                 self.cf(name)?,
                 IteratorMode::From(&seq_key(bucket_id, 0), Direction::Forward),
@@ -1673,6 +1708,7 @@ mod tests {
                 "leaves",
                 "pruned_ranges",
                 "deletion_receipts",
+                "pruned_roots",
                 "garbage_collector_configuration"
             ],
             "column-family names locate every record on disk",
@@ -1803,6 +1839,15 @@ mod tests {
             array_bytes::bytes2hex("", &raw),
             "000000000000000001000000000000000000000000000000"
         );
+
+        // CF_PRUNED_ROOTS: key = bucket_id then new_start_seq, value = the raw root.
+        let cf = storage.db.cf_handle(CF_PRUNED_ROOTS).unwrap();
+        let raw = storage
+            .db
+            .get_cf(&cf, [1u8, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 1])
+            .unwrap()
+            .unwrap();
+        assert_eq!(raw, mmr_root.as_bytes());
 
         let receipt = signed_receipt(bucket_id, mmr_root, 1, &admin_pair());
         storage
@@ -3335,7 +3380,7 @@ mod tests {
         let storage = DiskStorage::new(dir.path()).unwrap();
         stash_leaves(&storage, 3, 2);
 
-        let receipt = receipt_for(2);
+        let receipt = receipt_for(&storage, 2);
         storage.attach_deletion_receipt(1, receipt.clone()).unwrap();
 
         assert_eq!(
@@ -3372,17 +3417,20 @@ mod tests {
         }
     }
 
-    /// A receipt for bucket 1 signed by the test admin.
-    fn receipt_for(new_start_seq: u64) -> DeletionReceipt {
-        signed_receipt(1, H256::repeat_byte(1), new_start_seq, &admin_pair())
+    /// A receipt for bucket 1 signed by the test admin over the bucket's
+    /// current root, which is the post-prune root when nothing was committed
+    /// after the prune.
+    fn receipt_for(storage: &DiskStorage, new_start_seq: u64) -> DeletionReceipt {
+        let root = storage.get_mmr_peaks(1).unwrap().0;
+        signed_receipt(1, root, new_start_seq, &admin_pair())
     }
 
-    fn forged_receipt(new_start_seq: u64) -> DeletionReceipt {
+    fn forged_receipt(storage: &DiskStorage, new_start_seq: u64) -> DeletionReceipt {
         DeletionReceipt {
             signature: sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from(
                 [0u8; 64],
             )),
-            ..receipt_for(new_start_seq)
+            ..receipt_for(storage, new_start_seq)
         }
     }
 
@@ -3393,7 +3441,7 @@ mod tests {
         stash_leaves(&storage, 3, 2);
 
         let err = storage
-            .attach_deletion_receipt(1, forged_receipt(2))
+            .attach_deletion_receipt(1, forged_receipt(&storage, 2))
             .unwrap_err();
 
         assert!(
@@ -3458,12 +3506,12 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
         stash_leaves(&storage, 3, 2);
-        let receipt = receipt_for(2);
+        let receipt = receipt_for(&storage, 2);
         storage.attach_deletion_receipt(1, receipt.clone()).unwrap();
         storage.erase_pruned_range(1, 0).unwrap();
 
         let err = storage
-            .attach_deletion_receipt(1, forged_receipt(2))
+            .attach_deletion_receipt(1, forged_receipt(&storage, 2))
             .unwrap_err();
 
         assert!(
@@ -3483,7 +3531,7 @@ mod tests {
         stash_leaves(&storage, 3, 2);
 
         let err = storage
-            .attach_deletion_receipt(1, receipt_for(1))
+            .attach_deletion_receipt(1, receipt_for(&storage, 1))
             .unwrap_err();
 
         assert!(
@@ -3497,10 +3545,12 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let storage = DiskStorage::new(dir.path()).unwrap();
         stash_leaves(&storage, 3, 2);
-        storage.attach_deletion_receipt(1, receipt_for(2)).unwrap();
+        storage
+            .attach_deletion_receipt(1, receipt_for(&storage, 2))
+            .unwrap();
         storage.erase_pruned_range(1, 0).unwrap();
 
-        let replacement = signed_receipt(1, H256::repeat_byte(2), 2, &admin_pair());
+        let replacement = receipt_for(&storage, 2);
         storage
             .attach_deletion_receipt(1, replacement.clone())
             .unwrap();
@@ -3508,6 +3558,80 @@ mod tests {
         assert_eq!(
             storage.deletion_receipt_covering(1, 1).unwrap(),
             Some(replacement)
+        );
+    }
+
+    /// A receipt for bucket 1, `new_start_seq` 2, signed over `signed_root`.
+    fn receipt_over(signed_root: H256) -> DeletionReceipt {
+        signed_receipt(1, signed_root, 2, &admin_pair())
+    }
+
+    #[test]
+    fn a_receipt_over_another_root_is_rejected_and_not_stored() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        bucket_with_leaves(&storage, 1, 3);
+        let expected = storage.delete_before(1, 2).unwrap().mmr_root;
+        let wrong = H256::repeat_byte(9);
+
+        let err = storage
+            .attach_deletion_receipt(1, receipt_over(wrong))
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                Error::DeletionRootMismatch { bucket_id: 1, expected: e, actual: a }
+                    if e == expected && a == wrong
+            ),
+            "got {err:?}"
+        );
+        assert_eq!(raw(&storage, CF_DELETION_RECEIPTS, &seq_key(1, 2)), None);
+    }
+
+    #[test]
+    fn a_replacement_over_another_root_is_rejected_after_erasure() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        stash_leaves(&storage, 3, 2);
+        let receipt = receipt_for(&storage, 2);
+        storage.attach_deletion_receipt(1, receipt.clone()).unwrap();
+        storage.erase_pruned_range(1, 0).unwrap();
+
+        let err = storage
+            .attach_deletion_receipt(1, receipt_over(H256::repeat_byte(9)))
+            .unwrap_err();
+
+        assert!(
+            matches!(err, Error::DeletionRootMismatch { .. }),
+            "got {err:?}"
+        );
+        assert_eq!(
+            storage.deletion_receipt_covering(1, 1).unwrap(),
+            Some(receipt)
+        );
+    }
+
+    #[test]
+    fn a_range_without_a_recorded_root_accepts_any_signed_root() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        stash_leaves(&storage, 3, 2);
+        // A range pruned by a build that did not record roots.
+        storage
+            .db
+            .delete_cf(
+                &storage.db.cf_handle(CF_PRUNED_ROOTS).unwrap(),
+                seq_key(1, 2),
+            )
+            .unwrap();
+        let receipt = receipt_over(H256::repeat_byte(9));
+
+        storage.attach_deletion_receipt(1, receipt.clone()).unwrap();
+
+        assert_eq!(
+            raw(&storage, CF_DELETION_RECEIPTS, &seq_key(1, 2)),
+            Some(receipt.encode())
         );
     }
 
@@ -3519,7 +3643,7 @@ mod tests {
         storage.condemn_bucket(1).unwrap();
 
         let err = storage
-            .attach_deletion_receipt(1, receipt_for(2))
+            .attach_deletion_receipt(1, receipt_for(&storage, 2))
             .unwrap_err();
 
         assert!(matches!(err, Error::BucketCondemned(1)), "got {err:?}");
@@ -3699,22 +3823,27 @@ mod tests {
         assert!(storage.get_bucket(1).unwrap().is_none());
     }
 
-    /// Number of leaf, pruned range and receipt records of the bucket.
+    /// Number of leaf, pruned range, receipt and pruned root records of the bucket.
     fn records_of(storage: &DiskStorage, bucket_id: BucketId) -> usize {
-        [CF_LEAVES, CF_PRUNED_RANGES, CF_DELETION_RECEIPTS]
-            .into_iter()
-            .map(|name| {
-                storage
-                    .db
-                    .iterator_cf(
-                        storage.db.cf_handle(name).unwrap(),
-                        IteratorMode::From(&seq_key(bucket_id, 0), Direction::Forward),
-                    )
-                    .map(Result::unwrap)
-                    .take_while(|(key, _)| seq_of(bucket_id, key).is_some())
-                    .count()
-            })
-            .sum()
+        [
+            CF_LEAVES,
+            CF_PRUNED_RANGES,
+            CF_DELETION_RECEIPTS,
+            CF_PRUNED_ROOTS,
+        ]
+        .into_iter()
+        .map(|name| {
+            storage
+                .db
+                .iterator_cf(
+                    storage.db.cf_handle(name).unwrap(),
+                    IteratorMode::From(&seq_key(bucket_id, 0), Direction::Forward),
+                )
+                .map(Result::unwrap)
+                .take_while(|(key, _)| seq_of(bucket_id, key).is_some())
+                .count()
+        })
+        .sum()
     }
 
     #[test]
@@ -3770,8 +3899,9 @@ mod tests {
         assert_in_sync(&storage, 0);
     }
 
-    /// A condemned bucket with five leaf records left and nothing to erase:
-    /// the state a removal that stopped part way leaves behind.
+    /// A condemned bucket with five leaf records and a pruned root record left
+    /// and nothing to erase: the state a removal that stopped part way leaves
+    /// behind.
     fn interrupted_removal(storage: &DiskStorage) {
         bucket_with_leaves(storage, 1, 5);
         storage.delete_before(1, 5).unwrap();
@@ -3783,7 +3913,7 @@ mod tests {
             .db
             .put_cf(&cf, 1u64.to_le_bytes(), row.encode())
             .unwrap();
-        assert_eq!(records_of(storage, 1), 5);
+        assert_eq!(records_of(storage, 1), 6);
     }
 
     #[test]
@@ -3795,10 +3925,10 @@ mod tests {
         interrupted_removal(&storage);
 
         assert!(storage.remove_bucket_batch(1).unwrap());
-        assert_eq!(records_of(&storage, 1), 3);
+        assert_eq!(records_of(&storage, 1), 4);
         assert!(storage.get_bucket(1).unwrap().is_some());
         assert!(storage.remove_bucket_batch(1).unwrap());
-        assert_eq!(records_of(&storage, 1), 1);
+        assert_eq!(records_of(&storage, 1), 2);
         assert!(storage.get_bucket(1).unwrap().is_some());
         assert!(!storage.remove_bucket_batch(1).unwrap());
         assert_eq!(records_of(&storage, 1), 0);

@@ -326,7 +326,10 @@ pub trait StorageBackend: Send + Sync {
     /// by `new_start_seq`). Replaces a previous receipt for the same range.
     /// A condemned bucket rejects it with [`Error::BucketCondemned`], and a
     /// receipt whose signature does not verify with
-    /// [`Error::InvalidDeletionReceipt`].
+    /// [`Error::InvalidDeletionReceipt`]. A receipt whose root differs from
+    /// the post-prune root recorded for its range is rejected with
+    /// [`Error::DeletionRootMismatch`]; a range pruned before roots were
+    /// recorded accepts any signed root.
     fn attach_deletion_receipt(
         &self,
         bucket_id: BucketId,

@@ -501,11 +501,8 @@ async fn delete_data(
     // only Admin can perform DELETE action
     check_role(&state, &headers, "POST", request.bucket_id, Role::Admin).await?;
 
-    // Frozen buckets are append-only by design: deletion is refused outright.
-    // If chain truth cannot be read, the prune is rejected as retryable (503)
-    // rather than allowed through on a stale answer. Nodes running without a
-    // chain connection (no signing key configured — local dev and tests) skip
-    // the check: buckets can only be frozen on-chain.
+    // - Frozen buckets are append-only by design
+    // - If chain truth cannot be read, the prune is rejected as retryable (503)
     if let Some(frozen_check) = &state.frozen_check {
         let frozen = frozen_check
             .is_frozen(request.bucket_id)
@@ -539,26 +536,22 @@ async fn delete_data(
     }))
 }
 
-/// POST /delete/confirm — store the admin's signed deletion authorization.
+/// POST /delete/confirm - store the admin's signed deletion authorization.
 ///
-/// Deletion is two requests because the admin signs the *post-prune*
-/// commitment, and only the provider can compute it (buckets are
-/// multi-writer; clients do not hold the full MMR): `/delete` computes and
-/// returns the commitment, the admin signs it, this endpoint stores the
-/// signature.
+/// The admin signs the post-prune commitment, which only the provider can
+/// compute, so `/delete` returns it first and this endpoint stores the
+/// signature. The signed payload is `CommitmentPayload(bucket_id,
+/// Commitment { mmr_root, start_seq: new_start_seq, leaf_count: 0 })`, the
+/// payload the pallet's `Deleted` challenge defense verifies. With the
+/// receipt stored, the GC may erase the pruned range and answer later
+/// challenges over it with the receipt instead of the bytes.
 ///
-/// The admin signs `CommitmentPayload(bucket_id, Commitment { mmr_root,
-/// start_seq: new_start_seq, leaf_count: 0 })` — the exact payload the
-/// pallet's `Deleted` challenge defense verifies. Holding this receipt is
-/// what allows the GC to physically erase the pruned range: any later
-/// `challenge_offchain` citing an old commitment over the erased leaves is
-/// answered with the receipt instead of the bytes.
-///
-/// `admin` must be the account that signed the request, and `signature` must
-/// verify against it over that payload. Otherwise the node rejects the
-/// receipt (403 `not_authorized`, 400 `invalid_signature`), because the pallet
-/// would reject it at defense time and slash the provider. The pallet also
-/// checks that `admin` is still a bucket admin at defense time.
+/// Rejections:
+/// - 403 `not_authorized`: `admin` is not the account that signed the request.
+/// - 400 `invalid_signature`: `signature` does not verify over the payload.
+/// - 400 `invalid_start_seq`: no pruned range ends at `new_start_seq`.
+/// - 400 `mmr_root_mismatch`: `mmr_root` is not the root `/delete` returned
+///   for that range; `details.expected` is the recorded root.
 async fn confirm_deletion(
     State(state): State<Arc<ProviderState>>,
     headers: axum::http::HeaderMap,
@@ -566,10 +559,8 @@ async fn confirm_deletion(
 ) -> Result<Json<DeleteConfirmResponse>, Error> {
     let caller = check_role(&state, &headers, "POST", request.bucket_id, Role::Admin).await?;
 
-    // Parse, don't validate: malformed input is the caller's fault (400),
-    // and the receipt is stored fully typed — an undecodable signature is
-    // rejected here, where the admin can retry, not at defense time.
-    let root_bytes = array_bytes::hex2bytes(
+    // parse MMR root
+    let req_mmr_root_slice = array_bytes::hex2bytes(
         request
             .mmr_root
             .strip_prefix("0x")
@@ -581,7 +572,9 @@ async fn confirm_deletion(
         expected: "32-byte hex mmr_root".to_string(),
         actual: request.mmr_root.clone(),
     })?;
-    let mmr_root = H256::from_slice(&root_bytes);
+    let req_mmr_root = H256::from_slice(&req_mmr_root_slice);
+
+    // parse admin addr
     let admin_bytes: [u8; 32] =
         array_bytes::hex2bytes(request.admin.strip_prefix("0x").unwrap_or(&request.admin))
             .ok()
@@ -591,6 +584,8 @@ async fn confirm_deletion(
                 actual: request.admin.clone(),
             })?;
     let admin = sp_core::crypto::AccountId32::new(admin_bytes);
+
+    // parse signature
     let signature = array_bytes::hex2bytes(
         request
             .signature
@@ -600,6 +595,8 @@ async fn confirm_deletion(
     .ok()
     .and_then(|b| sp_runtime::MultiSignature::decode(&mut b.as_slice()).ok())
     .ok_or(Error::InvalidSignature)?;
+    
+    // address integrity check
     if caller.as_ref() != Some(&admin) {
         return Err(Error::NotAuthorized(
             "the receipt's admin must be the account that signed the request".to_string(),
@@ -608,7 +605,7 @@ async fn confirm_deletion(
 
     let bucket_id = request.bucket_id;
     let receipt = provider_storage::DeletionReceipt {
-        mmr_root,
+        mmr_root: req_mmr_root,
         new_start_seq: request.new_start_seq,
         admin,
         signature,

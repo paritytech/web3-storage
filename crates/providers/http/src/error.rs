@@ -238,6 +238,21 @@ impl IntoResponse for Error {
                         details: Some(serde_json::json!({ "bucket_id": id })),
                     },
                 ),
+                StorageError::DeletionRootMismatch {
+                    bucket_id,
+                    expected,
+                    actual,
+                } => (
+                    StatusCode::BAD_REQUEST,
+                    ErrorResponse {
+                        error: "mmr_root_mismatch".to_string(),
+                        details: Some(serde_json::json!({
+                            "bucket_id": bucket_id,
+                            "expected": expected,
+                            "actual": actual,
+                        })),
+                    },
+                ),
                 StorageError::RootNotFound(root) => (
                     StatusCode::NOT_FOUND,
                     ErrorResponse {
@@ -640,6 +655,14 @@ mod tests {
             status_of(Error::from(
                 provider_storage::Error::InvalidDeletionReceipt(1)
             )),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::from(provider_storage::Error::DeletionRootMismatch {
+                bucket_id: 1,
+                expected: H256::zero(),
+                actual: H256::repeat_byte(1),
+            })),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(

@@ -1811,6 +1811,41 @@ async fn test_delete_confirm_rejects_undecodable_signature() {
 }
 
 #[tokio::test]
+async fn test_delete_confirm_rejects_a_receipt_over_another_root() {
+    let server = TestServer::new().await;
+    let mmr_root = prune_one_chunk(&server).await;
+    let admin = common::test_member_pair();
+    let wrong_root = array_bytes::bytes2hex("0x", &[9u8; 32][..]);
+
+    // Validly signed, but over a root the provider did not return from /delete.
+    let resp = confirm_deletion(&server, &receipt_body(&admin, 1, &wrong_root, 1)).await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "mmr_root_mismatch");
+    assert_eq!(body["details"]["expected"], mmr_root);
+    assert_eq!(body["details"]["actual"], wrong_root);
+
+    // Nothing was stored: the receipt over the returned root still attaches.
+    let resp = confirm_deletion(&server, &signed_confirm_body(&admin, &mmr_root)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_delete_confirm_rejects_a_new_start_seq_no_prune_ended_at() {
+    let server = TestServer::new().await;
+    let mmr_root = prune_one_chunk(&server).await;
+
+    // The prune advanced start_seq to 1; a receipt for 5 matches no range.
+    let body = receipt_body(&common::test_member_pair(), 1, &mmr_root, 5);
+    let resp = confirm_deletion(&server, &body).await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_start_seq");
+}
+
+#[tokio::test]
 async fn test_delete_confirm_rejects_unknown_range() {
     let server = TestServer::new().await;
     // No prune happened: nothing to confirm.
