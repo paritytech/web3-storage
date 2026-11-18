@@ -8,6 +8,7 @@
 //! shared state every handler runs against.
 
 pub mod api;
+mod auth;
 pub mod error;
 pub mod negotiate;
 pub mod types;

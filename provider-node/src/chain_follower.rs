@@ -840,10 +840,22 @@ mod tests {
                     ("burned", Value::u128(0)),
                 ],
             )),
+            event_record(Value::named_variant(
+                "AgreementExtended",
+                [
+                    ("bucket_id", Value::u128(17)),
+                    ("provider", provider()),
+                    ("new_expires_at", Value::u128(300)),
+                    ("payment", Value::u128(1)),
+                ],
+            )),
         ];
         let events = events_with_metadata(METADATA.to_vec(), records).await;
 
-        assert_eq!(membership_changed_bucket_ids(&events), vec![13, 14, 15, 16]);
+        assert_eq!(
+            membership_changed_bucket_ids(&events),
+            vec![13, 14, 15, 16, 17]
+        );
     }
 
     #[tokio::test]

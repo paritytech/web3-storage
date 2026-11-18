@@ -30,6 +30,7 @@ fn is_membership_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
         || event.is::<pallet_events::StorageAgreementEstablished>()
         || event.is::<pallet_events::AgreementToppedUp>()
         || event.is::<pallet_events::AgreementEnded>()
+        || event.is::<pallet_events::AgreementExtended>()
 }
 
 /// Whether `event` is a storage-provider event that maps to a [`BlockEvent`]
