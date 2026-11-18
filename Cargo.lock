@@ -7043,6 +7043,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-garbage-collector"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "storage-primitives",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "provider-http"
 version = "0.1.0"
 dependencies = [

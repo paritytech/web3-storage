@@ -1,0 +1,13 @@
+[package]
+name = "provider-garbage-collector"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "Garbage collector: erases pruned and torn-down bucket data once on-chain liability has ended"
+
+[dependencies]
+async-trait = { workspace = true }
+storage-primitives = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }

@@ -14,6 +14,7 @@ members = [
 	"crates/providers/challenge",
 	"crates/providers/coordinator",
 	"crates/providers/events",
+	"crates/providers/garbage-collector",
 	"crates/providers/http",
 	"crates/providers/negotiation",
 	"crates/providers/replica",
@@ -50,6 +51,7 @@ provider-auth = { path = "crates/providers/auth" }
 provider-challenge = { path = "crates/providers/challenge" }
 provider-coordinator = { path = "crates/providers/coordinator" }
 provider-events = { path = "crates/providers/events" }
+provider-garbage-collector = { path = "crates/providers/garbage-collector" }
 provider-http = { path = "crates/providers/http" }
 provider-negotiation = { path = "crates/providers/negotiation" }
 provider-replica = { path = "crates/providers/replica" }

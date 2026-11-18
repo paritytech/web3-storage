@@ -29,6 +29,7 @@ COV_PACKAGES=(
 	provider-replica
 	provider-storage
 	provider-challenge
+	provider-garbage-collector
 	provider-types
 	storage-formats
 )
