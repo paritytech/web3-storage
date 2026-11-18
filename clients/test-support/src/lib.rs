@@ -266,6 +266,21 @@ pub async fn dev_discovery() -> Option<DiscoveryClient> {
 /// `/checkpoint-signature`, `/delete`) work end-to-end. `//Alice` is granted
 /// `Admin` on every bucket.
 pub async fn start_test_provider() -> String {
+    start_provider(alice_admin_resolver()).await
+}
+
+/// Like [`start_test_provider`], but the provider has no agreement on any
+/// bucket, so every bucket request answers 403 `no_agreement`.
+pub async fn start_test_provider_without_agreement() -> String {
+    start_provider(alice_admin_resolver().without_agreement()).await
+}
+
+/// Every bucket resolves as private, with `//Alice` as `Admin`.
+fn alice_admin_resolver() -> StaticMembershipResolver {
+    StaticMembershipResolver::private(vec![(dev_account("alice"), Role::Admin).into()])
+}
+
+async fn start_provider(resolver: StaticMembershipResolver) -> String {
     // The spawned server lives for the whole test binary, so its database
     // outlives any guard this could hand back: keep the directory. It is left
     // behind under the temp dir, named `provider_storage::TEMP_DIR_PREFIX*`.
@@ -273,9 +288,7 @@ pub async fn start_test_provider() -> String {
     let _ = dir.keep();
     let deps = ProviderDeps {
         storage,
-        auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(vec![
-            (dev_account("alice"), Role::Admin).into(),
-        ]))),
+        auth: Arc::new(Authenticator::new(resolver)),
     };
     let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is a valid SURI");
     publish_matching_registration(&state);

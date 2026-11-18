@@ -668,7 +668,8 @@ impl StorageUserClient {
 
     /// Like [`Self::get_commitment`], but returns `None` when the provider
     /// answers 404 (it has no record of the bucket: it has received no data
-    /// for it yet).
+    /// for it yet). A provider with no agreement on the bucket answers 403
+    /// `no_agreement`; this returns an error.
     pub async fn get_commitment_if_exists(
         &self,
         bucket_id: BucketId,
