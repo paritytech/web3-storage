@@ -8,9 +8,9 @@
 
 use parking_lot::Mutex;
 use provider_events::EVENT_CHANNEL_CAPACITY;
+use provider_garbage_collector::{CanonicalBucketState, GcChainClient, GcError};
 use provider_http::ProviderState;
 use provider_storage::{ChunkTreeNode, GarbageCollectorConfiguration};
-use provider_types::{CanonicalBucketState, ChainClientError, GcChainClient};
 use sp_core::H256;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -92,7 +92,7 @@ impl GcChainClient for MockGcChainClient {
     async fn fetch_canonical_bucket(
         &self,
         bucket_id: BucketId,
-    ) -> Result<CanonicalBucketState, ChainClientError> {
+    ) -> Result<CanonicalBucketState, GcError> {
         self.reads.fetch_add(1, Ordering::Relaxed);
         let bucket = self
             .buckets
@@ -109,14 +109,11 @@ impl GcChainClient for MockGcChainClient {
         })
     }
 
-    async fn fetch_agreement_max_bytes(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<Option<u64>, ChainClientError> {
+    async fn fetch_agreement_max_bytes(&self, bucket_id: BucketId) -> Result<Option<u64>, GcError> {
         Ok(self.agreements.lock().get(&bucket_id).copied())
     }
 
-    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, ChainClientError> {
+    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, GcError> {
         Ok(self.pending.lock().contains(&bucket_id))
     }
 }

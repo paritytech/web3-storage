@@ -13,6 +13,7 @@ axum = { workspace = true }
 base64 = { workspace = true }
 codec = { workspace = true, features = ["std"] }
 provider-auth = { workspace = true }
+provider-garbage-collector = { workspace = true }
 provider-negotiation = { workspace = true }
 provider-storage = { workspace = true }
 provider-types = { workspace = true }

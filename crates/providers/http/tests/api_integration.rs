@@ -1563,18 +1563,16 @@ struct StubGcChain {
 }
 
 #[async_trait::async_trait]
-impl provider_types::GcChainClient for StubGcChain {
+impl provider_garbage_collector::GcChainClient for StubGcChain {
     async fn fetch_canonical_bucket(
         &self,
         _bucket_id: u64,
-    ) -> Result<provider_types::CanonicalBucketState, provider_types::ChainClientError> {
+    ) -> Result<provider_garbage_collector::CanonicalBucketState, provider_garbage_collector::GcError>
+    {
         if self.fail {
-            return Err(provider_types::ChainClientError::query(
-                "bucket",
-                "chain down",
-            ));
+            return Err(provider_garbage_collector::GcError::chain("chain down"));
         }
-        Ok(provider_types::CanonicalBucketState {
+        Ok(provider_garbage_collector::CanonicalBucketState {
             block_number: 1,
             exists: true,
             next_bucket_id: u64::MAX,
@@ -1586,14 +1584,14 @@ impl provider_types::GcChainClient for StubGcChain {
     async fn fetch_agreement_max_bytes(
         &self,
         _bucket_id: u64,
-    ) -> Result<Option<u64>, provider_types::ChainClientError> {
+    ) -> Result<Option<u64>, provider_garbage_collector::GcError> {
         Ok(None)
     }
 
     async fn has_pending_challenges(
         &self,
         _bucket_id: u64,
-    ) -> Result<bool, provider_types::ChainClientError> {
+    ) -> Result<bool, provider_garbage_collector::GcError> {
         Ok(false)
     }
 }

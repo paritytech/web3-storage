@@ -32,9 +32,9 @@
 
 use parking_lot::Mutex;
 use provider_events::{BlockEvent, BlockEventRx};
-use provider_http::{Error, ProviderState};
+use provider_garbage_collector::GcChainClient;
+use provider_http::ProviderState;
 use provider_storage::GarbageCollectorConfiguration;
-use provider_types::GcChainClient;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -155,7 +155,10 @@ impl GcCoordinator {
         }
     }
 
-    async fn try_reconcile(&self, bucket_id: BucketId) -> Result<(), Error> {
+    async fn try_reconcile(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let chain = self.chain.fetch_canonical_bucket(bucket_id).await?;
 
         let last_scanned_block = self

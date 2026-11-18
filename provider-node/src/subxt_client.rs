@@ -14,9 +14,9 @@ use crate::chain_connection::{self, ChainWatch};
 use crate::challenge_responder::{
     ChallengeChainClient, ChallengeError, ChallengeResponse, DetectedChallenge,
 };
+use provider_garbage_collector::{CanonicalBucketState, GcChainClient, GcError};
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
-use provider_types::{CanonicalBucketState, GcChainClient};
 use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
 use std::collections::HashSet;
@@ -511,14 +511,14 @@ impl GcChainClient for SubxtChainClient {
     async fn fetch_canonical_bucket(
         &self,
         bucket_id: BucketId,
-    ) -> Result<CanonicalBucketState, ChainClientError> {
+    ) -> Result<CanonicalBucketState, GcError> {
         // `unvalidated`: see the `storage-subxt` crate docs.
         let storage_address = storage_subxt::api::storage()
             .storage_provider()
             .buckets()
             .unvalidated();
 
-        let at = self.at_current_block().await?;
+        let at = self.at_current_block().await.map_err(GcError::chain)?;
         let block_number = at.block_number();
         let next_bucket_id = at
             .storage()
@@ -530,15 +530,15 @@ impl GcChainClient for SubxtChainClient {
                 (),
             )
             .await
-            .map_err(|e| ChainClientError::query("next bucket id", e))?
+            .map_err(|e| GcError::chain(ChainClientError::query("next bucket id", e)))?
             .decode()
-            .map_err(|e| ChainClientError::decode("next bucket id", e))?;
+            .map_err(|e| GcError::chain(ChainClientError::decode("next bucket id", e)))?;
 
         let Some(value) = at
             .storage()
             .try_fetch(storage_address, (bucket_id,))
             .await
-            .map_err(|e| ChainClientError::query("bucket", e))?
+            .map_err(|e| GcError::chain(ChainClientError::query("bucket", e)))?
         else {
             // Authoritative "no bucket row" — distinct from a fetch failure,
             // which propagates as Err (the GC fails closed on it).
@@ -551,7 +551,7 @@ impl GcChainClient for SubxtChainClient {
 
         let bucket = value
             .decode()
-            .map_err(|e| ChainClientError::decode("bucket", e))?;
+            .map_err(|e| GcError::chain(ChainClientError::decode("bucket", e)))?;
 
         Ok(CanonicalBucketState {
             block_number,
@@ -562,38 +562,35 @@ impl GcChainClient for SubxtChainClient {
         })
     }
 
-    async fn fetch_agreement_max_bytes(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<Option<u64>, ChainClientError> {
+    async fn fetch_agreement_max_bytes(&self, bucket_id: BucketId) -> Result<Option<u64>, GcError> {
         // `unvalidated`: see the `storage-subxt` crate docs.
         let storage_address = storage_subxt::api::storage()
             .storage_provider()
             .storage_agreements()
             .unvalidated();
 
-        let at = self.at_current_block().await?;
+        let at = self.at_current_block().await.map_err(GcError::chain)?;
 
         let our_account = subxt::utils::AccountId32(self.signer.public_key().0);
         let Some(value) = at
             .storage()
             .try_fetch(storage_address, (bucket_id, our_account))
             .await
-            .map_err(|e| ChainClientError::query("storage agreement", e))?
+            .map_err(|e| GcError::chain(ChainClientError::query("storage agreement", e)))?
         else {
             return Ok(None);
         };
 
         let agreement = value
             .decode()
-            .map_err(|e| ChainClientError::decode("storage agreement", e))?;
+            .map_err(|e| GcError::chain(ChainClientError::decode("storage agreement", e)))?;
         Ok(Some(agreement.max_bytes))
     }
 
-    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, ChainClientError> {
+    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, GcError> {
         let challenges = ChallengeChainClient::poll_challenges(self)
             .await
-            .map_err(|e| ChainClientError::query("pending challenges", e))?;
+            .map_err(|e| GcError::chain(ChainClientError::query("pending challenges", e)))?;
         Ok(challenges.iter().any(|c| c.bucket_id == bucket_id))
     }
 }

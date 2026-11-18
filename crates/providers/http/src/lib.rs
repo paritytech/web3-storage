@@ -19,8 +19,9 @@ pub use provider_types::ChainState;
 pub use types::*;
 
 use codec::Encode;
+use provider_garbage_collector::GcChainClient;
 use provider_storage::StorageBackend;
-use provider_types::{GcChainClient, KeyScheme, ProviderKeypair, ProviderSigner, SigningRefused};
+use provider_types::{KeyScheme, ProviderKeypair, ProviderSigner, SigningRefused};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;

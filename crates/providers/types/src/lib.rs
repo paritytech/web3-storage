@@ -9,7 +9,7 @@ mod provider_info;
 mod runtime_type;
 mod signer;
 
-pub use chain::{CanonicalBucketState, ChainClientError, GcChainClient};
+pub use chain::ChainClientError;
 pub use chain_state::{ChainState, PalletConstants};
 pub use keys::{KeyScheme, ProviderKeypair, SigningRefused};
 pub use provider_info::{ProviderInfo, ProviderSettings, ProviderStats};

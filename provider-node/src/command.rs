@@ -154,7 +154,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_gc_chain(
             chain_client
                 .as_ref()
-                .map(|c| Arc::new(c.clone()) as Arc<dyn provider_types::GcChainClient>),
+                .map(|c| Arc::new(c.clone()) as Arc<dyn provider_garbage_collector::GcChainClient>),
         ),
     );
 

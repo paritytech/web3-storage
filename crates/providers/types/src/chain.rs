@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The error a provider chain-client trait reports, shared so that a chain
-//! failure keeps one shape across the provider crates and the node, and the
-//! chain reads the GC and the `/delete` frozen check share.
+//! failure keeps one shape across the provider crates and the node.
 
 use std::fmt;
-use storage_primitives::BucketId;
 
 /// Why a call against the chain failed.
 ///
@@ -116,41 +114,4 @@ mod tests {
             "confirm_replica_sync rejected: SyncTooFrequent"
         );
     }
-}
-
-/// Chain truth about one bucket, as the GC needs it.
-#[derive(Clone, Debug, Default)]
-pub struct CanonicalBucketState {
-    /// Finalized block number the bucket row was read at.
-    pub block_number: u64,
-    /// Whether the bucket row is present on chain.
-    pub exists: bool,
-    /// `NextBucketId` at the same block: every bucket id below it was created.
-    pub next_bucket_id: u64,
-    /// `Bucket::frozen_start_seq` — deletion floor for frozen buckets.
-    pub frozen_start_seq: Option<u64>,
-    /// `snapshot.commitment.start_seq`; `None` = no snapshot yet.
-    pub canonical_start_seq: Option<u64>,
-}
-
-/// Chain reads the GC depends on — bucket row, our agreement, pending
-/// challenges: everything an erasure decision needs. `Err` means "could
-/// not read", and the caller must skip or refuse rather than assume.
-#[async_trait::async_trait]
-pub trait GcChainClient: Send + Sync {
-    /// Bucket row truth (existence, frozen floor, canonical start_seq).
-    async fn fetch_canonical_bucket(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<CanonicalBucketState, ChainClientError>;
-
-    /// This provider's agreement `max_bytes` on the bucket;
-    /// `Ok(None)` = no agreement row.
-    async fn fetch_agreement_max_bytes(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<Option<u64>, ChainClientError>;
-
-    /// Whether any pending challenge targets this provider on the bucket.
-    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, ChainClientError>;
 }

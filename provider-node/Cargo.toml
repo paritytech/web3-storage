@@ -13,6 +13,7 @@ provider-auth = { workspace = true }
 provider-challenge = { workspace = true }
 provider-coordinator = { workspace = true }
 provider-events = { workspace = true }
+provider-garbage-collector = { workspace = true }
 provider-http = { workspace = true }
 provider-replica = { workspace = true }
 provider-storage = { workspace = true }
