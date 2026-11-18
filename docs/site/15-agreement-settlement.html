@@ -625,6 +625,7 @@
           <li>&bull; Replica agreements cannot be ended early</li>
           <li>&bull; AgreementHasPendingChallenge blocks end_agreement, claim_expired_agreement and remove_slashed</li>
           <li>&bull; Anyone can call remove_slashed; the remaining payment returns to the owner</li>
+          <li>&bull; From expires_at the provider node rejects writes (agreement_expired); once the agreement is removed it rejects every request (no_agreement)</li>
         </ul>
       </div>
     </div>
