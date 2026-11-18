@@ -251,7 +251,7 @@ fn insert_challenge<T: Config>(
     challenger: &T::AccountId,
     commitment: Commitment,
     target: ChunkLocation,
-) -> storage_primitives::ChallengeId<BlockNumberFor<T>> {
+) -> ChallengeId<BlockNumberFor<T>> {
     let deadline: BlockNumberFor<T> = 200u32.into();
     let challenge = pallet::Challenge::<T> {
         bucket_id,
@@ -264,7 +264,7 @@ fn insert_challenge<T: Config>(
         created_at: deadline.saturating_sub(T::ChallengeTimeout::get()),
     };
     Challenges::<T>::insert(deadline, 0u16, challenge);
-    storage_primitives::ChallengeId { deadline, index: 0 }
+    ChallengeId { deadline, index: 0 }
 }
 
 /// The largest MMR proof `verify_mmr_proof` accepts, for `leaf` at index 0 of
@@ -1352,7 +1352,7 @@ mod benchmarks {
         #[extrinsic_call]
         resolve_expired_challenge(
             RawOrigin::Signed(caller),
-            storage_primitives::ChallengeId { deadline, index: 0 },
+            ChallengeId { deadline, index: 0 },
         );
 
         assert!(Challenges::<T>::get(deadline, 0).is_none());

@@ -4,7 +4,7 @@ use crate::*;
 use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
 use sp_runtime::traits::{CheckedMul, SaturatedConversion};
-use storage_primitives::{BucketId, BucketSnapshot};
+use storage_primitives::BucketId;
 
 fn challenge_to_response<T: Config>(
     deadline: BlockNumberFor<T>,

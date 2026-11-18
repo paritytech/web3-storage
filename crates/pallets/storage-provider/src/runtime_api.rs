@@ -7,11 +7,11 @@
 
 extern crate alloc;
 
-use crate::ProviderRole;
+use crate::{BucketSnapshot, ProviderRole};
 use alloc::vec::Vec;
 use codec::{Decode, Encode};
 use scale_info::TypeInfo;
-use storage_primitives::{BucketId, BucketSnapshot, ChunkLocation, Commitment, Role, Visibility};
+use storage_primitives::{BucketId, ChunkLocation, Commitment, Role, Visibility};
 
 /// Provider information returned by runtime API.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]

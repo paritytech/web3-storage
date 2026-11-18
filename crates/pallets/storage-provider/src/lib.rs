@@ -69,8 +69,8 @@ pub mod pallet {
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
-        BucketId, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, CommitmentPayload,
-        EndAction, MmrProof, RemovalReason, Role, Visibility,
+        BucketId, ChunkLocation, Commitment, CommitmentPayload, EndAction, MmrProof, Role,
+        Visibility,
     };
 
     /// Balance type of the configured currency.
@@ -706,6 +706,79 @@ pub mod pallet {
         pub creator: T::AccountId,
         /// Storage deposit for the bucket record, held on `creator`.
         pub deposit: TicketOf<T>,
+    }
+
+    /// Bucket snapshot representing canonical state at a checkpoint.
+    #[derive(
+        Clone, PartialEq, Eq, Encode, Decode, codec::DecodeWithMemTracking, TypeInfo, Debug,
+    )]
+    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+    pub struct BucketSnapshot<BlockNumber> {
+        /// Canonical MMR commitment at this checkpoint (root + covered range).
+        pub commitment: Commitment,
+        /// Block at which checkpointed
+        pub checkpoint_block: BlockNumber,
+        /// Bit i is set if `primary_providers[i]` signed. The length always equals
+        /// `primary_providers.len()`: `checkpoint` builds it, adding a primary
+        /// appends an unset bit, removing a primary removes its bit, and
+        /// `extend_checkpoint` sets the bit of a late signer.
+        pub primary_signers: BitVec<u8, Lsb0>,
+    }
+
+    impl<BlockNumber> BucketSnapshot<BlockNumber> {
+        /// Get the canonical range end (exclusive)
+        pub fn range_end(&self) -> u64 {
+            self.commitment.range_end()
+        }
+
+        /// Check if a sequence number is within this snapshot's range
+        pub fn contains_seq(&self, seq: u64) -> bool {
+            self.commitment.contains_seq(seq)
+        }
+    }
+
+    /// Challenge identifier combining deadline and index.
+    #[derive(
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Encode,
+        Decode,
+        codec::DecodeWithMemTracking,
+        TypeInfo,
+        MaxEncodedLen,
+        Debug,
+    )]
+    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+    pub struct ChallengeId<BlockNumber> {
+        /// Block by which provider must respond
+        pub deadline: BlockNumber,
+        /// Index within the deadline's challenge list
+        pub index: u16,
+    }
+
+    /// Reason for removing a primary provider from a bucket.
+    #[derive(
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Encode,
+        Decode,
+        codec::DecodeWithMemTracking,
+        TypeInfo,
+        MaxEncodedLen,
+        Debug,
+    )]
+    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+    pub enum RemovalReason {
+        /// Provider was slashed for failing a challenge
+        Slashed,
+        /// Admin terminated agreement early
+        AdminTerminated,
+        /// Agreement expired naturally
+        Expired,
     }
 
     /// Provider role for a specific bucket agreement.

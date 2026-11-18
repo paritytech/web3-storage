@@ -5,7 +5,7 @@ use sp_core::H256;
 use sp_runtime::transaction_validity::{
     InvalidTransaction, TransactionSource, TransactionValidityError, ValidTransaction,
 };
-use storage_primitives::{BucketSnapshot, ChallengeId, ChunkLocation, Commitment, Role};
+use storage_primitives::{ChunkLocation, Commitment, Role};
 
 /// Setup: register provider, create agreement, and insert a snapshot with provider signed.
 pub(super) fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
@@ -1552,8 +1552,7 @@ mod challenge_tests {
     use frame_support::{dispatch::Pays, pallet_prelude::DispatchResult, BoundedVec};
     use sp_core::H256;
     use storage_primitives::{
-        hash_children, hash_leaf, mmr, BucketSnapshot, ChallengeId, ChunkLocation, Commitment,
-        EndAction, MmrLeaf, MmrProof,
+        hash_children, hash_leaf, mmr, ChunkLocation, Commitment, EndAction, MmrLeaf, MmrProof,
     };
 
     // ─────────────────────────────────────────────────────────────────────────

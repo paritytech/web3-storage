@@ -3,7 +3,7 @@
 use super::*;
 use codec::Encode;
 use sp_core::H256;
-use storage_primitives::{BucketSnapshot, ChunkLocation, Commitment};
+use storage_primitives::{ChunkLocation, Commitment};
 
 #[test]
 fn query_provider_info_returns_data() {
@@ -377,7 +377,7 @@ fn query_challenges_at_returns_data() {
         });
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
-            storage_primitives::ChallengeId {
+            ChallengeId {
                 deadline: 101,
                 index: 0,
             },

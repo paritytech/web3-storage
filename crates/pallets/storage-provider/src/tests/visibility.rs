@@ -8,7 +8,7 @@ use super::challenge::{advance_snapshot_root, setup_with_snapshot};
 use super::*;
 use crate::ChallengeResponse;
 use sp_core::H256;
-use storage_primitives::{ChallengeId, ChunkLocation, Commitment, Role, Visibility};
+use storage_primitives::{ChunkLocation, Commitment, Role, Visibility};
 
 const CHUNK: ChunkLocation = ChunkLocation {
     leaf_index: 0,
@@ -324,7 +324,7 @@ fn timeout_slash_counts_failed_not_received() {
         System::set_block_number(103);
         assert_ok!(StorageProvider::resolve_expired_challenge(
             RuntimeOrigin::signed(3),
-            storage_primitives::ChallengeId {
+            ChallengeId {
                 deadline: 101,
                 index: 0,
             }

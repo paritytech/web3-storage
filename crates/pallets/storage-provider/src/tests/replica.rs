@@ -345,7 +345,7 @@ fn top_up_replica_sync_balance_fails_no_agreement() {
 /// and a replica provider (2) with an accepted replica agreement.
 fn setup_replica_with_snapshot() -> u64 {
     use sp_core::H256;
-    use storage_primitives::{BucketSnapshot, Commitment};
+    use storage_primitives::Commitment;
 
     // Provider 3 = primary
     register_provider(3, 200);
@@ -687,7 +687,7 @@ fn confirm_replica_sync_fails_insufficient_balance() {
 
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
-                bucket.snapshot = Some(storage_primitives::BucketSnapshot {
+                bucket.snapshot = Some(BucketSnapshot {
                     commitment: storage_primitives::Commitment {
                         mmr_root: sp_core::H256::repeat_byte(0xAB),
                         start_seq: 0,
@@ -873,7 +873,7 @@ fn confirm_replica_sync_after_interval_with_new_root() {
 #[test]
 fn replica_cannot_answer_with_superseded() {
     use sp_core::H256;
-    use storage_primitives::{ChallengeId, ChunkLocation};
+    use storage_primitives::ChunkLocation;
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_replica_with_snapshot();
@@ -941,7 +941,7 @@ fn replica_cannot_answer_with_superseded() {
 fn replica_cannot_answer_with_deleted() {
     use codec::Encode;
     use sp_core::{Pair, H256};
-    use storage_primitives::{ChallengeId, ChunkLocation, Commitment, CommitmentPayload};
+    use storage_primitives::{ChunkLocation, Commitment, CommitmentPayload};
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_replica_with_snapshot();

@@ -24,12 +24,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
-use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ChallengeResponse as RuntimeChallengeResponse;
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::{
+    ChallengeId as RuntimeChallengeId, ChallengeResponse as RuntimeChallengeResponse,
+};
 use storage_subxt::api::runtime_types::sp_runtime::MultiSignature as RuntimeMultiSignature;
 use storage_subxt::api::runtime_types::storage_primitives::{
     mmr::{MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof},
-    ChallengeId as RuntimeChallengeId, ChunkLocation as RuntimeChunkLocation,
-    Commitment as RuntimeCommitment,
+    ChunkLocation as RuntimeChunkLocation, Commitment as RuntimeCommitment,
 };
 use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};
 
