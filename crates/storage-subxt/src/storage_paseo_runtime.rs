@@ -16923,8 +16923,9 @@ pub mod api {
             }
             pub mod respond_to_challenge {
                 use super::runtime_types;
-                pub type ChallengeId =
-                    runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>;
+                pub type ChallengeId = runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                    ::core::primitive::u32,
+                >;
                 pub type Response =
                     runtime_types::pallet_storage_provider::pallet::ChallengeResponse;
             }
@@ -16957,8 +16958,9 @@ pub mod api {
             }
             pub mod cancel_challenge {
                 use super::runtime_types;
-                pub type ChallengeId =
-                    runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>;
+                pub type ChallengeId = runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                    ::core::primitive::u32,
+                >;
             }
             impl CancelChallenge {
                 const PALLET_NAME: &'static str = "StorageProvider";
@@ -16994,8 +16996,9 @@ pub mod api {
             }
             pub mod resolve_expired_challenge {
                 use super::runtime_types;
-                pub type ChallengeId =
-                    runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>;
+                pub type ChallengeId = runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                    ::core::primitive::u32,
+                >;
             }
             impl ResolveExpiredChallenge {
                 const PALLET_NAME: &'static str = "StorageProvider";
@@ -18540,7 +18543,7 @@ pub mod api {
                 use super::runtime_types;
                 pub type BucketId = ::core::primitive::u64;
                 pub type Provider = ::subxt::utils::AccountId32;
-                pub type Reason = runtime_types::storage_primitives::RemovalReason;
+                pub type Reason = runtime_types::pallet_storage_provider::pallet::RemovalReason;
             }
             impl PrimaryProviderRemoved {
                 const PALLET_NAME: &'static str = "StorageProvider";
@@ -18887,8 +18890,9 @@ pub mod api {
             }
             pub mod challenge_created {
                 use super::runtime_types;
-                pub type ChallengeId =
-                    runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>;
+                pub type ChallengeId = runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                    ::core::primitive::u32,
+                >;
                 pub type BucketId = ::core::primitive::u64;
                 pub type Provider = ::subxt::utils::AccountId32;
                 pub type Challenger = ::subxt::utils::AccountId32;
@@ -18925,8 +18929,9 @@ pub mod api {
             }
             pub mod challenge_defended {
                 use super::runtime_types;
-                pub type ChallengeId =
-                    runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>;
+                pub type ChallengeId = runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                    ::core::primitive::u32,
+                >;
                 pub type Provider = ::subxt::utils::AccountId32;
                 pub type ResponseTimeBlocks = ::core::primitive::u32;
                 pub type ChallengerCost = ::core::primitive::u128;
@@ -18961,8 +18966,9 @@ pub mod api {
             }
             pub mod challenge_slashed {
                 use super::runtime_types;
-                pub type ChallengeId =
-                    runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>;
+                pub type ChallengeId = runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                    ::core::primitive::u32,
+                >;
                 pub type Provider = ::subxt::utils::AccountId32;
                 pub type SlashedAmount = ::core::primitive::u128;
             }
@@ -18997,8 +19003,9 @@ pub mod api {
             }
             pub mod challenge_cancelled {
                 use super::runtime_types;
-                pub type ChallengeId =
-                    runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>;
+                pub type ChallengeId = runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                    ::core::primitive::u32,
+                >;
                 pub type BucketId = ::core::primitive::u64;
                 pub type Provider = ::subxt::utils::AccountId32;
                 pub type Challenger = ::subxt::utils::AccountId32;
@@ -27154,7 +27161,9 @@ pub mod api {
                             ::subxt::utils::AccountId32,
                         >,
                     pub snapshot: ::core::option::Option<
-                        runtime_types::storage_primitives::BucketSnapshot<::core::primitive::u32>,
+                        runtime_types::pallet_storage_provider::pallet::BucketSnapshot<
+                            ::core::primitive::u32,
+                        >,
                     >,
                     pub historical_roots: [(
                         ::core::primitive::u32,
@@ -27164,6 +27173,24 @@ pub mod api {
                     pub creator: ::subxt::utils::AccountId32,
                     pub deposit:
                         runtime_types::frame_support::traits::tokens::fungible::HoldConsideration,
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub struct BucketSnapshot<_0> {
+                    pub commitment: runtime_types::storage_primitives::Commitment,
+                    pub checkpoint_block: _0,
+                    pub primary_signers: ::subxt::utils::bits::DecodedBits<
+                        ::core::primitive::u8,
+                        ::subxt::utils::bits::Lsb0,
+                    >,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -27577,8 +27604,9 @@ pub mod api {
                     #[doc = "and the challenge stays open until the deadline. An unanswered"]
                     #[doc = "challenge is slashed by `resolve_expired_challenge`."]
                     respond_to_challenge {
-                        challenge_id:
-                            runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
+                        challenge_id: runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                            ::core::primitive::u32,
+                        >,
                         response: runtime_types::pallet_storage_provider::pallet::ChallengeResponse,
                     },
                     #[codec(index = 44)]
@@ -27588,8 +27616,9 @@ pub mod api {
                     #[doc = "Fails with `ChallengeNotFound` once the challenge was answered,"]
                     #[doc = "cancelled or resolved."]
                     cancel_challenge {
-                        challenge_id:
-                            runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
+                        challenge_id: runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                            ::core::primitive::u32,
+                        >,
                     },
                     #[codec(index = 45)]
                     #[doc = "Slash a provider whose challenge expired without a response."]
@@ -27603,8 +27632,9 @@ pub mod api {
                     #[doc = "Errors: `ChallengeNotExpired` while the provider may still respond"]
                     #[doc = "(`anchor <= deadline`); `ChallengeNotFound` once resolved."]
                     resolve_expired_challenge {
-                        challenge_id:
-                            runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
+                        challenge_id: runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                            ::core::primitive::u32,
+                        >,
                     },
                     #[codec(index = 50)]
                     #[doc = "Replica provider only. Attest, with a signature over `roots`, that"]
@@ -27646,6 +27676,20 @@ pub mod api {
                     pub deposit: ::core::primitive::u128,
                     pub authorized: ::core::primitive::bool,
                     pub created_at: ::core::primitive::u32,
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub struct ChallengeId<_0> {
+                    pub deadline: _0,
+                    pub index: ::core::primitive::u16,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -28114,7 +28158,7 @@ pub mod api {
                     PrimaryProviderRemoved {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
-                        reason: runtime_types::storage_primitives::RemovalReason,
+                        reason: runtime_types::pallet_storage_provider::pallet::RemovalReason,
                     },
                     #[codec(index = 17)]
                     #[doc = "A slashed provider was cleaned out of a bucket and the owner's"]
@@ -28207,8 +28251,9 @@ pub mod api {
                     #[codec(index = 26)]
                     #[doc = "Someone challenged a provider to prove it still holds a chunk."]
                     ChallengeCreated {
-                        challenge_id:
-                            runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
+                        challenge_id: runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                            ::core::primitive::u32,
+                        >,
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         challenger: ::subxt::utils::AccountId32,
@@ -28219,8 +28264,9 @@ pub mod api {
                     #[doc = "say who pays which part of the response cost, not who receives"]
                     #[doc = "money — together they always sum to the deposit."]
                     ChallengeDefended {
-                        challenge_id:
-                            runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
+                        challenge_id: runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                            ::core::primitive::u32,
+                        >,
                         provider: ::subxt::utils::AccountId32,
                         response_time_blocks: ::core::primitive::u32,
                         challenger_cost: ::core::primitive::u128,
@@ -28231,8 +28277,9 @@ pub mod api {
                     #[doc = "went to the Treasury and the challenger's deposit was refunded;"]
                     #[doc = "there is no reward."]
                     ChallengeSlashed {
-                        challenge_id:
-                            runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
+                        challenge_id: runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                            ::core::primitive::u32,
+                        >,
                         provider: ::subxt::utils::AccountId32,
                         slashed_amount: ::core::primitive::u128,
                     },
@@ -28241,8 +28288,9 @@ pub mod api {
                     #[doc = "responded. The deposit was released to the challenger in full."]
                     #[doc = "The provider's stats did not change."]
                     ChallengeCancelled {
-                        challenge_id:
-                            runtime_types::storage_primitives::ChallengeId<::core::primitive::u32>,
+                        challenge_id: runtime_types::pallet_storage_provider::pallet::ChallengeId<
+                            ::core::primitive::u32,
+                        >,
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt::utils::AccountId32,
                         challenger: ::subxt::utils::AccountId32,
@@ -28390,6 +28438,24 @@ pub mod api {
                     Debug,
                     Eq,
                     PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub enum RemovalReason {
+                    #[codec(index = 0)]
+                    Slashed,
+                    #[codec(index = 1)]
+                    AdminTerminated,
+                    #[codec(index = 2)]
+                    Expired,
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
                     codec :: Decode,
                 )]
                 #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
@@ -28487,7 +28553,9 @@ pub mod api {
                     pub primary_providers:
                         ::subxt::alloc::vec::Vec<::subxt::alloc::vec::Vec<::core::primitive::u8>>,
                     pub snapshot: ::core::option::Option<
-                        runtime_types::storage_primitives::BucketSnapshot<::core::primitive::u32>,
+                        runtime_types::pallet_storage_provider::pallet::BucketSnapshot<
+                            ::core::primitive::u32,
+                        >,
                     >,
                     pub total_snapshots: ::core::primitive::u32,
                     pub visibility: runtime_types::storage_primitives::Visibility,
@@ -32853,38 +32921,6 @@ pub mod api {
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct BucketSnapshot<_0> {
-                pub commitment: runtime_types::storage_primitives::Commitment,
-                pub checkpoint_block: _0,
-                pub primary_signers: ::subxt::utils::bits::DecodedBits<
-                    ::core::primitive::u8,
-                    ::subxt::utils::bits::Lsb0,
-                >,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct ChallengeId<_0> {
-                pub deadline: _0,
-                pub index: ::core::primitive::u16,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             pub struct ChunkLocation {
                 pub leaf_index: ::core::primitive::u64,
                 pub chunk_index: ::core::primitive::u64,
@@ -32920,24 +32956,6 @@ pub mod api {
                 Pay,
                 #[codec(index = 1)]
                 Burn { burn_percent: ::core::primitive::u8 },
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub enum RemovalReason {
-                #[codec(index = 0)]
-                Slashed,
-                #[codec(index = 1)]
-                AdminTerminated,
-                #[codec(index = 2)]
-                Expired,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,
