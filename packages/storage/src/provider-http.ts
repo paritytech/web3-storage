@@ -391,7 +391,7 @@ export async function fetchChallengeProof(
 
 /** Parallel requests per batch in the blob helpers. */
 const BLOB_CONCURRENCY = 4;
-/** Chunks requested per `GET /read` call. */
+/** Chunks requested per `GET /read` call. Equals the provider's `MAX_READ_CHUNKS`. */
 const READ_WINDOW_CHUNKS = 16;
 /** Attempts for idempotent requests (`PUT /node` and reads). */
 const IDEMPOTENT_RETRIES = 3;
@@ -531,6 +531,9 @@ export interface BucketCommitment {
 /**
  * `GET /commitment`: the provider's current MMR commitment for the bucket.
  * Returns `null` when the provider has no data for the bucket yet (404).
+ * Throws an `HttpError` with status 403 (`no_agreement`) when the provider
+ * has no agreement on the bucket, so a bucket the provider dropped does not
+ * read as empty.
  *
  * The read is Reader-gated on a private bucket: pass a member as `opts.signer`.
  * Anonymous works only while the bucket is public.

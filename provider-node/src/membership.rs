@@ -4,15 +4,14 @@
 
 use crate::chain_connection::{self, ChainWatch};
 use provider_auth::{
-    BucketAccess, Invalidation, Member, MembershipError, MembershipInvalidations,
-    MembershipResolver,
+    BucketAccess, Invalidation, LocalBucketAgreement, Member, MembershipError,
+    MembershipInvalidations, MembershipResolver,
 };
 use provider_events::{BlockEvent, BlockEventRx};
 use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;
-use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::broadcast::error::TryRecvError;
 
@@ -20,10 +19,11 @@ use tokio::sync::broadcast::error::TryRecvError;
 /// follow reconnects instead of pinning their own socket.
 pub struct ChainMembershipResolver {
     chain_rx: ChainWatch,
-    /// `provider_id` parsed to an account, for resolving whether this node
-    /// holds the bucket as a replica (replicas serve reads to everyone). A
-    /// provider id that is not an SS58 account (the chainless dev
-    /// placeholder) makes every bucket resolve as not replica-held.
+    /// `provider_id` parsed to an account, for resolving this node's own
+    /// agreement on a bucket (replicas serve reads to everyone, and the
+    /// agreement's quota bounds uploads). A provider id that is not an SS58
+    /// account (the chainless dev placeholder) makes every bucket resolve as
+    /// having no agreement.
     provider_account: Option<AccountId32>,
 }
 
@@ -85,53 +85,50 @@ impl MembershipResolver for ChainMembershipResolver {
             tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
         }
 
+        // Existence of the agreement is the proxy - expiry is not re-checked
+        // here, so a lapsed-but-unpruned agreement keeps serving until the
+        // entry is invalidated or falls out of the TTL, the same freshness
+        // bound the member set lives under.
+        let local_agreement = match &self.provider_account {
+            Some(own) => {
+                let agreement_address = storage_subxt::api::storage()
+                    .storage_provider()
+                    .storage_agreements()
+                    .unvalidated();
+                let result = at
+                    .storage()
+                    .try_fetch(
+                        agreement_address,
+                        (bucket_id, crate::subxt_client::subxt_account(own)),
+                    )
+                    .await
+                    .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
+                match result {
+                    Some(agreement_value) => {
+                        let agreement =
+                            agreement_value
+                                .decode()
+                                .map_err(|e| MembershipError::Decode {
+                                    bucket_id,
+                                    reason: e.to_string(),
+                                })?;
+                        Some(LocalBucketAgreement {
+                            role: agreement.role.into(),
+                            max_bytes: agreement.max_bytes,
+                            expires_at: agreement.expires_at,
+                        })
+                    }
+                    None => None,
+                }
+            }
+            None => None,
+        };
+
         Ok(BucketAccess {
             members,
             visibility: bucket.visibility.into(),
+            local_agreement,
         })
-    }
-
-    /// Whether this node holds `bucket_id` under a replica agreement.
-    ///
-    /// Existence of a `Replica` agreement is the proxy — expiry is not
-    /// re-checked here, so a lapsed-but-unpruned agreement keeps serving until
-    /// the entry is invalidated or falls out of the TTL, the same freshness
-    /// bound the member set lives under.
-    async fn fetch_serves_as_replica(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
-        let Some(own) = &self.provider_account else {
-            return Ok(false);
-        };
-        let api = self.api()?;
-
-        let storage_address = storage_subxt::api::storage()
-            .storage_provider()
-            .storage_agreements()
-            .unvalidated();
-
-        let at = api
-            .at_current_block()
-            .await
-            .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
-        let result = at
-            .storage()
-            .try_fetch(
-                storage_address,
-                (bucket_id, crate::subxt_client::subxt_account(own)),
-            )
-            .await
-            .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
-
-        let Some(agreement_value) = result else {
-            return Ok(false);
-        };
-        let agreement = agreement_value
-            .decode()
-            .map_err(|e| MembershipError::Decode {
-                bucket_id,
-                reason: e.to_string(),
-            })?;
-
-        Ok(matches!(agreement.role, ProviderRole::Replica { .. }))
     }
 }
 
@@ -174,9 +171,9 @@ impl MembershipInvalidations for BlockEventInvalidations {
                 Ok(BlockEvent::BucketMembershipChanged { bucket_id }) if !all => {
                     buckets.push(bucket_id)
                 }
-                // A new replica agreement changes the resolver's `serves_as_replica`
-                // answer for the bucket, whoever the replica is (cheaper to
-                // drop the entry than to check whether it is us).
+                // A new replica agreement changes the cached agreement of the
+                // bucket, whoever the replica is (cheaper to drop the entry
+                // than to check whether it is us).
                 Ok(BlockEvent::ReplicaAgreementEstablished { bucket_id, .. }) if !all => {
                     buckets.push(bucket_id)
                 }
@@ -207,11 +204,15 @@ impl MembershipInvalidations for BlockEventInvalidations {
                 }
             }
         }
+        // Released before logging, so the lock covers only the receive loop.
+        drop(events);
         if all {
+            tracing::info!("membership feed: every bucket changed or was missed");
             Invalidation::All
         } else if buckets.is_empty() {
             Invalidation::None
         } else {
+            tracing::debug!(?buckets, "membership feed: drained bucket changes");
             Invalidation::Buckets(buckets)
         }
     }
@@ -275,7 +276,7 @@ mod tests {
 
     #[test]
     fn a_replica_agreement_invalidates_its_bucket() {
-        // `serves_as_replica` is resolved into the bucket's cached entry, so a
+        // The node's agreement is resolved into the bucket's cached entry, so a
         // new replica agreement must drop it like a member change does.
         let (tx, rx) = broadcast::channel(4);
         let _ = tx.send(BlockEvent::ReplicaAgreementEstablished {

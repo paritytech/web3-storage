@@ -244,19 +244,16 @@ start-second-provider BACKEND="rocksdb" PORT=SECOND_PROVIDER_PORT STORAGE_PATH="
 register-provider KEYFILE=PROVIDER_KEYFILE KEY_SCHEME=PROVIDER_KEY_SCHEME:
     #!/usr/bin/env bash
     set -euo pipefail
-    ARGS=("{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_MULTI_ADDR }}")
-    if [ -n "{{KEY_SCHEME}}" ]; then
-        KEYFILE_ARG="{{KEYFILE}}"
-        if [ -z "$KEYFILE_ARG" ]; then
-            KEYFILE_ARG=$(mktemp)
-            echo "//Alice" > "$KEYFILE_ARG" && chmod 600 "$KEYFILE_ARG"
-            trap "rm -f $KEYFILE_ARG" EXIT
-        fi
-        ARGS+=("$KEYFILE_ARG" "{{KEY_SCHEME}}")
-    elif [ -n "{{KEYFILE}}" ]; then
-        ARGS+=("{{KEYFILE}}")
+    ARGS=(--multiaddr "{{ PROVIDER_MULTI_ADDR }}")
+    if [ -n "{{KEYFILE}}" ]; then
+        ARGS+=(--provider-keyfile "{{KEYFILE}}")
+    else
+        ARGS+=(--provider-suri //Alice)
     fi
-    cargo run -p storage-client --example register_provider -- "${ARGS[@]}"
+    if [ -n "{{KEY_SCHEME}}" ]; then
+        ARGS+=(--key-scheme "{{KEY_SCHEME}}")
+    fi
+    cargo run -p storage-cli -- --chain-rpc "{{ CHAIN_WS }}" provider register "${ARGS[@]}"
 
 # Health check for provider node
 health:
@@ -411,7 +408,7 @@ papi-provider-discovery BYTES="1073741824" DURATION="100" MAX_PRICE="10": papi-s
 # ============================================================
 
 # Run comprehensive E2E test suite (all workflows sequentially). Needs the
-# provider node (`just start-provider`) and, for workflows 01 and 15, the second
+# provider node (`just start-provider`) and, for workflows 01, 15 and 16, the second
 # provider node (`just start-second-provider`).
 e2e PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL: papi-setup
     npx c8 --reporter=text --reporter=json --report-dir=examples/papi/coverage \

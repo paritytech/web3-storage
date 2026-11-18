@@ -18,7 +18,7 @@ use storage_subxt::api::{
 use subxt::{events::Event as RawEvent, PolkadotConfig};
 
 /// Whether `event` is a storage-provider event that changes a bucket's member
-/// set. A decode failure of one of these escalates instead of being dropped;
+/// set or agreements. A decode failure of one of these escalates instead of being dropped;
 /// see [`escalate_membership_decode_failure`].
 fn is_membership_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
     event.is::<pallet_events::BucketCreated>()
@@ -26,6 +26,11 @@ fn is_membership_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
         || event.is::<pallet_events::MemberRemoved>()
         || event.is::<pallet_events::BucketDeleted>()
         || event.is::<pallet_events::BucketVisibilityChanged>()
+        || event.is::<pallet_events::SlashedProviderRemoved>()
+        || event.is::<pallet_events::StorageAgreementEstablished>()
+        || event.is::<pallet_events::AgreementToppedUp>()
+        || event.is::<pallet_events::AgreementEnded>()
+        || event.is::<pallet_events::AgreementExtended>()
 }
 
 /// Whether `event` is a storage-provider event that maps to a [`BlockEvent`]
@@ -139,7 +144,12 @@ fn block_event(event: StorageProviderEvent) -> Option<BlockEvent> {
         | StorageProviderEvent::MemberSet { bucket_id, .. }
         | StorageProviderEvent::MemberRemoved { bucket_id, .. }
         | StorageProviderEvent::BucketDeleted { bucket_id }
-        | StorageProviderEvent::BucketVisibilityChanged { bucket_id, .. } => {
+        | StorageProviderEvent::BucketVisibilityChanged { bucket_id, .. }
+        | StorageProviderEvent::SlashedProviderRemoved { bucket_id, .. }
+        | StorageProviderEvent::StorageAgreementEstablished { bucket_id, .. }
+        | StorageProviderEvent::AgreementToppedUp { bucket_id, .. }
+        | StorageProviderEvent::AgreementEnded { bucket_id, .. }
+        | StorageProviderEvent::AgreementExtended { bucket_id, .. } => {
             Some(BlockEvent::BucketMembershipChanged { bucket_id })
         }
         // A new arm above also needs a check in `is_membership_event` or
@@ -311,6 +321,62 @@ mod tests {
             block_event(ev),
             Some(BlockEvent::BucketMembershipChanged { bucket_id: 6 })
         ));
+    }
+
+    #[test]
+    fn provider_and_agreement_events_map_bucket_id() {
+        let provider = || subxt::utils::AccountId32([3u8; 32]);
+        let events = [
+            StorageProviderEvent::SlashedProviderRemoved {
+                bucket_id: 13,
+                provider: provider(),
+                payment_returned_to_owner: 0,
+            },
+            StorageProviderEvent::StorageAgreementEstablished {
+                bucket_id: 14,
+                provider: provider(),
+                owner: subxt::utils::AccountId32([2u8; 32]),
+                terms: AgreementTerms {
+                    owner: subxt::utils::AccountId32([2u8; 32]),
+                    max_bytes: 1024,
+                    duration: 100,
+                    price_per_byte: 1,
+                    valid_until: 50,
+                    nonce: 1,
+                    bucket: BucketTarget::Existing(14),
+                    replica_params: None,
+                },
+                expires_at: 150,
+            },
+            StorageProviderEvent::AgreementToppedUp {
+                bucket_id: 15,
+                provider: provider(),
+                amount: 1,
+                new_max_bytes: 2048,
+            },
+            StorageProviderEvent::AgreementEnded {
+                bucket_id: 16,
+                provider: provider(),
+                payment_to_provider: 0,
+                burned: 0,
+            },
+            StorageProviderEvent::AgreementExtended {
+                bucket_id: 17,
+                provider: provider(),
+                new_expires_at: 300,
+                payment: 1,
+            },
+        ];
+
+        for (event, expected) in events.into_iter().zip(13u64..) {
+            assert!(
+                matches!(
+                    block_event(event),
+                    Some(BlockEvent::BucketMembershipChanged { bucket_id }) if bucket_id == expected
+                ),
+                "bucket {expected}"
+            );
+        }
     }
 
     #[test]
