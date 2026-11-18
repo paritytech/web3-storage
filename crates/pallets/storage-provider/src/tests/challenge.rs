@@ -1308,11 +1308,11 @@ fn cancel_challenge_fails_not_challenger() {
         // Neither the challenged provider nor a stranger may cancel.
         assert_noop!(
             StorageProvider::cancel_challenge(RuntimeOrigin::signed(2), challenge_id),
-            Error::<Test>::NotChallengeChallenger
+            Error::<Test>::NotChallengeCreator
         );
         assert_noop!(
             StorageProvider::cancel_challenge(RuntimeOrigin::signed(4), challenge_id),
-            Error::<Test>::NotChallengeChallenger
+            Error::<Test>::NotChallengeCreator
         );
         assert!(Challenges::<Test>::get(101, 0).is_some());
     });

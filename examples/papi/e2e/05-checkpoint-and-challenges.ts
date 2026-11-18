@@ -197,7 +197,7 @@ async function main() {
       );
       // Only the challenger may withdraw it.
       const tx = api.tx.StorageProvider.cancel_challenge({ challenge_id: challengeId });
-      await submitTxExpectFailure(tx, provider.signer, "NotChallengeChallenger", "5.8");
+      await submitTxExpectFailure(tx, provider.signer, "NotChallengeCreator", "5.8");
       const result = await cancelChallenge(api, client, challengeId);
       const events = api.event.StorageProvider.ChallengeCancelled.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected ChallengeCancelled event");

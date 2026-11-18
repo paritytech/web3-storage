@@ -1306,8 +1306,8 @@ pub mod pallet {
         /// challenged leaf, or the responder is a replica (`Superseded` is a
         /// primary-only defense). The challenge stays open.
         InvalidSupersededClaim,
-        /// Only the challenger who opened the challenge may cancel it.
-        NotChallengeChallenger,
+        /// Only the account that created the challenge may cancel it.
+        NotChallengeCreator,
         /// The provider did not sign the bucket's current snapshot, so there
         /// is no on-chain commitment to challenge; use `challenge_offchain`
         /// with a signed commitment instead. `checkpoint` and
@@ -2984,10 +2984,7 @@ pub mod pallet {
             let challenge = Challenges::<T>::take(challenge_id.deadline, challenge_id.index)
                 .ok_or(Error::<T>::ChallengeNotFound)?;
 
-            ensure!(
-                challenge.challenger == who,
-                Error::<T>::NotChallengeChallenger
-            );
+            ensure!(challenge.challenger == who, Error::<T>::NotChallengeCreator);
 
             // Cancellation is a resolution: decrement the pending counters
             // exactly once, mirroring the increment in `create_challenge`.
