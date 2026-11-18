@@ -209,6 +209,8 @@ impl StorageUserClient {
     ///
     /// The data must use `DEFAULT_CHUNK_SIZE` chunks, as committed data does.
     /// For data of unknown size or chunk size, use [`Self::download_full`].
+    /// A range of no bytes, or one that starts at or past `size`, returns no
+    /// bytes without a request.
     ///
     /// # Example
     /// ```no_run
@@ -229,6 +231,9 @@ impl StorageUserClient {
         offset: u64,
         length: u64,
     ) -> ClientResult<Vec<u8>> {
+        if length == 0 || offset >= size {
+            return Ok(Vec::new());
+        }
         let chunk_count = size.div_ceil(u64::from(DEFAULT_CHUNK_SIZE));
         self.download_range(bucket_id, data_root, offset, length, Some(chunk_count))
             .await

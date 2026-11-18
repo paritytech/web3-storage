@@ -380,7 +380,10 @@ async fn test_download_range_in_second_read_page() {
     assert_eq!(range, &data[offset..offset + chunk_size]);
 }
 
-/// An offset past the end of the data returns no bytes.
+/// An offset past the end of the data returns no bytes. The offset of one
+/// `DEFAULT_CHUNK_SIZE` is past the first chunk boundary, where the provider,
+/// which maps offsets with the 4-byte first chunk, and the client disagree on
+/// the chunk index.
 #[tokio::test]
 async fn test_download_offset_past_end() {
     let url = start_test_provider().await;
@@ -392,8 +395,29 @@ async fn test_download_offset_past_end() {
         .unwrap();
     client.commit(1, vec![data_root]).await.unwrap();
 
-    let retrieved = client.download(1, &data_root, 4, 10, 5).await.unwrap();
-    assert!(retrieved.is_empty());
+    for offset in [4, 10, u64::from(DEFAULT_CHUNK_SIZE)] {
+        let retrieved = client.download(1, &data_root, 4, offset, 5).await.unwrap();
+        assert!(retrieved.is_empty(), "offset {offset}");
+    }
+}
+
+/// A range of no bytes returns no bytes, not `VerificationFailed`, which
+/// reports a provider that sent wrong data.
+#[tokio::test]
+async fn test_download_empty_range() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let data_root = client
+        .upload(1, b"tiny", ChunkingStrategy::default())
+        .await
+        .unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
+
+    let zero_length = client.download(1, &data_root, 4, 0, 0).await.unwrap();
+    assert!(zero_length.is_empty());
+    let zero_size = client.download(1, &data_root, 0, 0, 4).await.unwrap();
+    assert!(zero_size.is_empty());
 }
 
 /// A length past the end of the data returns the data up to its end.
