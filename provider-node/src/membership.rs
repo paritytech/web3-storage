@@ -4,7 +4,7 @@
 
 use crate::chain_connection::{self, ChainWatch};
 use provider_auth::{
-    BucketAccess, Invalidation, LocalBucketAgreement, Member, MembershipError,
+    AgreementRole, BucketAccess, Invalidation, LocalBucketAgreement, Member, MembershipError,
     MembershipInvalidations, MembershipResolver,
 };
 use provider_events::{BlockEvent, BlockEventRx};
@@ -12,6 +12,7 @@ use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;
+use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::broadcast::error::TryRecvError;
 
@@ -113,7 +114,7 @@ impl MembershipResolver for ChainMembershipResolver {
                                     reason: e.to_string(),
                                 })?;
                         Some(LocalBucketAgreement {
-                            role: agreement.role.into(),
+                            role: agreement_role(&agreement.role),
                             max_bytes: agreement.max_bytes,
                             expires_at: agreement.expires_at,
                         })
@@ -218,10 +219,35 @@ impl MembershipInvalidations for BlockEventInvalidations {
     }
 }
 
+/// The role of an on-chain agreement, without the replica sync terms.
+fn agreement_role(role: &ProviderRole<u128, u32>) -> AgreementRole {
+    match role {
+        ProviderRole::Primary => AgreementRole::Primary,
+        ProviderRole::Replica { .. } => AgreementRole::Replica,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use storage_primitives::Role;
+
+    #[test]
+    fn agreement_role_maps_both_variants() {
+        assert_eq!(
+            agreement_role(&ProviderRole::Primary),
+            AgreementRole::Primary
+        );
+        assert_eq!(
+            agreement_role(&ProviderRole::Replica {
+                sync_balance: 700,
+                sync_price: 25,
+                min_sync_interval: 600,
+                last_sync: None,
+            }),
+            AgreementRole::Replica
+        );
+    }
 
     #[tokio::test]
     async fn chain_resolver_fails_cleanly_before_first_connect() {

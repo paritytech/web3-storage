@@ -11,7 +11,7 @@ use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use storage_primitives::{BucketId, Role, RuntimeProviderRole, Visibility};
+use storage_primitives::{BucketId, Role, Visibility};
 
 /// A bucket member and the role they hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,11 +28,21 @@ impl From<(AccountId32, Role)> for Member {
     }
 }
 
+/// The role of this node's agreement on a bucket. The on-chain role also
+/// contains the replica sync terms; access control does not read them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgreementRole {
+    /// The node receives writes for the bucket.
+    Primary,
+    /// The node syncs the bucket from other providers.
+    Replica,
+}
+
 /// This node's own storage agreement on a bucket.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalBucketAgreement {
-    /// The agreement's role, as stored on chain.
-    pub role: RuntimeProviderRole,
+    /// Whether this node is a primary or a replica for the bucket.
+    pub role: AgreementRole,
     /// The agreement's quota, in bytes.
     pub max_bytes: u64,
     /// Anchor block where the agreement's paid term ends.
@@ -40,8 +50,9 @@ pub struct LocalBucketAgreement {
 }
 
 impl LocalBucketAgreement {
+    /// Whether this node holds the bucket as a replica.
     pub fn is_replica_agreement(&self) -> bool {
-        matches!(self.role, RuntimeProviderRole::Replica { .. })
+        self.role == AgreementRole::Replica
     }
 
     /// Whether the node may still take writes for this agreement at `anchor_block`.
@@ -172,7 +183,7 @@ impl StaticMembershipResolver {
     pub fn private(members: Vec<Member>) -> Self {
         Self::new(BucketAccess {
             local_agreement: Some(LocalBucketAgreement {
-                role: RuntimeProviderRole::Primary,
+                role: AgreementRole::Primary,
                 max_bytes: u64::MAX,
                 expires_at: u32::MAX,
             }),
@@ -180,16 +191,10 @@ impl StaticMembershipResolver {
         })
     }
 
-    /// Resolve every bucket as replica-held by this node. The replica's sync
-    /// fields are zero: auth only reads the role.
+    /// Resolve every bucket as replica-held by this node.
     pub fn with_serves_as_replica(mut self) -> Self {
         self.access.local_agreement = Some(LocalBucketAgreement {
-            role: RuntimeProviderRole::Replica {
-                sync_balance: 0,
-                sync_price: 0,
-                min_sync_interval: 0,
-                last_sync: None,
-            },
+            role: AgreementRole::Replica,
             max_bytes: u64::MAX,
             expires_at: u32::MAX,
         });
@@ -199,7 +204,7 @@ impl StaticMembershipResolver {
     /// Resolve every bucket as a primary agreement with this quota.
     pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
         self.access.local_agreement = Some(LocalBucketAgreement {
-            role: RuntimeProviderRole::Primary,
+            role: AgreementRole::Primary,
             max_bytes,
             expires_at: u32::MAX,
         });

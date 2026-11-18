@@ -383,7 +383,7 @@ mod tests {
                 .await
                 .unwrap(),
             LocalBucketAgreement {
-                role: storage_primitives::RuntimeProviderRole::Primary,
+                role: crate::membership::AgreementRole::Primary,
                 max_bytes: 1_000,
                 expires_at: u32::MAX
             }
