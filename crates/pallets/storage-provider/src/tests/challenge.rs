@@ -1553,7 +1553,7 @@ mod challenge_tests {
     use sp_core::H256;
     use storage_primitives::{
         hash_children, hash_leaf, mmr, BucketSnapshot, ChallengeId, ChunkLocation, Commitment,
-        EndAction, MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
+        EndAction, MmrLeaf, MmrProof,
     };
 
     // ─────────────────────────────────────────────────────────────────────────

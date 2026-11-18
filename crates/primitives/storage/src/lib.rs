@@ -100,60 +100,6 @@ pub enum Visibility {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Provider Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Provider role for a specific bucket agreement.
-#[derive(
-    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum ProviderRole<Balance, BlockNumber> {
-    /// Receives data directly from writers.
-    /// - Admin-controlled (stored in bucket.primary_providers)
-    /// - Count toward min_providers for checkpoints
-    /// - Can be early-terminated by admin
-    Primary,
-    /// Syncs data from other providers autonomously.
-    /// - Permissionless (anyone can add)
-    /// - Does NOT count toward min_providers
-    /// - Cannot be early-terminated (runs to expiry)
-    /// - Receives per-sync payment from sync_balance
-    Replica {
-        /// Balance for per-sync payments (drawn down on each sync confirmation)
-        sync_balance: Balance,
-        /// Price per sync locked at creation/last extension
-        sync_price: Balance,
-        /// Minimum blocks between sync confirmations for this agreement.
-        min_sync_interval: BlockNumber,
-        /// Last confirmed sync. `None` if the replica hasn't confirmed sync yet.
-        last_sync: Option<ReplicaSyncRecord<BlockNumber>>,
-    },
-}
-
-/// A replica's last confirmed sync: the commitment and the anchor block.
-/// `challenge_replica` targets leaves of this commitment.
-#[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
-    Debug,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ReplicaSyncRecord<BlockNumber> {
-    /// MMR commitment the replica confirmed sync to (root + covered range).
-    pub commitment: Commitment,
-    /// Block at which `confirm_replica_sync` was executed.
-    pub block: BlockNumber,
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Agreement Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -237,7 +183,7 @@ pub struct ChallengeId<BlockNumber> {
 /// commitment over a contiguous range of leaves.
 ///
 /// One reusable type instead of three loose fields: it is a field group inside
-/// [`CommitmentPayload`], [`BucketSnapshot`], and [`ReplicaSyncRecord`], and it
+/// [`CommitmentPayload`], [`BucketSnapshot`], and the pallet's `ReplicaSyncRecord`, and it
 /// is the single argument the checkpoint/challenge extrinsics take in place of
 /// passing `mmr_root`, `start_seq`, and `leaf_count` separately.
 #[derive(

@@ -70,7 +70,7 @@ pub mod pallet {
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, ChunkLocation, Commitment, CommitmentPayload,
-        EndAction, MmrProof, ProviderRole, RemovalReason, ReplicaSyncRecord, Role, Visibility,
+        EndAction, MmrProof, RemovalReason, Role, Visibility,
     };
 
     /// Balance type of the configured currency.
@@ -706,6 +706,60 @@ pub mod pallet {
         pub creator: T::AccountId,
         /// Storage deposit for the bucket record, held on `creator`.
         pub deposit: TicketOf<T>,
+    }
+
+    /// Provider role for a specific bucket agreement.
+    #[derive(
+        Clone,
+        PartialEq,
+        Eq,
+        Encode,
+        Decode,
+        codec::DecodeWithMemTracking,
+        TypeInfo,
+        MaxEncodedLen,
+        Debug,
+    )]
+    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+    pub enum ProviderRole<Balance, BlockNumber> {
+        /// Receives data directly from writers. The bucket admin adds and
+        /// removes primary providers.
+        Primary,
+        /// Syncs data from other providers. Anyone can add a replica. It
+        /// runs until expiry and is paid `sync_price` from `sync_balance` for
+        /// each confirmed sync.
+        Replica {
+            /// Balance for per-sync payments, reduced on each confirmed sync.
+            sync_balance: Balance,
+            /// Price per sync, locked at creation or the last extension.
+            sync_price: Balance,
+            /// Minimum blocks between sync confirmations for this agreement.
+            min_sync_interval: BlockNumber,
+            /// Last confirmed sync. `None` if the replica hasn't confirmed sync yet.
+            last_sync: Option<ReplicaSyncRecord<BlockNumber>>,
+        },
+    }
+
+    /// A replica's last confirmed sync: the commitment and the anchor block.
+    /// `challenge_replica` targets leaves of this commitment.
+    #[derive(
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Encode,
+        Decode,
+        codec::DecodeWithMemTracking,
+        TypeInfo,
+        MaxEncodedLen,
+        Debug,
+    )]
+    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+    pub struct ReplicaSyncRecord<BlockNumber> {
+        /// MMR commitment the replica confirmed sync to (root + covered range).
+        pub commitment: Commitment,
+        /// Anchor (relay-chain) block of the `confirm_replica_sync` call.
+        pub block: BlockNumber,
     }
 
     /// Storage agreement between bucket and provider.

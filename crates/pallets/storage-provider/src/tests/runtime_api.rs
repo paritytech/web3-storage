@@ -86,10 +86,7 @@ fn query_agreement_info_returns_data() {
         assert_eq!(response.owner, 1u64.encode());
         assert_eq!(response.provider, 2u64.encode());
         assert!(!response.extensions_blocked);
-        assert!(matches!(
-            response.role,
-            storage_primitives::ProviderRole::Primary
-        ));
+        assert!(matches!(response.role, ProviderRole::Primary));
     });
 }
 

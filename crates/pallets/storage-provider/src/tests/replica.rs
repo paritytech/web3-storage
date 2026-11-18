@@ -37,10 +37,7 @@ fn add_replica_provider_works() {
         );
 
         let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
-        assert!(matches!(
-            agreement.role,
-            storage_primitives::ProviderRole::Replica { .. }
-        ));
+        assert!(matches!(agreement.role, ProviderRole::Replica { .. }));
         // sync_balance (price is 0, so only the sync balance) is escrowed and
         // the agreement's storage deposit is held.
         assert_eq!(held(HoldReason::AgreementPayment, 1), 100);
@@ -307,7 +304,7 @@ fn top_up_replica_sync_balance_works() {
 
         let agreement_before = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
         let sync_balance_before = match &agreement_before.role {
-            storage_primitives::ProviderRole::Replica { sync_balance, .. } => *sync_balance,
+            ProviderRole::Replica { sync_balance, .. } => *sync_balance,
             _ => panic!("expected replica"),
         };
 
@@ -320,7 +317,7 @@ fn top_up_replica_sync_balance_works() {
 
         let agreement_after = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
         let sync_balance_after = match &agreement_after.role {
-            storage_primitives::ProviderRole::Replica { sync_balance, .. } => *sync_balance,
+            ProviderRole::Replica { sync_balance, .. } => *sync_balance,
             _ => panic!("expected replica"),
         };
         assert_eq!(sync_balance_after, sync_balance_before + 50);
@@ -420,7 +417,7 @@ fn confirm_replica_sync_happy_path() {
         // Sync balance should decrease
         let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
         match &agreement.role {
-            storage_primitives::ProviderRole::Replica {
+            ProviderRole::Replica {
                 sync_balance,
                 last_sync,
                 ..
@@ -515,7 +512,7 @@ fn challenge_replica_binds_to_synced_range() {
 #[test]
 fn challenge_replica_binds_to_historical_sync_range() {
     use sp_core::H256;
-    use storage_primitives::{ChunkLocation, Commitment, ProviderRole};
+    use storage_primitives::{ChunkLocation, Commitment};
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_replica_with_snapshot();
@@ -855,7 +852,7 @@ fn confirm_replica_sync_after_interval_with_new_root() {
         // Verify last_sync updated
         let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
         match &agreement.role {
-            storage_primitives::ProviderRole::Replica {
+            ProviderRole::Replica {
                 sync_balance,
                 last_sync,
                 ..

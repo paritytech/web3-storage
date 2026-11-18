@@ -12,7 +12,7 @@ use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Member as RuntimeMember;
-use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderRole;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::broadcast::error::TryRecvError;
 

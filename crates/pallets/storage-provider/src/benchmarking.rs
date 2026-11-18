@@ -14,8 +14,7 @@ use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
 use sp_runtime::Saturating;
 use storage_primitives::{
-    AgreementTerms, BucketId, BucketTarget, ChunkLocation, Commitment, ProviderRole, ReplicaTerms,
-    Visibility,
+    AgreementTerms, BucketId, BucketTarget, ChunkLocation, Commitment, ReplicaTerms, Visibility,
 };
 
 const SEED: u32 = 0;
