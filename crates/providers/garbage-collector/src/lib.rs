@@ -2,37 +2,15 @@
 
 //! Garbage-collection coordinator: chain-truth-driven physical erasure.
 //!
-//! Deletion is two-phased. A prune (`/delete` + checkpoint) or an on-chain
-//! bucket teardown only *stashes* leaves locally; this coordinator later
-//! erases each stashed range once liability for it has provably passed:
-//!
-//! - **canonical checkpoint** — the bucket's on-chain snapshot `start_seq` has
-//!   reached the range's `new_start_seq` (the design's pruning rule), or the
-//!   bucket/our agreement is gone from the chain entirely;
-//! - **deletion receipt** — an admin-signed deletion authorization is held,
-//!   so a `challenge_offchain` citing an older signed commitment is answered
-//!   with the durable `Deleted` defense instead of the erased bytes;
-//! - **no pending challenges** against this provider on the bucket.
-//!
-//! The stash persisted in the storage backend is the work queue, and every
-//! decision re-reads chain truth (fail closed — an unreadable chain skips the
-//! bucket until the next pass). A chain read is also refused when it is older
-//! than one already made: the storage backend keeps the highest finalized
-//! block read (`last_scanned_block`), and a bucket row missing for an id at or
-//! above `NextBucketId` means the read predates the bucket. A condemned bucket
-//! is erased only by a pass that reads a newer block than the pass that first
-//! saw its obligation gone. The block number check does not detect a
-//! different chain: on a chain below `last_scanned_block` the GC skips every
-//! bucket until that height is reached.
-//!
-//! Events drive targeted reconciles; a safety-net interval and the follower's
-//! `Resubscribed` bootstrap rescue anything missed, including the one-shot
-//! `BucketDeleted` (whose chain row is gone afterwards, detected as "local
-//! bucket with no chain row").
-//!
-//! The coordinator reaches the chain, local storage and chain events only
-//! through [`GcChainClient`], [`GcStorage`] and [`GcEventSource`]; the
-//! provider node supplies the implementations.
+//! After receiving delete requests from (`/delete` + checkpoint) or an on-chain bucket teardown,
+//! it records a pruned range locally. Garbage-collection coordinator then erases
+//! a range when all of the following hold:
+//! - [`CanonicalBucketState::canonical_start_seq`] has reached
+//! [`PrunedRange::new_start_seq`], or the bucket or this node's agreement no
+//! longer exists on chain;
+//! - a deletion receipt signed by the bucket admin exists,
+//! so a later challenge over the erased data is answered with the [`ChallengeResponse::Deleted`] defense;
+//! - no challenge against this provider is pending on the bucket.
 
 mod error;
 mod traits;
