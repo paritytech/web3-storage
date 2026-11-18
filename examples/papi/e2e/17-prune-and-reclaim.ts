@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * E2E Workflow 16 — Prune & Reclaim (deletion reclaims paid capacity)
+ * E2E Workflow 17 — Prune & Reclaim (deletion reclaims paid capacity)
  *
  * Accounts: //Alice (provider), //Bob (client)
  *
@@ -15,7 +15,7 @@
  * agreement on bucket-related events *after* the bucket exists locally, so
  * the first checkpoint (a BucketCheckpointed event) is what arms the quota.
  *
- * Usage: node --import tsx e2e/16-prune-and-reclaim.ts [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/17-prune-and-reclaim.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";
@@ -81,7 +81,7 @@ async function main() {
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
   tests.push({
-    name: "16.1 Upload three chunks and checkpoint",
+    name: "17.1 Upload three chunks and checkpoint",
     fn: async () => {
       for (let i = 0; i < 3; i++) {
         const { hash } = await uploadChunk(PROVIDER_URL, bucketId, chunk(i), client);
@@ -93,7 +93,7 @@ async function main() {
   });
 
   tests.push({
-    name: "16.2 Quota syncs from the agreement and usage matches uploads",
+    name: "17.2 Quota syncs from the agreement and usage matches uploads",
     fn: async () => {
       // The checkpoint event drives the provider's GC reconcile, which
       // clamps the bucket quota to the agreement's max_bytes.
@@ -107,7 +107,7 @@ async function main() {
   });
 
   tests.push({
-    name: "16.3 Over-quota upload is refused (507 quota_exceeded)",
+    name: "17.3 Over-quota upload is refused (507 quota_exceeded)",
     fn: async () => {
       await assert.rejects(
         uploadChunk(PROVIDER_URL, bucketId, overQuotaChunk, client),
@@ -118,7 +118,7 @@ async function main() {
   });
 
   tests.push({
-    name: "16.4 Prune the first two leaves and checkpoint the deletion",
+    name: "17.4 Prune the first two leaves and checkpoint the deletion",
     fn: async () => {
       const result = await pruneAndCheckpoint(
         api,
@@ -133,7 +133,7 @@ async function main() {
   });
 
   tests.push({
-    name: "16.5 Rewind prune is refused (400 invalid_start_seq)",
+    name: "17.5 Rewind prune is refused (400 invalid_start_seq)",
     fn: async () => {
       await assert.rejects(
         deleteData(PROVIDER_URL, bucketId, 1n, client),
@@ -144,10 +144,10 @@ async function main() {
   });
 
   tests.push({
-    name: "16.6 Physical erasure reclaims the quota headroom",
+    name: "17.6 Physical erasure reclaims the quota headroom",
     fn: async () => {
       // Erasure requires the prune-checkpoint to be canonical and the
-      // admin's deletion receipt — both done in 16.4 by pruneAndCheckpoint.
+      // admin's deletion receipt — both done in 17.4 by pruneAndCheckpoint.
       const usage = await pollUntil("erasure + quota reclaim", 120_000, 3_000, async () => {
         const u = await fetchBucketUsage(PROVIDER_URL, bucketId, client);
         return u.usedBytes === 100n ? u : null;
@@ -157,15 +157,15 @@ async function main() {
   });
 
   tests.push({
-    name: "16.7 Re-upload fits within the reclaimed headroom",
+    name: "17.7 Re-upload fits within the reclaimed headroom",
     fn: async () => {
       const { commit } = await uploadChunk(PROVIDER_URL, bucketId, overQuotaChunk, client);
-      assert.ok(commit.mmr_root, "the same-size upload that failed in 16.3 now fits");
+      assert.ok(commit.mmr_root, "the same-size upload that failed in 17.3 now fits");
     },
   });
 
   tests.push({
-    name: "16.8 Pruned chunks are physically gone (404)",
+    name: "17.8 Pruned chunks are physically gone (404)",
     fn: async () => {
       await assert.rejects(
         downloadChunk(PROVIDER_URL, bucketId, chunkHashes[0]),
@@ -177,7 +177,7 @@ async function main() {
     },
   });
 
-  await runSuite("16 — Prune & Reclaim", tests, { api, papi });
+  await runSuite("17 — Prune & Reclaim", tests, { api, papi });
 
   try {
     await restore();
