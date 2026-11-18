@@ -19,37 +19,42 @@ cargo run -p storage-cli -- stress-test upload --help
 | ---------------------- | ----------------------- | -------------- | -------------------------------------------------- |
 | `--chain-rpc <URL>`    | `ws://127.0.0.1:2222`   | `CHAIN_RPC`    | Parachain RPC WebSocket endpoint.                  |
 | `--provider-url <URL>` | `http://127.0.0.1:3333` | `PROVIDER_URL` | Provider node HTTP endpoint.                       |
-| `--suri <SURI>`        | —                       |                | Secret URI for the account, e.g. `//Alice`.        |
-| `--keyfile <FILE>`     | —                       |                | Keyfile: the JSON file `provider generate-key` writes, or a file whose contents are the SURI/seed. Must not be group- or world-readable. |
 | `--output <FORMAT>`    | `text`                  |                | Metrics summary format: `text` or `json`.          |
 
-`--suri` and `--keyfile` are mutually exclusive; exactly one is required. The
-account they resolve to signs every transaction and the `Authorization` header
-on every provider request, so for `stress-test` it must be a member of the
-buckets being written to.
+Each command takes the secret of the account it signs as, named after the
+account's role: `--provider-suri`/`--provider-keyfile` or
+`--client-suri`/`--client-keyfile`. Exactly one of each pair is required. A
+keyfile is the JSON file `provider generate-key` writes, or a file whose
+contents are the SURI. It must not be group- or world-readable.
 
 ## `provider`
 
-Manages a provider's on-chain registration with the `--suri`/`--keyfile` account.
+Manages a provider's on-chain registration with the `--provider-suri`/`--provider-keyfile` account.
 Each chain action submits one signed transaction, waits for it to be final and exits.
 The account is the same identity the provider node runs with (`storage-provider-node --keyfile`).
 
 ```bash
-storage-cli --keyfile ./provider.json provider generate-key
-storage-cli --keyfile ./provider.json provider register --multiaddr /ip4/1.2.3.4/tcp/3333 --stake 1000000000000000
-storage-cli --keyfile ./provider.json provider update-settings --price-per-byte 7 --max-capacity 1073741824
-storage-cli --keyfile ./provider.json provider deregister
+storage-cli provider generate-key --provider-keyfile ./provider.json
+storage-cli provider register --provider-keyfile ./provider.json --multiaddr /ip4/1.2.3.4/tcp/3333
+storage-cli provider update-settings --provider-keyfile ./provider.json --price-per-byte 7 --max-capacity 1073741824
+storage-cli provider deregister --provider-keyfile ./provider.json
 ```
 
 | Action            | Description                                                                                                   |
 | ----------------- | ------------------------------------------------------------------------------------------------------------- |
-| `generate-key`    | Create a new secret in `--keyfile` and print, as JSON, the account it derives. Never overwrites an existing file. |
-| `register`        | Register the account as a provider with `--multiaddr` and `--stake`.                                          |
+| `generate-key`    | Create a new secret in `--provider-keyfile` and print, as JSON, the account it derives. Never overwrites an existing file. |
+| `register`        | Register the account as a provider with `--multiaddr` and `--stake` (default: the 1000-token minimum stake of the bundled runtimes). |
 | `update-settings` | Change the given settings; every other setting keeps its on-chain value. A no-op submits nothing.            |
 | `deregister`      | Announce deregistration. The stake is released by `complete_deregister` after the announcement period.        |
 
-`provider --key-scheme <SCHEME>` names the scheme of the key `register` puts on chain.
-Only `sr25519` is supported for now.
+`register --key-scheme <SCHEME>` names the scheme of the key `register` puts on chain: `sr25519`, `ed25519`, `ecdsa` or `eth`.
+It must match the node's `--key-scheme`.
+Without the flag, `register` uses a JSON keyfile's `keyScheme`, else `sr25519`.
+The extrinsics are always signed by the sr25519 account.
+`generate-key` supports only `sr25519` for now.
+
+The provider node can start before or after registration.
+If it starts after, it reads the registration when it connects and can sign terms on its first request.
 
 `generate-key` writes the keyfile with owner-only permissions.
 Its address uses the chain's SS58 prefix, read from `--chain-rpc`; when the chain is unreachable the generic prefix 42 is used and reported.
@@ -72,15 +77,15 @@ Every action validates the input and the provider's current on-chain state befor
 
 Drives configurable upload load against a provider: `--users` simulated clients
 each performing `--uploads-per-user` uploads, with either axis run sequentially
-or in parallel. Targets buckets the account already has a storage agreement with
+or in parallel. Targets buckets the client account already has a storage agreement with
 the given provider for, or buckets the run prepares itself with
 `--prepare-buckets`.
 
 ```bash
 cargo run -p storage-cli -- \
-  --suri //Bob \
   stress-test upload \
-  --provider <PROVIDER_SS58> \
+  --client-suri //Bob \
+  --provider-account <PROVIDER_SS58> \
   --prepare-buckets 2 \
   --users 10 \
   --uploads-per-user 5 \
@@ -90,7 +95,9 @@ cargo run -p storage-cli -- \
 
 | Param                        | Default            | Description                                                |
 | ---------------------------- | ------------------ | ---------------------------------------------------------- |
-| `--provider <ACCOUNT>`       | required           | Provider account (SS58 or `0x`-hex) whose agreements select the target buckets. |
+| `--client-suri <SURI>`       | —                  | Secret URI of the client account, e.g. `//Bob`.            |
+| `--client-keyfile <FILE>`    | —                  | File with the client account's SURI, or a JSON keyfile.    |
+| `--provider-account <ACCOUNT>` | required         | Public account of the provider (SS58 or `0x`-hex) whose agreements select the target buckets. |
 | `--max-buckets-to-write <N>` | all buckets        | Cap the number of buckets written to (must be `>= 1`).     |
 | `--users <N>`                | `1`                | Number of simulated users, each with its own client.       |
 | `--uploads-per-user <X>`     | `1`                | Number of uploads each user performs.                      |
@@ -98,7 +105,7 @@ cargo run -p storage-cli -- \
 | `--parallel-users`           | off (sequential)   | Run users in parallel.                                     |
 | `--parallel-uploads`         | off (sequential)   | Run each user's uploads in parallel.                       |
 | `--max-concurrency <N>`      | `0` (unbounded)    | Cap total in-flight uploads across all users.              |
-| `--prepare-buckets <N>`      | `0` (off)          | Open `N` fresh buckets with a primary agreement to `--provider` before the run. |
+| `--prepare-buckets <N>`      | `0` (off)          | Open `N` fresh buckets with a primary agreement to `--provider-account` before the run. |
 | `--prepare-max-bytes <BYTES>`| per-bucket load + 10% | Quota negotiated per prepared bucket. Rejected if below what the run writes to one bucket. |
 | `--prepare-duration <BLOCKS>`| `100`              | Agreement duration for prepared buckets, in anchor blocks. |
 | `--prepare-price-per-byte <P>`| `1`               | Price per byte per block the run accepts. The provider rejects lower offers and signs at its listed price. |
@@ -111,9 +118,11 @@ together maximise concurrency (bounded by `--max-concurrency` if set).
 
 **Behavior**
 
-1. Derives the account from `--suri`/`--keyfile`. Unless `--bucket-source create`,
+1. Derives the client account from `--client-suri`/`--client-keyfile`. This
+   account signs the `Authorization` header on every provider request, so it
+   must be a member of the buckets written to. Unless `--bucket-source create`,
    reads its buckets from chain (`MemberBuckets[account]`) and keeps those with a
-   `StorageAgreements[bucket][provider]` entry for the given `--provider`.
+   `StorageAgreements[bucket][provider]` entry for `--provider-account`.
 2. With `--prepare-buckets N`, negotiates terms with the provider node
    (`POST /negotiate`) and redeems them on-chain (`create_bucket_with_primary`)
    once per bucket, the same path as the SDK's `complete_workflow` example.
@@ -160,9 +169,9 @@ summary.
 ### Required on-chain setup
 
 The provider must be registered on-chain and its node running (`just start-chain`,
-`just start-provider`, `storage-cli provider register`).
+`just register-provider`, `just start-provider`).
 Buckets and agreements either exist already (default `discover` mode) or the run
-opens them with `--prepare-buckets N`. The signing account pays for the prepared
+opens them with `--prepare-buckets N`. The client account pays for the prepared
 agreements at the provider's listed price.
 
 ## Limitations

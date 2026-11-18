@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Error types for the provider node.
 
@@ -11,6 +11,7 @@ use provider_auth::{AuthError, MembershipError};
 use provider_types::{ChainClientError, SigningRefused};
 use serde::Serialize;
 use std::fmt;
+use storage_primitives::BucketId;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -53,6 +54,16 @@ pub enum Error {
     #[error(transparent)]
     Auth(#[from] AuthError),
 
+    /// An upload targets a bucket this provider has no storage agreement on.
+    /// Open an agreement with this provider for the bucket, then retry.
+    #[error("This provider has no agreement for bucket {0}")]
+    NoAgreement(BucketId),
+
+    /// A `/read` covers more chunks than one request may return. Split the
+    /// range into requests of at most `max` chunks.
+    #[error("Read of {requested} chunks exceeds the limit of {max} chunks per request")]
+    ReadTooLarge { requested: u64, max: u64 },
+
     #[error("Provider is not accepting new primary agreements")]
     NotAcceptingPrimary,
 
@@ -91,10 +102,6 @@ pub enum Error {
         "Chain state not ready: current_anchor_block and request_timeout must both be non-zero"
     )]
     ChainStateNotReady,
-
-    /// The node has not connected to the chain yet.
-    #[error(transparent)]
-    ChainNotConnected(#[from] crate::chain_connection::NotConnected),
 
     /// The node cannot sign with its registered key. Each reason keeps the
     /// response code it had when these were three separate variants.
@@ -335,6 +342,20 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": e.to_string() })),
                 },
             ),
+            Error::NoAgreement(bucket_id) => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "no_agreement".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
+                },
+            ),
+            Error::ReadTooLarge { requested, max } => (
+                StatusCode::BAD_REQUEST,
+                ErrorResponse {
+                    error: "read_too_large".to_string(),
+                    details: Some(serde_json::json!({ "requested": requested, "max": max })),
+                },
+            ),
             Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
                 StatusCode::UNAUTHORIZED,
                 ErrorResponse {
@@ -347,6 +368,15 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "insufficient_role".to_string(),
                     details: None,
+                },
+            ),
+            Error::Auth(AuthError::NotPrimary) => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "not_primary".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "this node serves this bucket as a replica and rejects writes to it."
+                    })),
                 },
             ),
             // Transient and worth retrying, unlike a decode failure.
@@ -478,15 +508,6 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({
                         "message": "current_anchor_block or request_timeout is 0; \
                                     the node has not yet synced with the chain"
-                    })),
-                },
-            ),
-            Error::ChainNotConnected(_) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "chain_unavailable".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "the node has not yet established a connection to the chain"
                     })),
                 },
             ),
@@ -691,11 +712,6 @@ mod tests {
         );
         assert_eq!(
             status_of(SigningRefused::NoKey.into()),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-        // A connection that was never established is retryable.
-        assert_eq!(
-            status_of(crate::chain_connection::NotConnected.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
     }

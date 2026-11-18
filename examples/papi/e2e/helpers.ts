@@ -29,6 +29,7 @@ import {
   type FsTree,
   type SubmittableTx,
   Web3Storage,
+  type NegotiateRequest,
 } from "@web3-storage/sdk";
 
 // ── Test runner primitives ──────────────────────────────────────────────────
@@ -213,7 +214,7 @@ export interface NegotiateOpts {
   duration: number;
   /** Set for a quote against an existing bucket. */
   bucketId?: bigint | null;
-  replicaParams?: { sync_balance: bigint; min_sync_interval: number } | null;
+  replicaParams?: NegotiateRequest["replica_params"];
   /** Defaults to the provider's current on-chain price_per_byte. */
   pricePerByte?: bigint | null;
 }

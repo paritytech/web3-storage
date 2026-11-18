@@ -391,7 +391,7 @@ export async function fetchChallengeProof(
 
 /** Parallel requests per batch in the blob helpers. */
 const BLOB_CONCURRENCY = 4;
-/** Chunks requested per `GET /read` call. */
+/** Chunks requested per `GET /read` call. Equals the provider's `MAX_READ_CHUNKS`. */
 const READ_WINDOW_CHUNKS = 16;
 /** Attempts for idempotent requests (`PUT /node` and reads). */
 const IDEMPOTENT_RETRIES = 3;

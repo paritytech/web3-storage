@@ -11,7 +11,7 @@ use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use storage_primitives::{BucketId, Role, Visibility};
+use storage_primitives::{BucketId, Role, RuntimeProviderRole, Visibility};
 
 /// A bucket member and the role they hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,12 +28,29 @@ impl From<(AccountId32, Role)> for Member {
     }
 }
 
-/// The slice of on-chain bucket state that access control needs: who the
-/// members are, and whether reads are member-only.
+/// This node's own storage agreement on a bucket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalBucketAgreement {
+    /// The agreement's role, as stored on chain.
+    pub role: RuntimeProviderRole,
+    /// The agreement's quota, in bytes.
+    pub max_bytes: u64,
+}
+
+impl LocalBucketAgreement {
+    pub fn is_replica_agreement(&self) -> bool {
+        matches!(self.role, RuntimeProviderRole::Replica { .. })
+    }
+}
+
+/// Everything access control and bucket initialization need about one
+/// bucket, resolved in one call at one block and cached as one entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BucketAccess {
     pub members: Vec<Member>,
     pub visibility: Visibility,
+    /// `None`: this node has no agreement on the bucket.
+    pub local_agreement: Option<LocalBucketAgreement>,
 }
 
 impl BucketAccess {
@@ -43,58 +60,54 @@ impl BucketAccess {
         Self {
             members,
             visibility: Visibility::Private,
+            local_agreement: None,
         }
+    }
+
+    /// The role `account` holds as a bucket member.
+    pub fn role_of(&self, account: &AccountId32) -> Option<Role> {
+        self.members
+            .iter()
+            .find(|m| &m.account == account)
+            .map(|m| m.role)
+    }
+
+    /// This node holds a replica agreement on the bucket.
+    pub fn serves_as_replica(&self) -> bool {
+        self.local_agreement
+            .as_ref()
+            .is_some_and(|agreement| agreement.is_replica_agreement())
     }
 }
 
-/// Required role for an endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RequiredRole {
-    /// Any member of the bucket.
-    Reader,
-    /// `Writer` or `Admin`.
-    Writer,
-    /// `Admin` only.
-    Admin,
-}
-
-impl RequiredRole {
-    /// Matched over the pair, not on `self` alone, so a new [`Role`] fails to
-    /// compile here until it is given an explicit answer.
-    pub fn is_satisfied_by(self, granted: Role) -> bool {
-        match (self, granted) {
-            // Any member of the bucket can read.
-            (RequiredRole::Reader, Role::Reader | Role::Writer | Role::Admin) => true,
-            (RequiredRole::Writer, Role::Writer | Role::Admin) => true,
-            (RequiredRole::Writer, Role::Reader) => false,
-            (RequiredRole::Admin, Role::Admin) => true,
-            (RequiredRole::Admin, Role::Reader | Role::Writer) => false,
-        }
+/// Whether `granted` meets `required`: `Admin` > `Writer` > `Reader`.
+/// Matched over the pair so a new [`Role`] fails to compile here.
+pub fn role_satisfies(required: Role, granted: Role) -> bool {
+    match (required, granted) {
+        // Any member of the bucket can read.
+        (Role::Reader, Role::Reader | Role::Writer | Role::Admin) => true,
+        (Role::Writer, Role::Writer | Role::Admin) => true,
+        (Role::Writer, Role::Reader) => false,
+        (Role::Admin, Role::Admin) => true,
+        (Role::Admin, Role::Reader | Role::Writer) => false,
     }
 }
 
 /// Cached access entry for a bucket: the bucket's own state plus this node's
-/// standing on it. Kept as separate fields — [`BucketAccess`] is bucket state,
-/// `serves_as_replica` is the node's relationship to the bucket — but cached as one
-/// value because both resolve from the same chain read-through and expire and
-/// invalidate together. `access.visibility` always equals the chain's, so
-/// `Private` together with `serves_as_replica: true` is a valid entry: the
-/// replica of a private bucket, which the design has serve everyone.
+/// agreement on it, resolved in one chain read, so they expire and invalidate
+/// together. `access.visibility` always equals the chain's, so `Private`
+/// together with a replica agreement is a valid entry: the replica of a
+/// private bucket, which the design has serve everyone.
 #[derive(Debug, Clone)]
 pub(crate) struct CachedMembership {
     pub(crate) access: BucketAccess,
-    /// This node serves the bucket under a replica agreement, so Reader
-    /// checks pass without auth (replicas serve reads to everyone —
-    /// visibility gates primaries only).
-    pub(crate) serves_as_replica: bool,
     fetched_at: Instant,
 }
 
 impl CachedMembership {
-    fn new(access: BucketAccess, serves_as_replica: bool) -> Self {
+    fn new(access: BucketAccess) -> Self {
         Self {
             access,
-            serves_as_replica,
             fetched_at: Instant::now(),
         }
     }
@@ -109,11 +122,7 @@ impl CachedMembership {
     }
 
     pub(crate) fn role_of(&self, account: &AccountId32) -> Option<Role> {
-        self.access
-            .members
-            .iter()
-            .find(|m| &m.account == account)
-            .map(|m| m.role)
+        self.access.role_of(account)
     }
 }
 
@@ -121,18 +130,10 @@ impl CachedMembership {
 /// tests).
 #[async_trait::async_trait]
 pub trait MembershipResolver: Send + Sync {
-    /// The members of `bucket_id` and whether its reads are member-only. An
-    /// empty member set means nobody is a member — either the bucket does not
+    /// The members of `bucket_id`, whether its reads are member-only, and this
+    /// node's agreement on it. An empty member set means nobody is a member — either the bucket does not
     /// exist, or it holds no members.
     async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError>;
-
-    /// Whether *this node* holds `bucket_id` under a replica agreement.
-    /// Replicas serve reads to everyone — visibility gates primaries only —
-    /// so `true` passes Reader checks without auth. Defaults to `false`, the
-    /// right answer for a resolver with no node identity.
-    async fn fetch_serves_as_replica(&self, _bucket_id: BucketId) -> Result<bool, MembershipError> {
-        Ok(false)
-    }
 }
 
 /// So a boxed resolver still satisfies the `impl MembershipResolver` bound.
@@ -141,51 +142,72 @@ impl<T: MembershipResolver + ?Sized> MembershipResolver for Box<T> {
     async fn fetch_access(&self, bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
         (**self).fetch_access(bucket_id).await
     }
-
-    async fn fetch_serves_as_replica(&self, bucket_id: BucketId) -> Result<bool, MembershipError> {
-        (**self).fetch_serves_as_replica(bucket_id).await
-    }
 }
 
 /// A [`MembershipResolver`] that returns the same fixed answers for every
 /// bucket. Used by tests across crates; [`Self::private`] is the fail-safe
 /// member-only shape.
+#[cfg(any(test, feature = "test-helpers"))]
 pub struct StaticMembershipResolver {
     /// Returned by `fetch_access` for every bucket.
     pub access: BucketAccess,
-    /// Returned by `fetch_serves_as_replica` for every bucket.
-    pub serves_as_replica: bool,
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 impl StaticMembershipResolver {
-    /// Returns `access` for every bucket, with `serves_as_replica` false.
+    /// Returns `access` for every bucket.
     pub fn new(access: BucketAccess) -> Self {
-        Self {
-            access,
-            serves_as_replica: false,
-        }
+        Self { access }
     }
 
-    /// Member-only buckets (auth always required) with the given members.
+    /// Member-only buckets (auth always required) with the given members and
+    /// an unlimited primary agreement.
     pub fn private(members: Vec<Member>) -> Self {
-        Self::new(BucketAccess::private(members))
+        Self::new(BucketAccess {
+            local_agreement: Some(LocalBucketAgreement {
+                role: RuntimeProviderRole::Primary,
+                max_bytes: u64::MAX,
+            }),
+            ..BucketAccess::private(members)
+        })
     }
 
-    /// Resolve every bucket as replica-held by this node.
+    /// Resolve every bucket as replica-held by this node. The replica's sync
+    /// fields are zero: auth only reads the role.
     pub fn with_serves_as_replica(mut self) -> Self {
-        self.serves_as_replica = true;
+        self.access.local_agreement = Some(LocalBucketAgreement {
+            role: RuntimeProviderRole::Replica {
+                sync_balance: 0,
+                sync_price: 0,
+                min_sync_interval: 0,
+                last_sync: None,
+            },
+            max_bytes: u64::MAX,
+        });
+        self
+    }
+
+    /// Resolve every bucket as a primary agreement with this quota.
+    pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
+        self.access.local_agreement = Some(LocalBucketAgreement {
+            role: RuntimeProviderRole::Primary,
+            max_bytes,
+        });
+        self
+    }
+
+    /// Resolve every bucket as one this node has no agreement on.
+    pub fn without_agreement(mut self) -> Self {
+        self.access.local_agreement = None;
         self
     }
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 #[async_trait::async_trait]
 impl MembershipResolver for StaticMembershipResolver {
     async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
         Ok(self.access.clone())
-    }
-
-    async fn fetch_serves_as_replica(&self, _bucket_id: BucketId) -> Result<bool, MembershipError> {
-        Ok(self.serves_as_replica)
     }
 }
 
@@ -414,18 +436,11 @@ impl MembershipCache {
         // invalidation landed while the resolver call was in flight.
         let epoch_before = self.epoch.load(Ordering::SeqCst);
 
-        // Cache miss or stale — fetch from chain. Both halves resolve or the
-        // entry does not: a failed standing lookup takes the same
-        // stale-if-error path as a failed member lookup.
-        let fetched = async {
-            let access = self.resolver.fetch_access(bucket_id).await?;
-            let serves_as_replica = self.resolver.fetch_serves_as_replica(bucket_id).await?;
-            Ok::<_, MembershipError>((access, serves_as_replica))
-        }
-        .await;
+        // Cache miss or stale — fetch from chain.
+        let fetched = self.resolver.fetch_access(bucket_id).await;
         match fetched {
-            Ok((access, serves_as_replica)) => {
-                let entry = Arc::new(CachedMembership::new(access, serves_as_replica));
+            Ok(access) => {
+                let entry = Arc::new(CachedMembership::new(access));
                 // Cache it only if no invalidation landed during the fetch,
                 // then check again: no lock spans the insert, so a bump can
                 // still slip between the two lines. `invalidate` bumps
@@ -439,8 +454,19 @@ impl MembershipCache {
                     self.cache.insert(bucket_id, entry.clone()).await;
                     if self.epoch.load(Ordering::SeqCst) != epoch_before {
                         self.cache.invalidate(&bucket_id).await;
+                        tracing::debug!(
+                            bucket_id,
+                            "membership cache: dropped a fetch that raced an invalidation"
+                        );
                     }
                 }
+                tracing::debug!(
+                    bucket_id,
+                    members = entry.access.members.len(),
+                    local_agreement = entry.access.local_agreement.is_some(),
+                    replica = entry.access.serves_as_replica(),
+                    "membership cache: resolved bucket access"
+                );
                 Ok(entry)
             }
             Err(e) => {
@@ -487,6 +513,7 @@ impl MembershipCache {
     async fn invalidate(&self, bucket_id: BucketId) {
         self.epoch.fetch_add(1, Ordering::SeqCst);
         self.cache.invalidate(&bucket_id).await;
+        tracing::debug!(bucket_id, "membership cache: invalidated bucket");
     }
 
     /// Drop every cached membership. `moka`'s `invalidate_all` is O(1) - it
@@ -496,35 +523,69 @@ impl MembershipCache {
     fn invalidate_all(&self) {
         self.epoch.fetch_add(1, Ordering::SeqCst);
         self.cache.invalidate_all();
+        tracing::info!("membership cache: invalidated every bucket");
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{CountingResolver, FlakyResolver, Gated, QueuedInvalidations};
+    use crate::test_support::{
+        AgreementResolver, CountingResolver, FlakyResolver, Gated, QueuedInvalidations,
+    };
 
     #[test]
     fn privilege_ladder_is_exhaustive() {
         // Every (required, granted) pair, so the ladder cannot be widened
         // without a test failing.
         for (required, granted, expected) in [
-            (RequiredRole::Reader, Role::Reader, true),
-            (RequiredRole::Reader, Role::Writer, true),
-            (RequiredRole::Reader, Role::Admin, true),
-            (RequiredRole::Writer, Role::Reader, false),
-            (RequiredRole::Writer, Role::Writer, true),
-            (RequiredRole::Writer, Role::Admin, true),
-            (RequiredRole::Admin, Role::Reader, false),
-            (RequiredRole::Admin, Role::Writer, false),
-            (RequiredRole::Admin, Role::Admin, true),
+            (Role::Reader, Role::Reader, true),
+            (Role::Reader, Role::Writer, true),
+            (Role::Reader, Role::Admin, true),
+            (Role::Writer, Role::Reader, false),
+            (Role::Writer, Role::Writer, true),
+            (Role::Writer, Role::Admin, true),
+            (Role::Admin, Role::Reader, false),
+            (Role::Admin, Role::Writer, false),
+            (Role::Admin, Role::Admin, true),
         ] {
             assert_eq!(
-                required.is_satisfied_by(granted),
+                role_satisfies(required, granted),
                 expected,
                 "{granted:?} vs required {required:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn serves_as_replica_is_true_only_for_a_replica_agreement() {
+        let base = || StaticMembershipResolver::private(vec![]);
+        for (resolver, expected) in [
+            (base().with_serves_as_replica(), true),
+            (base().with_max_bytes(10), false),
+            (base().without_agreement(), false),
+        ] {
+            let entry = MembershipCache::new(resolver).lookup(1).await.unwrap();
+            assert_eq!(entry.access.serves_as_replica(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn one_miss_makes_one_resolver_call_and_keeps_the_agreement() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let cache = MembershipCache::new(AgreementResolver {
+            max_bytes: 7,
+            calls: calls.clone(),
+        });
+
+        let entry = cache.lookup(1).await.unwrap();
+        cache.lookup(1).await.unwrap();
+
+        assert_eq!(
+            entry.access.local_agreement.as_ref().map(|a| a.max_bytes),
+            Some(7)
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -533,14 +594,11 @@ mod tests {
         let bob = AccountId32::new([2u8; 32]);
         let charlie = AccountId32::new([3u8; 32]);
 
-        let entry = CachedMembership::new(
-            BucketAccess::private(vec![
-                (alice.clone(), Role::Admin).into(),
-                (bob.clone(), Role::Writer).into(),
-                (charlie.clone(), Role::Reader).into(),
-            ]),
-            false,
-        );
+        let entry = CachedMembership::new(BucketAccess::private(vec![
+            (alice.clone(), Role::Admin).into(),
+            (bob.clone(), Role::Writer).into(),
+            (charlie.clone(), Role::Reader).into(),
+        ]));
 
         assert_eq!(entry.role_of(&alice), Some(Role::Admin));
         assert_eq!(entry.role_of(&bob), Some(Role::Writer));
@@ -552,7 +610,7 @@ mod tests {
 
     #[test]
     fn entries_go_stale_once_the_ttl_elapses() {
-        let entry = CachedMembership::new(BucketAccess::private(vec![]), false);
+        let entry = CachedMembership::new(BucketAccess::private(vec![]));
         assert!(entry.is_fresh(Duration::from_secs(60)));
         assert!(!entry.is_fresh(Duration::ZERO));
     }

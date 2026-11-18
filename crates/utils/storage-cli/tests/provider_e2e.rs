@@ -100,13 +100,18 @@ impl Run {
 }
 
 impl ProviderCli {
-    fn run(&self, args: &[&str]) -> Run {
+    /// Run `provider <action> --provider-keyfile <keyfile> <args>`.
+    fn run(&self, action_and_args: &[&str]) -> Run {
+        let (action, args) = action_and_args
+            .split_first()
+            .expect("the provider action is given");
         let output = Command::new(env!("CARGO_BIN_EXE_storage-cli"))
             .arg("--chain-rpc")
             .arg(&self.chain_ws)
-            .arg("--keyfile")
-            .arg(&self.keyfile)
             .arg("provider")
+            .arg(action)
+            .arg("--provider-keyfile")
+            .arg(&self.keyfile)
             .args(args)
             .output()
             .expect("the storage-cli binary runs");
@@ -276,7 +281,7 @@ async fn manages_a_generated_provider_account() {
     cli.run(&["generate-key"])
         .assert_rejected("second generate-key", "exists");
     assert_eq!(keyfile_json(&cli.keyfile), keyfile, "keyfile overwritten");
-    cli.run(&["--key-scheme", "ecdsa", "generate-key"])
+    cli.run(&["generate-key", "--key-scheme", "ecdsa"])
         .assert_rejected("ecdsa generate-key", "only sr25519");
 
     let ss58_address = printed["ss58Address"].as_str().unwrap().to_string();

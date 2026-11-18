@@ -3,7 +3,7 @@
 //! `provider` subcommand: provider management from the command line, backed
 //! by the `provider` module over the SDK's chain client.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::provider::ProviderManager;
 use anyhow::{anyhow, Context, Result};
@@ -15,31 +15,31 @@ use storage_client::substrate::SubstrateClient;
 use storage_client::{ProviderClient, ProviderSettings, ProviderSettingsUpdate, Signer};
 
 use crate::cli::GlobalArgs;
-use crate::common::{build_config, key_scheme_name, resolve_key};
+use crate::common::{build_config, key_scheme_name, ProviderKey};
 use crate::provider::GENERIC_SS58_PREFIX;
 
+/// Stake locked at registration by default: `MinProviderStake` of the
+/// bundled runtimes (1000 tokens at 12 decimals).
+pub const MIN_PROVIDER_STAKE: u128 = 1_000_000_000_000_000;
+
 /// `storage-cli provider`: one signed provider management transaction, then
-/// exit. The account is the global `--suri` or `--keyfile`.
-#[derive(Debug, Args)]
-pub struct ProviderCommand {
-    /// Signature scheme of the signing keypair registered as the on-chain
-    /// `public_key`. Only sr25519 is supported for now; any other value,
-    /// from this flag or from a keyfile's `keyScheme`, is rejected.
-    #[arg(long, value_enum)]
-    pub key_scheme: Option<KeyScheme>,
-
-    #[command(subcommand)]
-    pub action: ProviderAction,
-}
-
-/// The provider management operations of `storage-cli provider`.
+/// exit. The account is `--provider-suri` or `--provider-keyfile`.
 #[derive(Debug, Subcommand)]
 pub enum ProviderAction {
-    /// Create a new secret in `--keyfile` and print, as JSON, the account
-    /// it derives. Fails if the file exists. Reads the chain's SS58 prefix
-    /// from `--chain-rpc` for the address; when the chain is unreachable
-    /// the generic prefix 42 is used and reported in the output.
+    /// Create a new secret in `--provider-keyfile` and print, as JSON, the
+    /// account it derives. Fails if the file exists. Reads the chain's SS58
+    /// prefix from `--chain-rpc` for the address; when the chain is
+    /// unreachable the generic prefix 42 is used and reported in the output.
     GenerateKey {
+        /// Path of the keyfile to create.
+        #[arg(long, value_name = "FILE")]
+        provider_keyfile: PathBuf,
+
+        /// Scheme of the signing key the keyfile records. Only sr25519 is
+        /// supported for now; any other value is rejected.
+        #[arg(long, value_enum, value_name = "SCHEME")]
+        key_scheme: Option<KeyScheme>,
+
         /// Mnemonic length in words.
         #[arg(
             long,
@@ -51,26 +51,53 @@ pub enum ProviderAction {
     },
 
     /// Register the account as a provider.
-    Register {
-        /// Network address clients connect to, e.g.
-        /// `/ip4/1.2.3.4/tcp/3333` or
-        /// `/dns4/example.com/tcp/443/tls/http/http-path/web3-storage-provider`.
-        #[arg(long, value_name = "MULTIADDR", env = "PUBLIC_MULTIADDR")]
-        multiaddr: String,
-
-        /// Stake to lock, in the chain's smallest unit. Must be at least the
-        /// chain's minimum provider stake.
-        #[arg(long, value_name = "AMOUNT")]
-        stake: u128,
-    },
+    Register(RegisterArgs),
 
     /// Change the provider's settings. Only the given flags change; every
     /// other setting keeps its on-chain value.
-    UpdateSettings(SettingsUpdateArgs),
+    UpdateSettings(UpdateSettingsArgs),
 
     /// Announce deregistration. The chain releases the stake once
     /// `complete_deregister` is called after the announcement period.
-    Deregister,
+    Deregister {
+        #[command(flatten)]
+        provider: ProviderKey,
+    },
+}
+
+/// Flags of `provider register`.
+#[derive(Debug, Args)]
+pub struct RegisterArgs {
+    #[command(flatten)]
+    pub provider: ProviderKey,
+
+    /// Network address clients connect to, e.g.
+    /// `/ip4/1.2.3.4/tcp/3333` or
+    /// `/dns4/example.com/tcp/443/tls/http/http-path/web3-storage-provider`.
+    #[arg(long, value_name = "MULTIADDR", env = "PUBLIC_MULTIADDR")]
+    pub multiaddr: String,
+
+    /// Stake to lock, in the chain's smallest unit. Must be at least the
+    /// chain's minimum provider stake.
+    #[arg(long, value_name = "AMOUNT", default_value_t = MIN_PROVIDER_STAKE)]
+    pub stake: u128,
+
+    /// Scheme of the signing key to register as the on-chain `public_key`.
+    /// Must match the provider node's `--key-scheme`. Defaults to a JSON
+    /// keyfile's `keyScheme`, else sr25519. The extrinsics are always signed
+    /// by the sr25519 account.
+    #[arg(long, value_enum, value_name = "SCHEME")]
+    pub key_scheme: Option<KeyScheme>,
+}
+
+/// Flags of `provider update-settings`.
+#[derive(Debug, Args)]
+pub struct UpdateSettingsArgs {
+    #[command(flatten)]
+    pub provider: ProviderKey,
+
+    #[command(flatten)]
+    pub settings: SettingsUpdateArgs,
 }
 
 /// `--words` of `provider generate-key`: one of the BIP39 word counts.
@@ -153,14 +180,15 @@ impl SettingsUpdateArgs {
 ///
 /// Connects once, signs with the account's sr25519 keypair (the account the
 /// provider is keyed by on chain), and prints the outcome.
-pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
-    let action = match command.action {
-        ProviderAction::GenerateKey { words } => {
-            let path = global.keyfile.as_deref().ok_or_else(|| {
-                anyhow!("generate-key needs --keyfile: the path of the keyfile to create")
-            })?;
+pub async fn run(global: &GlobalArgs, action: ProviderAction) -> Result<()> {
+    let (provider, key_scheme) = match action {
+        ProviderAction::GenerateKey {
+            provider_keyfile,
+            key_scheme,
+            words,
+        } => {
             // Reject an unsupported scheme before connecting anywhere.
-            let scheme = supported_scheme(command.key_scheme.unwrap_or_default())?;
+            let scheme = supported_scheme(key_scheme.unwrap_or_default())?;
             let ss58_prefix = match SubstrateClient::connect(&global.chain_rpc).await {
                 Ok(client) => ss58_prefix(&client).await?,
                 Err(e) => {
@@ -170,15 +198,16 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
                     GENERIC_SS58_PREFIX
                 }
             };
-            let output = generate_key(path, scheme, words, ss58_prefix)?;
+            let output = generate_key(&provider_keyfile, scheme, words, ss58_prefix)?;
             println!("{}", serde_json::to_string_pretty(&output)?);
             return Ok(());
         }
-        action => action,
+        ProviderAction::Register(ref args) => (&args.provider, args.key_scheme),
+        ProviderAction::UpdateSettings(ref args) => (&args.provider, None),
+        ProviderAction::Deregister { ref provider } => (provider, None),
     };
 
-    let key = resolve_key(global, command.key_scheme)?;
-    supported_scheme(key.scheme)?;
+    let key = provider.load(key_scheme)?;
     let signer = Signer::from_seed(&key.seed).context("failed to derive keypair from SURI")?;
     let mut client = ProviderClient::new(build_config(global), signer.clone())?;
     client.connect().await?;
@@ -189,7 +218,9 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
     match action {
         // Returned above; the chain operations follow.
         ProviderAction::GenerateKey { .. } => {}
-        ProviderAction::Register { multiaddr, stake } => {
+        ProviderAction::Register(RegisterArgs {
+            multiaddr, stake, ..
+        }) => {
             let public_key = ProviderKeypair::from_seed(&key.seed, key.scheme)
                 .map_err(anyhow::Error::msg)?
                 .public_key_bytes();
@@ -202,7 +233,7 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
             );
         }
         ProviderAction::UpdateSettings(args) => {
-            let outcome = manager.update_settings(&args.update()).await?;
+            let outcome = manager.update_settings(&args.settings.update()).await?;
             match outcome.block_hash {
                 Some(block_hash) => println!(
                     "Updated settings of provider {account}{}",
@@ -212,7 +243,7 @@ pub async fn run(global: &GlobalArgs, command: ProviderCommand) -> Result<()> {
             }
             print_settings(&outcome.settings);
         }
-        ProviderAction::Deregister => {
+        ProviderAction::Deregister { .. } => {
             let block_hash = manager.deregister().await?;
             println!(
                 "Announced deregistration of provider {account}{}. Call complete_deregister after the announcement period to release the stake.",
@@ -233,12 +264,12 @@ async fn ss58_prefix(client: &SubstrateClient) -> Result<u16> {
         .context("failed to read the chain's SS58Prefix")
 }
 
-/// The subcommand supports sr25519 only for now.
+/// `generate-key` supports sr25519 only for now.
 fn supported_scheme(scheme: KeyScheme) -> Result<KeyScheme> {
     match scheme {
         KeyScheme::Sr25519 => Ok(scheme),
         other => Err(anyhow!(
-            "key scheme {} is not supported by storage-cli provider yet; only sr25519 is",
+            "key scheme {} is not supported by storage-cli provider generate-key yet; only sr25519 is",
             key_scheme_name(other)
         )),
     }
@@ -322,7 +353,7 @@ fn included_in(block_hash: &sp_core::H256) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::tests::global_args;
+    use crate::common::tests::provider_keyfile;
     use sp_core::crypto::AccountId32;
     use sp_core::{sr25519, Pair};
 
@@ -364,7 +395,7 @@ mod tests {
 
         let scheme = supported_scheme(KeyScheme::default()).unwrap();
         let output = generate_key(&path, scheme, 24, 0).unwrap();
-        let loaded = resolve_key(&global_args(None, Some(path.clone())), None).unwrap();
+        let loaded = provider_keyfile(path.clone()).load(None).unwrap();
         assert_eq!(loaded.scheme, KeyScheme::Sr25519);
         let seed = loaded.seed;
         assert_eq!(seed.split(' ').count(), 24);

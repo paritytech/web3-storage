@@ -2,15 +2,71 @@
 
 use crate::cli::GlobalArgs;
 use anyhow::{anyhow, bail, Context, Result};
-use clap::ValueEnum;
+use clap::{Args, ValueEnum};
 use provider_types::KeyScheme;
 use sp_core::crypto::Ss58Codec;
+use std::path::{Path, PathBuf};
 use storage_client::{ClientConfig, Signer};
 
 /// Bucket identifier on chain (alias of `storage_primitives::BucketId`, a `u64`).
 pub type BucketId = u64;
 
-/// The secret resolved from `--suri` or `--keyfile`, and the scheme to sign
+/// Secret of the client account: it owns or is a member of the target buckets,
+/// pays for prepared agreements and signs every provider request.
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+pub struct ClientKey {
+    /// Secret URI (SURI) of the client account, e.g. "//Bob".
+    #[arg(long, value_name = "SURI")]
+    pub client_suri: Option<String>,
+
+    /// File with the client account's SURI, or the JSON keyfile `provider
+    /// generate-key` writes. It must not be group- or world-readable
+    /// (permissions <= 0600 on Unix).
+    #[arg(long, value_name = "FILE")]
+    pub client_keyfile: Option<PathBuf>,
+}
+
+impl ClientKey {
+    pub fn suri(&self) -> Result<String> {
+        let (seed, _) =
+            resolve_secret(self.client_suri.as_deref(), self.client_keyfile.as_deref())?;
+        Ok(seed)
+    }
+}
+
+/// Secret of the provider account.
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+pub struct ProviderKey {
+    /// Secret URI (SURI) of the provider account, e.g. "//Alice".
+    #[arg(long, value_name = "SURI")]
+    pub provider_suri: Option<String>,
+
+    /// File with the provider account's SURI, or the JSON keyfile `provider
+    /// generate-key` writes: the file the provider node's `--keyfile` reads.
+    /// It must not be group- or world-readable (permissions <= 0600 on Unix).
+    #[arg(long, value_name = "FILE")]
+    pub provider_keyfile: Option<PathBuf>,
+}
+
+impl ProviderKey {
+    /// The provider secret and the scheme to sign provider messages with:
+    /// `scheme_flag` when given, else a JSON keyfile's `keyScheme`, else
+    /// sr25519.
+    pub fn load(&self, scheme_flag: Option<KeyScheme>) -> Result<LoadedKey> {
+        let (seed, file_scheme) = resolve_secret(
+            self.provider_suri.as_deref(),
+            self.provider_keyfile.as_deref(),
+        )?;
+        Ok(LoadedKey {
+            seed,
+            scheme: scheme_flag.or(file_scheme).unwrap_or_default(),
+        })
+    }
+}
+
+/// The secret resolved from a SURI or keyfile flag, and the scheme to sign
 /// provider messages with.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoadedKey {
@@ -21,12 +77,15 @@ pub struct LoadedKey {
     pub scheme: KeyScheme,
 }
 
-/// Resolve the secret from either `--suri` or `--keyfile` (exactly one is
-/// required). A keyfile is the JSON file `provider generate-key` writes or a
-/// plain seed; it must not be group- or world-readable.
-pub fn resolve_key(global: &GlobalArgs, scheme_flag: Option<KeyScheme>) -> Result<LoadedKey> {
-    let (seed, file_scheme) = match (&global.suri, &global.keyfile) {
-        (Some(suri), _) => (suri.clone(), None),
+/// The SURI given inline, or else the secret in the keyfile and the
+/// `keyScheme` it records. A keyfile is the JSON file `provider generate-key`
+/// writes or a plain seed; it must not be group- or world-readable.
+fn resolve_secret(
+    suri: Option<&str>,
+    keyfile: Option<&Path>,
+) -> Result<(String, Option<KeyScheme>)> {
+    match (suri, keyfile) {
+        (Some(suri), _) => Ok((suri.to_string(), None)),
         (None, Some(path)) => {
             let secret = provider_types::read_keyfile(path)?;
             let scheme = secret
@@ -37,24 +96,15 @@ pub fn resolve_key(global: &GlobalArgs, scheme_flag: Option<KeyScheme>) -> Resul
                     })
                 })
                 .transpose()?;
-            (secret.seed, scheme)
+            Ok((secret.seed, scheme))
         }
-        (None, None) => bail!("one of --suri or --keyfile is required"),
-    };
-    Ok(LoadedKey {
-        seed,
-        scheme: scheme_flag.or(file_scheme).unwrap_or_default(),
-    })
-}
-
-/// Resolve the SURI from either `--suri` or `--keyfile` (exactly one is required)
-pub fn resolve_suri(global: &GlobalArgs) -> Result<String> {
-    Ok(resolve_key(global, None)?.seed)
+        (None, None) => bail!("no SURI or keyfile given"),
+    }
 }
 
 /// The name of `scheme` as `--key-scheme` and a keyfile's `keyScheme`
-/// spell it: the clap value name, so what is written is what `resolve_key`
-/// parses.
+/// spell it: the clap value name, so what is written is what
+/// `resolve_secret` parses.
 pub fn key_scheme_name(scheme: KeyScheme) -> String {
     scheme
         .to_possible_value()
@@ -72,11 +122,9 @@ pub fn build_config(global: &GlobalArgs) -> ClientConfig {
     }
 }
 
-/// Derive the signer from `--suri`/`--keyfile`. It both identifies the account
-/// being operated on and authenticates every provider request.
-pub fn resolve_signer(global: &GlobalArgs) -> Result<Signer> {
-    let suri = resolve_suri(global)?;
-    Signer::from_seed(&suri).context("failed to derive keypair from SURI")
+/// The sr25519 account signer for a SURI.
+pub fn signer_from_suri(suri: &str) -> Result<Signer> {
+    Signer::from_seed(suri).context("failed to derive keypair from SURI")
 }
 
 /// The SS58 address of the signer's account.
@@ -88,21 +136,16 @@ pub fn account_ss58(signer: &Signer) -> String {
 pub(crate) mod tests {
     use super::*;
     use std::io::Write;
-    use std::path::PathBuf;
 
-    /// Build `GlobalArgs` with placeholder connection flags and the given
-    /// identity inputs — only `suri`/`keyfile` matter for `resolve_key`.
-    pub(crate) fn global_args(suri: Option<String>, keyfile: Option<PathBuf>) -> GlobalArgs {
-        GlobalArgs {
-            chain_rpc: "ws://127.0.0.1:2222".to_string(),
-            provider_url: "http://127.0.0.1:3333".to_string(),
-            suri,
-            keyfile,
-            output: crate::metrics::OutputFormat::Text,
+    /// A `ProviderKey` with only `--provider-keyfile` set.
+    pub(crate) fn provider_keyfile(path: PathBuf) -> ProviderKey {
+        ProviderKey {
+            provider_suri: None,
+            provider_keyfile: Some(path),
         }
     }
 
-    /// Write `contents` with the permissions `--keyfile` requires.
+    /// Write `contents` with the permissions a keyfile flag requires.
     fn write_keyfile(path: &std::path::Path, contents: &str) {
         std::fs::write(path, contents).unwrap();
         #[cfg(unix)]
@@ -113,9 +156,9 @@ pub(crate) mod tests {
     }
 
     /// A JSON keyfile supplies the seed and, unless `--key-scheme` is given,
-    /// the scheme; `--suri` and a plain seed file default to sr25519.
+    /// the scheme; `--provider-suri` and a plain seed file default to sr25519.
     #[test]
-    fn resolve_key_reads_scheme_from_json_keyfile() {
+    fn provider_key_reads_scheme_from_json_keyfile() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("provider.json");
         write_keyfile(
@@ -123,19 +166,17 @@ pub(crate) mod tests {
             r#"{"secretPhrase": "//Dave", "keyScheme": "ecdsa", "ss58Address": "5abc"}"#,
         );
         assert_eq!(
-            resolve_key(&global_args(None, Some(path.clone())), None).unwrap(),
+            provider_keyfile(path.clone()).load(None).unwrap(),
             LoadedKey {
                 seed: "//Dave".to_string(),
                 scheme: KeyScheme::Ecdsa,
             }
         );
         assert_eq!(
-            resolve_key(
-                &global_args(None, Some(path.clone())),
-                Some(KeyScheme::Ed25519)
-            )
-            .unwrap()
-            .scheme,
+            provider_keyfile(path.clone())
+                .load(Some(KeyScheme::Ed25519))
+                .unwrap()
+                .scheme,
             KeyScheme::Ed25519
         );
 
@@ -145,20 +186,20 @@ pub(crate) mod tests {
             r#"{"secretPhrase": "//Dave", "networkId": "substrate"}"#,
         );
         assert_eq!(
-            resolve_key(&global_args(None, Some(path.clone())), None)
-                .unwrap()
-                .scheme,
+            provider_keyfile(path.clone()).load(None).unwrap().scheme,
             KeyScheme::Sr25519
         );
 
         write_keyfile(&path, r#"{"secretPhrase": "//Dave", "keyScheme": "rsa"}"#);
-        let err = resolve_key(&global_args(None, Some(path)), None)
-            .unwrap_err()
-            .to_string();
+        let err = provider_keyfile(path).load(None).unwrap_err().to_string();
         assert!(err.contains("unknown keyScheme"), "unexpected error: {err}");
 
+        let inline = ProviderKey {
+            provider_suri: Some("//Alice".to_string()),
+            provider_keyfile: None,
+        };
         assert_eq!(
-            resolve_key(&global_args(Some("//Alice".to_string()), None), None).unwrap(),
+            inline.load(None).unwrap(),
             LoadedKey {
                 seed: "//Alice".to_string(),
                 scheme: KeyScheme::Sr25519,
@@ -168,16 +209,14 @@ pub(crate) mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn resolve_key_rejects_world_readable_keyfile() {
+    fn rejects_world_readable_keyfile() {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("seed");
         std::fs::write(&path, "//Alice").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        let err = resolve_suri(&global_args(None, Some(path)))
-            .unwrap_err()
-            .to_string();
+        let err = resolve_secret(None, Some(&path)).unwrap_err().to_string();
         assert!(
             err.contains("insecure permissions"),
             "unexpected error: {err}"
@@ -211,58 +250,52 @@ pub(crate) mod tests {
 
     #[test]
     fn returns_inline_suri() {
-        let args = global_args(Some("//Alice".to_string()), None);
-        assert_eq!(resolve_suri(&args).unwrap(), "//Alice");
+        assert_eq!(resolve_secret(Some("//Alice"), None).unwrap().0, "//Alice");
     }
 
     #[test]
     fn reads_and_trims_keyfile() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(file, "  //Bob").unwrap();
-        let args = global_args(None, Some(file.path().to_path_buf()));
-        assert_eq!(resolve_suri(&args).unwrap(), "//Bob");
+        assert_eq!(resolve_secret(None, Some(file.path())).unwrap().0, "//Bob");
     }
 
     #[test]
     fn rejects_empty_keyfile() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(file, "   ").unwrap();
-        let args = global_args(None, Some(file.path().to_path_buf()));
-        let err = resolve_suri(&args).unwrap_err().to_string();
+        let err = resolve_secret(None, Some(file.path()))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("is empty"), "unexpected error: {err}");
     }
 
     #[test]
     fn errors_on_missing_keyfile() {
         let path = std::env::temp_dir().join("storage-cli-resolve-suri-does-not-exist");
-        let args = global_args(None, Some(path));
-        let err = resolve_suri(&args).unwrap_err().to_string();
+        let err = resolve_secret(None, Some(&path)).unwrap_err().to_string();
         assert!(
             err.contains("cannot read keyfile"),
             "unexpected error: {err}"
         );
     }
 
+    /// Each command requires exactly one of its SURI and keyfile flags, so a
+    /// run never signs as an account the operator did not pick.
     #[test]
-    fn errors_when_neither_provided() {
-        let args = global_args(None, None);
-        let err = resolve_suri(&args).unwrap_err().to_string();
-        assert!(
-            err.contains("--suri or --keyfile"),
-            "unexpected error: {err}"
-        );
-    }
+    fn key_flags_require_exactly_one_source() {
+        use clap::Parser;
 
-    #[test]
-    fn inline_suri_wins_over_keyfile() {
-        // clap's `conflicts_with` blocks this at parse time; this only pins
-        // the `(Some, _)` arm's precedence within the function itself.
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        write!(file, "//FromFile").unwrap();
-        let args = global_args(
-            Some("//Inline".to_string()),
-            Some(file.path().to_path_buf()),
-        );
-        assert_eq!(resolve_suri(&args).unwrap(), "//Inline");
+        #[derive(Debug, Parser)]
+        struct Wrapper {
+            #[command(flatten)]
+            key: ProviderKey,
+        }
+
+        let parse = |args: &[&str]| Wrapper::try_parse_from([&["cmd"], args].concat());
+        assert!(parse(&[]).is_err());
+        assert!(parse(&["--provider-suri", "//Alice", "--provider-keyfile", "k"]).is_err());
+        let wrapper = parse(&["--provider-suri", "//Alice"]).unwrap();
+        assert_eq!(wrapper.key.load(None).unwrap().seed, "//Alice");
     }
 }

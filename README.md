@@ -255,7 +255,7 @@ The provider node uses environment variables for configuration:
 | `CHAIN_RPC` | Parachain WebSocket RPC endpoint | `ws://127.0.0.1:2222` |
 | `BIND_ADDR` | HTTP server bind address | `0.0.0.0:3333` |
 | `DATA_DIR` | Directory for storing data | `./data` |
-| `RUST_LOG` | Log level configuration | `storage_provider_node=debug` |
+| `RUST_LOG` | Log level configuration. HTTP handlers log under `provider_http`, the rest of the node under `storage_provider_node` | `storage_provider_node=debug,provider_http=debug,tower_http=debug` |
 
 ## Example: Basic Upload Flow
 

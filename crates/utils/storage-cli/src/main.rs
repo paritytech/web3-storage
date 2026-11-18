@@ -20,6 +20,7 @@ use clap::Parser;
 use crate::cli::{Cli, Command};
 use crate::commands::stress_test::StressTest;
 use crate::metrics::{print_text, to_json, OpSummary, OutputFormat};
+use crate::prepare::PreparationReport;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -27,18 +28,26 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    // Scenarios return their metrics and what their setup phase created;
-    // `main` only renders them, so every scenario shares one output path.
-    // The provider subcommand prints its own outcome.
-    let (summary, preparation) = match cli.command {
-        Command::Provider(command) => return commands::provider::run(&cli.global, command).await,
+    match cli.command {
         Command::StressTest(StressTest::ProviderUpload(args)) => {
-            commands::stress_test::upload(&cli.global, &args).await?
+            let (summary, preparation) = commands::stress_test::upload(&cli.global, &args).await?;
+            render_metrics(cli.global.output, summary, preparation)
         }
-    };
+        // The provider subcommand prints its own outcome.
+        Command::Provider(action) => commands::provider::run(&cli.global, action).await,
+    }
+}
+
+/// Print what a scenario's setup phase created and its metrics. Fails if
+/// every operation of the scenario failed.
+fn render_metrics(
+    output: OutputFormat,
+    summary: OpSummary,
+    preparation: Option<PreparationReport>,
+) -> anyhow::Result<()> {
     let all_results: Vec<OpSummary> = vec![summary];
 
-    match cli.global.output {
+    match output {
         OutputFormat::Text => {
             if let Some(report) = &preparation {
                 print!("{report}");
