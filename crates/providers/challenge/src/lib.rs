@@ -555,8 +555,9 @@ impl ChallengeResponder {
                 }
             }
             Err(e) => {
-                // The chain rejects a response to a challenge that is gone
-                // before dispatch, so the error does not say why: read it.
+                // The chain rejects a response to a missing challenge at
+                // transaction validation, with an error that does not name
+                // the cause. Re-read the challenge to tell the two apart.
                 if let Ok(None) = self
                     .chain_client
                     .fetch_challenge(challenge.deadline, challenge.index)
