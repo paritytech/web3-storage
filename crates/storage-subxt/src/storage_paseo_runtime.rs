@@ -4108,9 +4108,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                113u8, 104u8, 255u8, 98u8, 245u8, 49u8, 47u8, 175u8, 100u8, 46u8, 25u8, 9u8, 39u8,
-                127u8, 174u8, 216u8, 187u8, 25u8, 224u8, 36u8, 14u8, 138u8, 114u8, 191u8, 95u8,
-                203u8, 61u8, 203u8, 1u8, 8u8, 207u8, 5u8,
+                117u8, 231u8, 20u8, 203u8, 210u8, 239u8, 13u8, 104u8, 37u8, 239u8, 48u8, 13u8,
+                73u8, 69u8, 224u8, 132u8, 44u8, 19u8, 73u8, 195u8, 88u8, 143u8, 89u8, 112u8, 19u8,
+                80u8, 1u8, 122u8, 254u8, 19u8, 149u8, 80u8,
             ]
     }
     pub mod system {
@@ -21013,10 +21013,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            202u8, 196u8, 178u8, 139u8, 1u8, 79u8, 215u8, 113u8, 139u8, 234u8,
-                            105u8, 11u8, 114u8, 125u8, 179u8, 184u8, 101u8, 241u8, 61u8, 46u8,
-                            177u8, 3u8, 62u8, 253u8, 150u8, 226u8, 95u8, 14u8, 70u8, 21u8, 24u8,
-                            24u8,
+                            191u8, 4u8, 102u8, 110u8, 200u8, 40u8, 49u8, 157u8, 116u8, 225u8, 59u8,
+                            64u8, 19u8, 106u8, 76u8, 129u8, 155u8, 76u8, 133u8, 26u8, 241u8, 3u8,
+                            116u8, 81u8, 152u8, 121u8, 215u8, 246u8, 170u8, 43u8, 165u8, 5u8,
                         ],
                     )
                 }
@@ -27886,8 +27885,8 @@ pub mod api {
                     #[doc = "primary-only defense). The challenge stays open."]
                     InvalidSupersededClaim,
                     #[codec(index = 53)]
-                    #[doc = "Only the challenger who opened the challenge may cancel it."]
-                    NotChallengeChallenger,
+                    #[doc = "Only the account that created the challenge may cancel it."]
+                    NotChallengeCreator,
                     #[codec(index = 54)]
                     #[doc = "The provider did not sign the bucket's current snapshot, so there"]
                     #[doc = "is no on-chain commitment to challenge; use `challenge_offchain`"]
