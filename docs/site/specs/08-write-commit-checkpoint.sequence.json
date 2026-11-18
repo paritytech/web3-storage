@@ -102,7 +102,7 @@
       "y": 226,
       "label": "PUT /node, children first",
       "variant": "emphasis",
-      "note": "Writer role; 507 quota_exceeded"
+      "note": "Writer role; 403 no_agreement, 507 quota_exceeded"
     },
     {
       "id": "commit",

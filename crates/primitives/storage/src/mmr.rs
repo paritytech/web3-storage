@@ -83,18 +83,21 @@ pub fn bag_peaks(peaks: &[H256]) -> H256 {
         .unwrap_or_default()
 }
 
-/// Append `leaf` to an MMR that has `leaf_count` leaves and the given `peaks`
-/// (left to right), leaving the peaks of the MMR with one more leaf.
-pub fn push_leaf(peaks: &mut Vec<H256>, leaf_count: u64, leaf: &MmrLeaf) {
+/// Append `leaf` to the MMR with `leaf_count` leaves whose peaks, left to
+/// right, are `peaks`. Afterwards `peaks` are the peaks of the MMR with one
+/// more leaf; the caller increments its leaf count.
+///
+/// `peaks` must hold `leaf_count.count_ones()` peaks, as [`peaks`] returns.
+/// Fails with [`Error::InconsistentStore`] if `peaks` has fewer.
+pub fn append(peaks: &mut Vec<H256>, leaf_count: u64, leaf: &MmrLeaf) -> Result<(), Error> {
     let mut node = hash_leaf(&leaf.encode());
-    // One peak per set bit of `leaf_count`; each trailing set bit is a peak
-    // that merges with the new node.
+    // Each trailing one bit of the leaf count is a peak the new node merges with.
     for _ in 0..leaf_count.trailing_ones() {
-        if let Some(left) = peaks.pop() {
-            node = hash_children(left, node);
-        }
+        let left = peaks.pop().ok_or(Error::InconsistentStore)?;
+        node = hash_children(left, node);
     }
     peaks.push(node);
+    Ok(())
 }
 
 /// Combine a peak with the bagged peaks to its right:
@@ -243,6 +246,28 @@ mod tests {
     }
 
     #[test]
+    fn append_matches_the_rebuilt_mmr_for_every_leaf_count() {
+        let all: Vec<MmrLeaf> = (0..300u64)
+            .map(|i| MmrLeaf {
+                data_root: H256::from_low_u64_be(i + 1),
+                data_size: i,
+                total_size: 2 * i,
+                ..leaf(0)
+            })
+            .collect();
+        let mut peaks = Vec::new();
+        for (count, leaf) in all.iter().enumerate() {
+            let (root, rebuilt) = super::peaks(&all[..count]).unwrap();
+            assert_eq!(peaks, rebuilt, "peaks of {count} leaves");
+            assert_eq!(bag_peaks(&peaks), root, "root of {count} leaves");
+            append(&mut peaks, count as u64, leaf).unwrap();
+        }
+        let (root, rebuilt) = super::peaks(&all).unwrap();
+        assert_eq!(peaks, rebuilt);
+        assert_eq!(bag_peaks(&peaks), root);
+    }
+
+    #[test]
     fn chunk_count_uses_the_chunk_size_of_the_leaf_version() {
         let chunk = crate::DEFAULT_CHUNK_SIZE as u64;
         let with_size = |data_size| MmrLeaf {
@@ -319,27 +344,6 @@ mod tests {
             assert_eq!(mmr_root, root(&leaves(count)).unwrap());
             assert_eq!(mmr_peaks.len(), count.count_ones() as usize);
             assert_eq!(bag_peaks(&mmr_peaks), mmr_root, "{count} leaves");
-        }
-    }
-
-    #[test]
-    fn push_leaf_builds_the_peaks_of_the_full_mmr() {
-        let all: Vec<MmrLeaf> = (0..300u64)
-            .map(|i| MmrLeaf {
-                leaf_version: LEAF_VERSION,
-                data_root: H256::from_low_u64_be(i + 1),
-                data_size: i,
-                total_size: 2 * i,
-            })
-            .collect();
-        let mut pushed = Vec::new();
-        for count in 0..=300 {
-            let (mmr_root, mmr_peaks) = peaks(&all[..count]).unwrap();
-            assert_eq!(pushed, mmr_peaks, "{count} leaves");
-            assert_eq!(bag_peaks(&pushed), mmr_root, "{count} leaves");
-            if let Some(next) = all.get(count) {
-                push_leaf(&mut pushed, count as u64, next);
-            }
         }
     }
 

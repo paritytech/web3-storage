@@ -15,7 +15,7 @@ use storage_client::{
     Visibility,
 };
 use storage_formats::format::DEFAULT_MIME_TYPE;
-use storage_formats::s3::{ListObjectsParams, Objects, PutObjectOptions};
+use storage_formats::s3::{ListObjectsParams, PutObjectOptions, S3Bucket};
 use storage_formats::{BucketId, EmptyParents, Tree};
 use storage_primitives::Role;
 use subxt_signer::sr25519::dev;
@@ -86,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Deleted a file and an empty directory");
 
     // Objects are files in the same tree: key `k` is the file `/k`.
-    let objects = Objects::new(Tree::new(&store, bucket_id));
+    let objects = S3Bucket::new(Tree::new(&store, bucket_id));
     let payload = b"This is a binary-like payload for testing.";
     let put_hello = objects
         .put_object(

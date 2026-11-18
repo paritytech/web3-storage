@@ -18,7 +18,7 @@ use storage_subxt::api::{
 use subxt::{events::Event as RawEvent, PolkadotConfig};
 
 /// Whether `event` is a storage-provider event that changes a bucket's member
-/// set. A decode failure of one of these escalates instead of being dropped;
+/// set or agreements. A decode failure of one of these escalates instead of being dropped;
 /// see [`escalate_membership_decode_failure`].
 fn is_membership_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
     event.is::<pallet_events::BucketCreated>()
@@ -26,6 +26,10 @@ fn is_membership_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
         || event.is::<pallet_events::MemberRemoved>()
         || event.is::<pallet_events::BucketDeleted>()
         || event.is::<pallet_events::BucketVisibilityChanged>()
+        || event.is::<pallet_events::SlashedProviderRemoved>()
+        || event.is::<pallet_events::StorageAgreementEstablished>()
+        || event.is::<pallet_events::AgreementToppedUp>()
+        || event.is::<pallet_events::AgreementEnded>()
 }
 
 /// Whether `event` is a storage-provider event that maps to a [`BlockEvent`]
@@ -175,7 +179,8 @@ fn block_event(event: StorageProviderEvent) -> Option<BlockEvent> {
         StorageProviderEvent::BucketCreated { bucket_id, .. }
         | StorageProviderEvent::MemberSet { bucket_id, .. }
         | StorageProviderEvent::MemberRemoved { bucket_id, .. }
-        | StorageProviderEvent::BucketVisibilityChanged { bucket_id, .. } => {
+        | StorageProviderEvent::BucketVisibilityChanged { bucket_id, .. }
+        | StorageProviderEvent::SlashedProviderRemoved { bucket_id, .. } => {
             Some(BlockEvent::BucketMembershipChanged { bucket_id })
         }
         // A new arm above also needs a check in `is_membership_event` or
@@ -411,6 +416,19 @@ mod tests {
         assert!(matches!(
             block_event(ev),
             Some(BlockEvent::BucketMembershipChanged { bucket_id: 6 })
+        ));
+    }
+
+    #[test]
+    fn slashed_provider_removed_maps_bucket_id() {
+        let ev = StorageProviderEvent::SlashedProviderRemoved {
+            bucket_id: 13,
+            provider: subxt::utils::AccountId32([3u8; 32]),
+            payment_returned_to_owner: 0,
+        };
+        assert!(matches!(
+            block_event(ev),
+            Some(BlockEvent::BucketMembershipChanged { bucket_id: 13 })
         ));
     }
 

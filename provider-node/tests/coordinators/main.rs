@@ -10,12 +10,13 @@ mod gc;
 mod membership;
 
 use provider_auth::{Authenticator, StaticMembershipResolver};
+use provider_http::{ProviderDeps, ProviderState};
 use provider_storage::{build_merkle_tree, temp_rocksdb, ChunkTreeNode, StorageBackend};
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
 use storage_primitives::hash_leaf;
-use storage_provider_node::{DetectedChallenge, ProviderDeps, ProviderState};
+use storage_provider_node::{ChallengeProofSource, DetectedChallenge, StorageProofSource};
 use tempfile::TempDir;
 
 /// Full Alice SS58 address (substrate prefix 42).
@@ -74,6 +75,11 @@ pub fn test_state() -> (Arc<ProviderState>, TempDir) {
     (state, dir)
 }
 
+/// Challenge proof source over `storage`, as the node wires it.
+pub fn proof_source(storage: &Arc<dyn StorageBackend>) -> Arc<dyn ChallengeProofSource> {
+    Arc::new(StorageProofSource::new(storage.clone()))
+}
+
 /// Poll a condition with timeout. Returns `true` if the condition was met
 /// before the timeout, `false` otherwise.
 pub async fn wait_for<F, Fut>(timeout_secs: u64, poll_ms: u64, mut f: F) -> bool
@@ -93,9 +99,9 @@ where
     }
 }
 
-/// Create a provider state with a bucket containing a single committed chunk,
-/// and return the state along with a matching challenge.
-pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir) {
+/// Create a storage backend with a bucket containing a single committed chunk,
+/// and return it along with a matching challenge.
+pub fn test_storage_with_data() -> (Arc<dyn StorageBackend>, DetectedChallenge, TempDir) {
     let (storage, dir) = temp_rocksdb();
     storage
         .init_bucket(1, 1024 * 1024)
@@ -128,9 +134,5 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge, TempDir
         },
     };
 
-    let state = Arc::new(ProviderState::with_provider_id(
-        test_deps(storage),
-        ALICE_SS58.to_string(),
-    ));
-    (state, challenge, dir)
+    (storage, challenge, dir)
 }

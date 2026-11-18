@@ -15,7 +15,7 @@ const DEV_PROVIDER_URL = process.env.PROVIDER_URL ?? "http://127.0.0.1:3333";
 const DEFAULT_MAX_BYTES = 10_000_000n;
 const DEFAULT_DURATION = 10_000;
 
-// Drives and S3 buckets are both plain Layer 0 buckets. The chain has no
+// Drives and S3 buckets are both plain buckets. The chain has no
 // bucket deletion (see the "Bucket without providers" section of the
 // implementation design doc), so fixtures accumulate across runs: tests
 // look up the bucket ids they created instead of expecting an empty list.

@@ -9,8 +9,8 @@
 
 import { describe, expect, it } from "vitest";
 import { createLimiter } from "@web3-storage/core";
-import { makeSigner } from "@web3-storage/layer0";
-import { FakeProvider } from "@web3-storage/layer0/testing";
+import { makeSigner } from "@web3-storage/storage";
+import { FakeProvider } from "@web3-storage/storage/testing";
 
 import { providerBlobStore } from "./store.js";
 import { FileSystemError, FsTree } from "./tree.js";

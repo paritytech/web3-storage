@@ -7,17 +7,17 @@ use crate::{
     chain_follower::SubxtChainFollower,
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, DEFAULT_PROVIDER_ID},
-    create_router,
     membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, GcCoordinator, GcCoordinatorConfig, GcCoordinatorHandle,
-    ProviderDeps, ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle,
+    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
+    StorageProofSource,
 };
 use clap::Parser;
 use provider_auth::Authenticator;
 use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
+use provider_http::{create_router, ProviderDeps, ProviderState};
 use sp_core::crypto::{AccountId32, Ss58Codec};
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -30,8 +30,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "storage_provider_node=debug,tower_http=debug".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "storage_provider_node=debug,provider_http=debug,tower_http=debug".into()
+            }),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -134,7 +135,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let state = ProviderState::with_seed_scheme(deps, seed, cli.key.key_scheme)?;
                 tracing::info!(
                     "Signing enabled for account: {} (scheme: {:?})",
-                    state.provider_id,
+                    state.provider_id(),
                     cli.key.key_scheme
                 );
                 state
@@ -153,7 +154,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_gc_chain(
             chain_client
                 .as_ref()
-                .map(|c| Arc::new(c.clone()) as Arc<dyn crate::gc_coordinator::GcChainClient>),
+                .map(|c| Arc::new(c.clone()) as Arc<dyn provider_types::GcChainClient>),
         ),
     );
 
@@ -181,7 +182,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(chain_client) = &chain_client {
         chain_client
             .sync_multiaddr(
-                &state.provider_id,
+                state.provider_id(),
                 &cli.rpc.bind_addr,
                 cli.rpc.public_multiaddr.as_deref(),
             )
@@ -215,12 +216,12 @@ fn start_chain_state_coordinator(
     events_tx: BlockEventTx,
     state: Arc<ProviderState>,
 ) -> Option<ChainStateCoordinatorHandle> {
-    let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
+    let provider_account = match sp_runtime::AccountId32::from_str(state.provider_id()) {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(
                 "chain-state coordinator: invalid provider SS58 '{}': {e:?}",
-                state.provider_id
+                state.provider_id()
             );
             return None;
         }
@@ -229,7 +230,7 @@ fn start_chain_state_coordinator(
     let coordinator = ChainStateCoordinator::new(
         follower,
         provider_account,
-        state.chain_state.clone(),
+        state.chain_state().clone(),
         events_tx,
     );
 
@@ -286,10 +287,10 @@ async fn start_replica_sync_coordinator(
 
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        state.storage.clone(),
-        state.provider_id.clone(),
+        state.storage().clone(),
+        state.provider_id().to_string(),
         Box::new(chain_client),
-        Some(state.clone()),
+        state.signer().cloned().map(|signer| signer as _),
     );
 
     match coordinator.start(events_rx, None).await {
@@ -324,12 +325,12 @@ async fn start_challenge_responder(
         }
     };
 
-    let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
+    let provider_account = match sp_runtime::AccountId32::from_str(state.provider_id()) {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(
                 "challenge responder: invalid provider SS58 '{}': {e:?}",
-                state.provider_id
+                state.provider_id()
             );
             return None;
         }
@@ -342,7 +343,7 @@ async fn start_challenge_responder(
 
     let responder = ChallengeResponder::new(
         config,
-        state.challenge_proof_source(),
+        Arc::new(StorageProofSource::new(state.storage().clone())),
         Box::new(chain_client),
     );
 

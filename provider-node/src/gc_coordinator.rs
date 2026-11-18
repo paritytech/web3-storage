@@ -30,53 +30,16 @@
 //! `BucketDeleted` (whose chain row is gone afterwards, detected as "local
 //! bucket with no chain row").
 
-use crate::{Error, ProviderState};
 use parking_lot::Mutex;
 use provider_events::{BlockEvent, BlockEventRx};
+use provider_http::{Error, ProviderState};
 use provider_storage::GarbageCollectorConfiguration;
-use provider_types::ChainClientError;
+use provider_types::GcChainClient;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
 use tokio::sync::broadcast;
-
-/// Chain truth about one bucket, as the GC needs it.
-#[derive(Clone, Debug, Default)]
-pub struct CanonicalBucketState {
-    /// Finalized block number the bucket row was read at.
-    pub block_number: u64,
-    /// Whether the bucket row is present on chain.
-    pub exists: bool,
-    /// `NextBucketId` at the same block: every bucket id below it was created.
-    pub next_bucket_id: u64,
-    /// `Bucket::frozen_start_seq` — deletion floor for frozen buckets.
-    pub frozen_start_seq: Option<u64>,
-    /// `snapshot.commitment.start_seq`; `None` = no snapshot yet.
-    pub canonical_start_seq: Option<u64>,
-}
-
-/// Chain reads the GC depends on — bucket row, our agreement, pending
-/// challenges: everything an erasure decision needs. `Err` means "could
-/// not read", and the caller must skip or refuse rather than assume.
-#[async_trait::async_trait]
-pub trait GcChainClient: Send + Sync {
-    /// Bucket row truth (existence, frozen floor, canonical start_seq).
-    async fn fetch_canonical_bucket(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<CanonicalBucketState, ChainClientError>;
-
-    /// This provider's agreement `max_bytes` on the bucket;
-    /// `Ok(None)` = no agreement row.
-    async fn fetch_agreement_max_bytes(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<Option<u64>, ChainClientError>;
-
-    /// Whether any pending challenge targets this provider on the bucket.
-    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, ChainClientError>;
-}
 
 /// GC coordinator configuration.
 #[derive(Clone, Debug)]
@@ -160,7 +123,7 @@ impl GcCoordinator {
                         Ok(BlockEvent::BucketCheckpointed { bucket_id, .. })
                         | Ok(BlockEvent::BucketDeleted { bucket_id })
                         | Ok(BlockEvent::AgreementChanged { bucket_id, .. }) => {
-                            if self.state.storage.get_bucket(bucket_id).ok().flatten().is_some() {
+                            if self.state.storage().get_bucket(bucket_id).ok().flatten().is_some() {
                                 self.reconcile_bucket(bucket_id).await;
                             }
                         }
@@ -179,7 +142,7 @@ impl GcCoordinator {
 
     /// Reconcile every locally-known bucket against chain truth.
     async fn rescan(&self) {
-        for bucket_id in self.state.storage.bucket_ids() {
+        for bucket_id in self.state.storage().bucket_ids() {
             self.reconcile_bucket(bucket_id).await;
         }
     }
@@ -197,7 +160,7 @@ impl GcCoordinator {
 
         let last_scanned_block = self
             .state
-            .storage
+            .storage()
             .garbage_collector_configuration()?
             .last_scanned_block;
         if chain.block_number < last_scanned_block {
@@ -219,7 +182,7 @@ impl GcCoordinator {
             return Ok(());
         }
         if chain.block_number > last_scanned_block {
-            self.state.storage.set_garbage_collector_configuration(
+            self.state.storage().set_garbage_collector_configuration(
                 &GarbageCollectorConfiguration {
                     last_scanned_block: chain.block_number,
                 },
@@ -238,19 +201,21 @@ impl GcCoordinator {
             self.obligation_gone_at.lock().remove(&bucket_id);
         }
 
-        if !self.state.storage.is_condemned(bucket_id)? {
+        if !self.state.storage().is_condemned(bucket_id)? {
             if obligation_gone {
                 tracing::info!(bucket_id, "GC: no on-chain obligation, condemning bucket");
-                self.state.storage.condemn_bucket(bucket_id)?;
+                self.state.storage().condemn_bucket(bucket_id)?;
             } else if let Some(max_bytes) = agreement_max {
                 // Quota truth lives in the agreement; cheap no-op when equal.
-                self.state.storage.set_bucket_quota(bucket_id, max_bytes)?;
+                self.state
+                    .storage()
+                    .init_bucket_or_set_quota(bucket_id, max_bytes)?;
 
                 // Converge on canonical prunes we did not perform locally
                 // (replicas never receive /delete; a restored node may lag).
                 if let (Some(canonical), Some(info)) = (
                     chain.canonical_start_seq,
-                    self.state.storage.get_bucket(bucket_id)?,
+                    self.state.storage().get_bucket(bucket_id)?,
                 ) {
                     if canonical > info.start_seq {
                         tracing::info!(
@@ -259,13 +224,13 @@ impl GcCoordinator {
                             local = info.start_seq,
                             "GC: converging local start_seq on canonical prune"
                         );
-                        self.state.storage.delete_before(bucket_id, canonical)?;
+                        self.state.storage().delete_before(bucket_id, canonical)?;
                     }
                 }
             }
         } else {
             // Resumes a removal that stopped part way; a no-op otherwise.
-            self.state.storage.condemn_bucket(bucket_id)?;
+            self.state.storage().condemn_bucket(bucket_id)?;
         }
 
         // Erasure pass over the stash. A range may be erased once liability
@@ -281,11 +246,11 @@ impl GcCoordinator {
         //   defense instead of the erased bytes).
         //
         // Either way, challenges already open must be resolved first.
-        let ranges = self.state.storage.pruned_ranges(bucket_id)?;
+        let ranges = self.state.storage().pruned_ranges(bucket_id)?;
         if ranges.is_empty() {
             return Ok(());
         }
-        let condemned = self.state.storage.is_condemned(bucket_id)?;
+        let condemned = self.state.storage().is_condemned(bucket_id)?;
         let obligation_gone_confirmed = condemned && obligation_gone && {
             let mut gone_at = self.obligation_gone_at.lock();
             let first_block = *gone_at.entry(bucket_id).or_insert(chain.block_number);
@@ -322,7 +287,7 @@ impl GcCoordinator {
 
             let outcome = self
                 .state
-                .storage
+                .storage()
                 .erase_pruned_range(bucket_id, range.first_seq)?;
             tracing::info!(
                 bucket_id,
@@ -333,7 +298,7 @@ impl GcCoordinator {
                 "GC: pruned range physically erased"
             );
         }
-        if condemned && self.state.storage.get_bucket(bucket_id)?.is_none() {
+        if condemned && self.state.storage().get_bucket(bucket_id)?.is_none() {
             self.obligation_gone_at.lock().remove(&bucket_id);
         }
         Ok(())

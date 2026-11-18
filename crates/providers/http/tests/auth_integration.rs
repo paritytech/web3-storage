@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Integration tests for auth-enabled HTTP endpoints.
 //!
@@ -13,14 +13,19 @@ mod common;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use common::{current_timestamp, make_auth_header, test_member_pair};
-use provider_auth::{Authenticator, BucketAccess, MembershipResolver, StaticMembershipResolver};
-use provider_storage::temp_rocksdb;
+use provider_auth::{
+    Authenticator, BucketAccess, Invalidation, LocalBucketAgreement, MembershipError,
+    MembershipInvalidations, MembershipResolver, StaticMembershipResolver,
+};
+use provider_http::{ProviderDeps, ProviderState};
+use provider_storage::{temp_rocksdb, ChunkTreeNode, StorageBackend};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
-use std::sync::Arc;
-use storage_primitives::{Commitment, Role, Visibility};
-use storage_provider_node::{ProviderDeps, ProviderState};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use storage_primitives::{BucketId, Commitment, Role, RuntimeProviderRole, Visibility};
 
 type AccountId32 = sp_core::crypto::AccountId32;
 
@@ -31,6 +36,8 @@ type AccountId32 = sp_core::crypto::AccountId32;
 struct AuthTestServer {
     addr: std::net::SocketAddr,
     client: Client,
+    /// The server's storage, for seeding data the way replica sync does.
+    storage: Arc<dyn StorageBackend>,
     /// This server's scratch directory; dropped with the server.
     _dir: tempfile::TempDir,
 }
@@ -54,6 +61,10 @@ impl AuthTestServer {
         Self::with_resolver(StaticMembershipResolver::new(BucketAccess {
             members: vec![(alice_account, alice_role).into()],
             visibility: Visibility::Public,
+            local_agreement: Some(LocalBucketAgreement {
+                role: RuntimeProviderRole::Primary,
+                max_bytes: u64::MAX,
+            }),
         }))
         .await
     }
@@ -66,7 +77,7 @@ impl AuthTestServer {
         // The 300s skew keeps the default the `*_expired_timestamp` tests assume.
         let (storage, dir) = temp_rocksdb();
         let deps = ProviderDeps {
-            storage,
+            storage: storage.clone(),
             auth: Arc::new(authenticator),
         };
         let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");
@@ -77,6 +88,7 @@ impl AuthTestServer {
         Self {
             addr,
             client: Client::new(),
+            storage,
             _dir: dir,
         }
     }
@@ -151,7 +163,7 @@ async fn delete_missing_auth_returns_401() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// L0 node / commit endpoint auth tests
+// Node and commit endpoint auth tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Build an `UploadNodeRequest` body for `bucket_id` storing `data`.
@@ -223,6 +235,325 @@ async fn node_writer_can_upload() {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
+/// A member of a bucket this node has no agreement on cannot store anything.
+#[tokio::test]
+async fn upload_without_agreement_is_rejected() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let server = AuthTestServer::with_resolver(
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Admin).into()
+        ])
+        .without_agreement(),
+    )
+    .await;
+
+    let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+    let resp = put_node(&server, Some(header), b"no agreement").await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "no_agreement");
+    assert_eq!(
+        server
+            .client
+            .get(server.url("/stats"))
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()["total_bytes"],
+        0,
+        "nothing was written"
+    );
+}
+
+/// A resolver whose answer a test replaces to stand in for a chain change,
+/// counting how often the chain would be read.
+struct SwitchableResolver {
+    access: Arc<Mutex<BucketAccess>>,
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl MembershipResolver for SwitchableResolver {
+    async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self.access.lock().unwrap().clone())
+    }
+}
+
+/// Buckets a test marks as changed on chain. The membership cache drains them
+/// like the node's block-event feed, which turns each agreement and
+/// membership event into its bucket id.
+#[derive(Clone, Default)]
+struct ChangedBuckets(Arc<Mutex<Vec<BucketId>>>);
+
+impl ChangedBuckets {
+    fn mark(&self, bucket_id: BucketId) {
+        self.0.lock().unwrap().push(bucket_id);
+    }
+}
+
+impl MembershipInvalidations for ChangedBuckets {
+    fn drain(&self) -> Invalidation {
+        let buckets = std::mem::take(&mut *self.0.lock().unwrap());
+        if buckets.is_empty() {
+            Invalidation::None
+        } else {
+            Invalidation::Buckets(buckets)
+        }
+    }
+}
+
+/// A server over a [`SwitchableResolver`] that starts with `access`, with the
+/// membership cache fed by the returned [`ChangedBuckets`]. The 300s TTL is
+/// long enough that only an invalidation can cause a re-resolve within a test.
+async fn switchable_server(
+    access: BucketAccess,
+) -> (
+    AuthTestServer,
+    Arc<Mutex<BucketAccess>>,
+    Arc<AtomicUsize>,
+    ChangedBuckets,
+) {
+    let access = Arc::new(Mutex::new(access));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let changed = ChangedBuckets::default();
+    let auth = Authenticator::new(SwitchableResolver {
+        access: access.clone(),
+        calls: calls.clone(),
+    })
+    .with_ttl(Duration::from_secs(300))
+    .with_invalidations(changed.clone());
+    let server = AuthTestServer::with_authenticator(auth).await;
+    (server, access, calls, changed)
+}
+
+/// The first upload to a bucket reads the chain once: the role check and the
+/// quota lookup share one cached entry.
+#[tokio::test]
+async fn first_upload_reads_the_chain_once() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let (server, _, calls, _) = switchable_server(
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Writer).into()
+        ])
+        .access,
+    )
+    .await;
+
+    let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+    let resp = put_node(&server, Some(header), b"one chain read").await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+/// This node's agreement is part of the cached access entry, so the
+/// `StorageAgreementEstablished` event (decoded to `BucketMembershipChanged`)
+/// must drop the entry: an upload refused for lack of an agreement succeeds
+/// once the agreement exists on chain, without waiting out the TTL.
+#[tokio::test]
+async fn new_agreement_is_honoured_after_the_block_event() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let member = || {
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Writer).into()
+        ])
+    };
+    let (server, access, calls, changed) =
+        switchable_server(member().without_agreement().access).await;
+    let put = |data: &'static [u8]| {
+        put_node(
+            &server,
+            Some(make_auth_header(&alice, "PUT", 1, current_timestamp())),
+            data,
+        )
+    };
+
+    assert_eq!(put(&[1u8; 10]).await.status(), StatusCode::FORBIDDEN);
+    assert_eq!(put(&[1u8; 10]).await.status(), StatusCode::FORBIDDEN);
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "the refusal is cached");
+
+    *access.lock().unwrap() = member().with_max_bytes(10).access;
+    changed.mark(1);
+
+    assert_eq!(put(&[1u8; 10]).await.status(), StatusCode::OK);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    // The local bucket took the new agreement's quota: a second node passes it.
+    assert_eq!(
+        put(&[2u8; 10]).await.status(),
+        StatusCode::INSUFFICIENT_STORAGE
+    );
+}
+
+/// `AgreementEnded` (decoded to `BucketMembershipChanged`) must drop the
+/// entry: once the agreement is gone from chain, a bucket the node holds no
+/// data for is refused instead of being created from the cached agreement.
+#[tokio::test]
+async fn ended_agreement_is_refused_after_the_block_event() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let member = || {
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Admin).into()
+        ])
+    };
+    let (server, access, calls, changed) = switchable_server(member().access).await;
+
+    // A bucket-bound read caches the entry without creating the local bucket.
+    let header = make_auth_header(&alice, "GET", 1, current_timestamp());
+    let resp = server
+        .client
+        .get(server.url("/commitment?bucket_id=1"))
+        .header("Authorization", &header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    *access.lock().unwrap() = member().without_agreement().access;
+    changed.mark(1);
+
+    let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+    let resp = put_node(&server, Some(header), b"after the agreement ended").await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "no_agreement");
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(server.storage.get_bucket(1).unwrap().is_none());
+}
+
+/// `AgreementToppedUp` (decoded to `BucketMembershipChanged`) must drop the
+/// entry, so a local bucket created after the top-up takes the new quota.
+#[tokio::test]
+async fn topped_up_quota_applies_after_the_block_event() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let member = || {
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Admin).into()
+        ])
+    };
+    let (server, access, calls, changed) =
+        switchable_server(member().with_max_bytes(10).access).await;
+
+    let header = make_auth_header(&alice, "GET", 1, current_timestamp());
+    let resp = server
+        .client
+        .get(server.url("/commitment?bucket_id=1"))
+        .header("Authorization", &header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    *access.lock().unwrap() = member().with_max_bytes(20).access;
+    changed.mark(1);
+
+    // 20 bytes fit the topped-up quota and not the cached one.
+    let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+    assert_eq!(
+        put_node(&server, Some(header), &[1u8; 20]).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+/// A top-up raises the quota of an existing bucket.
+#[tokio::test]
+async fn topped_up_quota_applies_to_an_existing_bucket() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let member = || {
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Writer).into()
+        ])
+    };
+    let (server, access, calls, changed) =
+        switchable_server(member().with_max_bytes(10).access).await;
+    let put = |data: &'static [u8]| {
+        put_node(
+            &server,
+            Some(make_auth_header(&alice, "PUT", 1, current_timestamp())),
+            data,
+        )
+    };
+
+    assert_eq!(put(&[1u8; 10]).await.status(), StatusCode::OK);
+    assert_eq!(
+        put(&[2u8; 10]).await.status(),
+        StatusCode::INSUFFICIENT_STORAGE
+    );
+
+    *access.lock().unwrap() = member().with_max_bytes(20).access;
+    changed.mark(1);
+
+    assert_eq!(put(&[2u8; 10]).await.status(), StatusCode::OK);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        put(&[3u8; 10]).await.status(),
+        StatusCode::INSUFFICIENT_STORAGE
+    );
+}
+
+/// An upload to an existing bucket is rejected once the agreement is gone.
+#[tokio::test]
+async fn upload_to_existing_bucket_without_agreement_is_rejected() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let member = || {
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Writer).into()
+        ])
+    };
+    let (server, access, _, changed) = switchable_server(member().with_max_bytes(100).access).await;
+    let put = |data: &'static [u8]| {
+        put_node(
+            &server,
+            Some(make_auth_header(&alice, "PUT", 1, current_timestamp())),
+            data,
+        )
+    };
+
+    assert_eq!(put(&[1u8; 10]).await.status(), StatusCode::OK);
+    let stats_before = server.storage.stats();
+
+    *access.lock().unwrap() = member().without_agreement().access;
+    changed.mark(1);
+
+    let resp = put(&[2u8; 10]).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "no_agreement");
+    assert_eq!(server.storage.stats(), stats_before);
+}
+
+/// The agreement's `max_bytes` bounds what the bucket stores: a node that
+/// would pass it is answered `507` and nothing is written.
+#[tokio::test]
+async fn upload_beyond_agreement_quota_is_rejected() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let server = AuthTestServer::with_resolver(
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Writer).into()
+        ])
+        .with_max_bytes(10),
+    )
+    .await;
+    let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+
+    assert_eq!(
+        put_node(&server, Some(header.clone()), &[1u8; 10])
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    let resp = put_node(&server, Some(header), &[2u8; 10]).await;
+    assert_eq!(resp.status(), StatusCode::INSUFFICIENT_STORAGE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "quota_exceeded");
+}
+
 #[tokio::test]
 async fn node_reader_blocked() {
     let server = AuthTestServer::with_role(Role::Reader).await;
@@ -275,7 +606,7 @@ async fn commit_reader_blocked() {
 }
 
 /// A validly-signed request from an account that is not a member of the bucket
-/// must be rejected on the L0 write path — a correct signature only proves
+/// must be rejected on the write path — a correct signature only proves
 /// identity, not authorization.
 #[tokio::test]
 async fn node_non_member_returns_forbidden() {
@@ -330,7 +661,7 @@ async fn public_bucket_node_upload_still_requires_auth() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Layer-0 read gates: bucket-bound reads are Reader-gated; hash-keyed
+// Read gates: bucket-bound reads are Reader-gated; hash-keyed
 // reads stay open as capability lookups.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -342,7 +673,7 @@ fn mmr_proof_path(commitment: &Commitment) -> String {
     )
 }
 
-/// The bucket-bound L0 `GET` reads gated at Reader, with `/mmr_proof` for
+/// The bucket-bound `GET` reads gated at Reader, with `/mmr_proof` for
 /// `commitment`. Add a newly gated endpoint here; both tests below walk this
 /// list.
 fn l0_gated_gets(commitment: &Commitment) -> Vec<String> {
@@ -356,7 +687,7 @@ fn l0_gated_gets(commitment: &Commitment) -> Vec<String> {
     ]
 }
 
-/// Every bucket-bound L0 read answers 401 to an anonymous request on a
+/// Every bucket-bound read answers 401 to an anonymous request on a
 /// private bucket.
 #[tokio::test]
 async fn l0_reads_require_auth_on_private_bucket() {
@@ -391,7 +722,7 @@ async fn l0_reads_require_auth_on_private_bucket() {
 async fn l0_member_reads_private_bucket() {
     let server = AuthTestServer::with_role(Role::Admin).await;
     let alice = test_member_pair();
-    let (_, commitment) = upload_and_commit(&server, &alice, b"l0-gate-test-data").await;
+    let (_, commitment) = upload_and_commit(&server, &alice, b"read-gate-test-data").await;
 
     for path in l0_gated_gets(&commitment) {
         let header = make_auth_header(&alice, "GET", 1, current_timestamp());
@@ -426,7 +757,7 @@ async fn l0_member_reads_private_bucket() {
 async fn l0_reads_open_on_public_bucket() {
     let server = AuthTestServer::public_with_role(Role::Writer).await;
     let alice = test_member_pair();
-    upload_and_commit(&server, &alice, b"l0-gate-test-data").await;
+    upload_and_commit(&server, &alice, b"read-gate-test-data").await;
 
     let resp = server
         .client
@@ -445,7 +776,7 @@ async fn l0_reads_open_on_public_bucket() {
 async fn hash_keyed_reads_stay_open_on_private_bucket() {
     let server = AuthTestServer::with_role(Role::Admin).await;
     let alice = test_member_pair();
-    let (hash_hex, _) = upload_and_commit(&server, &alice, b"l0-gate-test-data").await;
+    let (hash_hex, _) = upload_and_commit(&server, &alice, b"read-gate-test-data").await;
 
     let resp = server
         .client
@@ -491,7 +822,7 @@ async fn provider_account_reads_private_bucket_proofs() {
         .with_provider_account(AccountId32::new(alice.public().0)),
     )
     .await;
-    let (_, commitment) = upload_and_commit(&server, &bob, b"l0-gate-test-data").await;
+    let (_, commitment) = upload_and_commit(&server, &bob, b"read-gate-test-data").await;
 
     // Alice is not a member, but is the node's own account: Reader passes.
     let header = make_auth_header(&alice, "GET", 1, current_timestamp());
@@ -527,7 +858,7 @@ async fn replica_served_private_bucket_reads_anonymously() {
         .with_serves_as_replica(),
     )
     .await;
-    upload_and_commit(&server, &alice, b"l0-gate-test-data").await;
+    seed_bucket_1(&server, b"read-gate-test-data");
 
     let resp = server
         .client
@@ -540,4 +871,83 @@ async fn replica_served_private_bucket_reads_anonymously() {
         StatusCode::OK,
         "a replica serves private-bucket reads to anyone"
     );
+}
+
+/// Store `data` as a node of bucket 1 and commit it directly in storage.
+fn seed_bucket_1(server: &AuthTestServer, data: &[u8]) {
+    let hash = storage_primitives::hash_leaf(data);
+    server.storage.init_bucket(1, u64::MAX).unwrap();
+    server
+        .storage
+        .store_node(1, hash, ChunkTreeNode::Chunk(data.to_vec()))
+        .unwrap();
+    server.storage.commit(1, vec![hash]).unwrap();
+}
+
+/// A server whose node holds every bucket as a replica, with Alice as `role`.
+async fn replica_server(role: Role) -> AuthTestServer {
+    AuthTestServer::with_resolver(
+        StaticMembershipResolver::private(vec![(
+            AccountId32::new(test_member_pair().public().0),
+            role,
+        )
+            .into()])
+        .with_serves_as_replica(),
+    )
+    .await
+}
+
+/// The response is a 403 `not_primary`.
+async fn assert_not_primary(resp: reqwest::Response) {
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "not_primary");
+}
+
+/// A bucket writer cannot push a node to, or commit on, a node that holds
+/// the bucket as a replica.
+#[tokio::test]
+async fn replica_rejects_node_upload_and_commit() {
+    let alice = test_member_pair();
+    let server = replica_server(Role::Writer).await;
+    let data = b"pushed to a replica";
+
+    let header = make_auth_header(&alice, "PUT", 1, current_timestamp());
+    assert_not_primary(put_node(&server, Some(header), data).await).await;
+
+    let header = make_auth_header(&alice, "POST", 1, current_timestamp());
+    let hash_hex = format!("{:#x}", storage_primitives::hash_leaf(data));
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+        .send()
+        .await
+        .unwrap();
+    assert_not_primary(resp).await;
+
+    assert!(
+        server.storage.get_bucket(1).unwrap().is_none(),
+        "a rejected write must not create the bucket"
+    );
+}
+
+/// A bucket admin cannot prune a bucket on a node that holds it as a replica.
+#[tokio::test]
+async fn replica_rejects_delete() {
+    let alice = test_member_pair();
+    let server = replica_server(Role::Admin).await;
+    seed_bucket_1(&server, b"replicated data");
+
+    let header = make_auth_header(&alice, "POST", 1, current_timestamp());
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0 }))
+        .send()
+        .await
+        .unwrap();
+    assert_not_primary(resp).await;
 }

@@ -453,16 +453,17 @@ mod tests {
     }
 
     /// The membership-invalidating bucket ids [`decode_block_contents`]
-    /// produces from `events`, in encounter order. `BucketDeleted` is its
-    /// own event (the GC consumes it too) but still invalidates cached
-    /// membership for the bucket.
+    /// produces from `events`, in encounter order. `BucketDeleted` and
+    /// `AgreementChanged` are their own events (the GC consumes them too)
+    /// but still invalidate cached membership for the bucket.
     fn membership_changed_bucket_ids(events: &subxt::events::Events<PolkadotConfig>) -> Vec<u64> {
         decode_block_contents(events, 0)
             .events
             .into_iter()
             .filter_map(|event| match event {
                 BlockEvent::BucketMembershipChanged { bucket_id }
-                | BlockEvent::BucketDeleted { bucket_id } => Some(bucket_id),
+                | BlockEvent::BucketDeleted { bucket_id }
+                | BlockEvent::AgreementChanged { bucket_id, .. } => Some(bucket_id),
                 _ => None,
             })
             .collect()
@@ -778,6 +779,71 @@ mod tests {
         // included (invalidation is idempotent); the provider-lifecycle event
         // carries no bucket and must be skipped.
         assert_eq!(membership_changed_bucket_ids(&events), vec![9, 7, 7, 8]);
+    }
+
+    #[tokio::test]
+    async fn provider_and_agreement_changes_decode_to_their_bucket_ids() {
+        let provider = || Value::from_bytes([3u8; 32]);
+        let owner = || Value::from_bytes([2u8; 32]);
+        let records = vec![
+            event_record(Value::named_variant(
+                "SlashedProviderRemoved",
+                [
+                    ("bucket_id", Value::u128(13)),
+                    ("provider", provider()),
+                    ("payment_returned_to_owner", Value::u128(0)),
+                ],
+            )),
+            event_record(Value::named_variant(
+                "StorageAgreementEstablished",
+                [
+                    ("bucket_id", Value::u128(14)),
+                    ("provider", provider()),
+                    ("owner", owner()),
+                    (
+                        "terms",
+                        Value::named_composite([
+                            ("owner", owner()),
+                            ("max_bytes", Value::u128(1024)),
+                            ("duration", Value::u128(100)),
+                            ("price_per_byte", Value::u128(1)),
+                            ("valid_until", Value::u128(50)),
+                            ("nonce", Value::u128(1)),
+                            (
+                                "bucket",
+                                Value::unnamed_variant("Existing", [Value::u128(14)]),
+                            ),
+                            (
+                                "replica_params",
+                                Value::unnamed_variant("None", Vec::<Value>::new()),
+                            ),
+                        ]),
+                    ),
+                    ("expires_at", Value::u128(150)),
+                ],
+            )),
+            event_record(Value::named_variant(
+                "AgreementToppedUp",
+                [
+                    ("bucket_id", Value::u128(15)),
+                    ("provider", provider()),
+                    ("amount", Value::u128(1)),
+                    ("new_max_bytes", Value::u128(2048)),
+                ],
+            )),
+            event_record(Value::named_variant(
+                "AgreementEnded",
+                [
+                    ("bucket_id", Value::u128(16)),
+                    ("provider", provider()),
+                    ("payment_to_provider", Value::u128(0)),
+                    ("burned", Value::u128(0)),
+                ],
+            )),
+        ];
+        let events = events_with_metadata(METADATA.to_vec(), records).await;
+
+        assert_eq!(membership_changed_bucket_ids(&events), vec![13, 14, 15, 16]);
     }
 
     #[tokio::test]

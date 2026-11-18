@@ -11,7 +11,7 @@ import {
   uploadBlob,
   type ChainSigner,
   type ProviderHttpOpts,
-} from "@web3-storage/layer0";
+} from "@web3-storage/storage";
 
 import type { BlobStore } from "../pkg/storage_formats.js";
 

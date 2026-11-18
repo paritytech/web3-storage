@@ -3,7 +3,7 @@
 /**
  * PAPI-based integration test for web3-storage.
  *
- * Single-script orchestration of the end-to-end Layer 0 flow:
+ * Single-script orchestration of the end-to-end storage flow:
  *  1. Setup provider, bucket, and agreement (on-chain)
  *  2. Upload data to the provider (HTTP) and verify it
  *  3. Submit two challenges and respond to both
