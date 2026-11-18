@@ -2,6 +2,9 @@
 
 use super::*;
 use sp_core::H256;
+use sp_runtime::transaction_validity::{
+    InvalidTransaction, TransactionSource, TransactionValidityError, ValidTransaction,
+};
 use storage_primitives::{BucketSnapshot, ChallengeId, ChunkLocation, Commitment, Role};
 
 /// Setup: register provider, create agreement, and insert a snapshot with provider signed.
@@ -1431,6 +1434,110 @@ fn cancel_challenge_leaves_sibling_untouched() {
         assert_eq!(PendingChallenges::<Test>::get(2), 1);
         assert_eq!(PendingChallengesByBucket::<Test>::get(bucket_id, 2), 1);
         assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CheckChallengeResponse
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Validate a `respond_to_challenge` from `who` through
+/// `CheckChallengeResponse`, as the transaction pool and the block builder do.
+fn validate_response(
+    who: u64,
+    challenge_index: u16,
+    response: ChallengeResponse<Test>,
+) -> Result<ValidTransaction, TransactionValidityError> {
+    use frame_support::dispatch::GetDispatchInfo;
+    use sp_runtime::traits::DispatchTransaction;
+
+    let call = RuntimeCall::StorageProvider(crate::Call::respond_to_challenge {
+        challenge_id: ChallengeId {
+            deadline: 101,
+            index: challenge_index,
+        },
+        response,
+    });
+    crate::CheckChallengeResponse::<Test>::new()
+        .validate_only(
+            RuntimeOrigin::signed(who),
+            &call,
+            &call.get_dispatch_info(),
+            0,
+            TransactionSource::External,
+            0,
+        )
+        .map(|(valid, _, _)| valid)
+}
+
+/// A provider that races the challenger's `cancel_challenge` and loses must
+/// not pay for the response: once the cancel is in, the response fails
+/// validation, so the pool and the block builder drop it instead of
+/// including it and charging a fee sized by the chunk it carries.
+#[test]
+fn response_after_cancel_is_rejected_before_dispatch() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+        assert_ok!(validate_response(2, 0, ChallengeResponse::Superseded));
+
+        assert_ok!(StorageProvider::cancel_challenge(
+            RuntimeOrigin::signed(3),
+            ChallengeId {
+                deadline: 101,
+                index: 0,
+            }
+        ));
+
+        assert_eq!(
+            validate_response(2, 0, ChallengeResponse::Superseded),
+            Err(InvalidTransaction::Stale.into())
+        );
+    });
+}
+
+/// Only the challenged provider can answer, so no other account can put a
+/// response in the pool that would fail at dispatch.
+#[test]
+fn response_from_another_account_is_rejected_before_dispatch() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+
+        for who in [3, 4] {
+            assert_eq!(
+                validate_response(who, 0, ChallengeResponse::Superseded),
+                Err(InvalidTransaction::BadSigner.into())
+            );
+        }
+    });
+}
+
+/// Responses to the same challenge provide the same tag whatever they
+/// contain, so the pool keeps one of them. Responses to different challenges
+/// do not displace each other.
+#[test]
+fn responses_to_one_challenge_share_a_pool_tag() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+        open_challenge(4, bucket_id);
+        let deleted = ChallengeResponse::<Test>::Deleted {
+            new_mmr_root: H256::repeat_byte(0x77),
+            new_start_seq: 1,
+            admin: 1,
+            admin_signature: sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+        };
+
+        let tags = |index, response| validate_response(2, index, response).unwrap().provides;
+        assert_eq!(
+            tags(0, ChallengeResponse::Superseded),
+            tags(0, deleted.clone())
+        );
+        assert_ne!(tags(0, deleted.clone()), tags(1, deleted));
     });
 }
 

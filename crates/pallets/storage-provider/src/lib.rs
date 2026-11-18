@@ -22,6 +22,9 @@ extern crate alloc;
 
 pub use pallet::*;
 
+mod extension;
+pub use extension::CheckChallengeResponse;
+
 /// Pallet internals: the agreement, bucket, challenge, and payment logic behind
 /// the extrinsics and runtime APIs.
 pub mod impls;
