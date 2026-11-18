@@ -21,13 +21,12 @@ pub type BalanceOf<T> =
 /// record it pays for and dropped when the record is removed.
 pub type TicketOf<T> = <T as Config>::StorageDeposit;
 
-/// The anchor clock ([`Config::BlockNumberProvider`], relay chain in
-/// production) that every duration, deadline and expiry in this pallet is
-/// measured against. Deliberately shadows the `frame_system` name,
-/// treasury-style: the habitual spelling yields the correct clock, and the
-/// parachain height is only reachable as
-/// [`SystemBlockNumberFor`](crate::SystemBlockNumberFor) (hooks only). The
-/// `Config` bound pins the two equal.
+/// Block number of [`Config::BlockNumberProvider`] (the relay chain in
+/// production). The pallet measures every duration, deadline and expiry in
+/// this block number. The alias replaces the `frame_system` `BlockNumberFor`
+/// in the pallet; only the hooks use the parachain block number, as
+/// [`SystemBlockNumberFor`](crate::SystemBlockNumberFor). The `Config` bound
+/// requires both block number types to be the same type.
 pub type BlockNumberFor<T> =
     <<T as Config>::BlockNumberProvider as sp_runtime::traits::BlockNumberProvider>::BlockNumber;
 
@@ -56,17 +55,17 @@ pub struct ProviderInfo<T: Config> {
     pub public_key: BoundedVec<u8, ConstU32<64>>,
     /// Total stake locked by this provider.
     pub stake: BalanceOf<T>,
-    /// Total contracted bytes (sum of max_bytes across all agreements).
+    /// Total contracted bytes: the sum of `max_bytes` across all agreements.
     pub committed_bytes: u64,
-    /// Provider settings.
+    /// Pricing and availability settings.
     pub settings: ProviderSettings<T>,
-    /// Provider statistics.
+    /// Agreement and challenge counters.
     pub stats: ProviderStats<T>,
-    /// Block at which a previously-announced deregistration becomes
-    /// finalisable via `complete_deregister`. `None` means no
-    /// announcement is in progress. During the announcement window the
-    /// provider is still on-chain and still slashable for any pending
-    /// challenge — they only get their stake back after the window.
+    /// Earliest block at which `complete_deregister` can succeed. It also
+    /// requires no agreements and no pending challenges. `None` means no
+    /// deregistration is announced. Until `complete_deregister` succeeds, the
+    /// provider stays registered, a failed challenge still slashes it, and its
+    /// stake stays held.
     pub deregister_at: Option<BlockNumberFor<T>>,
     /// Storage deposit for this record: held on the provider at
     /// registration, separate from the stake, released by
@@ -101,14 +100,15 @@ pub struct ProviderSettings<T: Config> {
     pub max_duration: BlockNumberFor<T>,
     /// Price per byte per block for storage.
     pub price_per_byte: BalanceOf<T>,
-    /// Whether accepting new primary agreements.
+    /// Whether the provider accepts new primary agreements.
     pub accepting_primary: bool,
-    /// Price per successful sync confirmation, or None if not accepting replicas.
+    /// Price per confirmed replica sync. `None` means the provider accepts no
+    /// replica agreements.
     pub replica_sync_price: Option<BalanceOf<T>>,
-    /// Whether accepting extensions on existing agreements.
+    /// Whether the provider accepts extensions of existing agreements.
     pub accepting_extensions: bool,
-    /// Maximum storage capacity in bytes. 0 = unlimited (backward compatible).
-    /// When set, provider cannot accept agreements that would exceed this capacity.
+    /// Maximum storage capacity in bytes. 0 means unlimited. The pallet
+    /// rejects agreements that would exceed a non-zero capacity.
     pub max_capacity: u64,
     /// Smallest agreement size, in bytes, that the provider accepts, for
     /// primary and replica agreements. 0 = no minimum. Must not exceed a
@@ -125,7 +125,7 @@ impl<T: Config> Default for ProviderSettings<T> {
             accepting_primary: true,
             replica_sync_price: None,
             accepting_extensions: true,
-            max_capacity: 0, // 0 = unlimited (backward compatible)
+            max_capacity: 0, // 0 = unlimited
             min_agreement_bytes: 0,
         }
     }
@@ -145,33 +145,33 @@ impl<T: Config> Default for ProviderSettings<T> {
 )]
 #[scale_info(skip_type_params(T))]
 pub struct ProviderStats<T: Config> {
-    /// Block when provider registered.
+    /// Block at which the provider registered.
     pub registered_at: BlockNumberFor<T>,
     /// Total agreements ever created with this provider.
     pub agreements_total: u32,
-    /// Agreements where client chose to extend.
+    /// Number of `extend_agreement` calls on this provider's agreements, by any
+    /// caller.
     pub agreements_extended: u32,
     /// Agreements that expired without extension.
     pub agreements_not_extended: u32,
-    /// Agreements where client burned payment.
+    /// Agreements that ended with part of the payment burned.
     pub agreements_burned: u32,
     /// Total bytes ever committed across all agreements.
     pub total_bytes_committed: u64,
-    /// Challenges from authorized challengers (member/agreement owner at
-    /// challenge creation) that the provider responded to. Counted at
-    /// resolution — a challenge resolves into exactly one of
-    /// received_authorized / received_public (successfully defended) or
-    /// failed (slashed).
+    /// Challenges from authorized challengers (a bucket member or agreement
+    /// owner at challenge creation) that the provider defended. The pallet
+    /// counts a challenge at resolution, in exactly one of
+    /// `challenges_received_authorized`, `challenges_received_public` or
+    /// `challenges_failed`.
     pub challenges_received_authorized: u32,
-    /// Same, for general-public challengers.
+    /// Challenges from unauthorized challengers that the provider defended.
     pub challenges_received_public: u32,
     /// Number of challenges where provider was slashed. Tier-independent
     /// and disjoint from the received counters.
     pub challenges_failed: u32,
     /// Total payment ever received by this provider for storage service:
     /// agreement settlements, extension payments, and replica sync
-    /// payments. Monotonically increasing, never reset by a slash or
-    /// anything else. A historical record, not a live balance.
+    /// payments. The pallet never decreases or resets this value.
     pub lifetime_revenue: BalanceOf<T>,
 }
 
@@ -187,9 +187,8 @@ impl<T: Config> ProviderStats<T> {
     /// tallied at resolution, so pending challenges never count against a
     /// provider.
     ///
-    /// Providers with no resolved challenges score 100 — benefit of the
-    /// doubt, so a newly registered provider is not immediately
-    /// challenge-worthy.
+    /// A provider with no resolved challenges scores 100, so a newly
+    /// registered provider does not rank as a challenge target.
     pub fn reputation(&self) -> u8 {
         let defended = self.challenges_defended();
         let total = defended as u64 + self.challenges_failed as u64;
@@ -240,15 +239,15 @@ pub struct Member<T: Config> {
 pub struct Bucket<T: Config> {
     /// Members who can interact with this bucket.
     pub members: BoundedVec<Member<T>, T::MaxMembers>,
-    /// Read visibility (see `Visibility`). On-chain, only challenge
+    /// Read visibility (see [`Visibility`]). On-chain, only challenge
     /// creation reads it: `Private` restricts primary challenges to
     /// members and primary-agreement owners.
     pub visibility: Visibility,
-    /// If Some, bucket is append-only from this start_seq.
+    /// `Some(seq)` makes the bucket append-only from `seq`.
     pub frozen_start_seq: Option<u64>,
     /// Minimum primary provider signatures required for checkpoint.
     pub min_providers: u32,
-    /// Primary provider account IDs (limited to T::MaxPrimaryProviders).
+    /// Primary provider accounts.
     pub primary_providers: BoundedVec<T::AccountId, T::MaxPrimaryProviders>,
     /// Current canonical state.
     pub snapshot: Option<BucketSnapshot<BlockNumberFor<T>>>,
@@ -273,7 +272,7 @@ pub struct Bucket<T: Config> {
 pub struct BucketSnapshot<BlockNumber> {
     /// Canonical MMR commitment at this checkpoint (root + covered range).
     pub commitment: Commitment,
-    /// Block at which checkpointed
+    /// Anchor block of the `checkpoint` call that created this snapshot.
     pub checkpoint_block: BlockNumber,
     /// Bit i is set if `primary_providers[i]` signed. The length always equals
     /// `primary_providers.len()`: `checkpoint` builds it, adding a primary
@@ -283,12 +282,12 @@ pub struct BucketSnapshot<BlockNumber> {
 }
 
 impl<BlockNumber> BucketSnapshot<BlockNumber> {
-    /// Get the canonical range end (exclusive)
+    /// End of the canonical range (exclusive).
     pub fn range_end(&self) -> u64 {
         self.commitment.range_end()
     }
 
-    /// Check if a sequence number is within this snapshot's range
+    /// Whether `seq` is within this snapshot's range.
     pub fn contains_seq(&self, seq: u64) -> bool {
         self.commitment.contains_seq(seq)
     }
@@ -309,9 +308,9 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct ChallengeId<BlockNumber> {
-    /// Block by which provider must respond
+    /// Block by which the provider must respond.
     pub deadline: BlockNumber,
-    /// Index within the deadline's challenge list
+    /// Index among the challenges that share this deadline.
     pub index: u16,
 }
 
@@ -330,11 +329,11 @@ pub struct ChallengeId<BlockNumber> {
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub enum RemovalReason {
-    /// Provider was slashed for failing a challenge
+    /// A failed challenge slashed the provider.
     Slashed,
-    /// Admin terminated agreement early
+    /// The bucket admin ended the agreement early.
     AdminTerminated,
-    /// Agreement expired naturally
+    /// The agreement reached `expires_at`.
     Expired,
 }
 
@@ -355,9 +354,10 @@ pub enum ProviderRole<Balance, BlockNumber> {
     /// Receives data directly from writers. The bucket admin adds and
     /// removes primary providers.
     Primary,
-    /// Syncs data from other providers. Anyone can add a replica. It
-    /// runs until expiry and is paid `sync_price` from `sync_balance` for
-    /// each confirmed sync.
+    /// Syncs data from other providers. Anyone can add a replica. Replicas
+    /// do not count toward `min_providers`. The agreement runs until expiry,
+    /// and the pallet pays `sync_price` from `sync_balance` for each
+    /// confirmed sync.
     Replica {
         /// Balance for per-sync payments, reduced on each confirmed sync.
         sync_balance: Balance,
@@ -398,15 +398,15 @@ pub struct ReplicaSyncRecord<BlockNumber> {
 pub struct StorageAgreement<T: Config> {
     /// Who owns this agreement (can top up, transfer ownership).
     ///
-    /// The whole escrow is held on *this* account, whoever paid it in, and
-    /// every settlement path draws on it — so reassigning `owner` must move
-    /// the hold too.
+    /// The pallet holds the whole escrow on this account, whoever paid it,
+    /// and every settlement draws on it. Reassigning `owner` must also move
+    /// the hold.
     pub owner: T::AccountId,
     /// Maximum bytes (quota).
     pub max_bytes: u64,
     /// Payment locked for storage.
     pub payment_locked: BalanceOf<T>,
-    /// Price per byte locked at creation/last extension.
+    /// Price per byte, locked at creation or the last extension.
     pub price_per_byte: BalanceOf<T>,
     /// Agreement expiration.
     pub expires_at: BlockNumberFor<T>,
@@ -414,7 +414,8 @@ pub struct StorageAgreement<T: Config> {
     pub extensions_blocked: bool,
     /// Provider role for this bucket.
     pub role: ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,
-    /// Block when agreement became active.
+    /// Block at which the current payment period started: agreement creation
+    /// or the last extension.
     pub started_at: BlockNumberFor<T>,
     /// The account that opened the agreement and paid `deposit`. Fixed at
     /// creation: a transfer moves `owner`, not the deposit, so `new_owner`
@@ -498,11 +499,12 @@ pub enum ChallengeResponse<T: Config> {
         /// Proves the leaf is part of the committed MMR.
         mmr_proof: MmrProof,
     },
-    /// Data was deleted - show newer commitment without this seq.
+    /// The bucket admin signed a commitment that starts after the challenged
+    /// sequence number.
     /// Primary providers only; a replica gets `InvalidDeletionClaim`.
     Deleted {
         /// Root of the newer commitment that no longer holds the
-        /// challenged sequence.
+        /// challenged sequence number.
         new_mmr_root: H256,
         /// Start sequence of that commitment; must be past the
         /// challenged one.
@@ -512,7 +514,8 @@ pub enum ChallengeResponse<T: Config> {
         /// The admin's signature over the newer commitment.
         admin_signature: sp_runtime::MultiSignature,
     },
-    /// Challenged state has been superseded by canonical.
+    /// The bucket's current snapshot has a different root from the challenged
+    /// commitment and still covers the challenged sequence number.
     /// Primary providers only; a replica gets `InvalidSupersededClaim`.
     Superseded,
 }

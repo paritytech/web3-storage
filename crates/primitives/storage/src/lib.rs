@@ -128,10 +128,10 @@ pub enum EndAction {
 /// The `(mmr_root, start_seq, leaf_count)` triplet that identifies an MMR
 /// commitment over a contiguous range of leaves.
 ///
-/// One reusable type instead of three loose fields: it is a field group inside
-/// [`CommitmentPayload`] and the pallet's `BucketSnapshot` and `ReplicaSyncRecord`, and it
-/// is the single argument the checkpoint/challenge extrinsics take in place of
-/// passing `mmr_root`, `start_seq`, and `leaf_count` separately.
+/// A field group inside [`CommitmentPayload`] and the pallet's
+/// `BucketSnapshot` and `ReplicaSyncRecord`. The checkpoint and challenge
+/// extrinsics take it as one argument instead of `mmr_root`, `start_seq` and
+/// `leaf_count`.
 #[derive(
     Clone,
     Copy,
