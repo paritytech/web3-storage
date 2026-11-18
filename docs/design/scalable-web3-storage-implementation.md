@@ -2162,7 +2162,9 @@ Rules:
 - Every bucket-scoped endpoint requires this node to have an agreement on the
   bucket, otherwise `403 no_agreement`. `PUT /node`, `POST /commit` and
   `POST /delete` also require the agreement to be unexpired, otherwise
-  `403 agreement_expired`.
+  `403 agreement_expired`. Until the node has read the anchor block from the
+  chain it cannot check expiry, so these three answer
+  `503 chain_state_not_ready`.
 - A member whose `Role` the provider cannot decode is not authorized — the
   lookup fails rather than falling back to a lesser role.
 
