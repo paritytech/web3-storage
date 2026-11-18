@@ -14,7 +14,6 @@ pub use types::{BucketState, ChunkTreeNode, DeletionReceipt, PrunedRange};
 use crate::error::Error;
 use sp_core::H256;
 use std::fmt;
-use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage_primitives::{merkle_root, BucketId, Commitment, DEFAULT_CHUNK_SIZE};
@@ -22,6 +21,17 @@ use storage_primitives::{merkle_root, BucketId, Commitment, DEFAULT_CHUNK_SIZE};
 /// A chunk's hash, its data and its Merkle proof (sibling hashes up to the
 /// data root).
 pub type ProvenChunk = (H256, Vec<u8>, Vec<H256>);
+
+/// Result of [`StorageBackend::read_chunks`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkRead {
+    /// Index of the first chunk in `chunks`.
+    pub start_chunk: u64,
+    /// Number of chunks under the data root.
+    pub chunk_count: u64,
+    /// The chunks read, in index order.
+    pub chunks: Vec<ProvenChunk>,
+}
 
 /// Upper bound on the nodes one content-tree traversal visits.
 ///
@@ -286,22 +296,54 @@ pub trait StorageBackend: Send + Sync {
                 chunk_count,
             });
         }
-        let (_, data, proof) = chunk_with_proof(self, data_root, chunk_count, chunk_index)?;
-        Ok((data, proof))
+        let (hash, proof) = locate_chunk(self, data_root, chunk_count, chunk_index)?;
+        Ok((chunk_data(self, data_root, &hash)?, proof))
     }
 
-    /// Hash, data and Merkle proof of each chunk of `data_root` with an index
-    /// in `range`. Leaves out indices past the last chunk. An unknown
-    /// `data_root` has no chunks.
-    fn get_chunks_in_range(
+    /// Chunks of `data_root` from index `start`, with their proofs. Stops
+    /// after `max_chunks` chunks, at the last chunk, or before the data passes
+    /// `max_bytes`, but returns at least one chunk.
+    fn read_chunks(
         &self,
         data_root: H256,
-        range: Range<u64>,
-    ) -> Result<Vec<ProvenChunk>, Error> {
+        start: u64,
+        max_chunks: u64,
+        max_bytes: u64,
+    ) -> Result<ChunkRead, Error> {
         let chunk_count = chunk_count(self, data_root)?;
-        (range.start..range.end.min(chunk_count))
-            .map(|index| chunk_with_proof(self, data_root, chunk_count, index))
-            .collect()
+        read_chunks_of(self, data_root, chunk_count, start, max_chunks, max_bytes)
+    }
+
+    /// Whole chunks of `data_root` that cover `offset..offset + length`, with
+    /// the limits of [`Self::read_chunks`]. The chunk size is the size of the
+    /// first chunk.
+    fn read_range(
+        &self,
+        data_root: H256,
+        offset: u64,
+        length: u64,
+        max_chunks: u64,
+        max_bytes: u64,
+    ) -> Result<ChunkRead, Error> {
+        let chunk_count = chunk_count(self, data_root)?;
+        let chunk_size = first_chunk_size(self, data_root)?;
+        if chunk_size == 0 && chunk_count > 1 {
+            return Err(Error::NonCanonicalTree(format!("{:#x}", data_root)));
+        }
+        let chunk_size = chunk_size.max(1);
+        let start = offset / chunk_size;
+        let end = match length {
+            0 => start,
+            _ => offset.saturating_add(length).div_ceil(chunk_size),
+        };
+        read_chunks_of(
+            self,
+            data_root,
+            chunk_count,
+            start,
+            end.saturating_sub(start).min(max_chunks),
+            max_bytes,
+        )
     }
 
     /// Delete data before a sequence number.
@@ -434,6 +476,19 @@ fn chunk_count<B: StorageBackend + ?Sized>(backend: &B, root: H256) -> Result<u6
     Err(Error::NonCanonicalTree(format!("{:#x}", root)))
 }
 
+/// Size of the first chunk under `root`, from the nodes down its left edge.
+/// Reads no chunk data.
+fn first_chunk_size<B: StorageBackend + ?Sized>(backend: &B, root: H256) -> Result<u64, Error> {
+    let mut hash = root;
+    for _ in 0..=MAX_TREE_DEPTH {
+        match shape_at(backend, &hash)? {
+            NodeShape::Chunk { size } => return Ok(size),
+            NodeShape::Internal { left, .. } => hash = left,
+        }
+    }
+    Err(Error::NonCanonicalTree(format!("{:#x}", root)))
+}
+
 /// Chunks under `left`, a left child: `2^h` for `h` nodes down its left edge.
 fn left_child_chunks<B: StorageBackend + ?Sized>(
     backend: &B,
@@ -450,27 +505,106 @@ fn left_child_chunks<B: StorageBackend + ?Sized>(
     Err(Error::NonCanonicalTree(format!("{:#x}", root)))
 }
 
-/// Hash, data and Merkle proof of chunk `index` in the tree of `chunk_count`
+/// [`StorageBackend::read_chunks`] for a tree of `chunk_count` chunks. One
+/// walk from the root visits each node on the paths to the read chunks once.
+fn read_chunks_of<B: StorageBackend + ?Sized>(
+    backend: &B,
+    root: H256,
+    chunk_count: u64,
+    start: u64,
+    max_chunks: u64,
+    max_bytes: u64,
+) -> Result<ChunkRead, Error> {
+    let end = start.saturating_add(max_chunks).min(chunk_count);
+    let mut walk = RangeWalk {
+        backend,
+        root,
+        range: start..end,
+        max_bytes,
+        bytes: 0,
+        siblings: Vec::new(),
+        chunks: Vec::new(),
+    };
+    if start < end {
+        walk.visit(root, chunk_count, 0)?;
+    }
+    Ok(ChunkRead {
+        start_chunk: start,
+        chunk_count,
+        chunks: walk.chunks,
+    })
+}
+
+/// State of [`read_chunks_of`]'s walk.
+struct RangeWalk<'a, B: ?Sized> {
+    backend: &'a B,
+    root: H256,
+    /// Chunk indices to read.
+    range: core::ops::Range<u64>,
+    max_bytes: u64,
+    /// Chunk data bytes read so far.
+    bytes: u64,
+    /// Siblings on the path from the root to the current node.
+    siblings: Vec<H256>,
+    chunks: Vec<ProvenChunk>,
+}
+
+impl<B: StorageBackend + ?Sized> RangeWalk<'_, B> {
+    /// Read the chunks in `self.range` under `hash`, the subtree over `count`
+    /// chunks from index `first`. Returns `false` once `max_bytes` stops the
+    /// read.
+    fn visit(&mut self, hash: H256, count: u64, first: u64) -> Result<bool, Error> {
+        if first >= self.range.end || first.saturating_add(count) <= self.range.start {
+            return Ok(true);
+        }
+        match shape_at(self.backend, &hash)? {
+            NodeShape::Chunk { size } if count == 1 => {
+                let total = self.bytes.saturating_add(size);
+                if !self.chunks.is_empty() && total > self.max_bytes {
+                    return Ok(false);
+                }
+                self.bytes = total;
+                let data = chunk_data(self.backend, self.root, &hash)?;
+                let proof = self.siblings.iter().rev().copied().collect();
+                self.chunks.push((hash, data, proof));
+                Ok(true)
+            }
+            NodeShape::Internal { left, right } if count > 1 => {
+                let split = 1u64 << (count - 1).ilog2();
+                self.siblings.push(right);
+                let more = self.visit(left, split, first)?;
+                self.siblings.pop();
+                if !more {
+                    return Ok(false);
+                }
+                self.siblings.push(left);
+                let more = self.visit(right, count - split, first + split)?;
+                self.siblings.pop();
+                Ok(more)
+            }
+            _ => Err(Error::NonCanonicalTree(format!("{:#x}", self.root))),
+        }
+    }
+}
+
+/// Hash and Merkle proof of chunk `index` in the tree of `chunk_count`
 /// chunks under `root`. A tree over `n > 1` chunks splits into the largest
 /// power of two below `n` on the left and the rest on the right, and the
-/// proof lists the sibling at each split, from the chunk up. Only the proven
-/// chunk's data is read.
-fn chunk_with_proof<B: StorageBackend + ?Sized>(
+/// proof lists the sibling at each split, from the chunk up. Reads no chunk
+/// data.
+fn locate_chunk<B: StorageBackend + ?Sized>(
     backend: &B,
     root: H256,
     chunk_count: u64,
     index: u64,
-) -> Result<ProvenChunk, Error> {
+) -> Result<(H256, Vec<H256>), Error> {
     let (mut hash, mut count, mut index) = (root, chunk_count, index);
     let mut siblings = Vec::new();
     loop {
         match shape_at(backend, &hash)? {
             NodeShape::Chunk { .. } if count == 1 => {
-                let ChunkTreeNode::Chunk(data) = node_at(backend, &hash)? else {
-                    return Err(Error::NonCanonicalTree(format!("{:#x}", root)));
-                };
                 siblings.reverse();
-                return Ok((hash, data, siblings));
+                return Ok((hash, siblings));
             }
             NodeShape::Internal { left, right } if count > 1 => {
                 let split = 1u64 << (count - 1).ilog2();
@@ -484,6 +618,18 @@ fn chunk_with_proof<B: StorageBackend + ?Sized>(
             }
             _ => return Err(Error::NonCanonicalTree(format!("{:#x}", root))),
         }
+    }
+}
+
+/// Data of the chunk `hash` in the tree under `root`.
+fn chunk_data<B: StorageBackend + ?Sized>(
+    backend: &B,
+    root: H256,
+    hash: &H256,
+) -> Result<Vec<u8>, Error> {
+    match node_at(backend, hash)? {
+        ChunkTreeNode::Chunk(data) => Ok(data),
+        ChunkTreeNode::Internal { .. } => Err(Error::NonCanonicalTree(format!("{:#x}", root))),
     }
 }
 
@@ -552,13 +698,94 @@ mod tests {
         }
     }
 
+    /// A byte range maps to the chunks that cover it, with the chunk size of
+    /// the root's first chunk.
     #[test]
-    fn chunks_in_range_match_single_chunks_and_clip_to_the_last_chunk() {
+    fn read_range_returns_the_chunks_that_cover_the_bytes() {
+        // Five chunks of 32 bytes.
+        let (_dir, storage, leaves) = storage_with_chunks(1024 * 1024, &chunks(5));
+        let root = build_merkle_tree(&storage, 1, &leaves).unwrap();
+
+        let read = storage
+            .read_range(root, 40, 30, u64::MAX, u64::MAX)
+            .unwrap();
+        assert_eq!((read.start_chunk, read.chunk_count), (1, 5));
+        let hashes: Vec<H256> = read.chunks.iter().map(|c| c.0).collect();
+        assert_eq!(hashes, leaves[1..3]);
+
+        let read = storage.read_range(root, 0, u64::MAX, 2, u64::MAX).unwrap();
+        assert_eq!(read.chunks.len(), 2, "max_chunks");
+        let read = storage
+            .read_range(root, u64::MAX, u64::MAX, 10, u64::MAX)
+            .unwrap();
+        assert!(read.chunks.is_empty());
+    }
+
+    /// A root of one chunk: a short chunk, and an empty one, are read whole
+    /// from offset 0 and give nothing past their end.
+    #[test]
+    fn read_range_of_a_single_chunk_root() {
+        let (_dir, storage, leaves) = storage_with_chunks(1024 * 1024, &[vec![9u8; 100], vec![]]);
+        let short = leaves[0];
+        let read = storage.read_range(short, 0, 1 << 20, 10, u64::MAX).unwrap();
+        assert_eq!((read.chunk_count, read.chunks.len()), (1, 1));
+        assert!(storage
+            .read_range(short, 200, 10, 10, u64::MAX)
+            .unwrap()
+            .chunks
+            .is_empty());
+
+        let empty = leaves[1];
+        let read = storage.read_range(empty, 0, 1, 10, u64::MAX).unwrap();
+        assert_eq!((read.chunk_count, read.chunks.len()), (1, 1));
+        assert!(storage
+            .read_range(empty, 0, 0, 10, u64::MAX)
+            .unwrap()
+            .chunks
+            .is_empty());
+    }
+
+    /// A tree whose first chunk is empty but has more chunks is not a chunk
+    /// tree: only the last chunk can be shorter.
+    #[test]
+    fn read_range_rejects_an_empty_first_chunk() {
+        let (_dir, storage, leaves) = storage_with_chunks(1024 * 1024, &[vec![], vec![1u8; 32]]);
+        let root = build_merkle_tree(&storage, 1, &leaves).unwrap();
+        assert!(matches!(
+            storage.read_range(root, 0, 64, 10, u64::MAX),
+            Err(Error::NonCanonicalTree(_))
+        ));
+    }
+
+    /// `max_bytes` stops the read before the chunk that would pass it, but
+    /// never returns zero chunks for a start inside the data. The chunk count
+    /// is the count of the whole data root.
+    #[test]
+    fn read_chunks_stops_at_max_bytes_and_reports_the_chunk_count() {
+        // Five chunks of 32 bytes.
+        let (_dir, storage, leaves) = storage_with_chunks(1024 * 1024, &chunks(5));
+        let root = build_merkle_tree(&storage, 1, &leaves).unwrap();
+
+        let read = storage.read_chunks(root, 1, 10, 64).unwrap();
+        assert_eq!(read.chunk_count, 5);
+        assert_eq!(read.chunks.len(), 2);
+        assert_eq!(read.chunks[0].0, leaves[1]);
+
+        let read = storage.read_chunks(root, 1, 10, 63).unwrap();
+        assert_eq!(read.chunks.len(), 1, "one chunk even above max_bytes");
+
+        let read = storage.read_chunks(root, 5, 10, u64::MAX).unwrap();
+        assert_eq!(read.chunk_count, 5);
+        assert!(read.chunks.is_empty());
+    }
+
+    #[test]
+    fn read_chunks_match_single_chunks_and_clip_to_the_last_chunk() {
         let chunks = chunks(5);
         let (_dir, storage, leaves) = storage_with_chunks(1024 * 1024, &chunks);
         let root = build_merkle_tree(&storage, 1, &leaves).unwrap();
 
-        let range = storage.get_chunks_in_range(root, 1..4).unwrap();
+        let range = storage.read_chunks(root, 1, 3, u64::MAX).unwrap().chunks;
         assert_eq!(range.len(), 3);
         for (index, (hash, data, proof)) in (1..4).zip(&range) {
             assert_eq!(*data, chunks[index as usize]);
@@ -572,17 +799,22 @@ mod tests {
         }
 
         let clipped: Vec<Vec<u8>> = storage
-            .get_chunks_in_range(root, 3..10)
+            .read_chunks(root, 3, 7, u64::MAX)
             .unwrap()
+            .chunks
             .into_iter()
             .map(|(_, data, _)| data)
             .collect();
         assert_eq!(clipped, chunks[3..]);
-        assert!(storage.get_chunks_in_range(root, 7..9).unwrap().is_empty());
-        let reversed = Range { start: 3, end: 1 };
         assert!(storage
-            .get_chunks_in_range(root, reversed)
+            .read_chunks(root, 7, 2, u64::MAX)
             .unwrap()
+            .chunks
+            .is_empty());
+        assert!(storage
+            .read_chunks(root, 3, 0, u64::MAX)
+            .unwrap()
+            .chunks
             .is_empty());
         assert!(matches!(
             storage.get_chunk_at_index(root, 5),
@@ -645,8 +877,14 @@ mod tests {
                         .collect()
                 };
                 let got = storage
-                    .get_chunks_in_range(root, start as u64..end as u64)
-                    .unwrap();
+                    .read_chunks(
+                        root,
+                        start as u64,
+                        (end as u64).saturating_sub(start as u64),
+                        u64::MAX,
+                    )
+                    .unwrap()
+                    .chunks;
                 assert_eq!(got, expected, "n {n} range {start}..{end}");
             }
         }
