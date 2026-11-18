@@ -50,7 +50,7 @@ pub struct LocalBucketAgreement {
 }
 
 impl LocalBucketAgreement {
-    /// Whether this node holds the bucket as a replica.
+    /// Whether this node's agreement on the bucket is a replica agreement.
     pub fn is_replica_agreement(&self) -> bool {
         self.role == AgreementRole::Replica
     }

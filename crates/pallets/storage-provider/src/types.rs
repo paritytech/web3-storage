@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Storage types and type aliases of the pallet.
+//! Types and type aliases that the pallet stores, takes as call arguments,
+//! or emits in events.
 
 use crate::Config;
 use alloc::vec::Vec;
 use bitvec::prelude::{BitVec, Lsb0};
-use frame_support::{
-    pallet_prelude::*, traits::fungible::Inspect, CloneNoBound, DebugNoBound, DefaultNoBound,
-    EqNoBound, PartialEqNoBound,
-};
+use frame_support::{pallet_prelude::*, traits::fungible::Inspect, DefaultNoBound};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion, Saturating, Zero};
 use storage_primitives::{BucketId, ChunkLocation, Commitment, MmrProof, Role, Visibility};
@@ -50,12 +48,13 @@ pub type AgreementTermsOf<T> = storage_primitives::AgreementTerms<
 pub struct ProviderInfo<T: Config> {
     /// Multiaddr for connecting to this provider.
     pub multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
-    /// Public key for signature verification.
-    /// Stored as raw bytes to support multiple key types (Sr25519, Ed25519, Ecdsa).
+    /// Public key for signature verification, as raw bytes. The pallet
+    /// accepts Sr25519, Ed25519, ECDSA and Ethereum (keccak ECDSA) keys.
     pub public_key: BoundedVec<u8, ConstU32<64>>,
-    /// Total stake locked by this provider.
+    /// Stake held on the provider under `HoldReason::ProviderStake`.
     pub stake: BalanceOf<T>,
-    /// Total contracted bytes: the sum of `max_bytes` across all agreements.
+    /// Total contracted bytes: the sum of `max_bytes` across the provider's
+    /// current agreements.
     pub committed_bytes: u64,
     /// Pricing and availability settings.
     pub settings: ProviderSettings<T>,
@@ -80,7 +79,7 @@ pub struct ProviderInfo<T: Config> {
     EqNoBound,
     Encode,
     Decode,
-    codec::DecodeWithMemTracking,
+    DecodeWithMemTracking,
     TypeInfo,
     MaxEncodedLen,
     DebugNoBound,
@@ -94,9 +93,11 @@ pub struct ProviderInfo<T: Config> {
     default
 )]
 pub struct ProviderSettings<T: Config> {
-    /// Minimum agreement duration provider will accept.
+    /// Minimum duration, in anchor blocks, that the provider accepts for a new
+    /// agreement or an `extend_agreement` call.
     pub min_duration: BlockNumberFor<T>,
-    /// Maximum agreement duration provider will accept.
+    /// Maximum duration, in anchor blocks, that the provider accepts for a new
+    /// agreement or an `extend_agreement` call.
     pub max_duration: BlockNumberFor<T>,
     /// Price per byte per block for storage.
     pub price_per_byte: BalanceOf<T>,
@@ -108,10 +109,11 @@ pub struct ProviderSettings<T: Config> {
     /// Whether the provider accepts extensions of existing agreements.
     pub accepting_extensions: bool,
     /// Maximum storage capacity in bytes. 0 means unlimited. The pallet
-    /// rejects agreements that would exceed a non-zero capacity.
+    /// rejects a new agreement that would raise `committed_bytes` above a
+    /// non-zero capacity.
     pub max_capacity: u64,
     /// Smallest agreement size, in bytes, that the provider accepts, for
-    /// primary and replica agreements. 0 = no minimum. Must not exceed a
+    /// primary and replica agreements. 0 means no minimum. Must not exceed a
     /// non-zero `max_capacity`.
     pub min_agreement_bytes: u64,
 }
@@ -152,26 +154,30 @@ pub struct ProviderStats<T: Config> {
     /// Number of `extend_agreement` calls on this provider's agreements, by any
     /// caller.
     pub agreements_extended: u32,
-    /// Agreements that expired without extension.
+    /// Agreements settled after expiry, claimed with
+    /// `claim_expired_agreement`, or ended early with `EndAction::Pay`, with
+    /// nothing burned.
     pub agreements_not_extended: u32,
     /// Agreements that ended with part of the payment burned.
     pub agreements_burned: u32,
-    /// Total bytes ever committed across all agreements.
+    /// Sum of `max_bytes` at creation over all agreements ever created with
+    /// this provider.
     pub total_bytes_committed: u64,
     /// Challenges from authorized challengers (a bucket member or agreement
     /// owner at challenge creation) that the provider defended. The pallet
-    /// counts a challenge at resolution, in exactly one of
+    /// counts each answered or timed-out challenge in exactly one of
     /// `challenges_received_authorized`, `challenges_received_public` or
-    /// `challenges_failed`.
+    /// `challenges_failed`. A cancelled challenge counts in none.
     pub challenges_received_authorized: u32,
     /// Challenges from unauthorized challengers that the provider defended.
     pub challenges_received_public: u32,
-    /// Number of challenges where provider was slashed. Tier-independent
-    /// and disjoint from the received counters.
+    /// Challenges that slashed the provider, from authorized and
+    /// unauthorized challengers.
     pub challenges_failed: u32,
-    /// Total payment ever received by this provider for storage service:
-    /// agreement settlements, extension payments, and replica sync
-    /// payments. The pallet never decreases or resets this value.
+    /// Total payment this provider received for storage service: agreement
+    /// settlements, the elapsed-period payment that `extend_agreement`
+    /// settles, and replica sync payments. The pallet never decreases or
+    /// resets this value.
     pub lifetime_revenue: BalanceOf<T>,
 }
 
@@ -187,8 +193,9 @@ impl<T: Config> ProviderStats<T> {
     /// tallied at resolution, so pending challenges never count against a
     /// provider.
     ///
-    /// A provider with no resolved challenges scores 100, so a newly
-    /// registered provider does not rank as a challenge target.
+    /// A provider with no resolved challenges scores 100, so
+    /// `query_challenge_candidates` with a `max_reputation` of 100 or less
+    /// does not return a newly registered provider.
     pub fn reputation(&self) -> u8 {
         let defended = self.challenges_defended();
         let total = defended as u64 + self.challenges_failed as u64;
@@ -223,7 +230,7 @@ impl<T: Config> From<&ProviderStats<T>> for crate::runtime_api::ProviderStatsInf
 pub struct Member<T: Config> {
     /// The member's account.
     pub account: T::AccountId,
-    /// Role the member holds in the bucket.
+    /// Role of the member in the bucket.
     pub role: Role,
     /// The admin that added the member and paid `deposit`. Fixed for the
     /// lifetime of the entry.
@@ -233,28 +240,30 @@ pub struct Member<T: Config> {
     pub deposit: TicketOf<T>,
 }
 
-/// Bucket container for data with membership and storage agreements.
+/// A bucket: its members, primary providers, visibility and checkpoint state.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
 #[scale_info(skip_type_params(T))]
 pub struct Bucket<T: Config> {
     /// Members who can interact with this bucket.
     pub members: BoundedVec<Member<T>, T::MaxMembers>,
     /// Read visibility (see [`Visibility`]). On-chain, only challenge
-    /// creation reads it: `Private` restricts primary challenges to
-    /// members and primary-agreement owners.
+    /// creation reads it: `Private` allows only bucket members and owners of
+    /// primary agreements to challenge a primary provider.
     pub visibility: Visibility,
-    /// `Some(seq)` makes the bucket append-only from `seq`.
+    /// `None` until `freeze_bucket`. `Some(seq)` makes the bucket append-only:
+    /// every later `checkpoint` must use `start_seq == seq`.
     pub frozen_start_seq: Option<u64>,
     /// Minimum primary provider signatures required for checkpoint.
     pub min_providers: u32,
     /// Primary provider accounts.
     pub primary_providers: BoundedVec<T::AccountId, T::MaxPrimaryProviders>,
-    /// Current canonical state.
+    /// Latest checkpoint. `None` before the first `checkpoint`.
     pub snapshot: Option<BucketSnapshot<BlockNumberFor<T>>>,
-    /// Recent snapshot commitments for replica sync validation, one per
-    /// prime-spaced position (see `update_historical_roots`). Each entry is
-    /// the full commitment, so a replica that syncs to one of these roots
-    /// records a range `challenge_replica` can bind a proof to.
+    /// Recent snapshot commitments for replica sync validation. Entry `i`
+    /// contains `(anchor_block / HISTORICAL_ROOT_PRIMES[i], commitment)`, and
+    /// `checkpoint` replaces it when the quotient changes. Each entry
+    /// contains the full commitment, so a replica that syncs to one of these
+    /// roots records a range that `challenge_replica` can bind a proof to.
     pub historical_roots: [(u32, Commitment); 6],
     /// Total snapshots created for this bucket.
     pub total_snapshots: u32,
@@ -267,7 +276,7 @@ pub struct Bucket<T: Config> {
 }
 
 /// Bucket snapshot representing canonical state at a checkpoint.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, codec::DecodeWithMemTracking, TypeInfo, Debug)]
+#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, Debug)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct BucketSnapshot<BlockNumber> {
     /// Canonical MMR commitment at this checkpoint (root + covered range).
@@ -301,12 +310,11 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
     Eq,
     Encode,
     Decode,
-    codec::DecodeWithMemTracking,
+    DecodeWithMemTracking,
     TypeInfo,
     MaxEncodedLen,
     Debug,
 )]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct ChallengeId<BlockNumber> {
     /// Block by which the provider must respond.
     pub deadline: BlockNumber,
@@ -322,12 +330,11 @@ pub struct ChallengeId<BlockNumber> {
     Eq,
     Encode,
     Decode,
-    codec::DecodeWithMemTracking,
+    DecodeWithMemTracking,
     TypeInfo,
     MaxEncodedLen,
     Debug,
 )]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub enum RemovalReason {
     /// A failed challenge slashed the provider.
     Slashed,
@@ -339,25 +346,18 @@ pub enum RemovalReason {
 
 /// Provider role for a specific bucket agreement.
 #[derive(
-    Clone,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    codec::DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
-    Debug,
+    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub enum ProviderRole<Balance, BlockNumber> {
-    /// Receives data directly from writers. The bucket admin adds and
-    /// removes primary providers.
+    /// Receives data directly from writers. Only a bucket admin can add a
+    /// primary provider. Before `expires_at`, only a bucket admin or
+    /// `remove_slashed` can end its agreement.
     Primary,
     /// Syncs data from other providers. Anyone can add a replica. Replicas
-    /// do not count toward `min_providers`. The agreement runs until expiry,
-    /// and the pallet pays `sync_price` from `sync_balance` for each
-    /// confirmed sync.
+    /// do not count toward `min_providers`. Before `expires_at`, only
+    /// `remove_slashed` can end a replica agreement. The pallet pays `sync_price`
+    /// from `sync_balance` for each confirmed sync.
     Replica {
         /// Balance for per-sync payments, reduced on each confirmed sync.
         sync_balance: Balance,
@@ -379,7 +379,7 @@ pub enum ProviderRole<Balance, BlockNumber> {
     Eq,
     Encode,
     Decode,
-    codec::DecodeWithMemTracking,
+    DecodeWithMemTracking,
     TypeInfo,
     MaxEncodedLen,
     Debug,
@@ -396,21 +396,24 @@ pub struct ReplicaSyncRecord<BlockNumber> {
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, Debug)]
 #[scale_info(skip_type_params(T))]
 pub struct StorageAgreement<T: Config> {
-    /// Who owns this agreement (can top up, transfer ownership).
+    /// Account that owns the agreement. Only the owner can top up the
+    /// agreement, transfer ownership, extend it at a higher price, and settle
+    /// it within `SettlementTimeout` after expiry.
     ///
     /// The pallet holds the whole escrow on this account, whoever paid it,
     /// and every settlement draws on it. Reassigning `owner` must also move
     /// the hold.
     pub owner: T::AccountId,
-    /// Maximum bytes (quota).
+    /// Quota in bytes. `top_up_agreement` raises it.
     pub max_bytes: u64,
-    /// Payment locked for storage.
+    /// Prepaid storage fee, held on `owner` under `HoldReason::AgreementPayment`.
     pub payment_locked: BalanceOf<T>,
     /// Price per byte, locked at creation or the last extension.
     pub price_per_byte: BalanceOf<T>,
-    /// Agreement expiration.
+    /// Anchor block at which the agreement expires.
     pub expires_at: BlockNumberFor<T>,
-    /// Whether provider has blocked extensions for this agreement.
+    /// Whether the provider blocked extensions of this agreement with
+    /// `set_extensions_blocked`.
     pub extensions_blocked: bool,
     /// Provider role for this bucket.
     pub role: ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,
@@ -453,14 +456,14 @@ pub struct Challenge<T: Config> {
     /// The commitment being challenged; its `leaf_count` binds the proof
     /// to the exact `leaf_index` in `respond_to_challenge`.
     pub commitment: Commitment,
-    /// Leaf + chunk being challenged.
+    /// Leaf index and chunk index that the challenge targets.
     pub target: ChunkLocation,
-    /// Deposit locked by challenger.
+    /// Challenger's deposit, held under `HoldReason::ChallengeDeposit`.
     pub deposit: BalanceOf<T>,
-    /// Whether the challenger was authorized (bucket member or agreement
-    /// owner, via `is_authorized`) at challenge creation. Snapshotted so
-    /// membership/agreement changes between creation and response cannot
-    /// alter the fee split applied in `respond_to_challenge`.
+    /// Whether the challenger was a bucket member or agreement owner
+    /// (`is_authorized`) at challenge creation. The pallet stores this value
+    /// so that membership or agreement changes after creation do not change
+    /// the fee split in `respond_to_challenge`.
     pub authorized: bool,
     /// Anchor block at which the challenge was created.
     /// `respond_to_challenge` computes the response time for the fee
@@ -475,13 +478,14 @@ pub struct Challenge<T: Config> {
     EqNoBound,
     Encode,
     Decode,
-    codec::DecodeWithMemTracking,
+    DecodeWithMemTracking,
     TypeInfo,
     DebugNoBound,
 )]
 #[scale_info(skip_type_params(T))]
 pub enum ChallengeResponse<T: Config> {
-    /// Provide the chunk with proofs.
+    /// The challenged chunk with an MMR proof for its leaf and a Merkle proof
+    /// for the chunk.
     Proof {
         /// Bytes of the challenged chunk.
         chunk_data: BoundedVec<u8, T::MaxChunkSize>,
@@ -503,15 +507,17 @@ pub enum ChallengeResponse<T: Config> {
     /// sequence number.
     /// Primary providers only; a replica gets `InvalidDeletionClaim`.
     Deleted {
-        /// Root of the newer commitment that no longer holds the
+        /// Root of the newer commitment that no longer contains the
         /// challenged sequence number.
         new_mmr_root: H256,
-        /// Start sequence of that commitment; must be past the
-        /// challenged one.
+        /// Start sequence number of that commitment; must be greater than
+        /// the challenged sequence number.
         new_start_seq: u64,
-        /// Bucket admin who authorised the deletion.
+        /// Bucket admin who authorized the deletion.
         admin: T::AccountId,
-        /// The admin's signature over the newer commitment.
+        /// The admin's signature over the SCALE-encoded
+        /// `CommitmentPayload::new(bucket_id, Commitment { mmr_root:
+        /// new_mmr_root, start_seq: new_start_seq, leaf_count: 0 })`.
         admin_signature: sp_runtime::MultiSignature,
     },
     /// The bucket's current snapshot has a different root from the challenged

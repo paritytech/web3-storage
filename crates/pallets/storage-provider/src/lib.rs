@@ -53,7 +53,8 @@ mod tests;
 #[allow(clippy::too_many_arguments)]
 pub mod pallet {
     use crate::types::*;
-    // Explicit, so it takes precedence over the `frame_system` glob import.
+    // `crate::types::*` and `frame_system::pallet_prelude::*` both export
+    // `BlockNumberFor`. This explicit import takes precedence over both.
     use crate::types::BlockNumberFor;
     use crate::weights::WeightInfo;
     use alloc::vec::Vec;

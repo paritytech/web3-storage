@@ -128,10 +128,10 @@ pub enum EndAction {
 /// The `(mmr_root, start_seq, leaf_count)` triplet that identifies an MMR
 /// commitment over a contiguous range of leaves.
 ///
-/// A field group inside [`CommitmentPayload`] and the pallet's
-/// `BucketSnapshot` and `ReplicaSyncRecord`. The checkpoint and challenge
-/// extrinsics take it as one argument instead of `mmr_root`, `start_seq` and
-/// `leaf_count`.
+/// [`CommitmentPayload`] contains it, and the pallet stores it in
+/// `BucketSnapshot`, `ReplicaSyncRecord`, `Challenge` and
+/// `Bucket::historical_roots`. `checkpoint` and `challenge_offchain` take it
+/// as one argument.
 #[derive(
     Clone,
     Copy,
