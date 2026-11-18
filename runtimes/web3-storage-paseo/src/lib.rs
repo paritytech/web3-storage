@@ -130,6 +130,7 @@ pub type TxExtension = cumulus_pallet_weight_reclaim::StorageWeightReclaim<
         frame_metadata_hash_extension::CheckMetadataHash<Runtime>,
         // lets the runtime accept Ethereum-signed transactions via `pallet_revive::eth_transact`
         pallet_revive::evm::tx_extension::SetOrigin<Runtime>,
+        pallet_storage_provider::CheckChallengeResponse<Runtime>,
     ),
 >;
 

@@ -110,6 +110,16 @@ export interface ChallengeSlashResult {
   blockHash: string;
 }
 
+export interface ChallengeCancelResult {
+  challengeId: { deadline: number; index: number };
+  bucketId: bigint;
+  provider: string;
+  challenger: string;
+  deposit: bigint;
+  blockNumber: number;
+  blockHash: string;
+}
+
 // ── S3Client class ────────────────────────────────────────────────────────────
 
 export class S3Client {
@@ -355,6 +365,19 @@ export class S3Client {
     };
   }
 
+  /**
+   * Cancel an open challenge this account created. Finalized mode so the
+   * open-challenges refresh that follows does not return it.
+   */
+  async cancelChallenge(challengeId: { deadline: number; index: number }): Promise<void> {
+    const api = this.requireApi();
+    await submitTx(
+      api.tx.StorageProvider.cancel_challenge({ challenge_id: challengeId }),
+      this.requireOwner().signer,
+      { label: "cancel_challenge", mode: "finalized" },
+    );
+  }
+
   /** Chunk count of leaf `leafIndex`, counted from `checkpoint.startSeq`, of `checkpoint`. */
   async getLeafChunkCount(bucketId: bigint, checkpoint: CheckpointInfo, leafIndex: bigint): Promise<number> {
     const providerUrl = await this.getProviderUrl(bucketId);
@@ -426,22 +449,24 @@ export class S3Client {
     return result.sort((a, b) => a.deadline - b.deadline);
   }
 
+  /** Report the outcome events of the challenge `challengeId`. */
   watchChallengeOutcome(
-    deadline: number,
-    providerAddress: string,
+    challengeId: { deadline: number; index: number },
     onDefended: (result: ChallengeDefenseResult) => void,
     onSlashed: (result: ChallengeSlashResult) => void,
+    onCancelled: (result: ChallengeCancelResult) => void,
   ): () => void {
     const api = this.requireApi();
     const sub = new Subscription();
+    const isWatched = (id: { deadline: number; index: number }) =>
+      id.deadline === challengeId.deadline && id.index === challengeId.index;
 
     sub.add(
       api.event.StorageProvider.ChallengeDefended.watch().subscribe({
         next: ({ block, events }) => {
           for (const ev of events) {
             const p = ev.payload;
-            if (p.challenge_id.deadline !== deadline) continue;
-            if (p.provider !== providerAddress) continue;
+            if (!isWatched(p.challenge_id)) continue;
             onDefended({
               challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
               provider: p.provider,
@@ -462,12 +487,32 @@ export class S3Client {
         next: ({ block, events }) => {
           for (const ev of events) {
             const p = ev.payload;
-            if (p.challenge_id.deadline !== deadline) continue;
-            if (p.provider !== providerAddress) continue;
+            if (!isWatched(p.challenge_id)) continue;
             onSlashed({
               challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
               provider: p.provider,
               slashedAmount: p.slashed_amount,
+              blockNumber: block.number,
+              blockHash: block.hash,
+            });
+          }
+        },
+        error: () => {},
+      }),
+    );
+
+    sub.add(
+      api.event.StorageProvider.ChallengeCancelled.watch().subscribe({
+        next: ({ block, events }) => {
+          for (const ev of events) {
+            const p = ev.payload;
+            if (!isWatched(p.challenge_id)) continue;
+            onCancelled({
+              challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
+              bucketId: BigInt(p.bucket_id),
+              provider: p.provider,
+              challenger: p.challenger,
+              deposit: p.deposit,
               blockNumber: block.number,
               blockHash: block.hash,
             });
