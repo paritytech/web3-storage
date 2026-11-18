@@ -164,7 +164,7 @@ flowchart TD
 
 | Error case | Action |
 | --- | --- |
-| Proof data provably absent: bucket unknown, leaves pruned past the cited window, node or chunk missing | Report `DataNotFound`. No retry helps; `ChallengeError::risks_slashing` is true. The challenge expires on chain and the stake is slashed unless the data is restored before the deadline. |
+| Proof data provably absent: bucket unknown, leaves pruned past the cited window, node or chunk missing | Report `DataNotFound`. No retry helps; the error is classified as one that risks slashing. The challenge expires on chain and the stake is slashed unless the data is restored before the deadline. |
 | Storage backend error while building a proof | Report `ProofGenerationFailed`. The next full scan retries. |
 | Unknown leaf version in the MMR proof | Report `ProofGenerationFailed`. |
 | Chain read fails after an event | Log a warning. The next full scan retries. |

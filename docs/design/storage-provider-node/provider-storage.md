@@ -19,11 +19,11 @@ flowchart LR
     classDef chain fill:#ECEFF1,stroke:#455A64,color:#263238
     classDef external fill:#FAFAFA,stroke:#757575,color:#424242
 
-    api["HTTP handlers<br/>blocking_storage"]:::providernode
+    api["HTTP handlers"]:::providernode
     source["StorageProofSource<br/>provider-node"]:::providernode
     chal["provider-challenge"]:::challenge
     rep["provider-replica"]:::replica
-    prim["storage-primitives<br/>mmr, merkle_root, hash_leaf"]:::external
+    prim["storage-primitives<br/>hashing, Merkle tree, MMR"]:::external
 
     subgraph crate["provider-storage"]
         trait["StorageBackend trait"]:::storage
@@ -41,7 +41,7 @@ flowchart LR
     disk --> db
 ```
 
-Callers: every HTTP handler in `storage-provider-node` through `ProviderState::blocking_storage`; `provider-replica` for the local bucket and nodes; `provider-challenge` through the node's `StorageProofSource` adapter.
+Callers: every HTTP handler in `storage-provider-node` through `ProviderState`; `provider-replica` for the local bucket and nodes; `provider-challenge` through the node's `StorageProofSource` adapter.
 
 Callees: `storage-primitives` for hashing, the canonical Merkle tree and the MMR, and the `rocksdb` engine.
 
@@ -119,7 +119,7 @@ flowchart TD
 4. **Hash matches, children present, quota not exceeded?**
    Input: the node, the claimed hash and the bucket row.
    Output: no rejects with `InvalidHash`, `ChildrenMissing`, `BucketNotFound` or `QuotaExceeded`; yes continues.
-   `store_node` recomputes the node's hash, which must equal the claimed one, and requires an internal node's children to exist; these two checks run before the transaction.
+   The backend recomputes the node's hash, which must equal the claimed one, and requires an internal node's children to exist; these two checks run before the transaction.
    The quota check runs inside a pessimistic transaction that locks the bucket row: the node's size added to the used bytes must not exceed the quota.
 
 5. **Node already stored?**
@@ -158,12 +158,12 @@ flowchart TD
 12. **Rebuild the MMR proof for a cited commitment.**
     Input: bucket id, a `Commitment` (root, start sequence, leaf count) and a leaf index relative to that start sequence.
     Output: an `MmrProof` whose root equals the cited root.
-    `get_mmr_proof_for_commitment` assembles the leaf history from the stashed ranges followed by the live leaves, cuts the cited window from it, and builds the proof over that window.
+    The backend assembles the leaf history from the stashed ranges followed by the live leaves, cuts the cited window from it, and builds the proof over that window.
 
 13. **Read a chunk with its Merkle proof.**
     Input: a data root and a chunk index.
     Output: the chunk bytes and the sibling hashes up to the data root.
-    `get_chunk_at_index` derives the chunk count from the nodes down the right edge of the tree, and the tree shape follows from that count.
+    The backend derives the chunk count from the nodes down the right edge of the tree, and the tree shape follows from that count.
     The walk down to the chunk reads node shapes; only the proven chunk's data is read.
 
 14. **New start sequence within the current leaf range?**
@@ -173,7 +173,7 @@ flowchart TD
 
 15. **Prune leaves into the retention stash.**
     Input: the validated start sequence.
-    Output: the leaves before the new start sequence moved into a `PrunedRange`, the start sequence advanced, the MMR root and peaks recomputed from the retained leaves with `mmr::peaks`, and the post-prune `Commitment` returned for the node to sign.
+    Output: the leaves before the new start sequence moved into a `PrunedRange`, the start sequence advanced, the MMR root and peaks recomputed from the retained leaves, and the post-prune `Commitment` returned for the node to sign.
     The bytes stay on disk so challenges against older commitments remain provable.
 
 16. **Stashed range found for the first sequence?**

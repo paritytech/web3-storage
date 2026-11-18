@@ -19,15 +19,15 @@ flowchart LR
     classDef chain fill:#ECEFF1,stroke:#455A64,color:#263238
     classDef external fill:#FAFAFA,stroke:#757575,color:#424242
 
-    sdk["Client SDK<br/>build_auth_header"]:::external
-    api["HTTP handlers<br/>check_role"]:::providernode
+    sdk["Client SDK"]:::external
+    api["HTTP handlers"]:::providernode
     resolver["ChainMembershipResolver<br/>provider-node"]:::providernode
     feed["BlockEventInvalidations<br/>provider-node"]:::providernode
     coord["provider-coordinator<br/>block event fan-out"]:::coordinator
     chain["Buckets and StorageAgreements<br/>chain storage"]:::chain
 
     subgraph crate["provider-auth"]
-        verify["Authenticator::require_role"]:::auth
+        verify["Authenticator"]:::auth
         cache["MembershipCache"]:::auth
     end
 
@@ -40,7 +40,7 @@ flowchart LR
     coord --> feed
 ```
 
-Callers: the HTTP handlers in `storage-provider-node` that call `check_role`: `PUT /node`, `POST /exists`, `POST /commit`, `GET /commitment`, `GET /checkpoint-signature`, `GET /mmr_proof`, `POST /delete`, `GET /mmr_peaks`, `GET /replica/historical_roots` and `GET /replica/sync_status`.
+Callers: the HTTP handlers in `storage-provider-node` that check a role: `PUT /node`, `POST /exists`, `POST /commit`, `GET /commitment`, `GET /checkpoint-signature`, `GET /mmr_proof`, `POST /delete`, `GET /mmr_peaks`, `GET /replica/historical_roots` and `GET /replica/sync_status`.
 The hash-keyed reads `GET /node`, `GET /read`, `GET /chunk_proof` and `POST /fetch_nodes` bypass it by design: possession of the hash is the read capability.
 The client SDK uses the same crate to build the header it sends.
 
@@ -131,14 +131,14 @@ flowchart TD
 7. **Parse the header and verify the sr25519 signature and timestamp.**
    Input: the `Web3Storage <pubkey_hex>:<signature_hex>:<timestamp>` header.
    Output: the signer's `AccountId32`, or `AuthRequired` for a malformed header or an invalid signature, or `TimestampExpired` for a timestamp that does not parse or is outside the skew.
-   The message is `web3storage:<METHOD>:<bucket_id>:<timestamp>`, rebuilt by `auth_message`.
+   The message is `web3storage:<METHOD>:<bucket_id>:<timestamp>`, which the authenticator rebuilds.
    The timestamp must lie within the configured skew of the node clock.
-   `verify_signature` accepts both the raw message and the `<Bytes>`-wrapped form that wallet signers produce.
+   The verification accepts both the raw message and the `<Bytes>`-wrapped form that wallet signers produce.
 
 8. **Reader role and signer is the provider account?**
    Input: the signer account and the node's own provider account.
    Output: yes succeeds at once; no continues to the membership check.
-   This check runs before `require_role` reads the membership result, so operator reads keep working during a chain outage.
+   This check runs before the authenticator reads the membership result, so operator reads keep working during a chain outage.
 
 9. **Access entry resolved?**
    Input: the result of step 3 or 4.

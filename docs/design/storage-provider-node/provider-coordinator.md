@@ -119,7 +119,7 @@ flowchart TD
 
 4. **Bootstrap: fetch the pallet constants and the provider registration.**
    Input: the read client.
-   Output: `sync_constants` writes `ChainState::constants` from the `RequestTimeout` constant, and `refresh_provider_state` writes `ChainState::provider_info` from the `Providers` entry for this account, or clears it when the provider is not registered.
+   Output: `ChainState::constants` written from the `RequestTimeout` constant, and `ChainState::provider_info` written from the `Providers` entry for this account, or cleared when the provider is not registered.
 
 5. **Bootstrap finished within its timeout?**
    Input: the bootstrap future and the bootstrap timeout.
@@ -158,7 +158,7 @@ flowchart TD
 13. **Broadcast the block's events.**
     Input: the decoded `BlockEvent`s.
     Output: each event sent on the broadcast channel in block order.
-    `follow` ignores send failures, which mean no subscriber exists.
+    Send failures are ignored, because they mean no subscriber exists.
 
 14. **Lifecycle event for this provider in the block?**
     Input: the block's lifecycle accounts and the provider account.

@@ -92,7 +92,7 @@ flowchart LR
 
     subgraph bin["storage-provider-node"]
         api["HTTP router"]:::providernode
-        chainrx["Chain watch channel<br/>Option&lt;ChainHandle&gt;"]:::providernode
+        chainrx["Chain watch channel<br/>chain handle"]:::providernode
         events["Block event fan-out<br/>broadcast channel"]:::providernode
         state["ProviderState<br/>provider id, keypair, ChainState"]:::providernode
         follower["SubxtChainFollower<br/>SubxtChainStateClient"]:::providernode
@@ -124,12 +124,12 @@ flowchart LR
     client -- "ReplicaSyncChainClient" --> rep
     proofs -- "ChallengeProofSource" --> chal
     state -- "SyncRootsSigner" --> rep
-    api -- "require_role" --> auth
-    api -- "blocking_storage, sign" --> state
+    api -- "role check" --> auth
+    api -- "storage, signing" --> state
     api -- "wire types" --> neg
     state --> sto
     proofs --> sto
-    rep -- "store_node" --> sto
+    rep -- "stores nodes" --> sto
     follower --> chain
     client --> chain
     sto --> db
@@ -138,40 +138,40 @@ flowchart LR
 ### Shared objects
 
 - **Chain watch channel.**
-  A `tokio::sync::watch` channel of `Option<ChainHandle>`, created in `command.rs`.
-  `chain_connection::connect` fills it at startup when the chain is reachable; `SubxtChainFollower` republishes a new handle after every reconnect, only once its block subscription succeeds.
+  A watch channel of an optional chain handle, created at startup.
+  The startup connection attempt fills it when the chain is reachable; `SubxtChainFollower` republishes a new handle after every reconnect, only once its block subscription succeeds.
   `SubxtChainClient` and `ChainMembershipResolver` read the latest handle on every call, so a reconnect needs no restart.
 
 - **Block event fan-out.**
-  A `tokio::sync::broadcast` channel of `BlockEvent` with the capacity from `provider-events`.
+  A broadcast channel of `BlockEvent` with the capacity from `provider-events`.
   The chain-state coordinator is the only sender.
   The auth invalidation feed, the replica sync coordinator and the challenge responder subscribe before the follower starts, so none of them misses the first `Resubscribed` event.
 
 - **`ProviderState`.**
   The object every HTTP handler receives: the provider id, the optional signing keypair whose scheme `--key-scheme` selects, the `ChainState` the coordinator writes, the storage backend and the authenticator.
-  `sign` rejects every signing request until the coordinator has published a registration whose public key matches the local key.
-  `blocking_storage` runs storage work on the blocking thread pool so RocksDB I/O never stalls an async worker.
+  Signing is rejected until the coordinator has published a registration whose public key matches the local key.
+  Storage work runs on the blocking thread pool so RocksDB I/O never stalls an async worker.
 
 - **Storage backend.**
-  One `Arc<dyn StorageBackend>` that `command.rs` opens from `--storage-backend` and `--storage-path`; the HTTP handlers, `StorageProofSource` and the replica sync share it.
+  One shared `StorageBackend` that the node opens at startup from `--storage-backend` and `--storage-path`; the HTTP handlers, `StorageProofSource` and the replica sync share it.
 
 ### Crate wiring
 
 | Crate | The node supplies | The node consumes | Document |
 | --- | --- | --- | --- |
-| `provider-auth` | `ChainMembershipResolver` implementing `MembershipResolver` (reads `Buckets` and `StorageAgreements` through the chain watch channel), `BlockEventInvalidations` implementing `MembershipInvalidations` (a fan-out subscription), the provider account for operator self-auth, the `--auth-*` settings | `Authenticator::require_role`, which `check_role` calls in every bucket-bound handler | [provider-auth](provider-auth.md) |
-| `provider-storage` | The backend spec from `--storage-backend` and `--storage-path` | `StorageBackend` behind `ProviderState::blocking_storage`; every data endpoint | [provider-storage](provider-storage.md) |
-| `provider-coordinator` | `SubxtChainFollower` implementing `ChainFollower`, `SubxtChainStateClient` implementing `ChainStateChainClient`, `decode_block_contents` for the block events, the provider account, the `ChainState` and the fan-out sender | `ChainState`: the anchor block, the provider registration and the pallet constants, which the signing guard and `/negotiate` read | [provider-coordinator](provider-coordinator.md) |
+| `provider-auth` | `ChainMembershipResolver` implementing `MembershipResolver` (reads `Buckets` and `StorageAgreements` through the chain watch channel), `BlockEventInvalidations` implementing `MembershipInvalidations` (a fan-out subscription), the provider account for operator self-auth, the `--auth-*` settings | The role check that every bucket-bound handler runs | [provider-auth](provider-auth.md) |
+| `provider-storage` | The backend spec from `--storage-backend` and `--storage-path` | `StorageBackend` behind `ProviderState`; every data endpoint | [provider-storage](provider-storage.md) |
+| `provider-coordinator` | `SubxtChainFollower` implementing `ChainFollower`, `SubxtChainStateClient` implementing `ChainStateChainClient`, the block event decoder, the provider account, the `ChainState` and the fan-out sender | `ChainState`: the anchor block, the provider registration and the pallet constants, which the signing guard and `/negotiate` read | [provider-coordinator](provider-coordinator.md) |
 | `provider-events` | The broadcast channel and its subscriptions | `BlockEvent`, `BlockEventTx`, `BlockEventRx` | covered in [provider-coordinator](provider-coordinator.md) |
 | `provider-challenge` | `SubxtChainClient` implementing `ChallengeChainClient`, `StorageProofSource` implementing `ChallengeProofSource`, the provider account, the `--challenge-*` settings, a fan-out subscription | The `ChallengeResponder` task handle | [provider-challenge](provider-challenge.md) |
 | `provider-replica` | `SubxtChainClient` implementing `ReplicaSyncChainClient`, `ProviderState` implementing `SyncRootsSigner`, the provider id, the storage backend, the `--replica-*` settings, a fan-out subscription; the endpoints `/mmr_peaks` and `/node` that other nodes sync from, and the `/replica/*` status endpoints for clients | The `ReplicaSyncCoordinator` task handle | [provider-replica](provider-replica.md) |
-| `provider-negotiation` | Request validation against the registration, terms built from the chain-read price and the anchor block, the signature from the provider keypair, in `negotiate.rs` | `NegotiateRequest`, `AgreementTermsOf` and `SignedTerms`, the wire types shared with the SDK | [Other Endpoints](../scalable-web3-storage-implementation.md#other-endpoints) and [Agreement Nonces](../scalable-web3-storage-implementation.md#agreement-nonces) |
+| `provider-negotiation` | Request validation against the registration, terms built from the chain-read price and the anchor block, the signature from the provider keypair | `NegotiateRequest`, `AgreementTermsOf` and `SignedTerms`, the wire types shared with the SDK | [Other Endpoints](../scalable-web3-storage-implementation.md#other-endpoints) and [Agreement Nonces](../scalable-web3-storage-implementation.md#agreement-nonces) |
 | `storage-subxt` | Nothing | The generated chain bindings that every subxt adapter above uses | |
 
-The garbage collector is a module of the binary, not a crate: `gc_coordinator.rs` defines `GcChainClient`, which `SubxtChainClient` implements, subscribes to the fan-out, and erases pruned data through the storage backend; see [gc-coordinator](gc-coordinator.md).
+The garbage collector is a module of the binary, not a crate: it defines `GcChainClient`, which `SubxtChainClient` implements, subscribes to the fan-out, and erases pruned data through the storage backend; see [gc-coordinator](gc-coordinator.md).
 
-No crate under `crates/providers/` depends on `subxt` or `axum`; the crates see traits and plain types.
-`subxt` is confined to `chain_connection.rs`, `chain_follower.rs`, `subxt_client.rs`, `membership.rs` and `event_decoding.rs`; `axum` to `api.rs`, `error.rs` and `command.rs`.
+No provider crate depends on `subxt` or `axum`; the crates see traits and plain types.
+Both dependencies are confined to the binary.
 The signing chain client exists only when `--keyfile` is set, so the challenge responder, the replica sync coordinator, the garbage collector and the multiaddr sync need a keyfile.
 
 ## 4. Failure handling
@@ -203,7 +203,7 @@ Request failures:
 | --- | --- |
 | Storage call panics on the blocking pool | The request returns `500`. |
 | Rate limiter error on `/negotiate` | Fail closed with `500`. A rejected token returns `429`. |
-| Auth or storage error inside a handler | `error.rs` maps it to an HTTP status: `401` for a missing or expired signature, `403` for an insufficient role, `503` for an unreachable chain, `404` for an unknown bucket or node, `400` for malformed input. The mechanism behind each error is in the crate documents linked above. |
+| Auth or storage error inside a handler | The node maps it to an HTTP status: `401` for a missing or expired signature, `403` for an insufficient role, `503` for an unreachable chain, `404` for an unknown bucket or node, `400` for malformed input. The mechanism behind each error is in the crate documents linked above. |
 
 After a crash or restart: the RocksDB directory keeps every bucket, node, MMR leaf, pruned range and deletion receipt.
 `ChainState`, the membership cache and the chain connection exist only in memory and the chain-state coordinator rebuilds them on reconnect.

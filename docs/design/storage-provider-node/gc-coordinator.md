@@ -36,21 +36,21 @@ flowchart LR
 
     cmd --> gc
     events --> gc
-    api -- "delete_before,<br/>attach_deletion_receipt" --> sto
+    api -- "prune, receipt" --> sto
     api -- "frozen check" --> trait
     gc --> trait
     trait --> subxt
     subxt --> chain
     gc --> sto
-    chal -- "deletion_receipt_covering" --> sto
+    chal -- "receipt lookup" --> sto
 ```
 
-Callers: `command.rs` starts the coordinator at startup when the node has a signing chain client.
+Callers: the node starts the coordinator at startup when it has a signing chain client.
 The chain-state coordinator's block events and a safety-net interval trigger its passes.
 
 Callees: `GcChainClient`, which the node implements on `SubxtChainClient`, and the `StorageBackend` for the pruned ranges, the deletion receipts, the condemned flag, the bucket quota and the stored `last_scanned_block`.
 
-Related paths: `/delete` and `/delete/confirm` in `api.rs` produce the stash and the receipts the coordinator needs.
+Related paths: `/delete` and `/delete/confirm` produce the stash and the receipts the coordinator needs.
 The challenge responder reads the receipts to answer a challenge on an erased leaf with the `Deleted` defense.
 
 External interfaces: chain reads of `Buckets`, `NextBucketId`, this provider's `StorageAgreements` entry and `Challenges`.
@@ -161,7 +161,7 @@ flowchart TD
 
 9. **Condemn the bucket.**
    Input: bucket id.
-   Output: every retained leaf queued as one pruned range, the bucket marked condemned, and `store_node` and `commit` rejecting the bucket with `BucketCondemned` from then on.
+   Output: every retained leaf queued as one pruned range, the bucket marked condemned, and node stores and commits rejecting the bucket with `BucketCondemned` from then on.
    A call on a bucket that is already condemned changes nothing, except that it resumes a record removal that stopped part way.
 
 10. **Sync the quota and converge on the canonical prune.**
@@ -188,7 +188,7 @@ flowchart TD
 
 14. **Erase the range in batches.**
     Input: bucket id and the range's first sequence.
-    Output: the refcount of each node under the erased leaves decreased, zero-refcount nodes deleted, the charged bytes credited back, and the range's `erased_leaves` advanced, in one transaction per batch of whole leaves up to `ERASE_BATCH_NODES` distinct nodes.
+    Output: the refcount of each node under the erased leaves decreased, zero-refcount nodes deleted, the charged bytes credited back, and the range's `erased_leaves` advanced, in one transaction per batch of whole leaves up to a fixed number of distinct nodes.
     The leaves themselves remain, because a commitment signed before the prune also covers later leaves and its proof needs them.
     The range record is dropped once every leaf is erased; on a condemned bucket the bucket's records are removed once no retained leaf and no range remains.
     A later call resumes after the batches already applied.

@@ -153,7 +153,7 @@ Steps 7 to 16 run per duty, one duty at a time.
 8. **Fetch the next source's MMR peaks.**
    Input: the bucket id and one source endpoint, taken in order.
    Output: the source's current MMR root and peak hashes.
-   `sync_from_source` creates the local bucket row with an unbounded quota if it does not exist.
+   The sync creates the local bucket row with an unbounded quota if it does not exist.
    A transport error, a non-success status or an undecodable response counts as a failed source.
 
 9. **Local root already equals the source root?**
@@ -165,7 +165,7 @@ Steps 7 to 16 run per duty, one duty at a time.
     Output: every node under the peak present in local storage, or an error that counts as a failed source.
     The fetch skips a node already present, together with its subtree.
     The fetch rebuilds each node from the wire shape, hashes it, and rejects it on a hash mismatch before following its children.
-    The fetch stores the children before the parent, because `store_node` requires them to be present.
+    The fetch stores the children before the parent, because the backend requires them to be present.
 
 11. **Source root equals the chain snapshot root?**
     Input: the root returned by step 8 or 9 and the duty's target root.
