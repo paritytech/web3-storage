@@ -173,7 +173,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _challenge_responder_handle =
         start_challenge_responder(&cli, chain_client.as_ref(), challenge_events, state.clone())
             .await;
-    let _gc_handle = start_gc_coordinator(chain_client.as_ref(), gc_events, state.clone());
+    let _gc_handle = start_gc_coordinator(&cli, chain_client.as_ref(), gc_events, state.clone());
 
     // Sync the on-chain multiaddr. Reuses the chain client connected above, so
     // this only runs when that connection succeeded (which also implies a
@@ -243,19 +243,26 @@ fn start_chain_state_coordinator(
 /// agreements. Chainless nodes (no signing key/connection) run without it:
 /// nothing can be checkpointed or challenged, so stashes simply persist.
 fn start_gc_coordinator(
+    cli: &Cli,
     chain_client: Option<&SubxtChainClient>,
     events_rx: BlockEventRx,
     state: Arc<ProviderState>,
 ) -> Option<GcCoordinatorHandle> {
     let chain_client = chain_client?.clone();
 
-    let coordinator = GcCoordinator::new(
-        GcCoordinatorConfig::default(),
+    let config = GcCoordinatorConfig {
+        scan_interval: Duration::from_secs(cli.garbage_collector.gc_scan_interval),
+    };
+    let gc_coordinator = GcCoordinator::new(
+        config,
         Arc::new(BackendGcStorage(state.storage().clone())),
         Arc::new(chain_client),
     );
-    tracing::info!("GC coordinator started");
-    Some(coordinator.start(Box::new(BlockEventGcSource(events_rx))))
+    tracing::info!(
+        scan_interval_secs = cli.garbage_collector.gc_scan_interval,
+        "GC coordinator started"
+    );
+    Some(gc_coordinator.start(Box::new(BlockEventGcSource(events_rx))))
 }
 
 async fn start_replica_sync_coordinator(

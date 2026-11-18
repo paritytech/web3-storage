@@ -595,7 +595,7 @@ async fn confirm_deletion(
     .ok()
     .and_then(|b| sp_runtime::MultiSignature::decode(&mut b.as_slice()).ok())
     .ok_or(Error::InvalidSignature)?;
-    
+
     // address integrity check
     if caller.as_ref() != Some(&admin) {
         return Err(Error::NotAuthorized(
