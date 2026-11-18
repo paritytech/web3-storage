@@ -33,14 +33,13 @@ use storage_subxt::api::runtime_types::storage_primitives::{
 };
 use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};
 
-/// `StorageProvider` error variants that mean "this action already happened"
-/// — a retry after a dropped transaction watch may race an earlier attempt
-/// that landed, and these rejections prove the duty is done rather than
-/// failed. Matched against the pallet + error-variant names resolved from
-/// runtime metadata (see [`SubxtChainClient::is_already_done`]).
-const ALREADY_DONE_ERRORS: [&str; 1] = [
-    "SyncTooFrequent", // confirm_replica_sync: a sync already confirmed
-];
+/// `StorageProvider` error variant that means "this action already happened":
+/// `confirm_replica_sync` rejects a second sync within `min_sync_interval`.
+/// A retry after a dropped transaction watch may race an earlier attempt that
+/// landed, and this rejection proves the duty is done rather than failed.
+/// Matched against the pallet + error-variant names resolved from runtime
+/// metadata (see [`SubxtChainClient::is_already_done`]).
+const ALREADY_DONE_ERROR: &str = "SyncTooFrequent";
 
 /// Upper bound on one submit-and-watch pass. Generous next to normal
 /// finalization (a few blocks) so a slow chain isn't mistaken for a stuck one,
@@ -167,9 +166,9 @@ impl SubxtChainClient {
         )
     }
 
-    /// Whether the dispatch error is one of the pallet's duplicate
-    /// rejections ([`ALREADY_DONE_ERRORS`]): on a retry it proves the first
-    /// attempt landed and the duty is complete.
+    /// Whether the dispatch error is the pallet's duplicate rejection
+    /// ([`ALREADY_DONE_ERROR`]): on a retry it proves the first attempt
+    /// landed and the duty is complete.
     fn is_already_done(e: &TransactionFinalizedSuccessError) -> bool {
         let TransactionFinalizedSuccessError::SuccessError(
             TransactionEventsError::ExtrinsicFailed(DispatchError::Module(module_error)),
@@ -180,8 +179,7 @@ impl SubxtChainClient {
         let Ok(details) = module_error.details() else {
             return false;
         };
-        details.pallet.name() == "StorageProvider"
-            && ALREADY_DONE_ERRORS.contains(&details.variant.name.as_str())
+        details.pallet.name() == "StorageProvider" && details.variant.name == ALREADY_DONE_ERROR
     }
 
     /// Sign, submit, and wait for finalized success, retrying once on
