@@ -27,10 +27,11 @@ flowchart LR
     operator["Operator CLI flags"]:::external
 
     subgraph bin["storage-provider-node"]
-        api["HTTP API<br/>api.rs"]:::providernode
-        cmd["Startup<br/>command.rs"]:::providernode
+        api["HTTP API"]:::providernode
+        cmd["Startup"]:::providernode
         state["ProviderState<br/>signing key, ChainState"]:::providernode
         subxt["SubxtChainClient<br/>SubxtChainFollower"]:::providernode
+        gc["GcCoordinator"]:::providernode
     end
 
     auth["provider-auth"]:::auth
@@ -48,6 +49,9 @@ flowchart LR
     cmd --> coord
     cmd --> chal
     cmd --> rep
+    cmd --> gc
+    gc --> subxt
+    gc --> sto
     api --> auth
     api --> state
     state --> sto
@@ -65,9 +69,9 @@ Callees: `provider-auth` (request authentication), `provider-storage` (local dat
 
 External interfaces:
 
-- Chain reads: `Providers`, `Buckets`, `StorageAgreements` and `Challenges` storage, the `RequestTimeout` constant, the `StorageProviderApi` runtime API, and the finalized block subscription.
+- Chain reads: `Providers`, `Buckets`, `NextBucketId`, `StorageAgreements` and `Challenges` storage, the `RequestTimeout` constant, the `StorageProviderApi` runtime API, and the finalized block subscription.
 - Chain extrinsics: `update_provider_multiaddr`, `respond_to_challenge`, `confirm_replica_sync`.
-- HTTP endpoints: `/health`, `/info`, `/stats`, `/node`, `/exists`, `/commit`, `/read`, `/commitment`, `/checkpoint-signature`, `/mmr_proof`, `/chunk_proof`, `/delete`, `/mmr_peaks`, `/fetch_nodes`, `/negotiate`, `/replica/historical_roots`, `/replica/sync_status`.
+- HTTP endpoints: `/health`, `/info`, `/stats`, `/node`, `/exists`, `/commit`, `/read`, `/commitment`, `/checkpoint-signature`, `/mmr_proof`, `/chunk_proof`, `/delete`, `/delete/confirm`, `/mmr_peaks`, `/fetch_nodes`, `/negotiate`, `/replica/historical_roots`, `/replica/sync_status`.
 - Local DB: the RocksDB directory given by `--storage-path`, opened through `provider-storage`.
 
 ## 3. Composition
@@ -87,7 +91,7 @@ flowchart LR
     classDef external fill:#FAFAFA,stroke:#757575,color:#424242
 
     subgraph bin["storage-provider-node"]
-        api["HTTP router<br/>api.rs"]:::providernode
+        api["HTTP router"]:::providernode
         chainrx["Chain watch channel<br/>Option&lt;ChainHandle&gt;"]:::providernode
         events["Block event fan-out<br/>broadcast channel"]:::providernode
         state["ProviderState<br/>provider id, keypair, ChainState"]:::providernode
@@ -137,40 +141,38 @@ flowchart LR
   A `tokio::sync::watch` channel of `Option<ChainHandle>`, created in `command.rs`.
   `chain_connection::connect` fills it at startup when the chain is reachable; `SubxtChainFollower` republishes a new handle after every reconnect, only once its block subscription succeeds.
   `SubxtChainClient` and `ChainMembershipResolver` read the latest handle on every call, so a reconnect needs no restart.
-  Defined in [`chain_connection.rs`](../../../provider-node/src/chain_connection.rs).
 
 - **Block event fan-out.**
   A `tokio::sync::broadcast` channel of `BlockEvent` with the capacity from `provider-events`.
   The chain-state coordinator is the only sender.
   The auth invalidation feed, the replica sync coordinator and the challenge responder subscribe before the follower starts, so none of them misses the first `Resubscribed` event.
-  Defined in [`command.rs`](../../../provider-node/src/command.rs) over [`provider-events`](../../../crates/providers/events/src/lib.rs).
 
 - **`ProviderState`.**
   The object every HTTP handler receives: the provider id, the optional signing keypair whose scheme `--key-scheme` selects, the `ChainState` the coordinator writes, the storage backend and the authenticator.
   `sign` rejects every signing request until the coordinator has published a registration whose public key matches the local key.
   `blocking_storage` runs storage work on the blocking thread pool so RocksDB I/O never stalls an async worker.
-  Defined in [`lib.rs`](../../../provider-node/src/lib.rs).
 
 - **Storage backend.**
   One `Arc<dyn StorageBackend>` that `command.rs` opens from `--storage-backend` and `--storage-path`; the HTTP handlers, `StorageProofSource` and the replica sync share it.
-  Defined in [`provider-storage`](../../../crates/providers/storage/src/backend/mod.rs).
 
 ### Crate wiring
 
 | Crate | The node supplies | The node consumes | Document |
 | --- | --- | --- | --- |
-| `provider-auth` | [`ChainMembershipResolver`](../../../provider-node/src/membership.rs) implementing `MembershipResolver` (reads `Buckets` and `StorageAgreements` through the chain watch channel), [`BlockEventInvalidations`](../../../provider-node/src/membership.rs) implementing `MembershipInvalidations` (a fan-out subscription), the provider account for operator self-auth, the `--auth-*` settings | `Authenticator::require_role`, which `check_role` calls in every bucket-bound handler | [provider-auth](provider-auth.md) |
+| `provider-auth` | `ChainMembershipResolver` implementing `MembershipResolver` (reads `Buckets` and `StorageAgreements` through the chain watch channel), `BlockEventInvalidations` implementing `MembershipInvalidations` (a fan-out subscription), the provider account for operator self-auth, the `--auth-*` settings | `Authenticator::require_role`, which `check_role` calls in every bucket-bound handler | [provider-auth](provider-auth.md) |
 | `provider-storage` | The backend spec from `--storage-backend` and `--storage-path` | `StorageBackend` behind `ProviderState::blocking_storage`; every data endpoint | [provider-storage](provider-storage.md) |
-| `provider-coordinator` | [`SubxtChainFollower`](../../../provider-node/src/chain_follower.rs) implementing `ChainFollower`, [`SubxtChainStateClient`](../../../provider-node/src/chain_follower.rs) implementing `ChainStateChainClient`, [`decode_block_contents`](../../../provider-node/src/event_decoding.rs) for the block events, the provider account, the `ChainState` and the fan-out sender | `ChainState`: the anchor block, the provider registration and the pallet constants, which the signing guard and `/negotiate` read | [provider-coordinator](provider-coordinator.md) |
+| `provider-coordinator` | `SubxtChainFollower` implementing `ChainFollower`, `SubxtChainStateClient` implementing `ChainStateChainClient`, `decode_block_contents` for the block events, the provider account, the `ChainState` and the fan-out sender | `ChainState`: the anchor block, the provider registration and the pallet constants, which the signing guard and `/negotiate` read | [provider-coordinator](provider-coordinator.md) |
 | `provider-events` | The broadcast channel and its subscriptions | `BlockEvent`, `BlockEventTx`, `BlockEventRx` | covered in [provider-coordinator](provider-coordinator.md) |
-| `provider-challenge` | [`SubxtChainClient`](../../../provider-node/src/subxt_client.rs) implementing `ChallengeChainClient`, [`StorageProofSource`](../../../provider-node/src/challenge_proofs.rs) implementing `ChallengeProofSource`, the provider account, the `--challenge-*` settings, a fan-out subscription | The `ChallengeResponder` task handle | [provider-challenge](provider-challenge.md) |
-| `provider-replica` | [`SubxtChainClient`](../../../provider-node/src/subxt_client.rs) implementing `ReplicaSyncChainClient`, [`ProviderState`](../../../provider-node/src/lib.rs) implementing `SyncRootsSigner`, the provider id, the storage backend, the `--replica-*` settings, a fan-out subscription; the endpoints `/mmr_peaks` and `/node` that other nodes sync from, and the `/replica/*` status endpoints for clients | The `ReplicaSyncCoordinator` task handle | [provider-replica](provider-replica.md) |
-| `provider-negotiation` | Request validation against the registration, terms built from the chain-read price and the anchor block, the signature from the provider keypair, in [`negotiate.rs`](../../../provider-node/src/negotiate.rs) | `NegotiateRequest`, `AgreementTermsOf` and `SignedTerms`, the wire types shared with the SDK | [Other Endpoints](../scalable-web3-storage-implementation.md#other-endpoints) and [Agreement Nonces](../scalable-web3-storage-implementation.md#agreement-nonces) |
+| `provider-challenge` | `SubxtChainClient` implementing `ChallengeChainClient`, `StorageProofSource` implementing `ChallengeProofSource`, the provider account, the `--challenge-*` settings, a fan-out subscription | The `ChallengeResponder` task handle | [provider-challenge](provider-challenge.md) |
+| `provider-replica` | `SubxtChainClient` implementing `ReplicaSyncChainClient`, `ProviderState` implementing `SyncRootsSigner`, the provider id, the storage backend, the `--replica-*` settings, a fan-out subscription; the endpoints `/mmr_peaks` and `/node` that other nodes sync from, and the `/replica/*` status endpoints for clients | The `ReplicaSyncCoordinator` task handle | [provider-replica](provider-replica.md) |
+| `provider-negotiation` | Request validation against the registration, terms built from the chain-read price and the anchor block, the signature from the provider keypair, in `negotiate.rs` | `NegotiateRequest`, `AgreementTermsOf` and `SignedTerms`, the wire types shared with the SDK | [Other Endpoints](../scalable-web3-storage-implementation.md#other-endpoints) and [Agreement Nonces](../scalable-web3-storage-implementation.md#agreement-nonces) |
 | `storage-subxt` | Nothing | The generated chain bindings that every subxt adapter above uses | |
+
+The garbage collector is a module of the binary, not a crate: `gc_coordinator.rs` defines `GcChainClient`, which `SubxtChainClient` implements, subscribes to the fan-out, and erases pruned data through the storage backend; see [gc-coordinator](gc-coordinator.md).
 
 No crate under `crates/providers/` depends on `subxt` or `axum`; the crates see traits and plain types.
 `subxt` is confined to `chain_connection.rs`, `chain_follower.rs`, `subxt_client.rs`, `membership.rs` and `event_decoding.rs`; `axum` to `api.rs`, `error.rs` and `command.rs`.
-The signing chain client exists only when `--keyfile` is set, so the challenge responder, the replica sync coordinator and the multiaddr sync need a keyfile.
+The signing chain client exists only when `--keyfile` is set, so the challenge responder, the replica sync coordinator, the garbage collector and the multiaddr sync need a keyfile.
 
 ## 4. Failure handling
 
@@ -188,7 +190,7 @@ Degraded modes the node keeps running in:
 | Condition | What is disabled | Recovery |
 | --- | --- | --- |
 | Chain unreachable at startup | Auth lookups and signing endpoints return `503` | The chain-state coordinator reconnects with a fixed delay and republishes the handle; no restart. |
-| `--keyfile` absent | Signing endpoints return `503 signing_unavailable`; no signing chain client, so the challenge responder, the replica sync coordinator and the multiaddr sync do not start | Restart with a keyfile. |
+| `--keyfile` absent | Signing endpoints return `503 signing_unavailable`; no signing chain client, so the challenge responder, the replica sync coordinator, the garbage collector and the multiaddr sync do not start, and `/delete` skips the frozen check | Restart with a keyfile. |
 | Provider id does not parse as an account, which is the case for the default id and implies the row above | In addition, the chain-state coordinator does not start: `ChainState` stays empty and no `BlockEvent` reaches the auth cache | Restart with a keyfile or a valid `--provider-id`. |
 | Signing chain client fails to build | Same as a missing keyfile for the background services | Restart. |
 | A service flag is off | That service does not start | Restart with the flag. |
@@ -201,9 +203,9 @@ Request failures:
 | --- | --- |
 | Storage call panics on the blocking pool | The request returns `500`. |
 | Rate limiter error on `/negotiate` | Fail closed with `500`. A rejected token returns `429`. |
-| Auth or storage error inside a handler | [`error.rs`](../../../provider-node/src/error.rs) maps it to an HTTP status: `401` for a missing or expired signature, `403` for an insufficient role, `503` for an unreachable chain, `404` for an unknown bucket or node, `400` for malformed input. The mechanism behind each error is in the crate documents linked above. |
+| Auth or storage error inside a handler | `error.rs` maps it to an HTTP status: `401` for a missing or expired signature, `403` for an insufficient role, `503` for an unreachable chain, `404` for an unknown bucket or node, `400` for malformed input. The mechanism behind each error is in the crate documents linked above. |
 
-After a crash or restart: the RocksDB directory keeps every bucket, node, MMR leaf and pruned range.
+After a crash or restart: the RocksDB directory keeps every bucket, node, MMR leaf, pruned range and deletion receipt.
 `ChainState`, the membership cache and the chain connection exist only in memory and the chain-state coordinator rebuilds them on reconnect.
 The node queues no transaction on disk; the coordinators rediscover pending duties from chain state.
 

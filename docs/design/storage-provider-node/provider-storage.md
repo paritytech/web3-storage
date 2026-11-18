@@ -107,108 +107,92 @@ flowchart TD
 1. **Bucket row exists?**
    Input: bucket id and byte quota.
    Output: yes leaves the row unchanged; no continues with the creation.
-   Implemented by [`StorageBackend::init_bucket`](../../../crates/providers/storage/src/backend/mod.rs) on [`DiskStorage`](../../../crates/providers/storage/src/backend/rocksdb.rs).
 
 2. **Create the bucket row with an empty MMR.**
    Input: bucket id and byte quota.
-   Output: a `BucketState` row with no leaves, a zero root and the quota.
-   Implemented by `init_bucket`.
+   Output: a `BucketState` row with no leaves, no peaks, a zero root and the quota.
 
 3. **Receive a chunk-tree node to store.**
    Input: bucket id, the hash the caller claims, and a `ChunkTreeNode` that is either a chunk or two child hashes.
    Output: validation starts.
-   Implemented by [`StorageBackend::store_node`](../../../crates/providers/storage/src/backend/mod.rs) and [`ChunkTreeNode`](../../../crates/providers/storage/src/backend/types.rs).
 
 4. **Hash matches, children present, quota not exceeded?**
    Input: the node, the claimed hash and the bucket row.
    Output: no rejects with `InvalidHash`, `ChildrenMissing`, `BucketNotFound` or `QuotaExceeded`; yes continues.
    `store_node` recomputes the node's hash, which must equal the claimed one, and requires an internal node's children to exist; these two checks run before the transaction.
    The quota check runs inside a pessimistic transaction that locks the bucket row: the node's size added to the used bytes must not exceed the quota.
-   Implemented by `store_node`.
 
 5. **Node already stored?**
    Input: the node column family and the hash.
    Output: yes writes nothing and charges nothing; no continues with the write.
-   Implemented by `store_node`.
 
 6. **Write the node, its refcount record and the bucket counters in one transaction.**
    Input: the validated node.
-   Output: the node written under its hash, a refcount record with count zero charging the bucket, and the bucket's used bytes and node count updated.
-   Implemented by `store_node`.
+   Output: the node written under its hash, a `RefcountEntry` with count zero, the charged bucket, the charged size and the node kind (chunk or internal), and the bucket's used bytes and node count updated.
 
 7. **Walk the trees under the data roots to commit.**
    Input: the data roots to commit.
    Output: a `CommitWalk` with the data size of each root and the number of times the walk reaches each node.
    The walk runs outside the transaction and a visit budget bounds it.
-   Implemented by the private `DiskStorage::walk_commit_roots`, [`StorageBackend::walk_tree`](../../../crates/providers/storage/src/backend/mod.rs) and the private `canonical_size`.
+   The walk reads each node's `NodeShape`: a chunk's size from its refcount entry, an internal node's child hashes from its body.
+   It never reads a chunk's data.
 
 8. **Every root stored, every tree complete and canonical?**
    Input: the walk result.
    Output: no rejects with `RootNotFound`, `NodeNotFound` or `NonCanonicalTree`; yes continues.
    A canonical tree is the Merkle tree over fixed-size chunks with only the last chunk shorter.
-   Implemented by `walk_commit_roots` and `canonical_size`.
 
 9. **Append the leaves and update the refcounts in one transaction.**
    Input: the `CommitWalk` and the bucket id.
-   Output: one `MmrLeaf` per root appended to the bucket's leaves, the MMR root recomputed, and each reached node's refcount increased.
-   Implemented by the private `DiskStorage::apply_commit` using `mmr::root` from `storage-primitives`.
+   Output: one `MmrLeaf` per root appended to the bucket's leaves, the leaf merged into the stored peaks, the MMR root bagged from the peaks, and each reached node's refcount increased.
 
 10. **Every reached refcount row still present?**
     Input: the refcount rows read inside the transaction.
     Output: no rejects the commit, because an erase deleted the node since the walk and the caller must re-upload; yes continues.
-    Implemented by `apply_commit`.
 
 11. **Return the CommitOutcome.**
     Input: the bucket state after the commit.
     Output: a `CommitOutcome` with the MMR root, the start sequence, the leaf count and the index of each new leaf, all from the same bucket state so they are consistent.
     The node signs this as the commitment.
-    Implemented by [`StorageBackend::commit`](../../../crates/providers/storage/src/backend/mod.rs) and [`CommitOutcome`](../../../crates/providers/storage/src/backend/mod.rs).
 
 12. **Rebuild the MMR proof for a cited commitment.**
     Input: bucket id, a `Commitment` (root, start sequence, leaf count) and a leaf index relative to that start sequence.
     Output: an `MmrProof` whose root equals the cited root.
     `get_mmr_proof_for_commitment` assembles the leaf history from the stashed ranges followed by the live leaves, cuts the cited window from it, and builds the proof over that window.
-    Implemented by [`StorageBackend::get_mmr_proof_for_commitment`](../../../crates/providers/storage/src/backend/mod.rs).
 
 13. **Read a chunk with its Merkle proof.**
     Input: a data root and a chunk index.
     Output: the chunk bytes and the sibling hashes up to the data root.
     `get_chunk_at_index` derives the chunk count from the nodes down the right edge of the tree, and the tree shape follows from that count.
-    Implemented by [`StorageBackend::get_chunk_at_index`](../../../crates/providers/storage/src/backend/mod.rs) and, for byte ranges, [`StorageBackend::get_chunks_in_range`](../../../crates/providers/storage/src/backend/mod.rs).
+    The walk down to the chunk reads node shapes; only the proven chunk's data is read.
 
 14. **New start sequence within the current leaf range?**
     Input: bucket id and the new start sequence.
     Output: no rejects with `InvalidStartSeq`, because the sequence would rewind the bucket or overshoot its last leaf; yes continues.
     A new start sequence equal to the current one changes nothing.
-    Implemented by [`StorageBackend::delete_before`](../../../crates/providers/storage/src/backend/mod.rs).
 
 15. **Prune leaves into the retention stash.**
     Input: the validated start sequence.
-    Output: the leaves before the new start sequence moved into a `PrunedRange`, the start sequence advanced, the MMR root recomputed, and the post-prune `Commitment` returned for the node to sign.
+    Output: the leaves before the new start sequence moved into a `PrunedRange`, the start sequence advanced, the MMR root and peaks recomputed from the retained leaves with `mmr::peaks`, and the post-prune `Commitment` returned for the node to sign.
     The bytes stay on disk so challenges against older commitments remain provable.
-    Implemented by `delete_before` and [`PrunedRange`](../../../crates/providers/storage/src/backend/types.rs).
 
 16. **Stashed range found for the first sequence?**
     Input: bucket id and the first sequence of a stashed range.
     Output: yes continues with the erase; no returns an empty outcome.
     The backend does not check the deletion receipt: attaching the admin's `DeletionReceipt` and checking that liability has passed is the caller's job, and no node endpoint calls the erase yet.
-    Implemented by [`StorageBackend::erase_pruned_range`](../../../crates/providers/storage/src/backend/mod.rs); the caller stores the receipt with [`StorageBackend::attach_deletion_receipt`](../../../crates/providers/storage/src/backend/mod.rs).
 
 17. **Erase the stashed range.**
     Input: the `PrunedRange`.
-    Output: the refcount of each node under the range's leaves decreased, zero-refcount nodes deleted, the charged bytes credited back, and the range dropped, in one transaction.
+    Output: the refcount of each node under the range's leaves decreased, zero-refcount nodes deleted, the charged bytes credited back, the range dropped, and the MMR root and peaks recomputed, in one transaction.
     The erase keeps the receipt as the evidence for the on-chain deletion defense.
-    Implemented by `erase_pruned_range` and [`DeletionReceipt`](../../../crates/providers/storage/src/backend/types.rs).
 
 18. **Return an empty EraseOutcome.**
     Input: the missing range.
     Output: an `EraseOutcome` with zero deleted nodes and zero credited bytes, so a repeated erase is harmless.
-    Implemented by `erase_pruned_range` and [`EraseOutcome`](../../../crates/providers/storage/src/backend/mod.rs).
 
 19. **Return the Error to the caller.**
     Input: the failed check from step 4, 8, 10 or 14.
     Output: a `provider_storage::Error`; the variants and the caller's action are in section 5.
-    Implemented by [`Error`](../../../crates/providers/storage/src/error.rs).
 
 ## 5. Failure handling
 
@@ -226,6 +210,7 @@ flowchart TD
 | Tree not canonical, or too many nodes to walk | Reject with `NonCanonicalTree` or `TreeTooLarge`. |
 | Another writer keeps the bucket row locked past the lock timeout, or a deadlock is detected | Reject with `BucketBusy`; the caller retries. |
 | Refcount row gone between walk and transaction | Reject the commit with `NodeNotFound`; the caller re-uploads. |
+| Refcount entry marks an internal node whose body is missing | Reject with `NodeNotFound`. |
 | Cited commitment window outside the stored history | Reject with `LeavesNotHeld`. |
 | Rebuilt root differs from the cited root | Reject with `CommitmentNotReproducible`. |
 | Chunk index past the tree's chunk count | Reject with `ChunkIndexOutOfRange`. |
