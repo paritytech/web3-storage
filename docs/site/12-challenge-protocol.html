@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Defended challenge","focus":["open","gate","window","respond","verify","defended"],"note":"A valid response before the deadline leaves the stake untouched. The deposit reimburses the response fee per tier."},{"id":"gate-view","label":"Who may challenge","focus":["open","gate","denied"],"note":"The chain rejects a self-challenge, and a private-bucket primary challenge from a non-member without a primary agreement."},{"id":"failure","label":"Slash","focus":["window","verify","rejected","expire","slashed"],"note":"Invalid responses are rejected; the challenge stays open. After the deadline, resolve_expired_challenge (anyone) slashes the full stake."},{"id":"exit","label":"Cancel","focus":["open","window","cancelled"],"note":"cancel_challenge: the challenger withdraws before the response, no later than the deadline. Deposit released in full; stats untouched."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Defended challenge","focus":["open","gate","window","respond","verify","defended"],"note":"A valid response before the deadline leaves the stake untouched. The deposit reimburses the response fee per tier."},{"id":"gate-view","label":"Who may challenge","focus":["open","gate","denied"],"note":"The chain rejects a self-challenge, and a private-bucket primary challenge from a non-member without a primary agreement."},{"id":"failure","label":"Slash","focus":["window","verify","rejected","expire","slashed"],"note":"Invalid responses are rejected; the challenge stays open. After the deadline, resolve_expired_challenge (anyone) slashes the full stake."},{"id":"exit","label":"Cancel","focus":["open","window","cancelled"],"note":"cancel_challenge: the challenger cancels an open challenge before the response. Deposit released in full; stats untouched."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -674,7 +674,8 @@
           <li>&bull; Superseded (primary providers only): a newer canonical snapshot covers the leaf; a replica, or no such snapshot, gets InvalidSupersededClaim</li>
           <li>&bull; A rejected response costs the provider its tx fee; the challenge stays open until the deadline</li>
           <li>&bull; No response by the deadline: anyone calls resolve_expired_challenge (free on success); only a timeout slashes</li>
-          <li>&bull; cancel_challenge (challenger only, before the response and no later than the deadline): deposit released in full, provider stats untouched (ChallengeCancelled)</li>
+          <li>&bull; cancel_challenge (challenger only, before the response): deposit released in full, provider stats untouched (ChallengeCancelled)</li>
+          <li>&bull; CheckChallengeResponse drops a response to a challenge that is gone (Stale) or from another signer (BadSigner) before inclusion: no fee</li>
         </ul>
       </div>
 
