@@ -258,43 +258,27 @@ impl ChallengerClient {
         Ok(resolved)
     }
 
-    // ═════════════════════════════════════════════════════════════════════════
-    // Monitoring & Strategy
-    // ═════════════════════════════════════════════════════════════════════════
-
     /// Withdraw a challenge this account opened, before the provider has
     /// responded and no later than the deadline. The deposit is released in
     /// full. Rejected with `NotChallengeChallenger` for anyone else and
     /// `ChallengeExpired` past the deadline.
     pub async fn cancel_challenge(&self, challenge_id: ChallengeId) -> ClientResult<()> {
         let chain = self.base.chain()?;
-        let signer = chain.signer()?;
+        let tx = extrinsics::cancel_challenge((challenge_id.deadline, challenge_id.index));
+
+        chain.submit(&tx).await?;
 
         tracing::info!(
-            "Cancelling challenge (deadline {}, index {})",
+            "Challenge cancelled: deadline={}, index={}",
             challenge_id.deadline,
             challenge_id.index
         );
-
-        let tx = extrinsics::cancel_challenge((challenge_id.deadline, challenge_id.index));
-
-        let tx_progress = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
-
-        tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
-
         Ok(())
     }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // Monitoring & Strategy
+    // ═════════════════════════════════════════════════════════════════════════
 
     /// All open challenges created by this challenger, expired ones included.
     pub async fn list_my_challenges(&self) -> ClientResult<Vec<ChallengeInfo>> {
