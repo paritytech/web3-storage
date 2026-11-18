@@ -72,6 +72,7 @@ impl MembershipResolver for AgreementResolver {
             local_agreement: Some(LocalBucketAgreement {
                 role: RuntimeProviderRole::Primary,
                 max_bytes: self.max_bytes,
+                expires_at: u32::MAX,
             }),
             ..BucketAccess::private(vec![])
         })

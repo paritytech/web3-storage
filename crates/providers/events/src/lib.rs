@@ -44,9 +44,9 @@ pub enum BlockEvent {
     BucketCheckpointed { bucket_id: BucketId },
     /// `StorageProvider::BucketCreated` / `MemberSet` / `MemberRemoved` /
     /// `BucketDeleted` / `BucketVisibilityChanged` / `SlashedProviderRemoved` /
-    /// `StorageAgreementEstablished` / `AgreementToppedUp` / `AgreementEnded` -
-    /// the bucket's member set, visibility or agreements changed, so any
-    /// cached access for it is stale.
+    /// `StorageAgreementEstablished` / `AgreementToppedUp` / `AgreementExtended` /
+    /// `AgreementEnded` - the bucket's member set, visibility or agreements
+    /// changed, so any cached access for it is stale.
     /// Only the bucket id is decoded: patching in the member/role the event
     /// carries would build a set that never existed on chain if an earlier
     /// event was missed, so the cache drops the entry and re-resolves.

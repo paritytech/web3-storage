@@ -6,7 +6,9 @@
 //! there is no external dependency. On-chain operations are not exercised
 //! here — see the end-to-end demo in `justfile` for those.
 
-use client_test_support::{make_client, start_test_provider};
+use client_test_support::{
+    make_client, start_test_provider, start_test_provider_without_agreement,
+};
 use sp_core::H256;
 use storage_client::{ChunkingStrategy, ClientError, EncryptionKey, Node, ENCRYPTION_OVERHEAD};
 use storage_primitives::DEFAULT_CHUNK_SIZE;
@@ -813,6 +815,25 @@ async fn test_commitment_if_exists_is_none_for_an_unknown_bucket() {
     let url = start_test_provider().await;
     let client = make_client(url);
     assert!(client.get_commitment_if_exists(99).await.unwrap().is_none());
+}
+
+/// A provider that dropped the bucket answers 403 `no_agreement`. That must
+/// stay an error: returning `None` would make the bucket look empty.
+#[tokio::test]
+async fn test_commitment_if_exists_errors_without_an_agreement() {
+    let url = start_test_provider_without_agreement().await;
+    let client = make_client(url);
+    let result = client.get_commitment_if_exists(1).await;
+    assert!(
+        matches!(
+            result,
+            Err(ClientError::HttpStatus {
+                request: "GET /commitment",
+                status: 403
+            })
+        ),
+        "got {result:?}"
+    );
 }
 
 #[tokio::test]

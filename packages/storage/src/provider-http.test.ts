@@ -157,6 +157,17 @@ describe("commitDataRoots / getCommitment / getMmrProof", () => {
     expect(await getCommitment(PROVIDER, BUCKET, { fetch: provider.fetch, signer })).toBeNull();
   });
 
+  it("throws no_agreement once the provider's agreement on the bucket ended", async () => {
+    const provider = new FakeProvider();
+    const r = await uploadBlob(PROVIDER, BUCKET, blob(1), signer, { fetch: provider.fetch });
+    await commitDataRoots(PROVIDER, BUCKET, [r.dataRoot], signer, { fetch: provider.fetch });
+    provider.endAgreement(BUCKET);
+    await expect(getCommitment(PROVIDER, BUCKET, { fetch: provider.fetch, signer })).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringContaining("no_agreement"),
+    });
+  });
+
   it("commits roots in order and proves the last leaf", async () => {
     const provider = new FakeProvider();
     const roots: string[] = [];

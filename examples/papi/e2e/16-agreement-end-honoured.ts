@@ -13,7 +13,11 @@
  *   the first upload to the bucket with `no_agreement`;
  * - 16.3-16.4: a replica agreement ended by its owner after expiry. //Alice
  *   served the private bucket to everyone as a replica and then asks for a
- *   signature.
+ *   signature;
+ * - 16.5: a primary agreement ended on a bucket that holds data. //Alice then
+ *   refuses every request to it with `no_agreement`;
+ * - 16.6: a primary agreement that reaches `expires_at` without being ended.
+ *   //Alice refuses writes with `agreement_expired` and still serves reads.
  *
  * Each check follows the same steps. Read the bucket so the provider caches
  * its access. End the agreement. Wait until the provider has applied a later
@@ -21,9 +25,7 @@
  * chain events in block order). Then probe once, so the probe cannot pass by
  * racing the provider's event feed.
  *
- * What stays out: once a bucket has local data, the provider keeps accepting
- * writes after its agreement ends, so the probe uses a bucket with no local
- * data.
+ * 16.1-16.2 probe a bucket with no local data and 16.5 one with data.
  *
  * Usage: node e2e/16-agreement-end-honoured.js [chain_ws] [provider_url] [second_provider_url]
  */
@@ -37,6 +39,7 @@ import {
   getProviderNodeInfo,
   HttpError,
   makeSigner,
+  providerFetch,
   putChunk,
   READ_OPTS,
   removeMember,
@@ -78,6 +81,23 @@ async function write(who: ChainSigner, bucketId: bigint, text: string): Promise<
   } catch (err) {
     return failedReply(err);
   }
+}
+
+/** `PUT /node` storing `text` in `bucketId`, then `POST /commit` of it, signed by `who`. */
+async function storeAndCommit(who: ChainSigner, bucketId: bigint, text: string): Promise<void> {
+  const { hash } = await putChunk(PROVIDER_URL, bucketId, text, who);
+  // A single chunk is its own data root.
+  await providerFetch(PROVIDER_URL, "/commit", {
+    method: "POST",
+    body: { bucket_id: Number(bucketId), data_roots: [hash] },
+    sign: { signer: who.signer, bucketId },
+  });
+}
+
+/** The reply is a 403 that names `code`. */
+function assertRefused(reply: Reply, code: string): void {
+  assert.strictEqual(reply.status, 403, `expected 403 ${code}, got ${JSON.stringify(reply)}`);
+  assert.ok(reply.error?.includes(code), `expected ${code}, got ${reply.error}`);
 }
 
 /** `GET /commitment` for `bucketId`, signed by `who` or unsigned; 404 when there is no local data. */
@@ -172,6 +192,8 @@ async function main() {
 
   let primaryBucket: bigint;
   let replicaBucket: bigint;
+  let dataBucket: bigint;
+  let expiringBucket: bigint;
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
@@ -226,10 +248,9 @@ async function main() {
   });
 
   tests.push({
-    name: "16.2 Ended primary agreement: nothing was stored",
+    name: "16.2 Ended primary agreement: reads are refused too",
     fn: async () => {
-      const read = await readCommitment(primaryBucket, owner);
-      assert.strictEqual(read.status, 404, "a refused upload must not create the bucket");
+      assertRefused(await readCommitment(primaryBucket, owner), "no_agreement");
 
       // The sentinel keeps its agreement and keeps accepting writes, so the
       // refusal above comes from the ended agreement and not from the node.
@@ -319,6 +340,66 @@ async function main() {
         401,
         "without its agreement //Alice no longer serves the private bucket to everyone",
       );
+
+      // A member's signed read is refused as well.
+      assertRefused(await readCommitment(replicaBucket, owner), "no_agreement");
+    },
+  });
+
+  // ── Primary agreement on a bucket with data ───────────────────────────────
+
+  tests.push({
+    name: "16.5 Ended primary agreement on a bucket with data: every request is refused",
+    fn: async () => {
+      ({ bucketId: dataBucket } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        owner,
+        first,
+        { maxBytes, duration: 100 },
+        true,
+      ));
+      await storeAndCommit(owner, dataBucket, "kept after the agreement ended");
+      assert.strictEqual((await readCommitment(dataBucket, owner)).status, 200);
+
+      await endAgreement(api, owner, first, dataBucket, "Pay", undefined, {
+        mode: "finalized",
+      });
+      await providerHasCaughtUp();
+
+      assertRefused(await write(owner, dataBucket, "after the agreement ended"), "no_agreement");
+      assertRefused(await readCommitment(dataBucket, owner), "no_agreement");
+    },
+  });
+
+  tests.push({
+    name: "16.6 Expired primary agreement on a bucket with data: writes are refused, reads work",
+    fn: async () => {
+      ({ bucketId: expiringBucket } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        owner,
+        first,
+        { maxBytes, duration: 30 },
+        true,
+      ));
+      await storeAndCommit(owner, expiringBucket, "stored before expiry");
+      const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
+        expiringBucket,
+        first.address,
+        READ_OPTS,
+      ))!;
+      console.log("    Waiting for expiry at block %d...", Number(agreement.expires_at));
+      await waitForRelayBlock(papi, api, Number(agreement.expires_at));
+
+      // The agreement is not ended: only its term has passed.
+      await waitForReply(
+        () => write(owner, expiringBucket, "after expiry"),
+        (reply) => reply.status === 403,
+        "the upload to be refused after expiry",
+      );
+      assertRefused(await write(owner, expiringBucket, "after expiry"), "agreement_expired");
+      assert.strictEqual((await readCommitment(expiringBucket, owner)).status, 200);
     },
   });
 

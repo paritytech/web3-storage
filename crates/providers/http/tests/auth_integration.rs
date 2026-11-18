@@ -17,7 +17,7 @@ use provider_auth::{
     Authenticator, BucketAccess, Invalidation, LocalBucketAgreement, MembershipError,
     MembershipInvalidations, MembershipResolver, StaticMembershipResolver,
 };
-use provider_http::{ProviderDeps, ProviderState};
+use provider_http::{ChainState, ProviderDeps, ProviderState};
 use provider_storage::{temp_rocksdb, ChunkTreeNode, StorageBackend};
 use reqwest::Client;
 use serde_json::Value;
@@ -38,6 +38,8 @@ struct AuthTestServer {
     client: Client,
     /// The server's storage, for seeding data the way replica sync does.
     storage: Arc<dyn StorageBackend>,
+    /// The node's view of the chain, for moving its anchor block.
+    chain_state: Arc<ChainState>,
     /// This server's scratch directory; dropped with the server.
     _dir: tempfile::TempDir,
 }
@@ -64,6 +66,7 @@ impl AuthTestServer {
             local_agreement: Some(LocalBucketAgreement {
                 role: RuntimeProviderRole::Primary,
                 max_bytes: u64::MAX,
+                expires_at: u32::MAX,
             }),
         }))
         .await
@@ -82,6 +85,8 @@ impl AuthTestServer {
         };
         let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");
         common::publish_matching_registration(&state);
+        common::publish_anchor_block(&state);
+        let chain_state = state.chain_state().clone();
 
         let (addr, _) = common::serve(state).await;
 
@@ -89,8 +94,15 @@ impl AuthTestServer {
             addr,
             client: Client::new(),
             storage,
+            chain_state,
             _dir: dir,
         }
+    }
+
+    fn set_anchor_block(&self, block: u32) {
+        self.chain_state
+            .current_anchor_block
+            .store(block, Ordering::Relaxed);
     }
 
     fn url(&self, path: &str) -> String {
@@ -950,4 +962,239 @@ async fn replica_rejects_delete() {
         .await
         .unwrap();
     assert_not_primary(resp).await;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agreement gate
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A request to bucket 1 for each bucket-scoped read endpoint, over the
+/// single node `data_root` committed to it.
+fn bucket_reads(
+    data_root: &str,
+    commitment: &Commitment,
+) -> Vec<(&'static str, String, Option<Value>)> {
+    let hashes = serde_json::json!({ "bucket_id": 1, "hashes": [data_root] });
+    vec![
+        ("GET", format!("/node?bucket_id=1&hash={data_root}"), None),
+        (
+            "GET",
+            format!("/read?bucket_id=1&data_root={data_root}&offset=0&length=1"),
+            None,
+        ),
+        (
+            "GET",
+            format!("/chunk_proof?bucket_id=1&data_root={data_root}&chunk_index=0"),
+            None,
+        ),
+        ("POST", "/fetch_nodes".into(), Some(hashes.clone())),
+        ("POST", "/exists".into(), Some(hashes)),
+        ("GET", "/commitment?bucket_id=1".into(), None),
+        ("GET", "/checkpoint-signature?bucket_id=1".into(), None),
+        (
+            "GET",
+            format!(
+                "/mmr_proof?bucket_id=1&leaf_index=0&mmr_root={:#x}&start_seq={}&leaf_count={}",
+                commitment.mmr_root, commitment.start_seq, commitment.leaf_count
+            ),
+            None,
+        ),
+        ("GET", "/mmr_peaks?bucket_id=1".into(), None),
+        ("GET", "/replica/historical_roots?bucket_id=1".into(), None),
+        ("GET", "/replica/sync_status?bucket_id=1".into(), None),
+    ]
+}
+
+/// A request to bucket 1 for each endpoint that changes it.
+fn bucket_writes(data_root: &str) -> Vec<(&'static str, String, Option<Value>)> {
+    vec![
+        ("PUT", "/node".into(), Some(node_body(1, b"another node"))),
+        (
+            "POST",
+            "/commit".into(),
+            Some(serde_json::json!({ "bucket_id": 1, "data_roots": [data_root] })),
+        ),
+        (
+            "POST",
+            "/delete".into(),
+            Some(serde_json::json!({ "bucket_id": 1, "new_start_seq": 0 })),
+        ),
+    ]
+}
+
+/// Send `(method, path, body)` to bucket 1, signed by `signer`.
+async fn send_to_bucket(
+    server: &AuthTestServer,
+    signer: &sr25519::Pair,
+    (method, path, body): &(&'static str, String, Option<Value>),
+) -> reqwest::Response {
+    let header = make_auth_header(signer, method, 1, current_timestamp());
+    let url = server.url(path);
+    let request = match *method {
+        "GET" => server.client.get(url),
+        "PUT" => server.client.put(url),
+        _ => server.client.post(url),
+    }
+    .header("Authorization", header);
+    match body {
+        Some(body) => request.json(body),
+        None => request,
+    }
+    .send()
+    .await
+    .unwrap()
+}
+
+async fn assert_error(response: reqwest::Response, status: StatusCode, error: &str, what: &str) {
+    assert_eq!(response.status(), status, "{what}");
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"], error, "{what}");
+}
+
+/// Once the node's agreement is gone from chain, every bucket-scoped request
+/// is refused, including the hash-keyed reads that carry no authorization,
+/// on a bucket that still holds data. The `AgreementEnded` event drops the
+/// cached entry, so this does not wait for the TTL.
+#[tokio::test]
+async fn ended_agreement_rejects_every_request_to_a_bucket_with_data() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let member = || {
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Admin).into()
+        ])
+    };
+    let (server, access, _, changed) = switchable_server(member().access).await;
+    let (data_root, commitment) = upload_and_commit(&server, &alice, b"kept after the end").await;
+    let requests: Vec<_> = bucket_reads(&data_root, &commitment)
+        .into_iter()
+        .chain(bucket_writes(&data_root))
+        .collect();
+
+    for request in &requests {
+        let response = send_to_bucket(&server, &alice, request).await;
+        let ok = response.status().is_success();
+        assert!(ok, "{} {} before the end", request.0, request.1);
+    }
+
+    *access.lock().unwrap() = member().without_agreement().access;
+    changed.mark(1);
+
+    for request in &requests {
+        let response = send_to_bucket(&server, &alice, request).await;
+        let what = format!("{} {} after the end", request.0, request.1);
+        assert_error(response, StatusCode::FORBIDDEN, "no_agreement", &what).await;
+    }
+}
+
+/// From the agreement's `expires_at`, writes are refused and reads keep
+/// working.
+#[tokio::test]
+async fn expired_agreement_rejects_writes_and_serves_reads() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let server = AuthTestServer::with_resolver(
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Admin).into()
+        ])
+        .with_expires_at(100),
+    )
+    .await;
+    server.set_anchor_block(99);
+    let (data_root, commitment) = upload_and_commit(&server, &alice, b"stored before expiry").await;
+
+    server.set_anchor_block(100);
+
+    for request in &bucket_writes(&data_root) {
+        let response = send_to_bucket(&server, &alice, request).await;
+        let what = format!("{} {} at expires_at", request.0, request.1);
+        assert_error(response, StatusCode::FORBIDDEN, "agreement_expired", &what).await;
+    }
+    for request in &bucket_reads(&data_root, &commitment) {
+        let response = send_to_bucket(&server, &alice, request).await;
+        let status = response.status();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{} {} at expires_at",
+            request.0,
+            request.1
+        );
+    }
+}
+
+/// Until the node has read the anchor block from the chain it cannot tell
+/// whether an agreement has expired, so writes answer
+/// `503 chain_state_not_ready` instead of passing, and reads keep working.
+#[tokio::test]
+async fn writes_wait_until_the_anchor_block_is_known() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let server = AuthTestServer::with_resolver(StaticMembershipResolver::private(vec![(
+        AccountId32::new(alice.public().0),
+        Role::Admin,
+    )
+        .into()]))
+    .await;
+    let (data_root, commitment) = upload_and_commit(&server, &alice, b"stored while synced").await;
+
+    server.set_anchor_block(0);
+
+    for request in &bucket_writes(&data_root) {
+        let response = send_to_bucket(&server, &alice, request).await;
+        let what = format!("{} {} with no anchor block", request.0, request.1);
+        assert_error(
+            response,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "chain_state_not_ready",
+            &what,
+        )
+        .await;
+    }
+    for request in &bucket_reads(&data_root, &commitment) {
+        let response = send_to_bucket(&server, &alice, request).await;
+        let status = response.status();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{} {} with no anchor block",
+            request.0,
+            request.1
+        );
+    }
+}
+
+/// An extension moves `expires_at` past the current anchor block. The node
+/// drops the cached entry on `AgreementExtended`, so writes resume without
+/// waiting for the TTL; without the drop the cached `expires_at` keeps
+/// rejecting them.
+#[tokio::test]
+async fn extended_agreement_accepts_writes_again() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let member = || {
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Writer).into()
+        ])
+    };
+    let (server, access, _, changed) =
+        switchable_server(member().with_expires_at(100).access).await;
+    server.set_anchor_block(100);
+    let put = || {
+        put_node(
+            &server,
+            Some(make_auth_header(&alice, "PUT", 1, current_timestamp())),
+            b"after the extension",
+        )
+    };
+
+    let before = put().await;
+    assert_error(
+        before,
+        StatusCode::FORBIDDEN,
+        "agreement_expired",
+        "before the extension",
+    )
+    .await;
+
+    *access.lock().unwrap() = member().with_expires_at(200).access;
+    changed.mark(1);
+
+    assert_eq!(put().await.status(), StatusCode::OK);
 }

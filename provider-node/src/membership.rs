@@ -115,6 +115,7 @@ impl MembershipResolver for ChainMembershipResolver {
                         Some(LocalBucketAgreement {
                             role: agreement.role.into(),
                             max_bytes: agreement.max_bytes,
+                            expires_at: agreement.expires_at,
                         })
                     }
                     None => None,

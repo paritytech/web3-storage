@@ -11,7 +11,6 @@ use provider_auth::{AuthError, MembershipError};
 use provider_types::{ChainClientError, SigningRefused};
 use serde::Serialize;
 use std::fmt;
-use storage_primitives::BucketId;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -54,11 +53,6 @@ pub enum Error {
     #[error(transparent)]
     Auth(#[from] AuthError),
 
-    /// An upload targets a bucket this provider has no storage agreement on.
-    /// Open an agreement with this provider for the bucket, then retry.
-    #[error("This provider has no agreement for bucket {0}")]
-    NoAgreement(BucketId),
-
     #[error("Provider is not accepting new primary agreements")]
     NotAcceptingPrimary,
 
@@ -94,7 +88,7 @@ pub enum Error {
     ProviderDeregistering,
 
     #[error(
-        "Chain state not ready: current_anchor_block and request_timeout must both be non-zero"
+        "Chain state not ready: the node has not yet read the anchor block or the request timeout from the chain"
     )]
     ChainStateNotReady,
 
@@ -337,13 +331,6 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({ "message": e.to_string() })),
                 },
             ),
-            Error::NoAgreement(bucket_id) => (
-                StatusCode::FORBIDDEN,
-                ErrorResponse {
-                    error: "no_agreement".to_string(),
-                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
-                },
-            ),
             Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
                 StatusCode::UNAUTHORIZED,
                 ErrorResponse {
@@ -365,6 +352,20 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({
                         "message": "this node serves this bucket as a replica and rejects writes to it."
                     })),
+                },
+            ),
+            Error::Auth(AuthError::NoAgreement(bucket_id)) => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "no_agreement".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
+                },
+            ),
+            Error::Auth(AuthError::AgreementExpired(bucket_id)) => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "agreement_expired".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
                 },
             ),
             // Transient and worth retrying, unlike a decode failure.
@@ -494,8 +495,8 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "chain_state_not_ready".to_string(),
                     details: Some(serde_json::json!({
-                        "message": "current_anchor_block or request_timeout is 0; \
-                                    the node has not yet synced with the chain"
+                        "message": "the node has not yet read the anchor block or the \
+                                    request timeout from the chain"
                     })),
                 },
             ),
