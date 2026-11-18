@@ -13,6 +13,7 @@ use provider_http::{create_router, ProviderDeps, ProviderState};
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use storage_primitives::Role;
@@ -61,6 +62,7 @@ impl TestServer {
     }
 
     async fn from_state(state: ProviderState, dir: TempDir) -> Self {
+        publish_anchor_block(&state);
         let (addr, client) = serve(state).await;
         Self {
             addr,
@@ -72,6 +74,16 @@ impl TestServer {
     pub fn url(&self, path: &str) -> String {
         format!("http://{}{}", self.addr, path)
     }
+}
+
+/// Publish a non-zero anchor block, as the chain-state coordinator does on its
+/// first chain read. Before that the node rejects writes with
+/// `503 chain_state_not_ready`.
+pub fn publish_anchor_block(state: &ProviderState) {
+    state
+        .chain_state()
+        .current_anchor_block
+        .store(1, Ordering::Relaxed);
 }
 
 /// Publish a registration snapshot whose `public_key` matches this state's

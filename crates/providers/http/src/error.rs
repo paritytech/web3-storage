@@ -93,7 +93,7 @@ pub enum Error {
     ProviderDeregistering,
 
     #[error(
-        "Chain state not ready: current_anchor_block and request_timeout must both be non-zero"
+        "Chain state not ready: the node has not yet read the anchor block or the request timeout from the chain"
     )]
     ChainStateNotReady,
 
@@ -507,8 +507,8 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "chain_state_not_ready".to_string(),
                     details: Some(serde_json::json!({
-                        "message": "current_anchor_block or request_timeout is 0; \
-                                    the node has not yet synced with the chain"
+                        "message": "the node has not yet read the anchor block or the \
+                                    request timeout from the chain"
                     })),
                 },
             ),

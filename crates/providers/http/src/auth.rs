@@ -29,6 +29,10 @@ pub(crate) async fn require_role(
         .map_err(Into::into)
 }
 
+/// This node's agreement on `bucket_id`, if it allows a request with role
+/// `required`. A write before the node has read the anchor block from the
+/// chain fails with [`Error::ChainStateNotReady`]: the node cannot yet tell
+/// whether the agreement has expired.
 pub(crate) async fn require_agreement(
     state: &ProviderState,
     bucket_id: BucketId,
@@ -38,6 +42,9 @@ pub(crate) async fn require_agreement(
         .chain_state
         .current_anchor_block
         .load(std::sync::atomic::Ordering::Relaxed);
+    if required != Role::Reader && anchor_block == 0 {
+        return Err(Error::ChainStateNotReady);
+    }
     state
         .auth
         .require_agreement(bucket_id, required, anchor_block)

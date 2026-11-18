@@ -85,6 +85,7 @@ impl AuthTestServer {
         };
         let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");
         common::publish_matching_registration(&state);
+        common::publish_anchor_block(&state);
         let chain_state = state.chain_state().clone();
 
         let (addr, _) = common::serve(state).await;
@@ -1114,6 +1115,46 @@ async fn expired_agreement_rejects_writes_and_serves_reads() {
             status,
             StatusCode::OK,
             "{} {} at expires_at",
+            request.0,
+            request.1
+        );
+    }
+}
+
+/// Until the node has read the anchor block from the chain it cannot tell
+/// whether an agreement has expired, so writes answer
+/// `503 chain_state_not_ready` instead of passing, and reads keep working.
+#[tokio::test]
+async fn writes_wait_until_the_anchor_block_is_known() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let server = AuthTestServer::with_resolver(StaticMembershipResolver::private(vec![(
+        AccountId32::new(alice.public().0),
+        Role::Admin,
+    )
+        .into()]))
+    .await;
+    let (data_root, commitment) = upload_and_commit(&server, &alice, b"stored while synced").await;
+
+    server.set_anchor_block(0);
+
+    for request in &bucket_writes(&data_root) {
+        let response = send_to_bucket(&server, &alice, request).await;
+        let what = format!("{} {} with no anchor block", request.0, request.1);
+        assert_error(
+            response,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "chain_state_not_ready",
+            &what,
+        )
+        .await;
+    }
+    for request in &bucket_reads(&data_root, &commitment) {
+        let response = send_to_bucket(&server, &alice, request).await;
+        let status = response.status();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{} {} with no anchor block",
             request.0,
             request.1
         );

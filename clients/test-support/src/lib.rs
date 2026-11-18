@@ -8,6 +8,7 @@ use provider_storage::temp_rocksdb;
 use sp_core::crypto::Ss58Codec;
 use sp_core::Pair;
 use sp_runtime::AccountId32;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock};
 use storage_client::substrate::{fetch_current_anchor_block, SubstrateClient};
 use storage_client::{
@@ -278,6 +279,7 @@ pub async fn start_test_provider() -> String {
     };
     let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is a valid SURI");
     publish_matching_registration(&state);
+    publish_anchor_block(&state);
     let app = create_router(Arc::new(state));
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -289,6 +291,16 @@ pub async fn start_test_provider() -> String {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     format!("http://{addr}")
+}
+
+/// Publish a non-zero anchor block, as the chain-state coordinator does on its
+/// first chain read. Before that the provider rejects writes with
+/// `503 chain_state_not_ready`.
+fn publish_anchor_block(state: &ProviderState) {
+    state
+        .chain_state()
+        .current_anchor_block
+        .store(1, Ordering::Relaxed);
 }
 
 /// Publish a registration snapshot whose `public_key` matches this state's own
