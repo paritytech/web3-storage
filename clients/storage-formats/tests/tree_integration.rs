@@ -207,8 +207,8 @@ async fn sizeless_read_of_internal_node_fails_the_cid_check() {
     use storage_client::ChunkingStrategy;
     use storage_formats::{BlobLength, BlobStore};
 
-    // Over 256 KiB, so that `/read` (which counts 256 KiB chunks) returns
-    // both 32-byte chunks below.
+    // Over 256 KiB, so that the client, which converts bytes to 256 KiB
+    // chunk indices, reads both 32-byte chunks below.
     const MAX: u64 = 1 << 20;
 
     let url = start_test_provider().await;

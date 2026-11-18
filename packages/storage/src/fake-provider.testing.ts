@@ -14,7 +14,6 @@
 import {
   bagPeaks,
   bytesToBase64,
-  DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
   hexToBytes,
@@ -24,6 +23,10 @@ import {
   parseNode,
   toHex,
 } from "@web3-storage/core";
+
+/** The provider's default read limits (`ReadLimits` in `crates/providers/http/src/lib.rs`). */
+const MAX_READ_BYTES = 4 * 1024 * 1024;
+const MAX_READ_CHUNKS = 1024;
 
 interface StoredNode {
   data: Uint8Array;
@@ -233,16 +236,25 @@ export class FakeProvider {
   private read(query: Record<string, string>): Response {
     const bucketError = this.requireBucket(query.bucket_id);
     if (bucketError) return bucketError;
+    const isUint = (v: string | undefined) => v !== undefined && /^\d+$/.test(v);
+    if (!isUint(query.offset) || !isUint(query.length)) return json(400, { error: "invalid_query" });
     const dataRoot = query.data_root;
-    const offset = BigInt(query.offset);
-    const length = BigInt(query.length);
     const hashes = this.chunkHashes(dataRoot.toLowerCase());
-    const size = BigInt(DEFAULT_CHUNK_SIZE);
-    const start = Number(offset / size);
-    const end = Number((offset + length + size - 1n) / size);
+    // The chunk size is the size of the first chunk; only the last is shorter.
+    const first = hashes.length > 0 ? this.nodes.get(hashes[0])!.data.length : 1;
+    const chunkSize = BigInt(Math.max(first, 1));
+    const offset = BigInt(query.offset);
+    const start = Number(offset / chunkSize);
+    const length = BigInt(query.length);
+    const last = length === 0n ? start : Number((offset + length + chunkSize - 1n) / chunkSize);
+    const end = Math.min(last, start + MAX_READ_CHUNKS, hashes.length);
     const tree = levels(hashes.map(hexToBytes));
     const chunks = [];
-    for (let i = start; i < end && i < hashes.length; i++) {
+    let bytes = 0;
+    for (let i = start; i < end; i++) {
+      const data = this.nodes.get(hashes[i])!.data;
+      if (chunks.length > 0 && bytes + data.length > MAX_READ_BYTES) break;
+      bytes += data.length;
       const proof: string[] = [];
       let idx = i;
       for (const level of tree.slice(0, -1)) {
@@ -250,10 +262,9 @@ export class FakeProvider {
         if ((idx ^ 1) < level.length) proof.push(toHex(level[idx ^ 1]));
         idx >>= 1;
       }
-      const data = this.nodes.get(hashes[i])!.data;
       chunks.push({ hash: toHex(hashLeaf(data)), data: bytesToBase64(data), proof });
     }
-    return json(200, { chunks });
+    return json(200, { start_chunk: start, chunk_count: hashes.length, chunks });
   }
 
   private commitment(bucketId: string): Response {

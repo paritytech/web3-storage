@@ -102,6 +102,26 @@ describe("uploadBlob / readBlob", () => {
     );
   });
 
+  it("rejects a wrong chunk_count, start_chunk or empty page on the /read path", async () => {
+    const provider = new FakeProvider();
+    const bytes = blob(DEFAULT_CHUNK_SIZE + 10);
+    const r = await uploadBlob(PROVIDER, BUCKET, bytes, signer, { fetch: provider.fetch });
+    const rewrite = (edit: (body: { start_chunk: number; chunk_count: number; chunks: unknown[] }) => void) =>
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const res = await provider.fetch(input, init);
+        if (!String(input).includes("/read?")) return res;
+        const body = await res.json();
+        edit(body);
+        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      }) as typeof fetch;
+    const read = (fetch: typeof globalThis.fetch) => readBlob(PROVIDER, BUCKET, r.dataRoot, { fetch, size: bytes.length });
+    await expect(read(rewrite((b) => (b.chunk_count = 1)))).rejects.toThrow(/provider reports 1 chunks, expected 2/);
+    await expect(read(rewrite((b) => (b.chunks = [])))).rejects.toThrow(/provider returned 0 of 2 chunks/);
+    await expect(read(rewrite((b) => (b.start_chunk = 1)))).rejects.toThrow(
+      /provider started at chunk 1, expected 0/,
+    );
+  });
+
   it("rejects a wrong size on the /read path", async () => {
     const provider = new FakeProvider();
     const bytes = blob(100);

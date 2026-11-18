@@ -36,7 +36,8 @@ pub enum ClientError {
     #[error("Serialization error: {0}")]
     Serialization(String),
 
-    /// Data from a provider does not match its hash or Merkle proof.
+    /// Data from a provider does not match its hash or Merkle proof, or a
+    /// `/read` response is incomplete or inconsistent.
     #[error("Data verification failed")]
     VerificationFailed,
 

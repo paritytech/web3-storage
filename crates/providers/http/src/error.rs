@@ -53,11 +53,6 @@ pub enum Error {
     #[error(transparent)]
     Auth(#[from] AuthError),
 
-    /// A `/read` covers more chunks than one request may return. Split the
-    /// range into requests of at most `max` chunks.
-    #[error("Read of {requested} chunks exceeds the limit of {max} chunks per request")]
-    ReadTooLarge { requested: u64, max: u64 },
-
     #[error("Provider is not accepting new primary agreements")]
     NotAcceptingPrimary,
 
@@ -334,13 +329,6 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "serialization_error".to_string(),
                     details: Some(serde_json::json!({ "message": e.to_string() })),
-                },
-            ),
-            Error::ReadTooLarge { requested, max } => (
-                StatusCode::BAD_REQUEST,
-                ErrorResponse {
-                    error: "read_too_large".to_string(),
-                    details: Some(serde_json::json!({ "requested": requested, "max": max })),
                 },
             ),
             Error::Auth(AuthError::AuthRequired | AuthError::TimestampExpired) => (
