@@ -783,21 +783,6 @@ mod tests {
         let owner = || Value::from_bytes([2u8; 32]);
         let records = vec![
             event_record(Value::named_variant(
-                "ProviderAddedToBucket",
-                [("bucket_id", Value::u128(11)), ("provider", provider())],
-            )),
-            event_record(Value::named_variant(
-                "PrimaryProviderRemoved",
-                [
-                    ("bucket_id", Value::u128(12)),
-                    ("provider", provider()),
-                    (
-                        "reason",
-                        Value::unnamed_variant("Expired", Vec::<Value>::new()),
-                    ),
-                ],
-            )),
-            event_record(Value::named_variant(
                 "SlashedProviderRemoved",
                 [
                     ("bucket_id", Value::u128(13)),
@@ -865,7 +850,7 @@ mod tests {
 
         assert_eq!(
             membership_changed_bucket_ids(&events),
-            vec![11, 12, 13, 14, 15, 16, 17]
+            vec![13, 14, 15, 16, 17]
         );
     }
 

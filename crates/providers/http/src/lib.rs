@@ -1,0 +1,423 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! Provider HTTP API.
+//!
+//! Axum handlers for uploading and downloading content-addressed chunks,
+//! committing data to a bucket's MMR, syncing data between providers (for
+//! replicas), and negotiating agreement terms. [`ProviderState`] is the
+//! shared state every handler runs against.
+
+pub mod api;
+mod auth;
+pub mod error;
+pub mod negotiate;
+pub mod types;
+
+pub use api::create_router;
+pub use error::Error;
+pub use negotiate::{AgreementTermsOf, NegotiateRequest, SignedTerms};
+pub use provider_types::ChainState;
+pub use types::*;
+
+use codec::Encode;
+use provider_storage::StorageBackend;
+use provider_types::{KeyScheme, ProviderKeypair, ProviderSigner, SigningRefused};
+use sp_core::crypto::Ss58Codec;
+use sp_core::{sr25519, Pair};
+use std::sync::Arc;
+
+/// Everything a servable [`ProviderState`] requires.
+pub struct ProviderDeps {
+    /// Local storage backend.
+    pub storage: Arc<dyn StorageBackend>,
+    /// Verifies signed requests and enforces bucket roles.
+    pub auth: Arc<provider_auth::Authenticator>,
+}
+
+/// Provider node state shared across handlers.
+pub struct ProviderState {
+    storage: Arc<dyn StorageBackend>,
+    provider_id: String,
+    signer: Option<Arc<ProviderSigner>>,
+    /// Verifies signed requests and enforces bucket roles.
+    auth: Arc<provider_auth::Authenticator>,
+    /// Browser origins allowed via CORS. `None` (the default) keeps the
+    /// permissive policy; `Some(list)` restricts to exactly those origins.
+    cors_allowed_origins: Option<Vec<String>>,
+    chain_state: Arc<ChainState>,
+}
+
+impl ProviderState {
+    /// Shared constructor body for [`with_provider_id`](Self::with_provider_id)
+    /// and [`with_seed`](Self::with_seed).
+    fn from_parts(
+        deps: ProviderDeps,
+        provider_id: String,
+        keypair: Option<ProviderKeypair>,
+    ) -> Self {
+        let ProviderDeps { storage, auth } = deps;
+        let chain_state = Arc::new(ChainState::default());
+        Self {
+            storage,
+            provider_id,
+            signer: keypair
+                .map(|keypair| Arc::new(ProviderSigner::new(keypair, Arc::clone(&chain_state)))),
+            auth,
+            cors_allowed_origins: None,
+            chain_state,
+        }
+    }
+
+    /// Create state for a provider that cannot sign: `provider_id` is used as-is
+    /// for identity and on-chain reconciliation, and signing endpoints stay
+    /// unavailable. For a signing provider use [`with_seed`](Self::with_seed).
+    pub fn with_provider_id(deps: ProviderDeps, provider_id: String) -> Self {
+        Self::from_parts(deps, provider_id, None)
+    }
+
+    /// Create with a seed phrase or derivation path (e.g., "//Alice", "//Bob"),
+    /// signing with the default sr25519 scheme.
+    pub fn with_seed(deps: ProviderDeps, seed: &str) -> Result<Self, String> {
+        Self::with_seed_scheme(deps, seed, KeyScheme::Sr25519)
+    }
+
+    /// Create with a seed phrase or derivation path and an explicit signing
+    /// scheme.
+    ///
+    /// `provider_id` is always the sr25519 account derived from the seed —
+    /// the extrinsic-submission account the provider is keyed by on-chain.
+    /// The scheme only selects the signing keypair (the on-chain
+    /// `public_key`), so a non-sr25519 provider keeps the same identity it
+    /// registered with.
+    pub fn with_seed_scheme(
+        deps: ProviderDeps,
+        seed: &str,
+        scheme: KeyScheme,
+    ) -> Result<Self, String> {
+        let provider_id = Self::provider_id_from_seed(seed)?;
+        let keypair = ProviderKeypair::from_seed(seed, scheme)?;
+
+        Ok(Self::from_parts(deps, provider_id, Some(keypair)))
+    }
+
+    /// The provider id for `seed`: its sr25519 account, SS58-encoded. This is
+    /// the extrinsic-submission account the provider is keyed by on-chain,
+    /// whatever signing scheme the node runs with.
+    pub fn provider_id_from_seed(seed: &str) -> Result<String, String> {
+        let account = sr25519::Pair::from_string(seed, None)
+            .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
+        Ok(account.public().to_ss58check())
+    }
+
+    /// Local storage backend.
+    pub fn storage(&self) -> &Arc<dyn StorageBackend> {
+        &self.storage
+    }
+
+    /// Provider account ID, SS58-encoded.
+    pub fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
+    /// Signer for the provider's registered key. `None` without a signing key.
+    pub fn signer(&self) -> Option<&Arc<ProviderSigner>> {
+        self.signer.as_ref()
+    }
+
+    /// Chain state, updated by the chain-state coordinator.
+    pub fn chain_state(&self) -> &Arc<ChainState> {
+        &self.chain_state
+    }
+
+    /// Restrict the browser origins allowed via CORS. `None` (the default) keeps
+    /// the permissive policy; `Some(list)` restricts to exactly those origins.
+    pub fn with_cors_origins(mut self, origins: Option<Vec<String>>) -> Self {
+        self.cors_allowed_origins = origins;
+        self
+    }
+
+    /// Sign a message and return the SCALE-encoded `MultiSignature` as
+    /// `0x`-prefixed hex — the same wire format `/negotiate` uses, so the
+    /// scheme tag travels with every signature.
+    ///
+    /// Returns [`SigningRefused::NoKey`] if no keypair is configured.
+    /// Callers must propagate this so the HTTP layer returns 503 rather than
+    /// silently emitting a zeroed placeholder signature, which would be a
+    /// cryptographically invalid commitment masquerading as a real one.
+    pub fn sign(&self, message: &[u8]) -> Result<String, Error> {
+        let signer = self.signer.as_ref().ok_or(SigningRefused::NoKey)?;
+        Ok(array_bytes::bytes2hex("0x", signer.sign(message)?.encode()))
+    }
+
+    /// Run `work` against the storage backend on the blocking thread pool.
+    /// Storage calls do RocksDB I/O, walk content trees and wait for other
+    /// writers; none of that may stall an async worker thread.
+    pub async fn blocking_storage<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&dyn StorageBackend) -> T + Send + 'static,
+    ) -> Result<T, Error> {
+        let storage = Arc::clone(&self.storage);
+        tokio::task::spawn_blocking(move || work(&*storage))
+            .await
+            .map_err(|join_error| {
+                tracing::error!(error = %join_error, "storage task failed");
+                Error::StorageTaskFailed(join_error.to_string())
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use provider_auth::Authenticator;
+    use provider_storage::temp_rocksdb;
+    use sp_runtime::MultiSignature;
+
+    /// Deps over a throwaway backend. Keep the returned guard bound for as
+    /// long as the state is used.
+    fn test_deps() -> (ProviderDeps, tempfile::TempDir) {
+        let (storage, dir) = temp_rocksdb();
+        let deps = ProviderDeps {
+            storage,
+            auth: Arc::new(Authenticator::new(
+                provider_auth::StaticMembershipResolver::private(vec![]),
+            )),
+        };
+        (deps, dir)
+    }
+
+    /// A registration snapshot carrying the given signing key. The values
+    /// other than `public_key` are not asserted on; only the key matters to
+    /// these tests.
+    fn registration(public_key: Vec<u8>) -> provider_types::ProviderInfo {
+        provider_types::ProviderInfo {
+            multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+            public_key,
+            stake: 1_000,
+            committed_bytes: 0,
+            settings: provider_types::ProviderSettings {
+                min_duration: 10,
+                max_duration: 100,
+                price_per_byte: 1,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0,
+                min_agreement_bytes: 0,
+            },
+            stats: Default::default(),
+            deregister_at: None,
+        }
+    }
+
+    /// Publish a registration snapshot whose `public_key` matches this
+    /// state's own signing key, as the chain-state coordinator would once
+    /// the provider is registered on chain.
+    fn publish_matching_registration(state: &ProviderState) {
+        let public_key = state.signer.as_ref().unwrap().public_key_bytes().to_vec();
+        state
+            .chain_state
+            .provider_info
+            .write()
+            .replace(registration(public_key));
+    }
+
+    /// A panic inside a storage call must come back as a 500, not as a
+    /// dropped connection.
+    #[tokio::test]
+    async fn blocking_storage_maps_a_panicking_task_to_storage_task_failed() {
+        let (deps, _dir) = test_deps();
+        let state = ProviderState::with_provider_id(deps, "provider".to_string());
+
+        let result: Result<(), crate::error::Error> = state
+            .blocking_storage(|_| panic!("storage call panicked"))
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(crate::error::Error::StorageTaskFailed(_))
+        ));
+    }
+
+    /// The getters return what the constructor stored.
+    #[test]
+    fn getters_return_the_constructed_parts() {
+        let (deps, _dir) = test_deps();
+        let storage = Arc::clone(&deps.storage);
+        let keyless = ProviderState::with_provider_id(deps, "provider".to_string());
+        assert_eq!(keyless.provider_id(), "provider");
+        assert!(Arc::ptr_eq(keyless.storage(), &storage));
+        assert!(keyless.signer().is_none());
+
+        let (deps, _dir) = test_deps();
+        let signing = ProviderState::with_seed(deps, "//Alice").unwrap();
+        assert_eq!(
+            signing.provider_id(),
+            ProviderState::provider_id_from_seed("//Alice").unwrap()
+        );
+        // The signer signs once its registration is in `chain_state()`.
+        let signer = signing.signer().unwrap();
+        assert!(signer.sign(b"msg").is_err());
+        signing
+            .chain_state()
+            .provider_info
+            .write()
+            .replace(registration(signer.public_key_bytes().to_vec()));
+        assert!(signer.sign(b"msg").is_ok());
+    }
+
+    #[test]
+    fn sign_without_keypair_refuses_with_signing_unavailable() {
+        // The pre-fix behaviour silently returned 64 zero bytes. The new
+        // contract is that `sign()` MUST return `Err(SigningUnavailable)`
+        // when no keypair is configured, so the HTTP layer can map it to a
+        // 503 instead of emitting a cryptographically invalid placeholder.
+        let (deps, _dir) = test_deps();
+        let state = ProviderState::with_provider_id(deps, "no-key-provider".to_string());
+        let err = state
+            .sign(b"any message")
+            .expect_err("must refuse to sign without a keypair");
+        assert!(matches!(err, Error::Signing(SigningRefused::NoKey)));
+    }
+
+    #[test]
+    fn sign_with_keypair_returns_real_sr25519_signature() {
+        // Round-trip: sign with //Alice, decode the SCALE-encoded
+        // MultiSignature, verify against Alice's public key. This catches
+        // any regression where sign() ever returns a placeholder again, and
+        // also catches the more subtle case where the bytes look random but
+        // aren't valid sr25519.
+        let (deps, _dir) = test_deps();
+        let state = ProviderState::with_seed(deps, "//Alice").unwrap();
+        publish_matching_registration(&state);
+        let message = b"commitment-payload-bytes";
+
+        let sig_hex = state.sign(message).expect("signing succeeds with keypair");
+        let sig_bytes = array_bytes::hex2bytes(&sig_hex).unwrap();
+        assert_eq!(
+            sig_bytes.len(),
+            65,
+            "SCALE MultiSignature: 1 variant byte + 64 sig bytes"
+        );
+
+        let sig = sig_from_hex(&sig_hex);
+        assert_ne!(sig.0, [0u8; 64], "must not return a zeroed placeholder");
+        let alice = keypair_for("//Alice");
+        assert!(
+            sr25519::Pair::verify(&sig, message, &alice.public()),
+            "signature did not verify under //Alice's public key"
+        );
+    }
+
+    #[test]
+    fn sign_refuses_when_registered_key_differs() {
+        // Best-effort guard: with a coordinator snapshot loaded, every signing
+        // path must refuse a key the chain doesn't know rather than emit
+        // signatures that can never verify.
+        let (deps, _dir) = test_deps();
+        let state = ProviderState::with_seed(deps, "//Alice").unwrap();
+        let local_key = state.signer.as_ref().unwrap().public_key_bytes().to_vec();
+
+        state
+            .chain_state
+            .provider_info
+            .write()
+            .replace(registration(vec![9u8; 32]));
+        assert!(matches!(
+            state.sign(b"msg"),
+            Err(Error::Signing(SigningRefused::KeyMismatch))
+        ));
+
+        // No snapshot at all must also refuse: an unpublished registration
+        // means the pallet has no key to verify against.
+        state.chain_state.provider_info.write().take();
+        assert!(matches!(
+            state.sign(b"msg"),
+            Err(Error::Signing(SigningRefused::Unregistered))
+        ));
+
+        // A matching snapshot signs.
+        state
+            .chain_state
+            .provider_info
+            .write()
+            .replace(registration(local_key));
+        assert!(state.sign(b"msg").is_ok());
+    }
+
+    /// Decode an `0x`-prefixed SCALE `MultiSignature` hex into the inner
+    /// `sr25519::Signature`, asserting the variant tag.
+    fn sig_from_hex(sig_hex: &str) -> sr25519::Signature {
+        use codec::Decode;
+        let bytes = array_bytes::hex2bytes(sig_hex).unwrap();
+        match MultiSignature::decode(&mut &bytes[..]).expect("valid SCALE MultiSignature") {
+            MultiSignature::Sr25519(sig) => sig,
+            other => panic!("expected an Sr25519 signature, got {other:?}"),
+        }
+    }
+
+    /// Derive a keypair from a SURI like `//Alice`.
+    fn keypair_for(seed: &str) -> sr25519::Pair {
+        sr25519::Pair::from_string(seed, None).unwrap()
+    }
+
+    #[test]
+    fn sign_produces_distinct_signatures_each_call_but_all_verify() {
+        // sr25519 (schnorrkel) is randomised — two calls over the same
+        // message produce different signatures, but both must verify. This
+        // test guards against accidentally swapping to a backend that
+        // returns a constant value (e.g. zero bytes).
+        let (deps, _dir) = test_deps();
+        let state = ProviderState::with_seed(deps, "//Alice").unwrap();
+        publish_matching_registration(&state);
+        let alice_pub = keypair_for("//Alice").public();
+        let msg = b"commitment-payload";
+
+        let sig_a = state.sign(msg).unwrap();
+        let sig_b = state.sign(msg).unwrap();
+
+        for sig_hex in [&sig_a, &sig_b] {
+            let bytes = array_bytes::hex2bytes(sig_hex).unwrap();
+            assert_ne!(bytes, vec![0u8; 64]);
+            let sig = sig_from_hex(sig_hex);
+            assert!(sr25519::Pair::verify(&sig, msg, &alice_pub));
+        }
+    }
+
+    #[test]
+    fn signatures_from_different_keys_do_not_cross_verify() {
+        // Negative control: //Bob's signature must NOT verify under //Alice.
+        // Cheap protection against a future refactor that accidentally
+        // stops checking the message or the key.
+        let (alice_deps, _alice_dir) = test_deps();
+        let (bob_deps, _bob_dir) = test_deps();
+        let alice = ProviderState::with_seed(alice_deps, "//Alice").unwrap();
+        let bob = ProviderState::with_seed(bob_deps, "//Bob").unwrap();
+        publish_matching_registration(&alice);
+        publish_matching_registration(&bob);
+        let alice_pub = keypair_for("//Alice").public();
+        let msg = b"checkpoint payload";
+
+        let bob_sig = sig_from_hex(&bob.sign(msg).unwrap());
+        assert!(!sr25519::Pair::verify(&bob_sig, msg, &alice_pub));
+
+        // Sanity: //Alice's own signature still verifies under her own key.
+        let alice_sig = sig_from_hex(&alice.sign(msg).unwrap());
+        assert!(sr25519::Pair::verify(&alice_sig, msg, &alice_pub));
+    }
+
+    #[test]
+    fn provider_state_chain_defaults_on_new() {
+        use std::sync::atomic::Ordering;
+        let (deps, _dir) = test_deps();
+        let state = ProviderState::with_provider_id(deps, "test-provider".to_string());
+        assert_eq!(
+            state
+                .chain_state
+                .current_anchor_block
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert!(state.chain_state.provider_info.read().is_none());
+    }
+}

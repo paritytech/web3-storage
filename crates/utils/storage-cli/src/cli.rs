@@ -2,10 +2,10 @@
 
 //! Command-line argument parsing for the storage CLI.
 
+use crate::commands::provider::Provider;
 use crate::commands::stress_test::StressTest;
 use crate::metrics::OutputFormat;
 use clap::{Args, Parser, Subcommand};
-use std::path::PathBuf;
 
 /// Storage CLI for scalable Web3 storage — drive on-chain and off-chain
 /// storage operations from a single tool.
@@ -19,7 +19,8 @@ pub struct Cli {
     pub command: Command,
 }
 
-/// Connection and identity flags shared by every subcommand.
+/// Connection and output flags shared by every subcommand. Each subcommand
+/// takes the secret of the account it signs as.
 #[derive(Debug, Args)]
 pub struct GlobalArgs {
     /// WebSocket URL for the parachain RPC.
@@ -40,17 +41,8 @@ pub struct GlobalArgs {
     )]
     pub provider_url: String,
 
-    /// Secret URI (SURI) for the signing/identity account, e.g. "//Alice".
-    /// Mutually exclusive with `--keyfile`.
-    #[arg(long, value_name = "SURI", conflicts_with = "keyfile")]
-    pub suri: Option<String>,
-
-    /// Path to a file whose contents are the SURI/seed for the account.
-    /// Mutually exclusive with `--suri`.
-    #[arg(long, value_name = "FILE", conflicts_with = "suri")]
-    pub keyfile: Option<PathBuf>,
-
-    /// Format for the final metrics summary printed to stdout.
+    /// Format for the final metrics summary printed to stdout. Commands
+    /// without metrics ignore it.
     #[arg(long, value_enum, value_name = "FORMAT", default_value_t = OutputFormat::Text)]
     pub output: OutputFormat,
 }
@@ -60,4 +52,8 @@ pub enum Command {
     /// Stress-test operations against a provider.
     #[command(subcommand)]
     StressTest(StressTest),
+
+    /// Provider registration.
+    #[command(subcommand)]
+    Provider(Provider),
 }

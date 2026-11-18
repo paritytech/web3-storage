@@ -18,7 +18,7 @@ use storage_subxt::api::{
 use subxt::{events::Event as RawEvent, PolkadotConfig};
 
 /// Whether `event` is a storage-provider event that changes a bucket's member
-/// set, primary providers or agreements. A decode failure of one of these escalates instead of being dropped;
+/// set or agreements. A decode failure of one of these escalates instead of being dropped;
 /// see [`escalate_membership_decode_failure`].
 fn is_membership_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
     event.is::<pallet_events::BucketCreated>()
@@ -26,8 +26,6 @@ fn is_membership_event(event: &RawEvent<'_, PolkadotConfig>) -> bool {
         || event.is::<pallet_events::MemberRemoved>()
         || event.is::<pallet_events::BucketDeleted>()
         || event.is::<pallet_events::BucketVisibilityChanged>()
-        || event.is::<pallet_events::ProviderAddedToBucket>()
-        || event.is::<pallet_events::PrimaryProviderRemoved>()
         || event.is::<pallet_events::SlashedProviderRemoved>()
         || event.is::<pallet_events::StorageAgreementEstablished>()
         || event.is::<pallet_events::AgreementToppedUp>()
@@ -147,8 +145,6 @@ fn block_event(event: StorageProviderEvent) -> Option<BlockEvent> {
         | StorageProviderEvent::MemberRemoved { bucket_id, .. }
         | StorageProviderEvent::BucketDeleted { bucket_id }
         | StorageProviderEvent::BucketVisibilityChanged { bucket_id, .. }
-        | StorageProviderEvent::ProviderAddedToBucket { bucket_id, .. }
-        | StorageProviderEvent::PrimaryProviderRemoved { bucket_id, .. }
         | StorageProviderEvent::SlashedProviderRemoved { bucket_id, .. }
         | StorageProviderEvent::StorageAgreementEstablished { bucket_id, .. }
         | StorageProviderEvent::AgreementToppedUp { bucket_id, .. }
@@ -329,19 +325,8 @@ mod tests {
 
     #[test]
     fn provider_and_agreement_events_map_bucket_id() {
-        use storage_subxt::api::runtime_types::storage_primitives::RemovalReason;
-
         let provider = || subxt::utils::AccountId32([3u8; 32]);
         let events = [
-            StorageProviderEvent::ProviderAddedToBucket {
-                bucket_id: 11,
-                provider: provider(),
-            },
-            StorageProviderEvent::PrimaryProviderRemoved {
-                bucket_id: 12,
-                provider: provider(),
-                reason: RemovalReason::Expired,
-            },
             StorageProviderEvent::SlashedProviderRemoved {
                 bucket_id: 13,
                 provider: provider(),
@@ -383,7 +368,7 @@ mod tests {
             },
         ];
 
-        for (event, expected) in events.into_iter().zip(11u64..) {
+        for (event, expected) in events.into_iter().zip(13u64..) {
             assert!(
                 matches!(
                     block_event(event),

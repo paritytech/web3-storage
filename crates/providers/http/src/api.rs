@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! HTTP API handlers for the provider node.
 
@@ -132,9 +132,8 @@ async fn rate_limit_by_ip_middleware(
     }
 }
 
-/// Store an uploaded `node` in `bucket_id`. On the bucket's first upload,
-/// create the local bucket with the quota of `agreement`, this node's
-/// agreement on it.
+/// Store an uploaded `node` in `bucket_id` under the quota of `agreement`,
+/// this node's agreement on it.
 async fn store_uploaded_node(
     state: &ProviderState,
     bucket_id: BucketId,
@@ -142,27 +141,11 @@ async fn store_uploaded_node(
     node: ChunkTreeNode,
     agreement: &LocalBucketAgreement,
 ) -> Result<(), Error> {
-    // The bucket check and the store share one storage task, so an upload to
-    // an existing bucket costs one blocking-pool hop. A missing bucket hands
-    // the node back for the agreement lookup.
-    let missing = state
-        .blocking_storage(
-            move |storage| -> Result<Option<ChunkTreeNode>, provider_storage::Error> {
-                if storage.get_bucket(bucket_id)?.is_none() {
-                    return Ok(Some(node));
-                }
-                storage.store_node(bucket_id, hash, node)?;
-                Ok(None)
-            },
-        )
-        .await??;
-    let Some(node) = missing else {
-        return Ok(());
-    };
+    // Applied on every upload, so a top-up takes effect.
     let max_bytes = agreement.max_bytes;
     state
         .blocking_storage(move |storage| {
-            storage.init_bucket(bucket_id, max_bytes)?;
+            storage.init_bucket_or_set_quota(bucket_id, max_bytes)?;
             storage.store_node(bucket_id, hash, node)
         })
         .await??;
@@ -186,7 +169,7 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
     Json(InfoResponse {
         provider_id: state.provider_id.clone(),
         readiness: ProviderReadiness {
-            signing_configured: state.keypair.is_some(),
+            signing_configured: state.signer.is_some(),
             provider_info_loaded: provider_registration_info.is_some(),
             deregistering: provider_registration_info
                 .as_ref()
@@ -295,13 +278,7 @@ async fn commit(
     Json(request): Json<CommitRequest>,
 ) -> Result<Json<CommitResponse>, Error> {
     require_role(&state, &headers, "POST", request.bucket_id, Role::Writer).await?;
-    let agreement = require_agreement(&state, request.bucket_id, Role::Writer).await?;
-
-    // A replica takes its commitments from the chain, so it rejects a commit
-    // even from a primary provider that may push nodes to it.
-    if agreement.is_replica_agreement() {
-        return Err(provider_auth::AuthError::NotPrimary.into());
-    }
+    require_agreement(&state, request.bucket_id, Role::Writer).await?;
 
     let data_roots: Vec<H256> = request
         .data_roots
@@ -621,7 +598,7 @@ async fn get_historical_roots(
 /// - `provider_key_mismatch` — the local signing key differs from the registered
 ///   on-chain `public_key`; signed terms would never verify. Clears on the next
 ///   provider-info refresh once the keys agree. Not specific to this endpoint:
-///   the guard sits in [`ProviderState::sign`], so `/commit`, `/commitment`,
+///   the guard is in [`provider_types::ProviderSigner::sign`], so `/commit`, `/commitment`,
 ///   `/checkpoint-signature` and deletion proofs return it too.
 /// - `provider_deregistering` — provider has announced deregistration and no longer
 ///   signs new terms.
@@ -629,7 +606,7 @@ async fn negotiate_terms(
     State(state): State<Arc<ProviderState>>,
     Json(req): Json<NegotiateRequest>,
 ) -> Result<Json<SignedTerms>, Error> {
-    let keypair = state.keypair.as_ref().ok_or(SigningRefused::NoKey)?;
+    let signer = state.signer.as_ref().ok_or(SigningRefused::NoKey)?;
 
     // Both the anchor block and RequestTimeout must be known before we can sign
     // — otherwise we'd emit unbounded or already-expired terms.
@@ -667,7 +644,7 @@ async fn negotiate_terms(
     // never be redeemed — fail fast instead. Checked against the snapshot this
     // request is already using, so a re-registration heals it on the next
     // refresh without a restart.
-    state.ensure_signing_key_matches(&info)?;
+    signer.ensure_key_matches(&info)?;
 
     negotiate::validate_request(&req, &info)?;
 
@@ -681,7 +658,7 @@ async fn negotiate_terms(
         bucket: req.bucket.into(),
         replica_params: req.replica_params,
     };
-    Ok(Json(keypair.sign_terms(terms)))
+    Ok(Json(signer.sign_terms(&info, terms)?))
 }
 
 /// Get replica sync status for a bucket.

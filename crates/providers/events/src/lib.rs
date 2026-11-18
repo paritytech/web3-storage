@@ -43,11 +43,9 @@ pub enum BlockEvent {
     /// bucket, so new canonical data may be available for replicas to sync.
     BucketCheckpointed { bucket_id: BucketId },
     /// `StorageProvider::BucketCreated` / `MemberSet` / `MemberRemoved` /
-    /// `BucketDeleted` / `BucketVisibilityChanged` / `ProviderAddedToBucket` /
-    /// `PrimaryProviderRemoved` / `SlashedProviderRemoved` /
+    /// `BucketDeleted` / `BucketVisibilityChanged` / `SlashedProviderRemoved` /
     /// `StorageAgreementEstablished` / `AgreementToppedUp` / `AgreementExtended` /
-    /// `AgreementEnded`
-    /// the bucket's member set, visibility, primary providers or agreements
+    /// `AgreementEnded` - the bucket's member set, visibility or agreements
     /// changed, so any cached access for it is stale.
     /// Only the bucket id is decoded: patching in the member/role the event
     /// carries would build a set that never existed on chain if an earlier
