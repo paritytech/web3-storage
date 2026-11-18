@@ -2,8 +2,8 @@
 
 //! Integration tests for the challenge responder.
 
-use super::{alice_account, signed_receipt, test_state, test_state_with_data, wait_for};
-use provider_storage::ChunkTreeNode;
+use super::{alice_account, proof_source, signed_receipt, test_storage_with_data, wait_for};
+use provider_storage::{temp_rocksdb, ChunkTreeNode};
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -168,16 +168,13 @@ fn test_detected_challenge() {
 #[tokio::test(start_paused = true)]
 async fn test_no_challenges() {
     let mock = Arc::new(MockChallengeChainClient::new());
-    let (state, _dir) = test_state();
+    let (storage, _dir) = temp_rocksdb();
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        state.challenge_proof_source(),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&storage), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -193,16 +190,13 @@ async fn test_no_challenges() {
 async fn test_paused_skips_poll() {
     let mock =
         Arc::new(MockChallengeChainClient::new().with_challenges(vec![make_challenge(1, 100, 0)]));
-    let (state, _dir) = test_state();
+    let (storage, _dir) = temp_rocksdb();
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        state.challenge_proof_source(),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&storage), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -219,12 +213,12 @@ async fn test_paused_skips_poll() {
 #[tokio::test(start_paused = true)]
 async fn test_stop_command() {
     let mock = MockChallengeChainClient::new();
-    let (state, _dir) = test_state();
+    let (storage, _dir) = temp_rocksdb();
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_secs(60),
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(config, state.challenge_proof_source(), Box::new(mock));
+    let responder = ChallengeResponder::new(config, proof_source(&storage), Box::new(mock));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -243,13 +237,12 @@ async fn erased_leaves_are_defended_with_the_deletion_receipt() {
     // A challenge cites a commitment whose leaves were pruned, confirmed by
     // the admin, and physically erased: the proof cannot be rebuilt, but the
     // stored receipt defends via the Deleted response.
-    let (state, challenge, _dir) = test_state_with_data();
-    let post_root = state.storage.delete_before(1, 1).unwrap().mmr_root;
-    state
-        .storage
+    let (storage, challenge, _dir) = test_storage_with_data();
+    let post_root = storage.delete_before(1, 1).unwrap().mmr_root;
+    storage
         .attach_deletion_receipt(1, signed_receipt(1, post_root, 1))
         .unwrap();
-    state.storage.erase_pruned_range(1, 0).unwrap();
+    storage.erase_pruned_range(1, 0).unwrap();
 
     // `challenge` cites leaf 0 of the erased (pre-prune) commitment.
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
@@ -259,11 +252,8 @@ async fn erased_leaves_are_defended_with_the_deletion_receipt() {
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        state.challenge_proof_source(),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&storage), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -296,24 +286,22 @@ async fn live_leaf_of_an_erased_commitment_is_answered() {
     // leaf. The receipt only defends leaves below its new_start_seq, so a
     // challenge on the live leaf needs another response. Without one the
     // provider is slashed although it still stores the challenged data.
-    let (state, first_leaf_challenge, _dir) = test_state_with_data();
+    let (storage, first_leaf_challenge, _dir) = test_storage_with_data();
     let live_chunk = b"chunk-that-stays-after-the-prune";
     let live_chunk_hash = hash_leaf(live_chunk);
-    state
-        .storage
+    storage
         .store_node(
             1,
             live_chunk_hash,
             ChunkTreeNode::Chunk(live_chunk.to_vec()),
         )
         .unwrap();
-    let pre_prune = state.storage.commit(1, vec![live_chunk_hash]).unwrap();
-    let post_root = state.storage.delete_before(1, 1).unwrap().mmr_root;
-    state
-        .storage
+    let pre_prune = storage.commit(1, vec![live_chunk_hash]).unwrap();
+    let post_root = storage.delete_before(1, 1).unwrap().mmr_root;
+    storage
         .attach_deletion_receipt(1, signed_receipt(1, post_root, 1))
         .unwrap();
-    state.storage.erase_pruned_range(1, 0).unwrap();
+    storage.erase_pruned_range(1, 0).unwrap();
 
     let challenge = DetectedChallenge {
         commitment: storage_primitives::Commitment {
@@ -333,11 +321,8 @@ async fn live_leaf_of_an_erased_commitment_is_answered() {
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        state.challenge_proof_source(),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&storage), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -361,7 +346,7 @@ async fn live_leaf_of_an_erased_commitment_is_answered() {
 
 #[tokio::test(start_paused = true)]
 async fn test_successful_challenge_response() {
-    let (state, challenge, _dir) = test_state_with_data();
+    let (storage, challenge, _dir) = test_storage_with_data();
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
     let config = ChallengeResponderConfig {
@@ -369,11 +354,8 @@ async fn test_successful_challenge_response() {
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        state.challenge_proof_source(),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&storage), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -406,7 +388,7 @@ async fn test_data_not_found_no_bucket() {
     // provably does not exist, so this reports DataNotFound (and risks the
     // stake) rather than ProofGenerationFailed (which now means "retry -
     // the backend, not the data, is the problem").
-    let (state, _dir) = test_state();
+    let (storage, _dir) = temp_rocksdb();
     let challenge = DetectedChallenge {
         bucket_id: 999,
         deadline: 1000,
@@ -422,7 +404,7 @@ async fn test_data_not_found_no_bucket() {
         },
     };
 
-    let (result, submitted) = respond_once(state.challenge_proof_source(), challenge).await;
+    let (result, submitted) = respond_once(proof_source(&storage), challenge).await;
 
     assert!(
         matches!(result, ChallengeResponseResult::DataNotFound { .. }),
@@ -436,10 +418,10 @@ async fn test_proof_generation_failed_on_backend_outage_not_data_not_found() {
     // A storage backend failure while gathering the chunk (not the data being
     // missing) must be reported as a retryable proof-generation failure, not
     // as data loss.
-    let (state, challenge, _dir) = test_state_with_data();
+    let (storage, challenge, _dir) = test_storage_with_data();
 
     let (result, submitted) = respond_once(
-        Arc::new(StepTwoBackendFailure(state.challenge_proof_source())),
+        Arc::new(StepTwoBackendFailure(proof_source(&storage))),
         challenge,
     )
     .await;
@@ -457,7 +439,7 @@ async fn test_proof_generation_failed_on_backend_outage_not_data_not_found() {
 
 #[tokio::test(start_paused = true)]
 async fn test_submission_failed() {
-    let (state, challenge, _dir) = test_state_with_data();
+    let (storage, challenge, _dir) = test_storage_with_data();
     let mock = Arc::new(
         MockChallengeChainClient::new()
             .with_challenges(vec![challenge])
@@ -478,11 +460,8 @@ async fn test_submission_failed() {
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        state.challenge_proof_source(),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&storage), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, Some(callback))
         .await
@@ -509,7 +488,7 @@ async fn test_submission_failed() {
 
 #[tokio::test(start_paused = true)]
 async fn test_callback_invoked_on_success() {
-    let (state, challenge, _dir) = test_state_with_data();
+    let (storage, challenge, _dir) = test_storage_with_data();
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
     let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
@@ -526,11 +505,8 @@ async fn test_callback_invoked_on_success() {
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        state.challenge_proof_source(),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&storage), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, Some(callback))
         .await
@@ -562,7 +538,7 @@ async fn test_callback_invoked_on_success() {
 
 #[tokio::test(start_paused = true)]
 async fn test_resume_after_pause() {
-    let (state, challenge, _dir) = test_state_with_data();
+    let (storage, challenge, _dir) = test_storage_with_data();
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
     let config = ChallengeResponderConfig {
@@ -570,11 +546,8 @@ async fn test_resume_after_pause() {
         auto_respond: true,
         ..ChallengeResponderConfig::new(alice_account())
     };
-    let responder = ChallengeResponder::new(
-        config,
-        state.challenge_proof_source(),
-        Box::new(Arc::clone(&mock)),
-    );
+    let responder =
+        ChallengeResponder::new(config, proof_source(&storage), Box::new(Arc::clone(&mock)));
     let handle = responder
         .start(tokio::sync::broadcast::channel(16).1, None)
         .await
@@ -683,10 +656,10 @@ async fn respond_once(
 /// provider is not slashed on timeout.
 #[tokio::test(start_paused = true)]
 async fn test_chunk_index_past_the_leaf_is_answered_as_out_of_range() {
-    let (state, mut challenge, _dir) = test_state_with_data();
+    let (storage, mut challenge, _dir) = test_storage_with_data();
     challenge.target.chunk_index = 999;
 
-    let (result, submitted) = respond_once(state.challenge_proof_source(), challenge).await;
+    let (result, submitted) = respond_once(proof_source(&storage), challenge).await;
     assert!(
         matches!(result, ChallengeResponseResult::Success { .. }),
         "expected Success, got {result:?}"
@@ -702,12 +675,10 @@ async fn test_chunk_index_past_the_leaf_is_answered_as_out_of_range() {
 /// `ChunkOutOfRange`.
 #[tokio::test(start_paused = true)]
 async fn test_empty_leaf_is_answered_as_out_of_range() {
-    let (state, challenge, _dir) = test_state_with_data();
+    let (storage, challenge, _dir) = test_storage_with_data();
     assert_eq!(challenge.target.chunk_index, 0);
 
-    let source = Arc::new(EditLeaf(state.challenge_proof_source(), |leaf| {
-        leaf.data_size = 0
-    }));
+    let source = Arc::new(EditLeaf(proof_source(&storage), |leaf| leaf.data_size = 0));
     let (result, submitted) = respond_once(source, challenge).await;
     assert!(
         matches!(result, ChallengeResponseResult::Success { .. }),
@@ -723,9 +694,9 @@ async fn test_empty_leaf_is_answered_as_out_of_range() {
 /// reports `ProofGenerationFailed` and submits nothing.
 #[tokio::test(start_paused = true)]
 async fn test_unknown_leaf_version_fails_without_submission() {
-    let (state, challenge, _dir) = test_state_with_data();
+    let (storage, challenge, _dir) = test_storage_with_data();
 
-    let source = Arc::new(EditLeaf(state.challenge_proof_source(), |leaf| {
+    let source = Arc::new(EditLeaf(proof_source(&storage), |leaf| {
         leaf.leaf_version = storage_primitives::LEAF_VERSION + 1
     }));
     let (result, submitted) = respond_once(source, challenge).await;

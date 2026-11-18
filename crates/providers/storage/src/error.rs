@@ -10,10 +10,6 @@ pub enum Error {
     #[error("Node not found: {0:?}")]
     NodeNotFound(H256),
 
-    /// A leaf index past the end of a bucket's leaf list.
-    #[error("Leaf not found: index {leaf_index} in bucket {bucket_id}")]
-    LeafNotFound { bucket_id: u64, leaf_index: u64 },
-
     #[error("Commitment not reproducible from local leaves: {0}")]
     CommitmentNotReproducible(String),
 
@@ -77,6 +73,17 @@ pub enum Error {
     /// new_start_seq, leaf_count: 0 })`.
     #[error("Invalid deletion receipt for bucket {0}")]
     InvalidDeletionReceipt(u64),
+
+    /// The deletion receipt's `mmr_root` is not the post-prune root this
+    /// provider returned from `/delete` for the range ending at the receipt's
+    /// `new_start_seq`. Sign `CommitmentPayload(bucket_id, Commitment {
+    /// mmr_root: expected, start_seq: new_start_seq, leaf_count: 0 })`.
+    #[error("Deletion receipt root mismatch for bucket {bucket_id}: expected {expected:?}, got {actual:?}")]
+    DeletionRootMismatch {
+        bucket_id: u64,
+        expected: H256,
+        actual: H256,
+    },
 
     #[error("Root not found: {0:?}")]
     RootNotFound(H256),

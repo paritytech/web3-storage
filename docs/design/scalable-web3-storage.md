@@ -424,8 +424,8 @@ membership of any role confers the authorized challenger tier, see
 [The Challenge Game](#the-challenge-game)).
 
 **Replicas always serve everyone—visibility concerns primaries only.** For a
-replica, `private` changes nothing except where it syncs from (other replicas
-or any data holder, instead of the primaries). Deliberate: this is the source
+replica, `private` changes nothing except where it syncs from (other replicas,
+instead of the primaries). Deliberate: this is the source
 of the anti-censorship guarantee below.
 
 **`private` is access control, not confidentiality.** The chain cannot observe
@@ -483,18 +483,18 @@ sourceless and the first member challenge catches it—a permanent
 The obvious rule—reject a replica agreement unless a sync source exists (bucket
 public, or a replica already there)—is deliberately absent, for three reasons:
 
-1. **The chain cannot see the sources.** Chunks self-verify against the
-   committed MMR root, so any data holder can seed a replica, by sync or by
-   push—the client itself, an ex-replica, a stranger who fetched while public.
+1. **The chain cannot see whether a source serves.** A replica syncs from the
+   bucket's primaries or other replicas, and the chain cannot tell whether any
+   of them will serve it.
    On-chain agreements are a poor proxy: the rule would reject fulfillable
    agreements and admit doomed ones (the one listed replica may be dead, or
    expire tomorrow).
 2. **It would help the censor.** Private bucket, last replica agreement
    expires: new replicas forbidden forever—by the chain itself.
 3. **Fulfillability is the funder's business.** The client pays, submits the
-   provider-signed terms last, and alone knows the sourcing plan (it may push
-   the data itself). Client software should warn when no source is visible
-   on-chain (private, zero replicas).
+   provider-signed terms last, and alone knows the sourcing plan. Client
+   software should warn when no source is visible on-chain (private, zero
+   replicas).
 
 A born-private bucket is thus the strongest privacy configuration not because
 anything forbids replicas, but because no honest source for one exists—and if

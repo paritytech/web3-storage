@@ -7,7 +7,7 @@
 //! interfaces with `tsify`.
 
 use crate::format::{Cid, DirectoryEntry, EntryType, MetadataEntry};
-use crate::s3::{ListObjectsParams, Objects, PutObjectOptions, S3ClientError};
+use crate::s3::{ListObjectsParams, PutObjectOptions, S3Bucket, S3ClientError};
 use crate::tree::{BlobLength, BlobStore, EmptyParents, Tree};
 use crate::{FsClientError, Result};
 use serde::{Deserialize, Serialize};
@@ -29,8 +29,8 @@ export interface BlobStore {
   commit(cids: Uint8Array[]): Promise<void>;
   /** The bucket's current MMR commitment, or `null` when it has none. */
   commitment(): Promise<StoreCommitment | null>;
-  /** MMR leaf `leafIndex` of the bucket and its inclusion proof. */
-  mmrProof(leafIndex: bigint): Promise<StoreMmrProof>;
+  /** MMR leaf `leafIndex`, counted from `commitment.startSeq`, of `commitment` and its inclusion proof. */
+  mmrProof(commitment: StoreCommitment, leafIndex: bigint): Promise<StoreMmrProof>;
 }
 
 /** A file's metadata and content. */
@@ -76,6 +76,7 @@ extern "C" {
     #[wasm_bindgen(method, catch, js_name = mmrProof)]
     fn mmr_proof_js(
         this: &JsBlobStore,
+        commitment: &JsValue,
         leaf_index: u64,
     ) -> std::result::Result<js_sys::Promise, JsValue>;
 }
@@ -121,6 +122,30 @@ impl From<StoreCommitment> for Commitment {
             leaf_count: commitment.leaf_count,
         }
     }
+}
+
+/// `commitment` as the [`StoreCommitment`] object the JS store takes.
+fn store_commitment_js(commitment: &Commitment) -> JsValue {
+    let object = js_sys::Object::new();
+    let fields: [(&str, JsValue); 3] = [
+        (
+            "mmrRoot",
+            js_sys::Uint8Array::from(commitment.mmr_root.as_bytes()).into(),
+        ),
+        (
+            "startSeq",
+            js_sys::BigInt::from(commitment.start_seq).into(),
+        ),
+        (
+            "leafCount",
+            js_sys::BigInt::from(commitment.leaf_count).into(),
+        ),
+    ];
+    for (key, value) in fields {
+        // Setting a property of a new plain object does not fail.
+        let _ = js_sys::Reflect::set(&object, &key.into(), &value);
+    }
+    object.into()
 }
 
 impl From<StoreMmrProof> for MmrProof {
@@ -201,8 +226,15 @@ impl BlobStore for JsBlobStore {
         Ok(commitment.map(Commitment::from))
     }
 
-    async fn mmr_proof(&self, _bucket_id: BucketId, leaf_index: u64) -> Result<MmrProof> {
-        let proof: StoreMmrProof = from_store(settle(self.mmr_proof_js(leaf_index)).await?)?;
+    async fn mmr_proof(
+        &self,
+        _bucket_id: BucketId,
+        commitment: &Commitment,
+        leaf_index: u64,
+    ) -> Result<MmrProof> {
+        let commitment = store_commitment_js(commitment);
+        let proof: StoreMmrProof =
+            from_store(settle(self.mmr_proof_js(&commitment, leaf_index)).await?)?;
         Ok(proof.into())
     }
 }
@@ -586,17 +618,17 @@ impl WasmTree {
 }
 
 /// S3-style objects of one bucket, stored in its tree: key `k` is the file `/k`.
-#[wasm_bindgen(js_name = WasmObjects)]
-pub struct WasmObjects {
-    objects: Objects<JsBlobStore>,
+#[wasm_bindgen(js_name = WasmS3Bucket)]
+pub struct WasmS3Bucket {
+    objects: S3Bucket<JsBlobStore>,
 }
 
-#[wasm_bindgen(js_class = WasmObjects)]
-impl WasmObjects {
+#[wasm_bindgen(js_class = WasmS3Bucket)]
+impl WasmS3Bucket {
     #[wasm_bindgen(constructor)]
-    pub fn new(store: JsBlobStore, bucket_id: u64) -> WasmObjects {
-        WasmObjects {
-            objects: Objects::new(Tree::with_clock(store, bucket_id, now)),
+    pub fn new(store: JsBlobStore, bucket_id: u64) -> WasmS3Bucket {
+        WasmS3Bucket {
+            objects: S3Bucket::new(Tree::with_clock(store, bucket_id, now)),
         }
     }
 

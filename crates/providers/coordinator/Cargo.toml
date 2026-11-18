@@ -9,7 +9,6 @@ description = "Chain-state coordinator for provider nodes: keeps the node's view
 
 [dependencies]
 async-trait = { workspace = true }
-parking_lot = { workspace = true }
 provider-events = { workspace = true }
 provider-types = { workspace = true }
 sp-runtime = { workspace = true, features = ["std"] }

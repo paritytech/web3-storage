@@ -8,9 +8,9 @@
  *
  * Tests the provider node's signed-request guard end to end: the role ladder
  * as enforced over HTTP, rejection of unsigned/tampered/expired signatures,
- * that granting or revoking a role on chain is honoured by the provider, and
- * that a signed walk of the bucket-id space is refused without disturbing a
- * real member.
+ * that granting or revoking a role on chain is honoured by the provider, that
+ * a new primary agreement is honoured, and that a signed walk of the bucket-id
+ * space is refused without disturbing a real member.
  * What this workflow adds over the Rust tests is the wiring — real client-built
  * signatures, real status codes, real chain events — not the cache mechanics,
  * which are covered deterministically in crates/providers/auth and
@@ -19,7 +19,7 @@
  * Workflow 06 covers the same ACL on-chain; this one is the off-chain half —
  * it is the only workflow that sends an `Authorization` header.
  *
- * The role ladder probes `PUT /node` (Writer) and `POST /delete` (Admin). Bucket-bound Layer 0 reads need `Reader` on a private
+ * The role ladder probes `PUT /node` (Writer) and `POST /delete` (Admin). Bucket-bound reads need `Reader` on a private
  * bucket: 12.13 covers that gate, 12.14 the hash-keyed reads that stay open.
  *
  * Usage: node --import tsx e2e/12-provider-http-auth.ts [chain_ws] [provider_url]
@@ -27,8 +27,10 @@
 
 import assert from "node:assert";
 import {
+  addPrimaryProvider,
   bytesToBase64,
   computeCid,
+  createBucket,
   ensureProviderRegistered,
   makeSigner,
   putChunk,
@@ -38,7 +40,7 @@ import {
   toHex,
   type ChainSigner,
 } from "@web3-storage/sdk";
-import { negotiateAndEstablish, runSuite, setupChain } from "./helpers.js";
+import { negotiateAndEstablish, negotiateSigned, runSuite, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
@@ -136,7 +138,7 @@ const writeStatus = (who: ChainSigner, bucketId: bigint, text: string) =>
   signedStatus(who, "PUT", "/node", bucketId, { body: nodeBody(bucketId, text) });
 
 /**
- * Body for the Admin-guarded `POST /delete` (L0 prune). Only ever sent by a
+ * Body for the Admin-guarded `POST /delete` (prune). Only ever sent by a
  * non-admin here: a prune that got past the guard would rewrite the bucket's
  * MMR, so the authorized path stays with the storage tests.
  */
@@ -367,10 +369,10 @@ async function main() {
     },
   });
 
-  // ── Layer-0 read gates ────────────────────────────────────────────────────
+  // ── Read gates ────────────────────────────────────────────────────────────
 
   tests.push({
-    name: "12.13 L0 bucket-bound reads are Reader-gated",
+    name: "12.13 Bucket-bound reads are Reader-gated",
     fn: async () => {
       // Unsigned: refused on the (private) bucket.
       assert.strictEqual(await statusOf("GET", `/commitment?bucket_id=${bucketId}`), 401);
@@ -393,13 +395,40 @@ async function main() {
   });
 
   tests.push({
-    name: "12.14 Hash-keyed L0 reads stay open (capability reads)",
+    name: "12.14 Hash-keyed reads stay open (capability reads)",
     fn: async () => {
       // A chunk a Writer stored is fetchable by hash with no signature:
       // possession of the hash is the capability; the enumeration surfaces
       // that would reveal it are gated (12.13).
       const { hash } = await putChunk(PROVIDER_URL, bucketId, "capability read probe", writer);
       assert.strictEqual(await statusOf("GET", `/node?bucket_id=${bucketId}&hash=${hash}`), 200);
+    },
+  });
+
+  // ── Cache invalidation from agreement events ──────────────────────────────
+
+  tests.push({
+    name: "12.15 A new primary agreement is honoured",
+    fn: async () => {
+      // The provider caches its own agreement on a bucket together with the
+      // bucket's members, so a bucket it has no agreement on is refused and
+      // that refusal is cached. Establishing the agreement must reach the
+      // provider the same way a membership change does.
+      const { bucketId: fresh } = await createBucket(api, admin, { mode: "finalized" });
+      assert.strictEqual(
+        await writeStatus(admin, fresh, "before the agreement"),
+        403,
+        "a bucket the provider has no agreement on must be refused",
+      );
+
+      const signed = await negotiateSigned(api, PROVIDER_URL, admin, provider, {
+        maxBytes: 1_048_576n,
+        duration: 100,
+        bucketId: fresh,
+      });
+      await addPrimaryProvider(api, admin, provider, signed, { mode: "finalized" });
+
+      await assertChangeHonoured(200, () => writeStatus(admin, fresh, "after the agreement"));
     },
   });
 

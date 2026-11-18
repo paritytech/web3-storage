@@ -56,11 +56,13 @@ pub enum BlockEvent {
         provider: AccountId32,
     },
     /// `StorageProvider::BucketCreated` / `MemberSet` / `MemberRemoved` /
-    /// `BucketVisibilityChanged` - the bucket's member set or visibility
-    /// changed, so any cached authorization for it is stale. Only the bucket
-    /// id is decoded: patching in the member/role the event carries would
-    /// build a set that never existed on chain if an earlier event was
-    /// missed, so the cache drops the entry and re-resolves.
+    /// `BucketVisibilityChanged` / `SlashedProviderRemoved` - the bucket's
+    /// member set, visibility or providers changed, so any cached access for
+    /// it is stale. [`BucketDeleted`](Self::BucketDeleted) and
+    /// [`AgreementChanged`](Self::AgreementChanged) invalidate it too.
+    /// Only the bucket id is decoded: patching in the member/role the event
+    /// carries would build a set that never existed on chain if an earlier
+    /// event was missed, so the cache drops the entry and re-resolves.
     BucketMembershipChanged { bucket_id: BucketId },
     /// The block follower (re)connected and re-read chain state wholesale.
     /// Coordinators run their bootstrap scan to catch anything missed while

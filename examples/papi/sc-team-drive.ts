@@ -3,7 +3,7 @@
 /**
  * Smart-contract end-to-end demo for the `SharedTeamDrive` example dApp.
  *
- * The contract owns a drive (a plain Layer 0 bucket) via the
+ * The contract owns a drive (a plain bucket) via the
  * storage-provider precompile.
  * Flow:
  *   1. Provider setup + account mapping.

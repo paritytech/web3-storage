@@ -119,7 +119,7 @@
   <div class="container">
     <!-- Header -->
     <div class="header">
-      <p class="site-crumb"><a href="index.html">&larr; Scalable Web3 Storage</a></p>
+      <p class="site-crumb"><a href="index.html">&larr; Capacity - Scalable Web3 Storage</a></p>
       <div class="header-row"
            data-preset-badge-signal-flow="SIGNAL FLOW"
            data-preset-badge-blueprint="BLUEPRINT / REV 01"
@@ -129,7 +129,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Chain-first sync","focus":["snapshot","read_chain","fetch_peaks","verify","traverse","fetch_nodes","confirm","sync_check"],"note":"The replica reads the trusted root from the chain and verifies every fetched node against it."},{"id":"untrusted-sources","label":"Untrusted sources","focus":["peak_source","node_source","verify","mismatch"],"note":"Any data holder can serve. The replica rejects a source whose peaks do not hash to the chain root."},{"id":"payment","label":"Confirmation and payment","focus":["confirm","sync_check","sync_balance"],"note":"confirm_replica_sync pays sync_price from sync_balance when the root is new and min_sync_interval has passed."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"happy-path","label":"Chain-first sync","focus":["snapshot","read_chain","fetch_peaks","verify","traverse","fetch_nodes","confirm","sync_check"],"note":"The replica reads the trusted root from the chain and verifies every fetched node against it."},{"id":"untrusted-sources","label":"Untrusted sources","focus":["peak_source","node_source","verify","mismatch"],"note":"Any primary or replica of the bucket can serve. The replica rejects a source whose peaks do not hash to the chain root."},{"id":"payment","label":"Confirmation and payment","focus":["confirm","sync_check","sync_balance"],"note":"confirm_replica_sync pays sync_price from sync_balance when the root is new and min_sync_interval has passed."}]</script>
 
     <script src="assets/archify/i18n.js?v=b331908a8a55"></script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -346,26 +346,26 @@
           <text data-detail="context" x="1130.3999999999999" y="258" class="t-muted" font-size="8" text-anchor="middle">roots[7] + signature</text>
         </g>
 
-        <g id="node-peak_source" data-node-id="peak_source" data-node-label="Any Data Holder" tabindex="0" role="button" aria-label="Focus Any Data Holder, primaries, then replicas, Data Sources › Trusted root" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="primaries, then replicas" data-node-context="Data Sources › Trusted root">
-          <title>Any Data Holder · primaries, then replicas · Data Sources › Trusted root</title>
+        <g id="node-peak_source" data-node-id="peak_source" data-node-label="Peak Source" tabindex="0" role="button" aria-label="Focus Peak Source, primaries, then replicas, Data Sources › Trusted root" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="primaries, then replicas" data-node-context="Data Sources › Trusted root">
+          <title>Peak Source · primaries, then replicas · Data Sources › Trusted root</title>
           <rect x="216" y="346" width="150" height="52" rx="6" class="c-mask"/>
           <rect x="216" y="346" width="150" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(222 352) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="291" y="367" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Any Data Holder</text>
+          <text data-node-label="" data-detail-anchor="" x="291" y="367" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Peak Source</text>
           <text data-detail="context" x="291" y="384" class="t-muted" font-size="8" text-anchor="middle">primaries, then replicas</text>
         </g>
 
-        <g id="node-node_source" data-node-id="node_source" data-node-label="Node Source" tabindex="0" role="button" aria-label="Focus Node Source, any data holder, Data Sources › Fetch and confirm" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="any data holder" data-node-context="Data Sources › Fetch and confirm">
-          <title>Node Source · any data holder · Data Sources › Fetch and confirm</title>
+        <g id="node-node_source" data-node-id="node_source" data-node-label="Node Source" tabindex="0" role="button" aria-label="Focus Node Source, primary or replica, Data Sources › Fetch and confirm" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="primary or replica" data-node-context="Data Sources › Fetch and confirm">
+          <title>Node Source · primary or replica · Data Sources › Fetch and confirm</title>
           <rect x="834.8" y="346" width="140" height="52" rx="6" class="c-mask"/>
           <rect x="834.8" y="346" width="140" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(840.8 352) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="904.8" y="367" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Node Source</text>
-          <text data-detail="context" x="904.8" y="384" class="t-muted" font-size="8" text-anchor="middle">any data holder</text>
+          <text data-detail="context" x="904.8" y="384" class="t-muted" font-size="8" text-anchor="middle">primary or replica</text>
         </g>
 
         <g id="node-mismatch" data-node-id="mismatch" data-node-label="Peak Mismatch" tabindex="0" role="button" aria-label="Focus Peak Mismatch, source rejected, Recovery › Verify and walk" aria-pressed="false" data-node-kind="security" data-node-sublabel="source rejected" data-node-context="Recovery › Verify and walk">
@@ -673,7 +673,7 @@
         </div>
         <ul>
           <li>&bull; Primaries reject GET /mmr_peaks: a replica provider is not a member</li>
-          <li>&bull; The replica syncs from other replicas or any data holder instead</li>
+          <li>&bull; The replica syncs from other replicas instead</li>
           <li>&bull; Replicas serve everyone, on public and private buckets</li>
         </ul>
       </div>

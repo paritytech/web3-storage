@@ -28,6 +28,7 @@ import {
   signProviderRequest,
   splitChunks,
   verifyChunkProof,
+  verifyMmrProof,
   type MmrProof,
   type ProviderRequestSigner,
   type TreeNode,
@@ -141,9 +142,8 @@ export interface PutChunkResult {
 }
 
 /**
- * PUT a single chunk to the provider without requesting an MMR commitment.
- * Suitable for S3-style object uploads where the Layer 1 metadata records
- * the CID itself and no Layer 0 checkpoint follows immediately.
+ * PUT a single chunk to the provider without a commit. The chunk is not part
+ * of the bucket's MMR until a `/commit` names a data root that contains it.
  *
  * `signer` authenticates the `PUT /node` request; it must hold a Writer/Admin
  * role on `bucketId` (the provider always enforces this).
@@ -434,6 +434,10 @@ export type ChallengeResponse = Parameters<
  * the chunk, or `ChunkOutOfRange` with the leaf's MMR proof alone when the
  * challenged `chunk_index` is at or past the leaf's chunk count.
  *
+ * The MMR proof is for the challenge's commitment, which `respond_to_challenge`
+ * verifies against. A proof that does not verify against it throws here,
+ * before the caller submits `respond_to_challenge` and pays its fee.
+ *
  * `signer` authenticates the `GET /mmr_proof` step, which is Reader-gated on
  * private buckets — a bucket member works, and so does the provider's own
  * account (the node grants its own account every Reader check).
@@ -461,26 +465,41 @@ export async function fetchChallengeProof(
         challengeId.index,
     );
 
-  const { leaf, items } = await getMmrProof(providerUrl, challenge.bucket_id, challenge.target.leaf_index, {
+  const commitment: MmrProofCommitment = {
+    mmrRoot: hexToBytes(challenge.commitment.mmr_root),
+    startSeq: challenge.commitment.start_seq,
+    leafCount: challenge.commitment.leaf_count,
+  };
+  const proof = await getMmrProof(providerUrl, challenge.bucket_id, commitment, challenge.target.leaf_index, {
     signer,
   });
-  const mmr_proof = {
-    leaf: {
-      leaf_version: leaf.leafVersion,
-      data_root: toHex(leaf.dataRoot),
-      data_size: leaf.dataSize,
-      total_size: leaf.totalSize,
-    },
-    items: items.map((h) => toHex(h)),
+  if (!verifyMmrProof(proof, challenge.target.leaf_index, commitment.mmrRoot, commitment.leafCount))
+    throw new Error(
+      "Provider /mmr_proof does not prove leaf " +
+        challenge.target.leaf_index +
+        " of the challenged commitment (root " +
+        toHex(commitment.mmrRoot) +
+        ", " +
+        commitment.leafCount +
+        " leaves): the provider node may be older than this client",
+    );
+
+  // `respond_to_challenge` takes the proof as hex with snake_case fields.
+  const leaf = {
+    leaf_version: proof.leaf.leafVersion,
+    data_root: toHex(proof.leaf.dataRoot),
+    data_size: proof.leaf.dataSize,
+    total_size: proof.leaf.totalSize,
   };
-  if (challenge.target.chunk_index >= BigInt(leafChunkCount(mmr_proof.leaf))) {
+  const mmr_proof = { leaf, items: proof.items.map((h) => toHex(h)) };
+  if (challenge.target.chunk_index >= BigInt(leafChunkCount(leaf))) {
     return Enum("ChunkOutOfRange", { mmr_proof });
   }
 
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
       bucket_id: challenge.bucket_id,
-      data_root: mmr_proof.leaf.data_root,
+      data_root: leaf.data_root,
       chunk_index: challenge.target.chunk_index,
     },
   });
@@ -500,11 +519,12 @@ export async function fetchChallengeProof(
 // A blob of any size is stored as its 256 KiB chunks plus the internal nodes
 // of its Merkle tree (`storage_primitives::merkle_tree`). Its
 // CID is the tree root (`computeDataRoot`). Blob reads are unauthenticated:
-// a blob's hash and its bucket id are enough to read it (#383/#396).
+// a blob's hash and its bucket id are enough to read it ("Read access at
+// Layer 0" in docs/design/scalable-web3-storage.md).
 
 /** Parallel requests per batch in the blob helpers. */
 const BLOB_CONCURRENCY = 4;
-/** Chunks requested per `GET /read` call. */
+/** Chunks requested per `GET /read` call. Equals the provider's `MAX_READ_CHUNKS`. */
 const READ_WINDOW_CHUNKS = 16;
 /** Attempts for idempotent requests (`PUT /node` and reads). */
 const IDEMPOTENT_RETRIES = 3;
@@ -644,6 +664,9 @@ export interface BucketCommitment {
 /**
  * `GET /commitment`: the provider's current MMR commitment for the bucket.
  * Returns `null` when the provider has no data for the bucket yet (404).
+ * Throws an `HttpError` with status 403 (`no_agreement`) when the provider
+ * has no agreement on the bucket, so a bucket the provider dropped does not
+ * read as empty.
  *
  * The read is Reader-gated on a private bucket: pass a member as `opts.signer`.
  * Anonymous works only while the bucket is public.
@@ -674,20 +697,36 @@ export async function getCommitment(
   };
 }
 
+/** The commitment a {@link getMmrProof} proof is for. */
+export interface MmrProofCommitment {
+  mmrRoot: Uint8Array;
+  /** First sequence number in the commitment; `leafIndex` counts from it. */
+  startSeq: bigint;
+  leafCount: bigint;
+}
+
 /**
- * `GET /mmr_proof`: the MMR leaf at `leafIndex` (counted from the bucket's
- * current `start_seq`) and its inclusion proof. Check it with
- * `verifyMmrProof` against a trusted MMR root. Reader-gated like
- * {@link getCommitment}: pass a member as `opts.signer` on a private bucket.
+ * `GET /mmr_proof`: the MMR leaf at `leafIndex`, counted from
+ * `commitment.startSeq`, in the MMR of `commitment`, and its inclusion proof.
+ * Check the proof with `verifyMmrProof` against `commitment`. Reader-gated
+ * like {@link getCommitment}: pass a member as `opts.signer` on a private
+ * bucket.
  */
 export async function getMmrProof(
   providerUrl: string,
   bucketId: bigint | number,
+  commitment: MmrProofCommitment,
   leafIndex: bigint | number,
   opts: ProviderHttpOpts & { signer?: ChainSigner } = {},
 ): Promise<MmrProof> {
   const res = await providerFetch(providerUrl, "/mmr_proof", {
-    params: { bucket_id: bucketId, leaf_index: leafIndex },
+    params: {
+      bucket_id: bucketId,
+      leaf_index: leafIndex,
+      mmr_root: toHex(commitment.mmrRoot),
+      start_seq: commitment.startSeq,
+      leaf_count: commitment.leafCount,
+    },
     sign: opts.signer ? { signer: opts.signer.signer, bucketId } : undefined,
     retries: opts.retries ?? IDEMPOTENT_RETRIES,
     fetch: opts.fetch,

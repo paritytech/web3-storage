@@ -8,8 +8,8 @@ use crate::Result;
 use storage_client::{ChunkingStrategy, StorageUserClient};
 use storage_primitives::{BucketId, Commitment, MmrProof};
 
-/// Layer 0 over HTTP. The client must not have encryption enabled: the
-/// stored bytes would then not match the CIDs the tree computes.
+/// The provider's blob routes over HTTP. The client must not have encryption
+/// enabled: the stored bytes would then not match the CIDs the tree computes.
 #[async_trait::async_trait]
 impl BlobStore for StorageUserClient {
     async fn put_blob(&self, bucket_id: BucketId, data: &[u8]) -> Result<Cid> {
@@ -35,14 +35,17 @@ impl BlobStore for StorageUserClient {
 
     async fn commitment(&self, bucket_id: BucketId) -> Result<Option<Commitment>> {
         let commitment = self.get_commitment_if_exists(bucket_id).await?;
-        Ok(commitment.map(|c| Commitment {
-            mmr_root: c.mmr_root,
-            start_seq: c.start_seq,
-            leaf_count: c.leaf_count,
-        }))
+        Ok(commitment.map(|c| c.commitment()))
     }
 
-    async fn mmr_proof(&self, bucket_id: BucketId, leaf_index: u64) -> Result<MmrProof> {
-        Ok(self.get_mmr_proof(bucket_id, leaf_index).await?)
+    async fn mmr_proof(
+        &self,
+        bucket_id: BucketId,
+        commitment: &Commitment,
+        leaf_index: u64,
+    ) -> Result<MmrProof> {
+        Ok(self
+            .get_mmr_proof(bucket_id, commitment, leaf_index)
+            .await?)
     }
 }

@@ -2,7 +2,7 @@
 
 //! Adapts [`StorageBackend`] to [`ChallengeProofSource`], so the challenge
 //! responder can be given proof access without depending on the rest of
-//! [`ProviderState`](crate::ProviderState).
+//! `provider_http::ProviderState`.
 
 use provider_challenge::{ChallengeError, ChallengeProofSource, ProofTarget};
 use provider_storage::{Error, StorageBackend};
@@ -31,9 +31,9 @@ impl ChallengeProofSource for StorageProofSource {
         self.0
             .get_mmr_proof_for_commitment(bucket_id, commitment, leaf_index)
             .map_err(|e| match e {
-                Error::BucketNotFound(_)
-                | Error::LeafNotFound { .. }
-                | Error::LeavesNotHeld { .. } => ChallengeError::ProofDataMissing { target },
+                Error::BucketNotFound(_) | Error::LeavesNotHeld { .. } => {
+                    ChallengeError::ProofDataMissing { target }
+                }
                 e => ChallengeError::Storage {
                     reason: e.to_string(),
                 },

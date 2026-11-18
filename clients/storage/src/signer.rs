@@ -106,7 +106,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_header_passes_provider_verification() {
-        use provider_auth::{AuthError, Authenticator, RequiredRole, StaticMembershipResolver};
+        use provider_auth::{AuthError, Authenticator, StaticMembershipResolver};
         use sp_runtime::AccountId32;
         use storage_primitives::Role;
 
@@ -120,17 +120,17 @@ mod tests {
 
         let header = signer.auth_header("PUT", 7);
         assert!(auth
-            .require_role(Some(&header), "PUT", 7, RequiredRole::Writer)
+            .require_role(Some(&header), "PUT", 7, Role::Writer)
             .await
             .is_ok());
         // The signature covers the method and the bucket id.
         assert!(matches!(
-            auth.require_role(Some(&header), "PUT", 8, RequiredRole::Writer)
+            auth.require_role(Some(&header), "PUT", 8, Role::Writer)
                 .await,
             Err(AuthError::AuthRequired)
         ));
         assert!(matches!(
-            auth.require_role(Some(&header), "GET", 7, RequiredRole::Reader)
+            auth.require_role(Some(&header), "GET", 7, Role::Reader)
                 .await,
             Err(AuthError::AuthRequired)
         ));

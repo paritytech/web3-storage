@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 /**
- * S3 Client — s3-ui's thin adapter over the SDK's Web3Storage + layer0 pallet
+ * S3 Client — s3-ui's thin adapter over the SDK's Web3Storage + storage pallet
  * wrappers, mirroring drive-ui's DriveClient. Everything chain/HTTP-mechanical
  * (bucket/object ops, tx submission, provider resolution + caching, retry,
  * request signing, the negotiate→establish flow, MultiSignature encoding)
@@ -16,12 +16,12 @@ import { parachain } from "@polkadot-api/descriptors";
 import { getSs58AddressInfo } from "@polkadot-api/substrate-bindings";
 import {
   buildSignedTermsArgs,
-  httpFetch,
+  getMmrProof,
+  hexToBytes,
   leafChunkCount,
   negotiateTerms,
   parseMultiaddrToUrl,
   requireOneEvent,
-  signProviderRequest,
   resolveExpiredChallenge as resolveExpiredChallengeTx,
   getBucketVisibility as getBucketVisibilityQuery,
   setBucketVisibility as setBucketVisibilityTx,
@@ -209,7 +209,7 @@ export class S3Client {
   /**
    * Redeem provider-signed terms in `create_bucket_with_primary`
    * (negotiate→establish). The terms are pre-negotiated by the create-bucket
-   * UI. Returns the new Layer 0 bucket id.
+   * UI. Returns the new bucket id.
    */
   async createBucket(
     providerAccount: string,
@@ -237,7 +237,7 @@ export class S3Client {
     return fetchBucketUsage(await this.getProviderUrl(bucketId), bucketId, this.owner ?? undefined);
   }
 
-  // ── S3 Object operations (the bucket's own tree, via the SDK's Objects) ────
+  // ── S3 Object operations (the bucket's own tree, via the SDK's S3Bucket) ────
 
   async putObject(
     bucketId: bigint,
@@ -339,7 +339,7 @@ export class S3Client {
   /**
    * Open a checkpoint challenge against a provider. The chain submission
    * (finalized — the challenge id must survive to the response) goes through
-   * the SDK's `submitTx`; we extract `respond_by` ourselves because layer0's
+   * the SDK's `submitTx`; we extract `respond_by` ourselves because the storage package's
    * `challengeCheckpoint` wrapper returns only the id and forces chunk 0.
    */
   async challengeCheckpoint(
@@ -370,21 +370,13 @@ export class S3Client {
     };
   }
 
-  async getLeafChunkCount(bucketId: bigint, leafIndex: bigint): Promise<number> {
+  /** Chunk count of leaf `leafIndex`, counted from `checkpoint.startSeq`, of `checkpoint`. */
+  async getLeafChunkCount(bucketId: bigint, checkpoint: CheckpointInfo, leafIndex: bigint): Promise<number> {
     const providerUrl = await this.getProviderUrl(bucketId);
-    const params = new URLSearchParams({
-      bucket_id: Number(bucketId).toString(),
-      leaf_index: leafIndex.toString(),
-    });
+    const commitment = { ...checkpoint, mmrRoot: hexToBytes(checkpoint.mmrRoot) };
     // Reader-gated on private buckets — sign as the connected owner.
-    const headers = await signProviderRequest(this.requireOwner().signer, "GET", bucketId);
-    const response = await httpFetch(`${providerUrl}/mmr_proof?${params.toString()}`, { headers });
-    if (!response.ok) {
-      throw new Error(`MMR proof request failed: ${response.status}`);
-    }
-    const result = await response.json();
-    if (!result.leaf) throw new Error("MMR proof response has no leaf");
-    return leafChunkCount(result.leaf);
+    const { leaf } = await getMmrProof(providerUrl, bucketId, commitment, leafIndex, { signer: this.requireOwner() });
+    return leafChunkCount({ leaf_version: leaf.leafVersion, data_size: leaf.dataSize });
   }
 
   /** Slash the provider of a challenge that expired unanswered; anyone may call it. */

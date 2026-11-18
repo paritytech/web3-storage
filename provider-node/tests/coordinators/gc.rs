@@ -8,17 +8,17 @@
 
 use parking_lot::Mutex;
 use provider_events::EVENT_CHANNEL_CAPACITY;
+use provider_garbage_collector::{CanonicalBucketState, GcChainClient, GcError};
+use provider_garbage_collector::{GcCoordinator, GcCoordinatorConfig, GcCoordinatorHandle};
+use provider_http::ProviderState;
 use provider_storage::{ChunkTreeNode, GarbageCollectorConfiguration};
-use provider_types::ChainClientError;
 use sp_core::H256;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{hash_leaf, BucketId};
-use storage_provider_node::{
-    CanonicalBucketState, GcChainClient, GcCoordinator, GcCoordinatorConfig, ProviderState,
-};
+use storage_provider_node::{BackendGcStorage, BlockEventGcSource};
 
 use super::{signed_receipt, test_state, wait_for};
 
@@ -93,7 +93,7 @@ impl GcChainClient for MockGcChainClient {
     async fn fetch_canonical_bucket(
         &self,
         bucket_id: BucketId,
-    ) -> Result<CanonicalBucketState, ChainClientError> {
+    ) -> Result<CanonicalBucketState, GcError> {
         self.reads.fetch_add(1, Ordering::Relaxed);
         let bucket = self
             .buckets
@@ -110,30 +110,27 @@ impl GcChainClient for MockGcChainClient {
         })
     }
 
-    async fn fetch_agreement_max_bytes(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<Option<u64>, ChainClientError> {
+    async fn fetch_agreement_max_bytes(&self, bucket_id: BucketId) -> Result<Option<u64>, GcError> {
         Ok(self.agreements.lock().get(&bucket_id).copied())
     }
 
-    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, ChainClientError> {
+    async fn has_pending_challenges(&self, bucket_id: BucketId) -> Result<bool, GcError> {
         Ok(self.pending.lock().contains(&bucket_id))
     }
 }
 
 /// Commit `n` single-chunk leaves into a bucket, returning their hashes.
 fn seed_bucket(state: &Arc<ProviderState>, bucket_id: BucketId, n: u8) -> Vec<H256> {
-    state.storage.init_bucket(bucket_id, u64::MAX).unwrap();
+    state.storage().init_bucket(bucket_id, u64::MAX).unwrap();
     (0..n)
         .map(|i| {
             let data = vec![i; 8];
             let hash = hash_leaf(&data);
             state
-                .storage
+                .storage()
                 .store_node(bucket_id, hash, ChunkTreeNode::Chunk(data))
                 .unwrap();
-            state.storage.commit(bucket_id, vec![hash]).unwrap();
+            state.storage().commit(bucket_id, vec![hash]).unwrap();
             hash
         })
         .collect()
@@ -143,12 +140,12 @@ fn seed_bucket(state: &Arc<ProviderState>, bucket_id: BucketId, n: u8) -> Vec<H2
 /// signed by the test admin.
 fn prune_with_receipt(state: &Arc<ProviderState>, bucket_id: BucketId, new_start_seq: u64) {
     let mmr_root = state
-        .storage
+        .storage()
         .delete_before(bucket_id, new_start_seq)
         .unwrap()
         .mmr_root;
     state
-        .storage
+        .storage()
         .attach_deletion_receipt(
             bucket_id,
             signed_receipt(bucket_id, mmr_root, new_start_seq),
@@ -161,7 +158,7 @@ fn start_gc(
     state: Arc<ProviderState>,
     mock: MockGcChainClient,
 ) -> (
-    storage_provider_node::GcCoordinatorHandle,
+    GcCoordinatorHandle,
     tokio::sync::broadcast::Sender<provider_events::BlockEvent>,
 ) {
     let (handle, tx, _mock) = start_gc_shared(state, Arc::new(mock));
@@ -174,7 +171,7 @@ fn start_gc_shared(
     state: Arc<ProviderState>,
     mock: Arc<MockGcChainClient>,
 ) -> (
-    storage_provider_node::GcCoordinatorHandle,
+    GcCoordinatorHandle,
     tokio::sync::broadcast::Sender<provider_events::BlockEvent>,
     Arc<MockGcChainClient>,
 ) {
@@ -182,7 +179,12 @@ fn start_gc_shared(
     let config = GcCoordinatorConfig {
         scan_interval: Duration::from_millis(50),
     };
-    let handle = GcCoordinator::new(config, state, Arc::clone(&mock) as Arc<_>).start(rx);
+    let handle = GcCoordinator::new(
+        config,
+        Arc::new(BackendGcStorage(state.storage().clone())),
+        Arc::clone(&mock) as Arc<_>,
+    )
+    .start(Box::new(BlockEventGcSource(rx)));
     (handle, tx, mock)
 }
 
@@ -203,18 +205,18 @@ async fn erases_after_canonical_checkpoint_with_receipt() {
 
     assert!(
         wait_for(5, 25, || async {
-            state.storage.pruned_ranges(1).unwrap().is_empty()
-                && state.storage.get_node(&hashes[0]).unwrap().is_none()
+            state.storage().pruned_ranges(1).unwrap().is_empty()
+                && state.storage().get_node(&hashes[0]).unwrap().is_none()
         })
         .await,
         "pruned range should be physically erased"
     );
     // Quota credited exactly for the erased leaf; the live one stays charged.
-    assert_eq!(state.storage.stats().bytes, used_before - 8);
-    assert!(state.storage.get_node(&hashes[1]).unwrap().is_some());
+    assert_eq!(state.storage().stats().bytes, used_before - 8);
+    assert!(state.storage().get_node(&hashes[1]).unwrap().is_some());
     // The receipt outlives the erasure — it is the permanent defense.
     assert!(state
-        .storage
+        .storage()
         .deletion_receipt_covering(1, 0)
         .unwrap()
         .is_some());
@@ -226,7 +228,7 @@ async fn missing_receipt_blocks_erasure() {
     let (state, _dir) = test_state();
     seed_bucket(&state, 1, 2);
     // Prune without confirming: no admin receipt held.
-    state.storage.delete_before(1, 1).unwrap();
+    state.storage().delete_before(1, 1).unwrap();
 
     let mock = MockGcChainClient::new()
         .with_bucket(1, Some(1))
@@ -235,7 +237,7 @@ async fn missing_receipt_blocks_erasure() {
 
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
-        state.storage.pruned_ranges(1).unwrap().len(),
+        state.storage().pruned_ranges(1).unwrap().len(),
         1,
         "stash must survive until the admin's deletion receipt is held"
     );
@@ -256,7 +258,7 @@ async fn canonical_behind_blocks_erasure() {
 
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
-        state.storage.pruned_ranges(1).unwrap().len(),
+        state.storage().pruned_ranges(1).unwrap().len(),
         1,
         "stash must survive while the canonical checkpoint lags"
     );
@@ -277,7 +279,7 @@ async fn pending_challenge_blocks_erasure() {
 
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
-        state.storage.pruned_ranges(1).unwrap().len(),
+        state.storage().pruned_ranges(1).unwrap().len(),
         1,
         "stash must survive while a challenge is pending"
     );
@@ -297,13 +299,13 @@ async fn missing_chain_row_condemns_and_erases_bucket() {
 
     assert!(
         wait_for(5, 25, || async {
-            state.storage.get_bucket(1).unwrap().is_none()
+            state.storage().get_bucket(1).unwrap().is_none()
         })
         .await,
         "bucket row should be gone after teardown erasure"
     );
     for hash in hashes {
-        assert!(state.storage.get_node(&hash).unwrap().is_none());
+        assert!(state.storage().get_node(&hash).unwrap().is_none());
     }
     handle.stop();
 }
@@ -325,20 +327,20 @@ async fn ended_agreement_condemns_bucket_and_rejects_writes_until_erased() {
     mock.agreements.lock().remove(&1);
 
     assert!(
-        wait_for(5, 25, || async { state.storage.is_condemned(1).unwrap() }).await,
+        wait_for(5, 25, || async { state.storage().is_condemned(1).unwrap() }).await,
         "bucket should be condemned once the agreement is gone"
     );
 
     let data = vec![9u8; 8];
     let hash = hash_leaf(&data);
     let stored = state
-        .storage
+        .storage()
         .store_node(1, hash, ChunkTreeNode::Chunk(data));
     assert!(
         matches!(stored, Err(provider_storage::Error::BucketCondemned(1))),
         "store_node on a condemned bucket: {stored:?}"
     );
-    let committed = state.storage.commit(1, vec![hashes[0]]);
+    let committed = state.storage().commit(1, vec![hashes[0]]);
     assert!(
         matches!(committed, Err(provider_storage::Error::BucketCondemned(1))),
         "commit on a condemned bucket: {committed:?}"
@@ -347,20 +349,20 @@ async fn ended_agreement_condemns_bucket_and_rejects_writes_until_erased() {
     mock.pending.lock().remove(&1);
     assert!(
         wait_for(5, 25, || async {
-            state.storage.get_bucket(1).unwrap().is_none()
+            state.storage().get_bucket(1).unwrap().is_none()
         })
         .await,
         "bucket row should be gone once the challenge clears"
     );
     for hash in hashes {
-        assert!(state.storage.get_node(&hash).unwrap().is_none());
+        assert!(state.storage().get_node(&hash).unwrap().is_none());
     }
     handle.stop();
 }
 
 fn last_scanned_block(state: &Arc<ProviderState>) -> u64 {
     state
-        .storage
+        .storage()
         .garbage_collector_configuration()
         .unwrap()
         .last_scanned_block
@@ -368,7 +370,7 @@ fn last_scanned_block(state: &Arc<ProviderState>) -> u64 {
 
 fn set_last_scanned_block(state: &Arc<ProviderState>, block: u64) {
     state
-        .storage
+        .storage()
         .set_garbage_collector_configuration(&GarbageCollectorConfiguration {
             last_scanned_block: block,
         })
@@ -387,13 +389,13 @@ async fn chain_state_older_than_one_already_read_does_not_condemn_the_bucket() {
     let (handle, _tx, mock) = start_gc_shared(state.clone(), mock);
 
     assert!(mock.wait_for_reads(2).await, "the GC should run passes");
-    assert!(!state.storage.is_condemned(1).unwrap());
+    assert!(!state.storage().is_condemned(1).unwrap());
     for hash in &hashes {
-        assert!(state.storage.get_node(hash).unwrap().is_some());
+        assert!(state.storage().get_node(hash).unwrap().is_some());
     }
     let data = vec![9u8; 8];
     state
-        .storage
+        .storage()
         .store_node(1, hash_leaf(&data), ChunkTreeNode::Chunk(data))
         .expect("the bucket still accepts writes");
     assert_eq!(
@@ -431,9 +433,9 @@ async fn chain_state_read_before_a_restart_still_protects_the_bucket() {
         behind.wait_for_reads(2).await,
         "the new coordinator should run passes"
     );
-    assert!(!state.storage.is_condemned(1).unwrap());
+    assert!(!state.storage().is_condemned(1).unwrap());
     for hash in &hashes {
-        assert!(state.storage.get_node(hash).unwrap().is_some());
+        assert!(state.storage().get_node(hash).unwrap().is_some());
     }
     assert_eq!(last_scanned_block(&state), 100);
     handle.stop();
@@ -452,9 +454,9 @@ async fn bucket_the_chain_had_not_created_yet_is_not_condemned() {
     let (handle, _tx, mock) = start_gc_shared(state.clone(), mock);
 
     assert!(mock.wait_for_reads(2).await, "the GC should run passes");
-    assert!(!state.storage.is_condemned(1).unwrap());
+    assert!(!state.storage().is_condemned(1).unwrap());
     for hash in &hashes {
-        assert!(state.storage.get_node(hash).unwrap().is_some());
+        assert!(state.storage().get_node(hash).unwrap().is_some());
     }
     handle.stop();
 }
@@ -476,8 +478,8 @@ async fn chain_state_older_than_one_already_read_does_not_erase_a_pruned_range()
     let (handle, _tx, mock) = start_gc_shared(state.clone(), mock);
 
     assert!(mock.wait_for_reads(2).await, "the GC should run passes");
-    assert_eq!(state.storage.pruned_ranges(1).unwrap().len(), 1);
-    assert!(state.storage.get_node(&hashes[0]).unwrap().is_some());
+    assert_eq!(state.storage().pruned_ranges(1).unwrap().len(), 1);
+    assert!(state.storage().get_node(&hashes[0]).unwrap().is_some());
     handle.stop();
 }
 
@@ -493,7 +495,7 @@ async fn condemned_bucket_is_erased_only_after_a_newer_block_confirms_it() {
     let (handle, _tx, mock) = start_gc_shared(state.clone(), mock);
 
     assert!(
-        wait_for(5, 25, || async { state.storage.is_condemned(1).unwrap() }).await,
+        wait_for(5, 25, || async { state.storage().is_condemned(1).unwrap() }).await,
         "the bucket is condemned at block 10"
     );
     assert!(
@@ -501,23 +503,23 @@ async fn condemned_bucket_is_erased_only_after_a_newer_block_confirms_it() {
         "the GC should run more passes"
     );
     assert!(
-        state.storage.is_condemned(1).unwrap(),
+        state.storage().is_condemned(1).unwrap(),
         "the bucket stays on disk, condemned, while only block 10 has been read"
     );
     for hash in &hashes {
-        assert!(state.storage.get_node(hash).unwrap().is_some());
+        assert!(state.storage().get_node(hash).unwrap().is_some());
     }
 
     mock.freeze_at(11);
     assert!(
         wait_for(5, 25, || async {
-            state.storage.get_bucket(1).unwrap().is_none()
+            state.storage().get_bucket(1).unwrap().is_none()
         })
         .await,
         "a read at block 11 that still shows the bucket gone erases it"
     );
     for hash in hashes {
-        assert!(state.storage.get_node(&hash).unwrap().is_none());
+        assert!(state.storage().get_node(&hash).unwrap().is_none());
     }
     handle.stop();
 }
@@ -531,7 +533,7 @@ async fn obligation_that_reappears_resets_the_erase_confirmation() {
     mock.freeze_at(10);
     let (handle, _tx, mock) = start_gc_shared(state.clone(), mock);
     assert!(
-        wait_for(5, 25, || async { state.storage.is_condemned(1).unwrap() }).await,
+        wait_for(5, 25, || async { state.storage().is_condemned(1).unwrap() }).await,
         "the bucket is condemned at block 10"
     );
 
@@ -559,7 +561,7 @@ async fn obligation_that_reappears_resets_the_erase_confirmation() {
     );
     for hash in &hashes {
         assert!(
-            state.storage.get_node(hash).unwrap().is_some(),
+            state.storage().get_node(hash).unwrap().is_some(),
             "the first read at block 20 must not erase: the obligation was present at 11"
         );
     }
@@ -567,7 +569,7 @@ async fn obligation_that_reappears_resets_the_erase_confirmation() {
     mock.freeze_at(21);
     assert!(
         wait_for(5, 25, || async {
-            state.storage.get_bucket(1).unwrap().is_none()
+            state.storage().get_bucket(1).unwrap().is_none()
         })
         .await,
         "a second read at block 21 confirms the obligation is gone"
@@ -592,7 +594,7 @@ async fn quota_synced_from_agreement() {
             let hash = hash_leaf(&data);
             matches!(
                 state
-                    .storage
+                    .storage()
                     .store_node(1, hash, ChunkTreeNode::Chunk(data)),
                 Err(provider_storage::Error::QuotaExceeded { .. })
             )
@@ -618,7 +620,7 @@ async fn converges_local_prune_on_canonical_start_seq() {
     assert!(
         wait_for(5, 25, || async {
             state
-                .storage
+                .storage()
                 .get_bucket(1)
                 .unwrap()
                 .is_some_and(|info| info.start_seq == 1)
@@ -628,7 +630,7 @@ async fn converges_local_prune_on_canonical_start_seq() {
     );
     // The converged prune is stashed like any other; without an admin
     // receipt it stays stashed.
-    assert_eq!(state.storage.pruned_ranges(1).unwrap().len(), 1);
+    assert_eq!(state.storage().pruned_ranges(1).unwrap().len(), 1);
     handle.stop();
 }
 
@@ -654,7 +656,7 @@ async fn top_up_raises_the_enforced_quota() {
         wait_for(5, 25, || async {
             matches!(
                 state
-                    .storage
+                    .storage()
                     .store_node(1, hash, ChunkTreeNode::Chunk(vec![9u8; 8])),
                 Err(provider_storage::Error::QuotaExceeded { .. })
             )
@@ -673,7 +675,7 @@ async fn top_up_raises_the_enforced_quota() {
     assert!(
         wait_for(5, 25, || async {
             state
-                .storage
+                .storage()
                 .store_node(1, hash, ChunkTreeNode::Chunk(vec![9u8; 8]))
                 .is_ok()
         })

@@ -35,7 +35,7 @@ otherwise — or a PR number via `gh pr view` / `gh pr diff`):
    - Precompiles / Solidity examples → `smart-contracts.md`
    - Encryption paths → `CLIENT_SIDE_ENCRYPTION.md`
    - S3 interface metadata → `S3_METADATA_INDEX.md`
-   - Layer 1 file system → `L1_design_implementation.md`
+   - File system in a bucket → `L1_design_implementation.md`
 
    Check each draft's header before relying on it — some are explicitly marked as
    superseded or removed (`provider-initiated-checkpoints.md` archives code deleted

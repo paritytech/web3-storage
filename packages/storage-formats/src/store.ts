@@ -11,7 +11,7 @@ import {
   uploadBlob,
   type ChainSigner,
   type ProviderHttpOpts,
-} from "@web3-storage/layer0";
+} from "@web3-storage/storage";
 
 import type { BlobStore } from "../pkg/storage_formats.js";
 
@@ -51,6 +51,6 @@ export function providerBlobStore(
       await commitDataRoots(providerUrl, bucketId, cids, requireSigner(), http);
     },
     commitment: () => getCommitment(providerUrl, bucketId, reads),
-    mmrProof: (leafIndex) => getMmrProof(providerUrl, bucketId, leafIndex, reads),
+    mmrProof: (commitment, leafIndex) => getMmrProof(providerUrl, bucketId, commitment, leafIndex, reads),
   };
 }

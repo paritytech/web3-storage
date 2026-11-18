@@ -4,10 +4,10 @@
  * In-memory provider node for unit tests. Implements the Layer 0 routes the
  * blob helpers and the file-system tree use (`PUT/GET /node`, `POST
  * /commit`, `GET /read`, `GET /commitment`, `GET /mmr_proof`) with the same
- * checks and JSON shapes as `provider-node/src/api.rs`. Signatures are not
+ * checks and JSON shapes as `crates/providers/http/src/api.rs`. Signatures are not
  * verified; a write and a Reader-gated read (`GET /commitment`, `GET
  * /mmr_proof`) only need an `Authorization` header, as on a private bucket.
- * Exported for tests as `@web3-storage/layer0/testing`, not from the package
+ * Exported for tests as `@web3-storage/storage/testing`, not from the package
  * root.
  */
 
@@ -89,6 +89,12 @@ export class FakeProvider {
   readonly nodes = new Map<string, StoredNode>();
   readonly buckets = new Map<string, Leaf[]>();
   readonly calls: FakeCall[] = [];
+  private readonly endedAgreements = new Set<string>();
+
+  /** End this provider's agreement on a bucket: from then on every request to it answers 403 `no_agreement`. */
+  endAgreement(bucketId: bigint | number): void {
+    this.endedAgreements.add(String(bucketId));
+  }
 
   /** Replace a stored node's data without changing its key (simulates a bad provider). */
   tamper(hash: string, data: Uint8Array): void {
@@ -123,13 +129,15 @@ export class FakeProvider {
       case "GET /commitment":
         return authed ? this.commitment(query.bucket_id) : json(401, { error: "unauthorized" });
       case "GET /mmr_proof":
-        return authed ? this.mmrProof(query.bucket_id, Number(query.leaf_index)) : json(401, { error: "unauthorized" });
+        return authed ? this.mmrProof(query) : json(401, { error: "unauthorized" });
       default:
         return json(404, { error: `no route ${route}` });
     }
   }) as typeof fetch;
 
   private putNode(body: { bucket_id: number; hash: string; data?: string | null; children?: string[] | null }): Response {
+    const agreementError = this.requireAgreement(String(body.bucket_id));
+    if (agreementError) return agreementError;
     const hash = body.hash.toLowerCase();
     const parsed = parseNode(body);
     if (!parsed) return json(400, { error: "invalid_node" });
@@ -155,6 +163,8 @@ export class FakeProvider {
   }
 
   private commit(body: { bucket_id: number; data_roots: string[] }): Response {
+    const agreementError = this.requireAgreement(String(body.bucket_id));
+    if (agreementError) return agreementError;
     const roots = body.data_roots.map((r) => r.toLowerCase());
     const missing = roots.find((r) => !this.nodes.has(r));
     if (missing) return json(404, { error: "root_not_found", details: { data_root: missing } });
@@ -182,10 +192,16 @@ export class FakeProvider {
     return bagPeaks(mmrPeaks(leaves.map(leafHash)).map((p) => p.levels[p.levels.length - 1][0]));
   }
 
-  /** `require_bucket`: the query names a bucket, and the provider has data for it. */
+  /** `require_agreement`: the provider has an agreement on the bucket. */
+  private requireAgreement(bucketId: string): Response | null {
+    if (!this.endedAgreements.has(bucketId)) return null;
+    return json(403, { error: "no_agreement", details: { bucket_id: Number(bucketId) } });
+  }
+
+  /** `require_bucket`: the query names a bucket the provider has an agreement on and data for. */
   private requireBucket(bucketId: string | undefined): Response | null {
     if (bucketId === undefined) return json(400, { error: "bucket_id_required" });
-    return this.buckets.has(bucketId) ? null : json(404, { error: "bucket_not_found" });
+    return this.requireAgreement(bucketId) ?? (this.buckets.has(bucketId) ? null : json(404, { error: "bucket_not_found" }));
   }
 
   private getNode(query: Record<string, string>): Response {
@@ -241,8 +257,9 @@ export class FakeProvider {
   }
 
   private commitment(bucketId: string): Response {
-    const leaves = this.buckets.get(bucketId);
-    if (!leaves) return json(404, { error: "bucket_not_found" });
+    const bucketError = this.requireBucket(bucketId);
+    if (bucketError) return bucketError;
+    const leaves = this.buckets.get(bucketId)!;
     return json(200, {
       bucket_id: Number(bucketId),
       mmr_root: toHex(this.mmrRoot(leaves)),
@@ -252,11 +269,20 @@ export class FakeProvider {
     });
   }
 
-  private mmrProof(bucketId: string, leafIndex: number): Response {
-    const leaves = this.buckets.get(bucketId);
-    if (!leaves) return json(404, { error: "bucket_not_found" });
+  private mmrProof(query: Record<string, string>): Response {
+    const { bucket_id, leaf_index, mmr_root, start_seq, leaf_count } = query;
+    if (!(leaf_index && mmr_root && start_seq && leaf_count)) return json(400, { error: "invalid_query" });
+    const bucketError = this.requireBucket(bucket_id);
+    if (bucketError) return bucketError;
+    const held = this.buckets.get(bucket_id)!;
+    const start = Number(start_seq);
+    const end = start + Number(leaf_count);
+    if (end > held.length) return json(404, { error: "leaves_not_held" });
+    const leaves = held.slice(start, end);
+    const leafIndex = Number(leaf_index);
     const leaf = leaves[leafIndex];
-    if (!leaf) return json(404, { error: "not_found" });
+    if (!leaf || toHex(this.mmrRoot(leaves)) !== mmr_root.toLowerCase())
+      return json(404, { error: "commitment_not_reproducible" });
     const peaks = mmrPeaks(leaves.map(leafHash));
     const peakIndex = peaks.findIndex((p) => leafIndex >= p.start && leafIndex < p.start + p.size);
     const peakRoots = peaks.map((p) => p.levels[p.levels.length - 1][0]);

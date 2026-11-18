@@ -16,7 +16,7 @@ use crate::verification::ClientVerifier;
 use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use sp_core::H256;
-use storage_primitives::{hash_children, hash_leaf, BucketId, DEFAULT_CHUNK_SIZE};
+use storage_primitives::{hash_children, hash_leaf, BucketId, DEFAULT_CHUNK_SIZE, MAX_READ_CHUNKS};
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {
@@ -197,7 +197,8 @@ impl StorageUserClient {
     /// Download data from a provider using the data root.
     ///
     /// This will:
-    /// 1. Request chunks from the provider
+    /// 1. Request chunks from the provider, in several `/read` requests when the
+    ///    range spans more than [`MAX_READ_CHUNKS`] chunks
     /// 2. Verify each chunk's hash
     /// 3. Optionally verify Merkle proofs
     /// 4. Reassemble the data
@@ -220,7 +221,79 @@ impl StorageUserClient {
         offset: u64,
         length: u64,
     ) -> ClientResult<Vec<u8>> {
+        let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
+        let start_chunk = offset / chunk_size;
+        let end_chunk = offset.saturating_add(length).div_ceil(chunk_size);
+        let mut data = self
+            .read_chunks(bucket_id, data_root, start_chunk, end_chunk)
+            .await?;
+
+        // Trim to requested range
+        let start = ((offset % chunk_size) as usize).min(data.len());
+        let end = start.saturating_add(length as usize).min(data.len());
+        data.truncate(end);
+        data.drain(..start);
+
+        // Decrypt after reassembly if encryption is enabled
+        if let Some(cipher) = &self.cipher {
+            cipher.decrypt(&data)
+        } else {
+            Ok(data)
+        }
+    }
+
+    /// Download all data under `data_root`. The caller does not need to know
+    /// its size.
+    pub async fn download_full(
+        &self,
+        bucket_id: BucketId,
+        data_root: &H256,
+    ) -> ClientResult<Vec<u8>> {
+        self.download(bucket_id, data_root, 0, u64::MAX).await
+    }
+
+    /// Read chunks `start_chunk..end_chunk` of `data_root` in pages of at most
+    /// [`MAX_READ_CHUNKS`] chunks. The provider returns fewer chunks than
+    /// requested at the end of the data, which ends the read.
+    async fn read_chunks(
+        &self,
+        bucket_id: BucketId,
+        data_root: &H256,
+        start_chunk: u64,
+        end_chunk: u64,
+    ) -> ClientResult<Vec<u8>> {
+        let mut data = Vec::new();
+        let mut next = start_chunk;
+        while next < end_chunk {
+            let count = (end_chunk - next).min(MAX_READ_CHUNKS);
+            let returned = self
+                .read_page(bucket_id, data_root, next, count, &mut data)
+                .await?;
+            // More chunks than requested is a provider bug, not data to trust.
+            if returned > count {
+                return Err(ClientError::VerificationFailed);
+            }
+            if returned < count {
+                break;
+            }
+            next += count;
+        }
+        Ok(data)
+    }
+
+    /// Send one `/read` for `count` chunks from `start_chunk`, verify each
+    /// chunk's hash and append the chunk bytes to `data`. Returns the number of
+    /// chunks the provider returned.
+    async fn read_page(
+        &self,
+        bucket_id: BucketId,
+        data_root: &H256,
+        start_chunk: u64,
+        count: u64,
+        data: &mut Vec<u8>,
+    ) -> ClientResult<u64> {
         let provider_url = self.base.get_provider_url()?;
+        let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
 
         let response = self
             .base
@@ -229,8 +302,8 @@ impl StorageUserClient {
             .query(&[
                 ("bucket_id", bucket_id.to_string()),
                 ("data_root", format!("{:#x}", data_root)),
-                ("offset", offset.to_string()),
-                ("length", length.to_string()),
+                ("offset", (start_chunk * chunk_size).to_string()),
+                ("length", (count * chunk_size).to_string()),
             ])
             .send()
             .await?;
@@ -243,8 +316,7 @@ impl StorageUserClient {
         }
 
         let read_response: ReadResponse = response.json().await?;
-
-        let mut data = Vec::new();
+        let returned = read_response.chunks.len() as u64;
         for chunk in read_response.chunks {
             let chunk_data = BASE64
                 .decode(&chunk.data)
@@ -258,33 +330,7 @@ impl StorageUserClient {
 
             data.extend_from_slice(&chunk_data);
         }
-
-        // Trim to requested range
-        let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
-        let start = (offset % chunk_size) as usize;
-        let end = start + length as usize;
-        let trimmed = if end <= data.len() {
-            data[start..end].to_vec()
-        } else {
-            data[start..].to_vec()
-        };
-
-        // Decrypt after reassembly if encryption is enabled
-        if let Some(cipher) = &self.cipher {
-            cipher.decrypt(&trimmed)
-        } else {
-            Ok(trimmed)
-        }
-    }
-
-    /// Download entire file by data root.
-    pub async fn download_full(
-        &self,
-        bucket_id: BucketId,
-        data_root: &H256,
-        total_size: u64,
-    ) -> ClientResult<Vec<u8>> {
-        self.download(bucket_id, data_root, 0, total_size).await
+        Ok(returned)
     }
 
     /// Read a single node by its hash.
@@ -622,7 +668,8 @@ impl StorageUserClient {
 
     /// Like [`Self::get_commitment`], but returns `None` when the provider
     /// answers 404 (it has no record of the bucket: it has received no data
-    /// for it yet).
+    /// for it yet). A provider with no agreement on the bucket answers 403
+    /// `no_agreement`; this returns an error.
     pub async fn get_commitment_if_exists(
         &self,
         bucket_id: BucketId,
@@ -652,12 +699,14 @@ impl StorageUserClient {
             .map_err(|e| ClientError::Serialization(e.to_string()))
     }
 
-    /// Get the MMR proof of the leaf at `leaf_index` of the bucket's current
-    /// MMR (`GET /mmr_proof`). The proof is not verified here: check it with
-    /// [`storage_primitives::verify_mmr_proof`] against a trusted MMR root.
+    /// Get the MMR proof of the leaf at `leaf_index`, counted from
+    /// `commitment.start_seq`, in the MMR of `commitment` (`GET /mmr_proof`).
+    /// The proof is not verified here: check it with
+    /// [`storage_primitives::verify_mmr_proof`] against `commitment`.
     pub async fn get_mmr_proof(
         &self,
         bucket_id: BucketId,
+        commitment: &storage_primitives::Commitment,
         leaf_index: u64,
     ) -> ClientResult<storage_primitives::MmrProof> {
         let provider_url = self.base.get_provider_url()?;
@@ -668,6 +717,9 @@ impl StorageUserClient {
             .query(&[
                 ("bucket_id", bucket_id.to_string()),
                 ("leaf_index", leaf_index.to_string()),
+                ("mmr_root", format!("{:#x}", commitment.mmr_root)),
+                ("start_seq", commitment.start_seq.to_string()),
+                ("leaf_count", commitment.leaf_count.to_string()),
             ]);
         let response = self.sign(req, "GET", bucket_id).send().await?;
 
@@ -877,6 +929,15 @@ pub struct CommitmentResponse {
 }
 
 impl CommitmentResponse {
+    /// The `(mmr_root, start_seq, leaf_count)` the provider signed.
+    pub fn commitment(&self) -> storage_primitives::Commitment {
+        storage_primitives::Commitment {
+            mmr_root: self.mmr_root,
+            start_seq: self.start_seq,
+            leaf_count: self.leaf_count,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn new(
         bucket_id: BucketId,

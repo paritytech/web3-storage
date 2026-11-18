@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The file tree against an in-process provider node, over Layer 0 routes
+//! The file tree against an in-process provider node, over the blob routes
 //! only. No chain is needed.
 
 use client_test_support::{make_client, start_test_provider};
@@ -148,11 +148,11 @@ async fn write_commits_root_as_last_leaf() {
     tree.put_file("/a/f", b"x", DEFAULT_MIME_TYPE, vec![])
         .await
         .unwrap();
-    let commitment = client.get_commitment(BUCKET).await.unwrap();
+    let commitment = client.get_commitment(BUCKET).await.unwrap().commitment();
     // content, manifest, /a, root
     assert_eq!(commitment.leaf_count, 4);
     let last = client
-        .get_mmr_proof(BUCKET, commitment.leaf_count - 1)
+        .get_mmr_proof(BUCKET, &commitment, commitment.leaf_count - 1)
         .await
         .unwrap();
     assert_eq!(
@@ -183,7 +183,7 @@ async fn delete_and_errors_over_http() {
     ));
 }
 
-/// A raw Layer 0 commit becomes the last leaf; root discovery reports it.
+/// A commit of other data becomes the last leaf; root discovery reports it.
 #[tokio::test]
 async fn raw_commit_is_not_a_file_system_root() {
     let url = start_test_provider().await;

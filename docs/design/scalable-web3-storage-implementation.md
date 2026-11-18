@@ -129,8 +129,9 @@ signs a checkpoint while the old one is still bound.
    funding and interval) off-chain and signs them
 2. Anyone calls `add_replica_provider` with the signed terms on an
    existing bucket → `StorageAgreement` created with `ProviderRole::Replica`
-3. Replica syncs data autonomously from primaries, other replicas, or any data
-   holder willing to push it (everything is content-addressed and self-verifying)
+3. Replica syncs data autonomously from primaries or other replicas.
+   A replica accepts no writes, commits or deletes from anyone, and never
+   signs a commitment
 4. Replica calls `confirm_replica_sync` on-chain → receives per-sync payment, becomes challengeable
 
 **Binding contract:**
@@ -148,6 +149,10 @@ When `expires_at` is reached:
 2. Client calls `end_agreement` with pay/burn decision within settlement window
 3. Provider is no longer bound to store data
 4. Provider won't be included in future checkpoints
+5. From `expires_at`, the provider node rejects writes to the bucket with
+   `403 agreement_expired`; reads keep working until the agreement is removed
+6. Once the agreement is removed, the node rejects every request to the
+   bucket with `403 no_agreement`; it deletes no local data
 
 **Bucket without providers:** ending the last agreement removes the provider
 from `bucket.primary_providers` and deletes the agreement, not the bucket.
@@ -2120,13 +2125,13 @@ Three Reader-level exemptions, all resolved from the same cached lookup:
   account passes any Reader check. Provider accounts are never bucket
   members, and the operator can read the node's disk anyway; this is what
   lets the provider's own tooling (e.g. the dashboard building a challenge
-  response) fetch `/mmr_proof` on a private bucket. It never grants Writer
-  or Admin.
+  response) fetch `/mmr_proof` with the challenge's commitment on a private
+  bucket. It never grants Writer or Admin.
 
 **Hash-keyed reads are capability reads.** `GET /node`, `GET /read`,
 `GET /chunk_proof` and `POST /fetch_nodes` are keyed by a blake2-256 hash or
-data root and take a `bucket_id`. The node answers 404 `bucket_not_found` for
-a bucket it does not store, and serves the rest without authentication: the
+data root and take a `bucket_id`. The node answers 403 `no_agreement` for
+a bucket it has no agreement on, and serves the rest without authentication: the
 node store is a single content-addressed namespace with cross-bucket dedup, so
 the node cannot tell whether a hash belongs to the named bucket, and
 possession of the hash is the capability. Hashes of
@@ -2159,6 +2164,12 @@ Rules:
   delay. If a refetch then fails, the cached set is served for up to
   `--auth-max-stale` (default 5 minutes) before the request is refused with
   `503 membership_unavailable`.
+- Every bucket-scoped endpoint requires this node to have an agreement on the
+  bucket, otherwise `403 no_agreement`. `PUT /node`, `POST /commit` and
+  `POST /delete` also require the agreement to be unexpired, otherwise
+  `403 agreement_expired`. Until the node has read the anchor block from the
+  chain it cannot check expiry, so these three answer
+  `503 chain_state_not_ready`.
 - A member whose `Role` the provider cannot decode is not authorized — the
   lookup fails rather than falling back to a lesser role.
 
@@ -2201,6 +2212,12 @@ Response (400 Bad Request):
 { "error": "invalid_node" }               // both or neither of data and children
 { "error": "invalid_child_count", "expected": 2, "actual": 3 }
 { "error": "chunk_too_large", "size": 300000, "max": 262144 }
+
+Response (403 Forbidden):
+{ "error": "no_agreement", "details": { "bucket_id": 1234 } }
+// the node has no storage agreement on this bucket, so it has no quota for it
+{ "error": "agreement_expired", "details": { "bucket_id": 1234 } }
+// the node's agreement on this bucket reached expires_at, so it takes no more writes
 
 Response (507 Insufficient Storage):
 { "error": "quota_exceeded", "used": 1000000, "max": 1000000 }
@@ -2267,6 +2284,10 @@ Response (200 OK):
 Response (400 Bad Request):
 { "error": "root_not_found", "missing": ["0xroot2..."] }
 { "error": "non_canonical_tree", "data_root": "0xroot1..." }
+
+Response (403 Forbidden):
+{ "error": "no_agreement", "details": { "bucket_id": 1234 } }
+{ "error": "agreement_expired", "details": { "bucket_id": 1234 } }
 ```
 
 ### Read
@@ -2276,8 +2297,14 @@ Read Chunks
 ───────────
 GET /read?bucket_id=1&data_root=0x...&offset=0&length=2097152
 
-Capability read: keyed by data root, unauthenticated; 404 for a bucket the
-node does not store (see Authentication & RBAC).
+Capability read: keyed by data root, unauthenticated; 403 `no_agreement` for a
+bucket the node has no agreement on (see Authentication & RBAC).
+
+One request returns at most MAX_READ_CHUNKS = 16 chunks (4 MiB at the
+256 KiB CHUNK_SIZE). The read is unauthenticated and the provider builds the
+whole response in memory, so the bound limits what one request can make the
+node load. A client reads a longer range in consecutive requests. The
+provider computes offset + length with saturating addition.
 
 Response:
 {
@@ -2286,6 +2313,9 @@ Response:
     ...
   ]
 }
+
+Response (400 Bad Request):
+{ "error": "read_too_large", "details": { "requested": 20, "max": 16 } }
 ```
 
 ### Other Endpoints
@@ -2339,8 +2369,8 @@ Download Node
 ─────────────
 GET /node?bucket_id=1&hash=0x...
 
-Capability read: keyed by hash, unauthenticated; 404 for a bucket the node
-does not store (see Authentication & RBAC).
+Capability read: keyed by hash, unauthenticated; 403 `no_agreement` for a
+bucket the node has no agreement on (see Authentication & RBAC).
 
 Response (200 OK), a chunk:
 { "hash": "0xabc...", "data": "<base64 encoded>" }
@@ -2394,9 +2424,19 @@ for the checkpoint workflow, where the signature goes into the
 
 Get MMR Proof
 ─────────────
-GET /mmr_proof?bucket_id=0x...&leaf_index=5
+GET /mmr_proof?bucket_id=0x...&leaf_index=5&mmr_root=0x...&start_seq=0&leaf_count=42
 Authorization: Web3Storage <...>       # Reader; the provider's own account
                                        # also passes (operator self-auth)
+
+The proof is for the leaf at `leaf_index` (counted from `start_seq`) in the
+MMR of the commitment `(mmr_root, start_seq, leaf_count)`, rebuilt from the
+node's leaf history. All three parameters are required: the bucket's current
+MMR changes with every commit or prune, so a proof against it does not
+verify against a commitment the client read earlier. A challenge response
+passes the challenge's `commitment`, which `respond_to_challenge` verifies
+against. A reader passes the commitment it got from `GET /commitment` or the
+on-chain checkpoint. The client verifies the proof against that commitment
+before it uses the proof.
 
 Response:
 {
@@ -2404,12 +2444,24 @@ Response:
   "items": ["0x...", ...]
 }
 
+Response (400 Bad Request):
+  // a missing parameter, or an mmr_root that is not 32 bytes of hex
+
+Response (404 Not Found):
+{ "error": "bucket_not_found" }
+{ "error": "leaves_not_held", "details": { "start_seq": 0, "leaf_count": 42,
+  "local_start_seq": 10, "local_end": 50 } }
+  // the commitment cites leaves the node does not hold: leaves it has
+  // already deleted, or a range past its local leaves
+{ "error": "commitment_not_reproducible", "details": { "reason": "..." } }
+  // leaf_index >= leaf_count, or the rebuilt root differs from mmr_root
+
 Get Chunk Proof
 ───────────────
 GET /chunk_proof?bucket_id=1&data_root=0x...&chunk_index=3
 
-Capability read: keyed by data root, unauthenticated; 404 for a bucket the
-node does not store.
+Capability read: keyed by data root, unauthenticated; 403 `no_agreement` for a
+bucket the node has no agreement on.
 
 Response:
 {
@@ -2493,6 +2545,8 @@ Response (400 Bad Request):
 
 Response (403 Forbidden):
 { "error": "not_admin" }
+{ "error": "no_agreement", "details": { "bucket_id": 1234 } }
+{ "error": "agreement_expired", "details": { "bucket_id": 1234 } }
 
 Note: Stores the admin's deletion authorization as the durable deletion
 receipt, parsed into typed form at this boundary (whether the admin
@@ -2615,8 +2669,8 @@ Fetch Nodes (batched, for sync)
 ───────────────────────────────
 POST /fetch_nodes
 
-Capability read: keyed by hash, unauthenticated; 404 for a bucket the node
-does not store (see Authentication & RBAC).
+Capability read: keyed by hash, unauthenticated; 403 `no_agreement` for a
+bucket the node has no agreement on (see Authentication & RBAC).
 
 Request:
 {
