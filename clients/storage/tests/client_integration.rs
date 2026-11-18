@@ -10,7 +10,9 @@ use client_test_support::{
     make_client, start_test_provider, start_test_provider_without_agreement,
 };
 use sp_core::H256;
-use storage_client::{ChunkingStrategy, ClientError, EncryptionKey, Node, ENCRYPTION_OVERHEAD};
+use storage_client::{
+    ChunkingStrategy, ClientError, ClientVerifier, EncryptionKey, Node, ENCRYPTION_OVERHEAD,
+};
 use storage_primitives::DEFAULT_CHUNK_SIZE;
 
 /// Chunks in one full `/read` response of the test provider.
@@ -782,9 +784,41 @@ async fn test_spot_check_passes_for_valid_data() {
         .unwrap();
     client.commit(1, vec![data_root]).await.unwrap();
 
-    let passed = client.spot_check(1, &data_root, 0).await.unwrap();
+    let passed = client.spot_check(1, &data_root, 0, 1).await.unwrap();
 
     assert!(passed, "spot check on valid data should pass");
+}
+
+/// The provider stores ciphertext, so a spot check verifies a chunk of
+/// ciphertext against `data_root` and does not decrypt it: one chunk of the
+/// ciphertext does not decrypt on its own.
+#[tokio::test]
+async fn test_spot_check_passes_for_encrypted_data() {
+    let url = start_test_provider().await;
+    let key = EncryptionKey::generate();
+    let mut client = make_client(url).with_encryption_key(&key);
+
+    let data = vec![7u8; DEFAULT_CHUNK_SIZE as usize];
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::default())
+        .await
+        .unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
+
+    let chunk_count = (data.len() + ENCRYPTION_OVERHEAD).div_ceil(DEFAULT_CHUNK_SIZE as usize);
+    assert_eq!(chunk_count, 2);
+    for chunk_index in 0..chunk_count as u64 {
+        let passed = client
+            .spot_check(1, &data_root, chunk_index, chunk_count as u64)
+            .await
+            .unwrap();
+        assert!(passed, "chunk {chunk_index}");
+    }
+    let (passed, failed) = ClientVerifier::new()
+        .spot_check_batch(&client, 1, &data_root, 4, chunk_count as u64)
+        .await
+        .unwrap();
+    assert_eq!((passed, failed), (4, 0));
 }
 
 #[tokio::test]
@@ -793,7 +827,7 @@ async fn test_spot_check_returns_false_for_missing_data() {
     let mut client = make_client(url);
 
     let phantom = H256::from_slice(&[0xCC; 32]);
-    let passed = client.spot_check(1, &phantom, 0).await.unwrap();
+    let passed = client.spot_check(1, &phantom, 0, 1).await.unwrap();
 
     assert!(
         !passed,
