@@ -229,11 +229,10 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
                             setCancelling(rowKey);
                             setCancelError(null);
                             try {
-                              await cancelChallenge(
-                                cancelBucket,
-                                { deadline: c.deadline, index: c.index },
-                                c.provider,
-                              );
+                              await cancelChallenge(cancelBucket, {
+                                deadline: c.deadline,
+                                index: c.index,
+                              });
                             } catch (err) {
                               setCancelError({
                                 key: rowKey,

@@ -449,23 +449,24 @@ export class S3Client {
     return result.sort((a, b) => a.deadline - b.deadline);
   }
 
+  /** Report the outcome events of the challenge `challengeId`. */
   watchChallengeOutcome(
-    deadline: number,
-    providerAddress: string,
+    challengeId: { deadline: number; index: number },
     onDefended: (result: ChallengeDefenseResult) => void,
     onSlashed: (result: ChallengeSlashResult) => void,
     onCancelled: (result: ChallengeCancelResult) => void,
   ): () => void {
     const api = this.requireApi();
     const sub = new Subscription();
+    const isWatched = (id: { deadline: number; index: number }) =>
+      id.deadline === challengeId.deadline && id.index === challengeId.index;
 
     sub.add(
       api.event.StorageProvider.ChallengeDefended.watch().subscribe({
         next: ({ block, events }) => {
           for (const ev of events) {
             const p = ev.payload;
-            if (p.challenge_id.deadline !== deadline) continue;
-            if (p.provider !== providerAddress) continue;
+            if (!isWatched(p.challenge_id)) continue;
             onDefended({
               challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
               provider: p.provider,
@@ -486,8 +487,7 @@ export class S3Client {
         next: ({ block, events }) => {
           for (const ev of events) {
             const p = ev.payload;
-            if (p.challenge_id.deadline !== deadline) continue;
-            if (p.provider !== providerAddress) continue;
+            if (!isWatched(p.challenge_id)) continue;
             onSlashed({
               challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
               provider: p.provider,
@@ -506,8 +506,7 @@ export class S3Client {
         next: ({ block, events }) => {
           for (const ev of events) {
             const p = ev.payload;
-            if (p.challenge_id.deadline !== deadline) continue;
-            if (p.provider !== providerAddress) continue;
+            if (!isWatched(p.challenge_id)) continue;
             onCancelled({
               challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
               bucketId: BigInt(p.bucket_id),

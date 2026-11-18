@@ -16,12 +16,7 @@
 
 import { BehaviorSubject } from "rxjs";
 import { bind } from "@react-rxjs/core";
-import type {
-  OpenChallenge,
-  ChallengeDefenseResult,
-  ChallengeSlashResult,
-  ChallengeCancelResult,
-} from "@/lib/s3-client";
+import type { OpenChallenge, ChallengeDefenseResult, ChallengeSlashResult } from "@/lib/s3-client";
 import { getS3Client } from "@/state/s3.state";
 import { getClient, getApi, getAnchorBlock } from "@/state/chain.state";
 
@@ -79,15 +74,15 @@ export const [useChallengeHistory] = bind(challengeHistory$, []);
 export const [useChallengeHistoryLoading] = bind(challengeHistoryLoading$, false);
 export const [useShowOutcomeModal] = bind(showOutcomeModal$, false);
 
-// Per-challenge trackers keyed by "deadline:provider"
+// Per-challenge trackers keyed by challenge id ("deadline:index")
 const eventWatchers = new Map<string, () => void>();
 const pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 const FALLBACK_POLL_MS = 300_000; // 5 minutes before fallback poll
 const POLL_INTERVAL_MS = 6_000;
 
-function watchKey(deadline: number, provider: string): string {
-  return `${deadline}:${provider}`;
+function watchKey(challengeId: { deadline: number; index: number }): string {
+  return `${challengeId.deadline}:${challengeId.index}`;
 }
 
 function stopPolling(key?: string): void {
@@ -180,7 +175,7 @@ export async function submitChallenge(
     startEventWatch(result.challengeId, provider, bucketId);
 
     // Fallback: if no event fires within 5 min, poll to detect resolution
-    startFallbackPoll(result.challengeId, provider, bucketId);
+    startFallbackPoll(result.challengeId, bucketId);
   } catch (err) {
     challengeStatus$.next("idle");
     activeChallenge$.next(null);
@@ -196,19 +191,16 @@ export async function submitChallenge(
 export async function cancelChallenge(
   bucketId: bigint,
   challengeId: { deadline: number; index: number },
-  provider: string,
 ): Promise<void> {
   const client = getS3Client();
   await client.cancelChallenge(challengeId);
 
-  // The watcher key is (deadline, provider) only: stop it just when the
-  // cancelled challenge is the one being watched.
+  const key = watchKey(challengeId);
+  stopPolling(key);
+  stopEventWatch(key);
   const current = activeChallenge$.getValue();
   if (current && current.challengeId.deadline === challengeId.deadline
       && current.challengeId.index === challengeId.index) {
-    const key = watchKey(challengeId.deadline, provider);
-    stopPolling(key);
-    stopEventWatch(key);
     activeChallenge$.next(null);
     challengeStatus$.next("idle");
   }
@@ -262,7 +254,7 @@ function startEventWatch(
   const client = getS3Client();
   if (!client.hasApi()) return;
 
-  const key = watchKey(challengeId.deadline, provider);
+  const key = watchKey(challengeId);
 
   const onDefended = (result: ChallengeDefenseResult): void => {
     stopPolling(key);
@@ -313,10 +305,7 @@ function startEventWatch(
     refreshOpenChallenges(bucketId).catch(() => {});
   };
 
-  const onCancelled = (result: ChallengeCancelResult): void => {
-    // The watch matches on deadline and provider only. Ignore a cancel of
-    // another challenge that shares both.
-    if (result.challengeId.index !== challengeId.index) return;
+  const onCancelled = (): void => {
     stopPolling(key);
     stopEventWatch(key);
     const current = activeChallenge$.getValue();
@@ -329,22 +318,15 @@ function startEventWatch(
     refreshChallengeHistory(bucketId).catch(() => {});
   };
 
-  const unsub = client.watchChallengeOutcome(
-    challengeId.deadline,
-    provider,
-    onDefended,
-    onSlashed,
-    onCancelled,
-  );
+  const unsub = client.watchChallengeOutcome(challengeId, onDefended, onSlashed, onCancelled);
   eventWatchers.set(key, unsub);
 }
 
 function startFallbackPoll(
   challengeId: { deadline: number; index: number },
-  provider: string,
   bucketId: bigint,
 ): void {
-  const key = watchKey(challengeId.deadline, provider);
+  const key = watchKey(challengeId);
 
   const timer = setTimeout(async () => {
     // Only poll if this challenge's event watcher is still active (not yet resolved)
