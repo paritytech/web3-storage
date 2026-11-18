@@ -4108,9 +4108,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                117u8, 231u8, 20u8, 203u8, 210u8, 239u8, 13u8, 104u8, 37u8, 239u8, 48u8, 13u8,
-                73u8, 69u8, 224u8, 132u8, 44u8, 19u8, 73u8, 195u8, 88u8, 143u8, 89u8, 112u8, 19u8,
-                80u8, 1u8, 122u8, 254u8, 19u8, 149u8, 80u8,
+                191u8, 254u8, 246u8, 164u8, 197u8, 61u8, 113u8, 58u8, 127u8, 80u8, 233u8, 11u8,
+                204u8, 243u8, 146u8, 49u8, 206u8, 183u8, 52u8, 138u8, 233u8, 242u8, 136u8, 5u8,
+                198u8, 207u8, 30u8, 40u8, 190u8, 108u8, 193u8, 188u8,
             ]
     }
     pub mod system {
@@ -21013,9 +21013,9 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            191u8, 4u8, 102u8, 110u8, 200u8, 40u8, 49u8, 157u8, 116u8, 225u8, 59u8,
-                            64u8, 19u8, 106u8, 76u8, 129u8, 155u8, 76u8, 133u8, 26u8, 241u8, 3u8,
-                            116u8, 81u8, 152u8, 121u8, 215u8, 246u8, 170u8, 43u8, 165u8, 5u8,
+                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
+                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
+                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
                         ],
                     )
                 }
@@ -28320,6 +28320,30 @@ pub mod api {
                     Debug,
                     Eq,
                     PartialEq,
+                    codec :: Decode,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub enum ProviderRole<_0, _1> {
+                    #[codec(index = 0)]
+                    Primary,
+                    #[codec(index = 1)]
+                    Replica {
+                        sync_balance: _0,
+                        sync_price: _0,
+                        min_sync_interval: _1,
+                        last_sync: ::core::option::Option<
+                            runtime_types::pallet_storage_provider::pallet::ReplicaSyncRecord<_1>,
+                        >,
+                    },
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
                     serde :: Deserialize,
                     serde :: Serialize,
                 )]
@@ -28370,6 +28394,21 @@ pub mod api {
                 )]
                 #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub struct ReplicaSyncRecord<_0> {
+                    pub commitment: runtime_types::storage_primitives::Commitment,
+                    pub block: _0,
+                }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                    codec :: Decode,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                 pub struct StorageAgreement {
                     pub owner: ::subxt::utils::AccountId32,
                     pub max_bytes: ::core::primitive::u64,
@@ -28377,7 +28416,7 @@ pub mod api {
                     pub price_per_byte: ::core::primitive::u128,
                     pub expires_at: ::core::primitive::u32,
                     pub extensions_blocked: ::core::primitive::bool,
-                    pub role: runtime_types::storage_primitives::ProviderRole<
+                    pub role: runtime_types::pallet_storage_provider::pallet::ProviderRole<
                         ::core::primitive::u128,
                         ::core::primitive::u32,
                     >,
@@ -28408,7 +28447,7 @@ pub mod api {
                     pub price_per_byte: ::core::primitive::u128,
                     pub expires_at: ::core::primitive::u32,
                     pub extensions_blocked: ::core::primitive::bool,
-                    pub role: runtime_types::storage_primitives::ProviderRole<
+                    pub role: runtime_types::pallet_storage_provider::pallet::ProviderRole<
                         ::core::primitive::u128,
                         ::core::primitive::u32,
                     >,
@@ -32889,30 +32928,6 @@ pub mod api {
                 Debug,
                 Eq,
                 PartialEq,
-                codec :: Decode,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub enum ProviderRole<_0, _1> {
-                #[codec(index = 0)]
-                Primary,
-                #[codec(index = 1)]
-                Replica {
-                    sync_balance: _0,
-                    sync_price: _0,
-                    min_sync_interval: _1,
-                    last_sync: ::core::option::Option<
-                        runtime_types::storage_primitives::ReplicaSyncRecord<_1>,
-                    >,
-                },
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
             )]
             #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
@@ -32923,21 +32938,6 @@ pub mod api {
                 AdminTerminated,
                 #[codec(index = 2)]
                 Expired,
-            }
-            #[derive(
-                :: subxt :: ext :: scale_decode :: DecodeAsType,
-                :: subxt :: ext :: scale_encode :: EncodeAsType,
-                Clone,
-                Debug,
-                Eq,
-                PartialEq,
-                codec :: Decode,
-            )]
-            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
-            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
-            pub struct ReplicaSyncRecord<_0> {
-                pub commitment: runtime_types::storage_primitives::Commitment,
-                pub block: _0,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,
