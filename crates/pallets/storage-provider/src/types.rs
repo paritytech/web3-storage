@@ -21,10 +21,13 @@ pub type TicketOf<T> = <T as Config>::StorageDeposit;
 
 /// Block number of [`Config::BlockNumberProvider`] (the relay chain in
 /// production). The pallet measures every duration, deadline and expiry in
-/// this block number. The alias replaces the `frame_system` `BlockNumberFor`
-/// in the pallet; only the hooks use the parachain block number, as
+/// this block number. The alias has the same name as `frame_system`'s
+/// `BlockNumberFor`, so pallet code that writes `BlockNumberFor<T>` gets this
+/// block number and not the parachain block number. Only the hooks use the
+/// parachain block number, as
 /// [`SystemBlockNumberFor`](crate::SystemBlockNumberFor). The `Config` bound
-/// requires both block number types to be the same type.
+/// requires both block number types to be the same type, so the compiler does
+/// not catch a mix-up.
 pub type BlockNumberFor<T> =
     <<T as Config>::BlockNumberProvider as sp_runtime::traits::BlockNumberProvider>::BlockNumber;
 
