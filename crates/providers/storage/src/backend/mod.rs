@@ -296,7 +296,7 @@ pub trait StorageBackend: Send + Sync {
                 chunk_count,
             });
         }
-        let (hash, _, proof) = locate_chunk(self, data_root, chunk_count, chunk_index)?;
+        let (hash, proof) = locate_chunk(self, data_root, chunk_count, chunk_index)?;
         Ok((chunk_data(self, data_root, &hash)?, proof))
     }
 
@@ -505,7 +505,8 @@ fn left_child_chunks<B: StorageBackend + ?Sized>(
     Err(Error::NonCanonicalTree(format!("{:#x}", root)))
 }
 
-/// [`StorageBackend::read_chunks`] for a tree of `chunk_count` chunks.
+/// [`StorageBackend::read_chunks`] for a tree of `chunk_count` chunks. One
+/// walk from the root visits each node on the paths to the read chunks once.
 fn read_chunks_of<B: StorageBackend + ?Sized>(
     backend: &B,
     root: H256,
@@ -515,25 +516,78 @@ fn read_chunks_of<B: StorageBackend + ?Sized>(
     max_bytes: u64,
 ) -> Result<ChunkRead, Error> {
     let end = start.saturating_add(max_chunks).min(chunk_count);
-    let mut chunks = Vec::new();
-    let mut bytes = 0u64;
-    for index in start..end {
-        let (hash, size, proof) = locate_chunk(backend, root, chunk_count, index)?;
-        let total = bytes.saturating_add(size);
-        if !chunks.is_empty() && total > max_bytes {
-            break;
-        }
-        chunks.push((hash, chunk_data(backend, root, &hash)?, proof));
-        bytes = total;
+    let mut walk = RangeWalk {
+        backend,
+        root,
+        range: start..end,
+        max_bytes,
+        bytes: 0,
+        siblings: Vec::new(),
+        chunks: Vec::new(),
+    };
+    if start < end {
+        walk.visit(root, chunk_count, 0)?;
     }
     Ok(ChunkRead {
         start_chunk: start,
         chunk_count,
-        chunks,
+        chunks: walk.chunks,
     })
 }
 
-/// Hash, size and Merkle proof of chunk `index` in the tree of `chunk_count`
+/// State of [`read_chunks_of`]'s walk.
+struct RangeWalk<'a, B: ?Sized> {
+    backend: &'a B,
+    root: H256,
+    /// Chunk indices to read.
+    range: core::ops::Range<u64>,
+    max_bytes: u64,
+    /// Chunk data bytes read so far.
+    bytes: u64,
+    /// Siblings on the path from the root to the current node.
+    siblings: Vec<H256>,
+    chunks: Vec<ProvenChunk>,
+}
+
+impl<B: StorageBackend + ?Sized> RangeWalk<'_, B> {
+    /// Read the chunks in `self.range` under `hash`, the subtree over `count`
+    /// chunks from index `first`. Returns `false` once `max_bytes` stops the
+    /// read.
+    fn visit(&mut self, hash: H256, count: u64, first: u64) -> Result<bool, Error> {
+        if first >= self.range.end || first.saturating_add(count) <= self.range.start {
+            return Ok(true);
+        }
+        match shape_at(self.backend, &hash)? {
+            NodeShape::Chunk { size } if count == 1 => {
+                let total = self.bytes.saturating_add(size);
+                if !self.chunks.is_empty() && total > self.max_bytes {
+                    return Ok(false);
+                }
+                self.bytes = total;
+                let data = chunk_data(self.backend, self.root, &hash)?;
+                let proof = self.siblings.iter().rev().copied().collect();
+                self.chunks.push((hash, data, proof));
+                Ok(true)
+            }
+            NodeShape::Internal { left, right } if count > 1 => {
+                let split = 1u64 << (count - 1).ilog2();
+                self.siblings.push(right);
+                let more = self.visit(left, split, first)?;
+                self.siblings.pop();
+                if !more {
+                    return Ok(false);
+                }
+                self.siblings.push(left);
+                let more = self.visit(right, count - split, first + split)?;
+                self.siblings.pop();
+                Ok(more)
+            }
+            _ => Err(Error::NonCanonicalTree(format!("{:#x}", self.root))),
+        }
+    }
+}
+
+/// Hash and Merkle proof of chunk `index` in the tree of `chunk_count`
 /// chunks under `root`. A tree over `n > 1` chunks splits into the largest
 /// power of two below `n` on the left and the rest on the right, and the
 /// proof lists the sibling at each split, from the chunk up. Reads no chunk
@@ -543,14 +597,14 @@ fn locate_chunk<B: StorageBackend + ?Sized>(
     root: H256,
     chunk_count: u64,
     index: u64,
-) -> Result<(H256, u64, Vec<H256>), Error> {
+) -> Result<(H256, Vec<H256>), Error> {
     let (mut hash, mut count, mut index) = (root, chunk_count, index);
     let mut siblings = Vec::new();
     loop {
         match shape_at(backend, &hash)? {
-            NodeShape::Chunk { size } if count == 1 => {
+            NodeShape::Chunk { .. } if count == 1 => {
                 siblings.reverse();
-                return Ok((hash, size, siblings));
+                return Ok((hash, siblings));
             }
             NodeShape::Internal { left, right } if count > 1 => {
                 let split = 1u64 << (count - 1).ilog2();
