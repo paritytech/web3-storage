@@ -38,11 +38,7 @@ use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSu
 /// that landed, and these rejections prove the duty is done rather than
 /// failed. Matched against the pallet + error-variant names resolved from
 /// runtime metadata (see [`SubxtChainClient::is_already_done`]).
-const ALREADY_DONE_ERRORS: [&str; 2] = [
-    // respond_to_challenge: the challenge is already gone (defended,
-    // resolved by `resolve_expired_challenge`, or cancelled by the
-    // challenger).
-    "ChallengeNotFound",
+const ALREADY_DONE_ERRORS: [&str; 1] = [
     "SyncTooFrequent", // confirm_replica_sync: a sync already confirmed
 ];
 

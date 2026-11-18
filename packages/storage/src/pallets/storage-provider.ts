@@ -457,7 +457,8 @@ export async function challengeOffchain(
   opts: SubmitOpts = {},
 ) {
   // Finalized: the challenge_id must survive to the respond that references it
-  // (a best-block reorg would invalidate it -> ChallengeNotFound).
+  // (a best-block reorg would invalidate it, and the chain would reject the
+  // response as `Stale`).
   const result = await submitTxFinalized(
     api.tx.StorageProvider.challenge_offchain({
       bucket_id: bucketId,
