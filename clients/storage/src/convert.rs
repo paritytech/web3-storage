@@ -11,6 +11,7 @@ use storage_subxt::api::runtime_types;
 
 use crate::agreement::AgreementTermsOf;
 use runtime_types::bounded_collections::bounded_vec::BoundedVec;
+use runtime_types::pallet_storage_provider::pallet::ChallengeId;
 use runtime_types::storage_primitives as rt;
 
 /// `sp_runtime::AccountId32` → `subxt::utils::AccountId32` (both wrap `[u8; 32]`).
@@ -136,11 +137,8 @@ pub fn end_action(a: storage_primitives::EndAction) -> rt::EndAction {
 }
 
 /// Build a generated `ChallengeId` from its parts.
-pub fn challenge_id(
-    deadline: u32,
-    index: u16,
-) -> runtime_types::pallet_storage_provider::pallet::ChallengeId<u32> {
-    runtime_types::pallet_storage_provider::pallet::ChallengeId { deadline, index }
+pub fn challenge_id(deadline: u32, index: u16) -> ChallengeId<u32> {
+    ChallengeId { deadline, index }
 }
 
 /// [`storage_primitives::MmrProof`] → generated twin.
