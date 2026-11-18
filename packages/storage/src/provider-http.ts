@@ -391,8 +391,6 @@ export async function fetchChallengeProof(
 
 /** Parallel requests per batch in the blob helpers. */
 const BLOB_CONCURRENCY = 4;
-/** Chunks requested per `GET /read` call. Equals the provider's `MAX_READ_CHUNKS`. */
-const READ_WINDOW_CHUNKS = 16;
 /** Attempts for idempotent requests (`PUT /node` and reads). */
 const IDEMPOTENT_RETRIES = 3;
 
@@ -675,7 +673,7 @@ export async function readBlob(
   return concatBytes(...chunks);
 }
 
-/** `GET /read` in windows; each chunk is checked against its Merkle proof. */
+/** `GET /read` until all chunks arrive; each chunk is checked against its Merkle proof. */
 async function readBlobWithProofs(
   providerUrl: string,
   bucketId: bigint,
@@ -686,8 +684,8 @@ async function readBlobWithProofs(
   const rootHex = toHex(root);
   const total = chunkCount(size);
   const out: Uint8Array[] = [];
-  for (let start = 0; start < total; start += READ_WINDOW_CHUNKS) {
-    const count = Math.min(READ_WINDOW_CHUNKS, total - start);
+  for (let start = 0; start < total; ) {
+    const count = total - start;
     const res = await providerFetch(providerUrl, "/read", {
       params: {
         bucket_id: bucketId,
@@ -699,8 +697,14 @@ async function readBlobWithProofs(
       fetch: opts.fetch,
       signal: opts.signal,
     });
+    if (res.chunk_count !== total) {
+      throw new BlobVerificationError(rootHex, `provider reports ${res.chunk_count} chunks, expected ${total}`);
+    }
+    if (res.start_chunk !== start) {
+      throw new BlobVerificationError(rootHex, `provider started at chunk ${res.start_chunk}, expected ${start}`);
+    }
     const got = res.chunks as { data: string; proof: string[] }[];
-    if (got.length !== count) {
+    if (got.length === 0 || got.length > count) {
       throw new BlobVerificationError(rootHex, `provider returned ${got.length} of ${count} chunks at ${start}`);
     }
     got.forEach((c, k) => {
@@ -711,6 +715,7 @@ async function readBlobWithProofs(
       }
       out.push(data);
     });
+    start += got.length;
   }
   const expected = BigInt(size);
   const actual = out.reduce((n, c) => n + BigInt(c.length), 0n);

@@ -34,6 +34,52 @@ pub struct ProviderDeps {
     pub auth: Arc<provider_auth::Authenticator>,
 }
 
+/// Limits on one `/read` response, which the provider builds in memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "clap", derive(clap::Args))]
+pub struct ReadLimits {
+    /// Most bytes of chunk data in one `/read` response. A response has at
+    /// least one chunk.
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long = "read-max-bytes",
+            env = "READ_MAX_BYTES",
+            default_value_t = ReadLimits::DEFAULT_MAX_BYTES,
+            value_parser = clap::value_parser!(u64).range(1..)
+        )
+    )]
+    pub max_bytes: u64,
+    /// Most chunks in one `/read` response. Applies when chunks are small
+    /// enough that the byte limit does not stop the response first.
+    #[cfg_attr(
+        feature = "clap",
+        arg(
+            long = "read-max-chunks",
+            env = "READ_MAX_CHUNKS",
+            default_value_t = ReadLimits::DEFAULT_MAX_CHUNKS,
+            value_parser = clap::value_parser!(u64).range(1..)
+        )
+    )]
+    pub max_chunks: u64,
+}
+
+impl ReadLimits {
+    /// Default for [`Self::max_bytes`]: 4 MiB.
+    pub const DEFAULT_MAX_BYTES: u64 = 4 * 1024 * 1024;
+    /// Default for [`Self::max_chunks`].
+    pub const DEFAULT_MAX_CHUNKS: u64 = 1024;
+}
+
+impl Default for ReadLimits {
+    fn default() -> Self {
+        Self {
+            max_bytes: Self::DEFAULT_MAX_BYTES,
+            max_chunks: Self::DEFAULT_MAX_CHUNKS,
+        }
+    }
+}
+
 /// Provider node state shared across handlers.
 pub struct ProviderState {
     storage: Arc<dyn StorageBackend>,
@@ -44,6 +90,8 @@ pub struct ProviderState {
     /// Browser origins allowed via CORS. `None` (the default) keeps the
     /// permissive policy; `Some(list)` restricts to exactly those origins.
     cors_allowed_origins: Option<Vec<String>>,
+    /// Limits on one `/read` response.
+    read_limits: ReadLimits,
     chain_state: Arc<ChainState>,
 }
 
@@ -64,6 +112,7 @@ impl ProviderState {
                 .map(|keypair| Arc::new(ProviderSigner::new(keypair, Arc::clone(&chain_state)))),
             auth,
             cors_allowed_origins: None,
+            read_limits: ReadLimits::default(),
             chain_state,
         }
     }
@@ -133,6 +182,15 @@ impl ProviderState {
     /// the permissive policy; `Some(list)` restricts to exactly those origins.
     pub fn with_cors_origins(mut self, origins: Option<Vec<String>>) -> Self {
         self.cors_allowed_origins = origins;
+        self
+    }
+
+    /// Set the limits on one `/read` response. A limit of 0 counts as 1.
+    pub fn with_read_limits(mut self, limits: ReadLimits) -> Self {
+        self.read_limits = ReadLimits {
+            max_bytes: limits.max_bytes.max(1),
+            max_chunks: limits.max_chunks.max(1),
+        };
         self
     }
 
