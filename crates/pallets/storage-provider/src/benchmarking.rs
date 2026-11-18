@@ -68,7 +68,7 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
     // Enable provider for agreements
     let _ = Pallet::<T>::update_provider_settings(
         RawOrigin::Signed(provider.clone()).into(),
-        pallet::ProviderSettings {
+        ProviderSettings {
             min_duration: 1u32.into(),
             max_duration: 1000u32.into(),
             price_per_byte: 1u32.into(),
@@ -253,7 +253,7 @@ fn insert_challenge<T: Config>(
     target: ChunkLocation,
 ) -> ChallengeId<BlockNumberFor<T>> {
     let deadline: BlockNumberFor<T> = 200u32.into();
-    let challenge = pallet::Challenge::<T> {
+    let challenge = Challenge::<T> {
         bucket_id,
         provider: provider.clone(),
         challenger: challenger.clone(),
@@ -406,7 +406,7 @@ mod benchmarks {
     #[benchmark]
     fn update_provider_settings() {
         let provider = create_provider::<T>(0);
-        let settings = pallet::ProviderSettings {
+        let settings = ProviderSettings {
             min_duration: 10u32.into(),
             max_duration: 10000u32.into(),
             price_per_byte: 100u32.into(),
@@ -1064,7 +1064,7 @@ mod benchmarks {
             },
         );
 
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Proof {
+        let response: ChallengeResponse<T> = ChallengeResponse::Proof {
             chunk_data,
             mmr_proof,
             chunk_proof,
@@ -1100,8 +1100,7 @@ mod benchmarks {
                 chunk_index,
             },
         );
-        let response: pallet::ChallengeResponse<T> =
-            pallet::ChallengeResponse::ChunkOutOfRange { mmr_proof };
+        let response: ChallengeResponse<T> = ChallengeResponse::ChunkOutOfRange { mmr_proof };
 
         #[extrinsic_call]
         respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);
@@ -1154,7 +1153,7 @@ mod benchmarks {
             .expect("signing should work");
         let admin_signature = sp_runtime::MultiSignature::Sr25519(sig);
 
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Deleted {
+        let response: ChallengeResponse<T> = ChallengeResponse::Deleted {
             new_mmr_root,
             new_start_seq,
             admin: admin.clone(),
@@ -1204,7 +1203,7 @@ mod benchmarks {
             },
         );
 
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Superseded;
+        let response: ChallengeResponse<T> = ChallengeResponse::Superseded;
 
         #[extrinsic_call]
         respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);
@@ -1325,7 +1324,7 @@ mod benchmarks {
         let challenger = funded_account::<T>("challenger", 0);
         let _ = StorageProvider::<T>::hold_challenge_deposit(&challenger, deposit);
         let bucket_id: BucketId = 0;
-        let challenge = pallet::Challenge::<T> {
+        let challenge = Challenge::<T> {
             bucket_id,
             provider: provider.clone(),
             challenger,
