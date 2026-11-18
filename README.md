@@ -195,7 +195,7 @@ web3-storage/
 ├── crates/
 │   ├── pallets/            # FRAME pallet: storage-provider
 │   │                       #   with a precompiles/ subfolder (pallet_revive precompile)
-│   ├── primitives/         # Shared types: storage, file-system
+│   ├── primitives/         # Shared types between the runtime and storage-provider-node
 │   ├── providers/          # Provider-node library crates
 │   ├── storage-subxt/      # Static subxt runtime bindings
 │   └── utils/              # Ultility crates
