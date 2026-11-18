@@ -196,45 +196,32 @@ impl StorageUserClient {
     // Download Operations
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Download data from a provider using the data root.
+    /// Download `offset..offset + length` of the data under `data_root`,
+    /// whose stored size is `size` bytes (with encryption, the size of the
+    /// encrypted data).
     ///
     /// This will:
     /// 1. Request chunks from the provider, in several `/read` requests when the
     ///    provider limits the response size
-    /// 2. Verify each chunk's hash and its proof against `data_root`
+    /// 2. Verify each chunk's hash and its proof against `data_root`, at its
+    ///    position in a tree of `size` bytes
     /// 3. Reassemble the data
     ///
-    /// The proofs use the chunk count the provider reports, so a provider can
-    /// return another chunk of the same data for the range. When the data
-    /// size is known, use [`Self::download_sized`]; for all data, use
-    /// [`Self::download_full`].
+    /// The data must use `DEFAULT_CHUNK_SIZE` chunks, as committed data does.
+    /// For data of unknown size or chunk size, use [`Self::download_full`].
     ///
     /// # Example
     /// ```no_run
     /// # use storage_client::{ClientConfig, Signer, StorageUserClient};
     /// # use sp_core::H256;
-    /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(data_root: H256, size: u64) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
-    /// let data = client.download(1, &data_root, 0, 1024).await?;
+    /// let data = client.download(1, &data_root, size, 0, 1024).await?;
     /// println!("Downloaded {} bytes", data.len());
     /// # Ok(())
     /// # }
     /// ```
     pub async fn download(
-        &self,
-        bucket_id: BucketId,
-        data_root: &H256,
-        offset: u64,
-        length: u64,
-    ) -> ClientResult<Vec<u8>> {
-        self.download_range(bucket_id, data_root, offset, length, None)
-            .await
-    }
-
-    /// Like [`Self::download`], for data whose stored size is `size` bytes
-    /// (with encryption, the size of the encrypted data). The chunk count
-    /// comes from `size`, so every chunk is checked at its position.
-    pub async fn download_sized(
         &self,
         bucket_id: BucketId,
         data_root: &H256,
@@ -247,8 +234,11 @@ impl StorageUserClient {
             .await
     }
 
-    /// Read `offset..offset + length` of `data_root`, trim it to the range
-    /// and decrypt it. See [`Self::read_chunks`] for `chunk_count`.
+    /// Read `offset..offset + length` of `data_root` in `DEFAULT_CHUNK_SIZE`
+    /// chunks, trim it to the range and decrypt it. Without `chunk_count`,
+    /// the proofs use the count the provider reports, so a provider can
+    /// return another chunk of the same data for the range; only checks of
+    /// the provider use that.
     async fn download_range(
         &self,
         bucket_id: BucketId,
@@ -260,9 +250,17 @@ impl StorageUserClient {
         let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
         let start_chunk = offset / chunk_size;
         let end_chunk = offset.saturating_add(length).div_ceil(chunk_size);
-        let (mut data, _) = self
-            .read_chunks(bucket_id, data_root, start_chunk, end_chunk, chunk_count)
-            .await?;
+        let mut data = self
+            .read_chunks(
+                bucket_id,
+                data_root,
+                start_chunk,
+                end_chunk,
+                Some(chunk_size),
+                chunk_count,
+            )
+            .await?
+            .data;
 
         // Trim to requested range
         let start = ((offset % chunk_size) as usize).min(data.len());
@@ -281,95 +279,124 @@ impl StorageUserClient {
         }
     }
 
-    /// Download all data under `data_root`. The caller does not need to know
-    /// its size: the client rebuilds `data_root` from the chunk hashes, so a
-    /// provider that leaves out or changes chunks is detected.
+    /// Download all data under `data_root`. The caller does not need to
+    /// know its size or chunk size: the client rebuilds `data_root` from
+    /// the chunk hashes, so a provider that leaves out or changes chunks is
+    /// detected.
     pub async fn download_full(
         &self,
         bucket_id: BucketId,
         data_root: &H256,
     ) -> ClientResult<Vec<u8>> {
-        let (data, hashes) = self
-            .read_chunks(bucket_id, data_root, 0, u64::MAX, None)
+        let read = self
+            .read_chunks(bucket_id, data_root, 0, u64::MAX, None, None)
             .await?;
-        if hashes.is_empty() || merkle_root(&hashes) != *data_root {
-            return Err(ClientError::VerificationFailed);
+        check_root(&read, data_root)?;
+        self.decrypt(read.data)
+    }
+
+    /// Download the data under `data_root` when it is at most `max` bytes,
+    /// checked by rebuilding `data_root` as in [`Self::download_full`]. For
+    /// longer data, returns its first `max + 1` bytes (each chunk checked
+    /// against its proof), so that the caller can reject it. The data must
+    /// use `DEFAULT_CHUNK_SIZE` chunks.
+    pub async fn download_at_most(
+        &self,
+        bucket_id: BucketId,
+        data_root: &H256,
+        max: u64,
+    ) -> ClientResult<Vec<u8>> {
+        let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
+        let limit = max.saturating_add(1);
+        let mut read = self
+            .read_chunks(
+                bucket_id,
+                data_root,
+                0,
+                limit.div_ceil(chunk_size),
+                Some(chunk_size),
+                None,
+            )
+            .await?;
+        if read.hashes.len() as u64 == read.chunk_count {
+            check_root(&read, data_root)?;
         }
-        self.decrypt(data)
+        read.data.truncate(limit.try_into().unwrap_or(usize::MAX));
+        self.decrypt(read.data)
     }
 
     /// Read chunks `start_chunk..end_chunk` of `data_root` in as many `/read`
     /// requests as needed, each continuing after the last returned chunk.
-    /// Returns the chunk bytes and the chunk hashes. Fails on an incomplete
-    /// or inconsistent response, or a chunk count other than `chunk_count`.
+    /// `chunk_size` is the size of every chunk but the last; without it, the
+    /// read must start at chunk 0 and takes the size from the first chunk.
+    /// Fails on an incomplete or inconsistent response, another chunk size,
+    /// or a chunk count other than `chunk_count`.
     async fn read_chunks(
         &self,
         bucket_id: BucketId,
         data_root: &H256,
         start_chunk: u64,
         end_chunk: u64,
+        chunk_size: Option<u64>,
         chunk_count: Option<u64>,
-    ) -> ClientResult<(Vec<u8>, Vec<H256>)> {
-        let default_size = u64::from(DEFAULT_CHUNK_SIZE);
-        let mut data = Vec::new();
-        let mut hashes = Vec::new();
-        let mut offset = start_chunk.saturating_mul(default_size);
-        let mut length = end_chunk
-            .saturating_sub(start_chunk)
-            .saturating_mul(default_size);
-        let mut end = end_chunk;
+    ) -> ClientResult<ChunkRead> {
+        let mut read = ChunkRead::default();
+        let mut chunk_size = chunk_size;
         // The caller's count, or the first response's.
         let mut chunk_count = chunk_count;
-        // A read from byte 0 starts at chunk 0.
-        let mut expected_start = (start_chunk == 0).then_some(0);
-        while length > 0 {
+        let mut next = start_chunk;
+        let mut end = end_chunk;
+        loop {
+            let size = chunk_size.unwrap_or(u64::from(DEFAULT_CHUNK_SIZE));
             let page = self
-                .read_page(bucket_id, data_root, offset, length, &mut data, &mut hashes)
+                .read_page(
+                    bucket_id,
+                    data_root,
+                    next.saturating_mul(size),
+                    end.saturating_sub(next).saturating_mul(size),
+                    &mut read,
+                )
                 .await?;
-            if *chunk_count.get_or_insert(page.chunk_count) != page.chunk_count
-                || expected_start.is_some_and(|start| start != page.start_chunk)
+            let count = *chunk_count.get_or_insert(page.chunk_count);
+            end = end.min(count);
+            // The response must continue at `next`, report the same count and
+            // stay in the range.
+            if page.start_chunk != next
+                || page.chunk_count != count
+                || page.returned > end.saturating_sub(next)
             {
                 return Err(ClientError::VerificationFailed);
             }
-            end = end.min(page.chunk_count);
-            let next = page.start_chunk.saturating_add(page.returned);
-            // More chunks than the range has is a wrong response.
-            if page.returned > end.saturating_sub(page.start_chunk) {
-                return Err(ClientError::VerificationFailed);
+            // Every chunk before the last one has the full chunk size.
+            for (index, &len) in (next..).zip(&page.chunk_lens) {
+                if index + 1 < count {
+                    let full = *chunk_size.get_or_insert(len);
+                    if full == 0 || len != full {
+                        return Err(ClientError::VerificationFailed);
+                    }
+                }
             }
-            if page.returned > 0 && next < page.chunk_count {
-                // Not the last chunk, so the first chunk has the full chunk size.
-                let chunk_size = page.first_chunk_len.max(1);
-                if page.start_chunk != offset / chunk_size {
-                    return Err(ClientError::VerificationFailed);
-                }
-                if next < end {
-                    offset = next.saturating_mul(chunk_size);
-                    length = (end - next).saturating_mul(chunk_size);
-                    expected_start = Some(next);
-                    continue;
-                }
+            next += page.returned;
+            if next >= end {
+                read.chunk_count = count;
+                return Ok(read);
             }
             // No chunk before the end: the read is incomplete.
-            if next < end {
+            if page.returned == 0 {
                 return Err(ClientError::VerificationFailed);
             }
-            break;
         }
-        Ok((data, hashes))
     }
 
     /// Send one `/read` for `length` bytes from `offset`, verify each chunk's
-    /// hash and proof, and append the chunk bytes to `data` and the chunk
-    /// hashes to `hashes`.
+    /// hash and proof, and append the chunk bytes and hashes to `read`.
     async fn read_page(
         &self,
         bucket_id: BucketId,
         data_root: &H256,
         offset: u64,
         length: u64,
-        data: &mut Vec<u8>,
-        hashes: &mut Vec<H256>,
+        read: &mut ChunkRead,
     ) -> ClientResult<ReadPage> {
         let provider_url = self.base.get_provider_url()?;
 
@@ -395,7 +422,7 @@ impl StorageUserClient {
 
         let read_response: ReadResponse = response.json().await?;
         let returned = read_response.chunks.len() as u64;
-        let mut first_chunk_len = 0;
+        let mut chunk_lens = Vec::new();
         for (index, chunk) in read_response.chunks.into_iter().enumerate() {
             let chunk_data = BASE64
                 .decode(&chunk.data)
@@ -419,18 +446,15 @@ impl StorageUserClient {
             {
                 return Err(ClientError::VerificationFailed);
             }
-            hashes.push(hash);
-
-            if index == 0 {
-                first_chunk_len = chunk_data.len() as u64;
-            }
-            data.extend_from_slice(&chunk_data);
+            read.hashes.push(hash);
+            chunk_lens.push(chunk_data.len() as u64);
+            read.data.extend_from_slice(&chunk_data);
         }
         Ok(ReadPage {
             start_chunk: read_response.start_chunk,
             chunk_count: read_response.chunk_count,
             returned,
-            first_chunk_len,
+            chunk_lens,
         })
     }
 
@@ -607,7 +631,7 @@ impl StorageUserClient {
 
         let start = Instant::now();
         let result = self
-            .download(bucket_id, data_root, offset, chunk_size)
+            .download_range(bucket_id, data_root, offset, chunk_size, None)
             .await;
         let duration = start.elapsed();
 
@@ -876,7 +900,8 @@ impl crate::verification::ProviderReadAccess for StorageUserClient {
         offset: u64,
         length: u64,
     ) -> Result<Vec<u8>, crate::ClientError> {
-        self.download(bucket_id, data_root, offset, length).await
+        self.download_range(bucket_id, data_root, offset, length, None)
+            .await
     }
 
     fn provider_url(&self) -> &str {
@@ -986,12 +1011,32 @@ struct ReadResponse {
     chunks: Vec<ChunkWithProof>,
 }
 
+/// Chunks read with [`StorageUserClient::read_chunks`].
+#[derive(Default)]
+struct ChunkRead {
+    /// The chunk bytes, in order.
+    data: Vec<u8>,
+    /// The chunk hashes, in order.
+    hashes: Vec<H256>,
+    /// Chunk count of the whole data root.
+    chunk_count: u64,
+}
+
+/// Fail unless `read` contains every chunk of `data_root`.
+fn check_root(read: &ChunkRead, data_root: &H256) -> ClientResult<()> {
+    if read.hashes.is_empty() || merkle_root(&read.hashes) != *data_root {
+        return Err(ClientError::VerificationFailed);
+    }
+    Ok(())
+}
+
 /// Summary of one `/read` response.
 struct ReadPage {
     start_chunk: u64,
     chunk_count: u64,
     returned: u64,
-    first_chunk_len: u64,
+    /// Length of each returned chunk.
+    chunk_lens: Vec<u64>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1083,7 +1128,17 @@ mod tests {
     /// A `/read` response that reports `start_chunk` and `chunk_count` and
     /// holds the test tree's chunks `indices`, each with its real proof.
     fn read_body(start_chunk: u64, chunk_count: u64, indices: &[usize]) -> String {
-        let leaves = tree_leaves();
+        tree_read_body(&CHUNKS, start_chunk, chunk_count, indices)
+    }
+
+    /// [`read_body`] for the tree over `tree`.
+    fn tree_read_body(
+        tree: &[&[u8]],
+        start_chunk: u64,
+        chunk_count: u64,
+        indices: &[usize],
+    ) -> String {
+        let leaves: Vec<H256> = tree.iter().map(|c| hash_leaf(c)).collect();
         let chunks: Vec<_> = indices
             .iter()
             .map(|&i| {
@@ -1094,7 +1149,7 @@ mod tests {
                     .collect();
                 serde_json::json!({
                     "hash": format!("{:#x}", leaves[i]),
-                    "data": BASE64.encode(CHUNKS[i]),
+                    "data": BASE64.encode(tree[i]),
                     "proof": proof,
                 })
             })
@@ -1190,24 +1245,81 @@ mod tests {
         assert_rejected(|start| read_body(start, 0, &[])).await;
     }
 
+    async fn read_chunks(
+        body: fn(u64) -> String,
+        start: u64,
+        end: u64,
+        chunk_size: u64,
+        chunk_count: Option<u64>,
+    ) -> ClientResult<Vec<u8>> {
+        let url = serve_read(body).await;
+        let client =
+            StorageUserClient::for_provider(&url, Signer::from_seed("//Alice").unwrap()).unwrap();
+        let read = client
+            .read_chunks(1, &tree_root(), start, end, Some(chunk_size), chunk_count)
+            .await?;
+        Ok(read.data)
+    }
+
+    fn assert_verification_failed(result: ClientResult<Vec<u8>>) {
+        assert!(
+            matches!(result, Err(ClientError::VerificationFailed)),
+            "got {result:?}"
+        );
+    }
+
     /// With a known chunk count, a provider cannot pass chunk 2 as chunk 1:
     /// its proof verifies under a claimed count of 2, but the count differs.
     #[tokio::test]
     async fn read_with_a_known_count_rejects_a_chunk_at_another_position() {
-        let url = serve_read(|_| read_body(1, 2, &[2])).await;
+        let body = |_| read_body(1, 2, &[2]);
+        let without_count = read_chunks(body, 1, 2, 5, None).await;
+        assert_eq!(without_count.unwrap(), CHUNKS[2], "the provider's count");
+        assert_verification_failed(read_chunks(body, 1, 2, 5, Some(3)).await);
+    }
+
+    /// A first response that reaches the last chunk must still start at the
+    /// requested chunk.
+    #[tokio::test]
+    async fn read_rejects_a_first_response_at_another_chunk() {
+        assert_verification_failed(read_chunks(|_| read_body(2, 3, &[2]), 1, 3, 5, Some(3)).await);
+        assert_verification_failed(
+            read_chunks(|_| read_body(0, 3, &[0, 1, 2]), 1, 3, 5, Some(3)).await,
+        );
+        let data = read_chunks(|start| read_body(start, 3, &[1, 2]), 1, 3, 5, Some(3)).await;
+        assert_eq!(data.unwrap(), [CHUNKS[1], CHUNKS[2]].concat());
+    }
+
+    /// A range read rejects chunks of another size than the one it maps
+    /// bytes with.
+    #[tokio::test]
+    async fn read_rejects_another_chunk_size() {
+        assert_verification_failed(
+            read_chunks(
+                |start| read_body(start, 3, &[start as usize]),
+                0,
+                3,
+                4,
+                Some(3),
+            )
+            .await,
+        );
+    }
+
+    /// A short chunk in the middle of a response is rejected, not only a
+    /// short first chunk.
+    #[tokio::test]
+    async fn read_rejects_a_short_chunk_after_the_first() {
+        const MIXED: [&[u8]; 3] = [b"aaaaa", b"bb", b"ccccc"];
+        let url = serve_read(|_| tree_read_body(&MIXED, 0, 3, &[0, 1, 2])).await;
         let client =
             StorageUserClient::for_provider(&url, Signer::from_seed("//Alice").unwrap()).unwrap();
-        let root = tree_root();
-        let without_count = client.read_chunks(1, &root, 1, 2, None).await;
-        assert_eq!(without_count.unwrap().0, CHUNKS[2], "the documented limit");
-        let err = client
-            .read_chunks(1, &root, 1, 2, Some(3))
+        let leaves: Vec<H256> = MIXED.iter().map(|c| hash_leaf(c)).collect();
+        let read = client
+            .read_chunks(1, &merkle_root(&leaves), 0, 3, Some(5), Some(3))
             .await
-            .unwrap_err();
-        assert!(
-            matches!(err, ClientError::VerificationFailed),
-            "got {err:?}"
-        );
+            .map(|read| read.data);
+        assert_verification_failed(read);
     }
 
     #[test]

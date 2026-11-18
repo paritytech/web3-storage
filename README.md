@@ -270,7 +270,7 @@ let data = b"Hello, decentralized storage!";
 let data_root = client.upload(bucket_id, data, ChunkingStrategy::default()).await?;
 
 // Verify upload
-let downloaded = client.download(bucket_id, &data_root, 0, data.len() as u64).await?;
+let downloaded = client.download(bucket_id, &data_root, data.len() as u64, 0, data.len() as u64).await?;
 assert_eq!(data, downloaded);
 ```
 

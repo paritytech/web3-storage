@@ -263,7 +263,13 @@ async fn test_upload_commit_download_roundtrip() {
     client.commit(1, vec![data_root]).await.unwrap();
 
     let retrieved = client
-        .download(1, &data_root, 0, original.len() as u64)
+        .download(
+            1,
+            &data_root,
+            original.len() as u64,
+            0,
+            original.len() as u64,
+        )
         .await
         .unwrap();
 
@@ -306,7 +312,7 @@ async fn test_download_more_than_one_read_page() {
     assert_eq!(full, data);
 
     let range = client
-        .download(1, &data_root, 10, len as u64 - 20)
+        .download(1, &data_root, len as u64, 10, len as u64 - 20)
         .await
         .unwrap();
     assert_eq!(range, &data[10..len - 10]);
@@ -366,7 +372,7 @@ async fn test_download_range_in_second_read_page() {
 
     let offset = page_len + 7;
     let range = client
-        .download(1, &data_root, offset as u64, chunk_size as u64)
+        .download(1, &data_root, len as u64, offset as u64, chunk_size as u64)
         .await
         .unwrap();
     assert_eq!(range, &data[offset..offset + chunk_size]);
@@ -384,7 +390,7 @@ async fn test_download_offset_past_end() {
         .unwrap();
     client.commit(1, vec![data_root]).await.unwrap();
 
-    let retrieved = client.download(1, &data_root, 10, 5).await.unwrap();
+    let retrieved = client.download(1, &data_root, 4, 10, 5).await.unwrap();
     assert!(retrieved.is_empty());
 }
 
@@ -402,7 +408,7 @@ async fn test_download_length_past_end() {
     client.commit(1, vec![data_root]).await.unwrap();
 
     let retrieved = client
-        .download(1, &data_root, 0, 1024u64.pow(4))
+        .download(1, &data_root, original.len() as u64, 0, 1024u64.pow(4))
         .await
         .unwrap();
     assert_eq!(retrieved, original);
@@ -423,7 +429,7 @@ async fn test_download_partial_offset() {
 
     // Download chunk 0
     let chunk0 = client
-        .download(1, &data_root, 0, chunk_size as u64)
+        .download(1, &data_root, data.len() as u64, 0, chunk_size as u64)
         .await
         .unwrap();
     assert_eq!(chunk0, &data[..chunk_size]);
@@ -550,7 +556,10 @@ async fn test_encryption_roundtrip() {
     // ENCRYPTION_OVERHEAD bytes.  We must fetch the full ciphertext so the
     // cipher can verify the authentication tag before decrypting.
     let enc_len = (original.len() + ENCRYPTION_OVERHEAD) as u64;
-    let retrieved = client.download(1, &data_root, 0, enc_len).await.unwrap();
+    let retrieved = client
+        .download(1, &data_root, enc_len, 0, enc_len)
+        .await
+        .unwrap();
 
     assert_eq!(retrieved, original);
 }
@@ -604,7 +613,7 @@ async fn test_decryption_with_wrong_key_fails() {
     let client2 = make_client(url).with_encryption_key(&key2);
     let enc_len = (data.len() + ENCRYPTION_OVERHEAD) as u64;
 
-    let result = client2.download(1, &data_root, 0, enc_len).await;
+    let result = client2.download(1, &data_root, enc_len, 0, enc_len).await;
 
     assert!(
         result.is_err(),

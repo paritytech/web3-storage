@@ -18,15 +18,12 @@ impl BlobStore for StorageUserClient {
             .await?)
     }
 
-    /// With [`BlobLength::AtMost`], the read requests one byte more than
+    /// With [`BlobLength::AtMost`], a longer blob returns one byte more than
     /// the maximum.
     async fn get_blob(&self, bucket_id: BucketId, cid: Cid, length: BlobLength) -> Result<Vec<u8>> {
         Ok(match length {
-            BlobLength::Exact(size) => self.download_sized(bucket_id, &cid, size, 0, size).await?,
-            BlobLength::AtMost(max) => {
-                self.download(bucket_id, &cid, 0, max.saturating_add(1))
-                    .await?
-            }
+            BlobLength::Exact(size) => self.download(bucket_id, &cid, size, 0, size).await?,
+            BlobLength::AtMost(max) => self.download_at_most(bucket_id, &cid, max).await?,
         })
     }
 
