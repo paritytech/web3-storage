@@ -2025,12 +2025,14 @@ impl<T: Config> Pallet<T> {
         response: ChallengeResponse<T>,
     ) -> DispatchResult;
 
-    /// Challenger only. Withdraw a challenge before the provider has
-    /// responded: the challenge is removed and the deposit released in full.
-    /// The provider's stats are untouched. Only valid up to the deadline,
-    /// like `respond_to_challenge`: past it the provider can be slashed with
-    /// `resolve_expired_challenge` and cancelling is rejected
-    /// (`ChallengeExpired`).
+    /// Cancel an active challenge.
+    ///
+    /// Allows the challenger to cancel if they received the data off-chain.
+    /// Full deposit is refunded (only transaction fees are lost). This prevents
+    /// unnecessary on-chain data submission when the issue was resolved
+    /// off-chain. Can only be called by the original challenger. Decrements
+    /// `PendingChallenges` and `PendingChallengesByBucket`, like any
+    /// resolution.
     #[pallet::weight(...)]
     pub fn cancel_challenge(
         origin: OriginFor<T>,
@@ -3019,6 +3021,31 @@ fn verify_challenge_response(
     }
 }
 ```
+
+### Transaction extension for raced calls
+
+A challenge response can race its challenger's `cancel_challenge`, and only
+one of them can succeed. A response carries a chunk of up to 256 KiB, so its
+fee is dominated by length. Without a check both would be included and both
+charged: transaction validity does not consult pallet state, and a dispatch
+that fails still pays. A runtime `TransactionExtension`,
+`CheckChallengeResponse` (the `CheckNonce` pattern), handles this:
+
+- `respond_to_challenge { challenge_id, .. }`: `validate` fails with `Stale` if
+  the challenge does not exist and with `BadSigner` if the signer is not the
+  challenged provider. Otherwise `provides: [challenge_id]`.
+
+A transaction that fails `validate` is rejected by the first pool that sees it
+and never gossiped further. The pool keeps at most one ready transaction per
+tag, so a second response is rejected at import (a higher tip replaces the
+pending one instead). Once one is included, every pool extracts its tags
+(validating at the parent block, where it is still valid) and prunes the
+others. A straggler that reaches the block builder anyway fails `validate` at
+the new block — the challenge is gone — and is dropped uncharged.
+
+The loser of a race pays nothing and takes no block space. A response that
+passes `validate` but fails at dispatch (an invalid proof) is included and
+pays the full fee. Other calls pass through the extension unchanged.
 
 ---
 
