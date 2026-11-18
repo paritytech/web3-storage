@@ -1160,3 +1160,41 @@ async fn writes_wait_until_the_anchor_block_is_known() {
         );
     }
 }
+
+/// An extension moves `expires_at` past the current anchor block. The node
+/// drops the cached entry on `AgreementExtended`, so writes resume without
+/// waiting for the TTL; without the drop the cached `expires_at` keeps
+/// rejecting them.
+#[tokio::test]
+async fn extended_agreement_accepts_writes_again() {
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let member = || {
+        StaticMembershipResolver::private(vec![
+            (AccountId32::new(alice.public().0), Role::Writer).into()
+        ])
+    };
+    let (server, access, _, changed) =
+        switchable_server(member().with_expires_at(100).access).await;
+    server.set_anchor_block(100);
+    let put = || {
+        put_node(
+            &server,
+            Some(make_auth_header(&alice, "PUT", 1, current_timestamp())),
+            b"after the extension",
+        )
+    };
+
+    let before = put().await;
+    assert_error(
+        before,
+        StatusCode::FORBIDDEN,
+        "agreement_expired",
+        "before the extension",
+    )
+    .await;
+
+    *access.lock().unwrap() = member().with_expires_at(200).access;
+    changed.mark(1);
+
+    assert_eq!(put().await.status(), StatusCode::OK);
+}
