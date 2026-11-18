@@ -11,8 +11,9 @@ use provider_events::{BlockEvent, BlockEventRx};
 use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use storage_primitives::BucketId;
-use storage_subxt::api::runtime_types::pallet_storage_provider::types::Member as RuntimeMember;
-use storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderRole;
+use storage_subxt::api::runtime_types::pallet_storage_provider::types::{
+    Member as RuntimeMember, ProviderRole,
+};
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::broadcast::error::TryRecvError;
 
