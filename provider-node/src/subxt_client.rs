@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
-use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::{
+use storage_subxt::api::runtime_types::pallet_storage_provider::types::{
     ChallengeId as RuntimeChallengeId, ChallengeResponse as RuntimeChallengeResponse,
 };
 use storage_subxt::api::runtime_types::sp_runtime::MultiSignature as RuntimeMultiSignature;
@@ -564,7 +564,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<Vec<String>, ChainClientError> {
-        use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderRole;
+        use storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderRole;
 
         let provider_account = self.signer.public_key().0.to_vec();
 
@@ -722,7 +722,7 @@ fn detected_challenge(
 }
 
 /// Generated type of a `StorageProvider::Buckets` value.
-type OnChainBucket = storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket;
+type OnChainBucket = storage_subxt::api::runtime_types::pallet_storage_provider::types::Bucket;
 
 /// Latest checkpoint of a bucket, or the zero snapshot when the bucket does
 /// not exist or has no checkpoint.
@@ -741,7 +741,7 @@ fn bucket_snapshot(bucket: Option<OnChainBucket>) -> BucketSnapshot {
 
 /// Generated type of a `StorageProvider::Providers` value.
 type OnChainProviderInfo =
-    storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
+    storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderInfo;
 
 /// HTTP endpoint a provider serves from, or `None` when it has no multiaddr.
 fn provider_endpoint(provider: &OnChainProviderInfo) -> Option<String> {
@@ -761,7 +761,7 @@ type AgreementFromRuntimeApi =
 /// `None` for a primary agreement — the coordinator only has duties for
 /// replicas.
 fn replica_agreement_info(agreement: AgreementFromRuntimeApi) -> Option<ReplicaAgreementInfo> {
-    use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderRole;
+    use storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderRole;
 
     let ProviderRole::Replica {
         sync_balance,
@@ -1013,7 +1013,7 @@ mod tests {
 
     /// Build an agreement response carrying `role`.
     fn runtime_api_agreement(
-        role: storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderRole<
+        role: storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderRole<
             u128,
             u32,
         >,
@@ -1034,14 +1034,14 @@ mod tests {
 
     #[test]
     fn primary_agreements_are_filtered_out() {
-        use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderRole;
+        use storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderRole;
 
         assert!(replica_agreement_info(runtime_api_agreement(ProviderRole::Primary)).is_none());
     }
 
     #[test]
     fn replica_agreement_carries_its_sync_terms_and_last_sync() {
-        use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::{
+        use storage_subxt::api::runtime_types::pallet_storage_provider::types::{
             ProviderRole, ReplicaSyncRecord,
         };
         use storage_subxt::api::runtime_types::storage_primitives::Commitment;
@@ -1073,7 +1073,7 @@ mod tests {
 
     #[test]
     fn only_locally_stored_buckets_survive_the_local_bucket_filter() {
-        use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderRole;
+        use storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderRole;
 
         let replica = || ProviderRole::Replica {
             sync_balance: 700,
@@ -1103,7 +1103,7 @@ mod tests {
 
     #[test]
     fn replica_agreement_without_a_sync_yet_has_no_last_sync() {
-        use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderRole;
+        use storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderRole;
 
         let info = replica_agreement_info(runtime_api_agreement(ProviderRole::Replica {
             sync_balance: 0,

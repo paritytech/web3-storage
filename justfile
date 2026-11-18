@@ -283,22 +283,22 @@ subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtim
         --derive Clone \
         --derive Eq \
         --derive PartialEq \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Serialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Deserialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Serialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Deserialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Serialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Deserialize" \
+        --derive-for-type "pallet_storage_provider::types::ProviderInfo=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::types::ProviderInfo=serde::Deserialize" \
+        --derive-for-type "pallet_storage_provider::types::ProviderSettings=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::types::ProviderSettings=serde::Deserialize" \
+        --derive-for-type "pallet_storage_provider::types::ProviderStats=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::types::ProviderStats=serde::Deserialize" \
         --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=serde::Serialize" \
         --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=serde::Deserialize" \
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Serialize" \
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Encode" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Decode" \
-        --derive-for-type "pallet_storage_provider::pallet::StorageAgreement=codec::Decode" \
+        --derive-for-type "pallet_storage_provider::types::StorageAgreement=codec::Decode" \
         --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=codec::Decode" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderRole=codec::Decode" \
-        --derive-for-type "pallet_storage_provider::pallet::ReplicaSyncRecord=codec::Decode" \
+        --derive-for-type "pallet_storage_provider::types::ProviderRole=codec::Decode" \
+        --derive-for-type "pallet_storage_provider::types::ReplicaSyncRecord=codec::Decode" \
         --derive-for-type "storage_primitives::Commitment=codec::Decode" \
         | rustfmt --edition=2021 --emit=stdout >> "{{ OUTPUT }}"
     echo "Generated {{ OUTPUT }}"
