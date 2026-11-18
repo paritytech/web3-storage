@@ -1557,42 +1557,21 @@ async fn test_replica_sync_status_endpoint() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Scripted chain truth for the `/delete` refusal tests.
-struct StubGcChain {
+struct StubFrozenCheck {
     frozen: bool,
     fail: bool,
 }
 
 #[async_trait::async_trait]
-impl provider_garbage_collector::GcChainClient for StubGcChain {
-    async fn fetch_canonical_bucket(
-        &self,
-        _bucket_id: u64,
-    ) -> Result<provider_garbage_collector::CanonicalBucketState, provider_garbage_collector::GcError>
-    {
+impl provider_http::FrozenBucketCheck for StubFrozenCheck {
+    async fn is_frozen(&self, _bucket_id: u64) -> Result<bool, provider_types::ChainClientError> {
         if self.fail {
-            return Err(provider_garbage_collector::GcError::chain("chain down"));
+            return Err(provider_types::ChainClientError::Query {
+                what: "bucket",
+                reason: "chain down".into(),
+            });
         }
-        Ok(provider_garbage_collector::CanonicalBucketState {
-            block_number: 1,
-            exists: true,
-            next_bucket_id: u64::MAX,
-            frozen_start_seq: self.frozen.then_some(0),
-            canonical_start_seq: None,
-        })
-    }
-
-    async fn fetch_agreement_max_bytes(
-        &self,
-        _bucket_id: u64,
-    ) -> Result<Option<u64>, provider_garbage_collector::GcError> {
-        Ok(None)
-    }
-
-    async fn has_pending_challenges(
-        &self,
-        _bucket_id: u64,
-    ) -> Result<bool, provider_garbage_collector::GcError> {
-        Ok(false)
+        Ok(self.frozen)
     }
 }
 
@@ -1686,7 +1665,7 @@ async fn test_delete_on_frozen_bucket_is_forbidden() {
     let server = TestServer::start(|deps| {
         ProviderState::with_seed(deps, common::PROVIDER_SEED)
             .expect("valid SURI")
-            .with_gc_chain(Some(std::sync::Arc::new(StubGcChain {
+            .with_frozen_check(Some(std::sync::Arc::new(StubFrozenCheck {
                 frozen: true,
                 fail: false,
             })))
@@ -1710,7 +1689,7 @@ async fn test_delete_fails_closed_when_chain_unreadable() {
     let server = TestServer::start(|deps| {
         ProviderState::with_seed(deps, common::PROVIDER_SEED)
             .expect("valid SURI")
-            .with_gc_chain(Some(std::sync::Arc::new(StubGcChain {
+            .with_frozen_check(Some(std::sync::Arc::new(StubFrozenCheck {
                 frozen: false,
                 fail: true,
             })))

@@ -19,12 +19,23 @@ pub use provider_types::ChainState;
 pub use types::*;
 
 use codec::Encode;
-use provider_garbage_collector::GcChainClient;
 use provider_storage::StorageBackend;
-use provider_types::{KeyScheme, ProviderKeypair, ProviderSigner, SigningRefused};
+use provider_types::{
+    ChainClientError, KeyScheme, ProviderKeypair, ProviderSigner, SigningRefused,
+};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
+use storage_primitives::BucketId;
+
+/// Chain read for the `/delete` frozen check. `Err` means the chain could not
+/// be read; the handler rejects the request instead of assuming "not frozen".
+#[async_trait::async_trait]
+pub trait FrozenBucketCheck: Send + Sync {
+    /// Fresh read of whether `bucket_id` is frozen on chain
+    /// (`Bucket::frozen_start_seq` is set). A missing bucket row is not frozen.
+    async fn is_frozen(&self, bucket_id: BucketId) -> Result<bool, ChainClientError>;
+}
 
 /// Everything a servable [`ProviderState`] requires.
 pub struct ProviderDeps {
@@ -45,16 +56,8 @@ pub struct ProviderState {
     /// permissive policy; `Some(list)` restricts to exactly those origins.
     cors_allowed_origins: Option<Vec<String>>,
     chain_state: Arc<ChainState>,
-    /// Read-only chain client for the `/delete` frozen check (shared with
-    /// the GC coordinator). The API holding a chain read is the established
-    /// pattern here — `auth` already resolves roles through a chain-backed
-    /// membership query — and this one must be a
-    /// FRESH read: a locally-executed prune cannot be undone, so pruning a
-    /// just-frozen bucket on a stale answer would wedge it for appends
-    /// forever. `None` when the node runs without a chain connection (no
-    /// signing key configured — local dev and tests): nothing can be
-    /// frozen there, so the check is skipped.
-    gc_chain: Option<Arc<dyn GcChainClient>>,
+    /// Read-only chain client for the `/delete` frozen check.
+    frozen_check: Option<Arc<dyn FrozenBucketCheck>>,
 }
 
 impl ProviderState {
@@ -75,7 +78,7 @@ impl ProviderState {
             auth,
             cors_allowed_origins: None,
             chain_state,
-            gc_chain: None,
+            frozen_check: None,
         }
     }
 
@@ -147,10 +150,10 @@ impl ProviderState {
         self
     }
 
-    /// Attach the chain reads used by the `/delete` frozen check.
-    /// Without them the check is skipped.
-    pub fn with_gc_chain(mut self, gc_chain: Option<Arc<dyn GcChainClient>>) -> Self {
-        self.gc_chain = gc_chain;
+    /// Attach the chain read used by the `/delete` frozen check.
+    /// Without it the check is skipped.
+    pub fn with_frozen_check(mut self, frozen_check: Option<Arc<dyn FrozenBucketCheck>>) -> Self {
+        self.frozen_check = frozen_check;
         self
     }
 

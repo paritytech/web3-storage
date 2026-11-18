@@ -15,6 +15,7 @@ use crate::challenge_responder::{
     ChallengeChainClient, ChallengeError, ChallengeResponse, DetectedChallenge,
 };
 use provider_garbage_collector::{CanonicalBucketState, GcChainClient, GcError};
+use provider_http::FrozenBucketCheck;
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
 use sp_core::crypto::Ss58Codec;
@@ -592,6 +593,16 @@ impl GcChainClient for SubxtChainClient {
             .await
             .map_err(|e| GcError::chain(ChainClientError::query("pending challenges", e)))?;
         Ok(challenges.iter().any(|c| c.bucket_id == bucket_id))
+    }
+}
+
+#[async_trait::async_trait]
+impl FrozenBucketCheck for SubxtChainClient {
+    async fn is_frozen(&self, bucket_id: BucketId) -> Result<bool, ChainClientError> {
+        Ok(self
+            .fetch_bucket(bucket_id)
+            .await?
+            .is_some_and(|bucket| bucket.frozen_start_seq.is_some()))
     }
 }
 

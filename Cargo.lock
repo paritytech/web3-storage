@@ -7064,7 +7064,6 @@ dependencies = [
  "base64",
  "parity-scale-codec",
  "provider-auth",
- "provider-garbage-collector",
  "provider-negotiation",
  "provider-storage",
  "provider-types",

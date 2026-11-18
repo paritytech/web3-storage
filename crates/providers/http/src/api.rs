@@ -498,9 +498,7 @@ async fn delete_data(
     headers: axum::http::HeaderMap,
     Json(request): Json<DeleteRequest>,
 ) -> Result<Json<DeleteResponse>, Error> {
-    // Admin-only: this prune rewrites the MMR (drops every leaf below
-    // `new_start_seq`) and so changes the commitment, unlike the Writer-level
-    // node uploads and commits.
+    // only Admin can perform DELETE action
     check_role(&state, &headers, "POST", request.bucket_id, Role::Admin).await?;
 
     // Frozen buckets are append-only by design: deletion is refused outright.
@@ -508,12 +506,12 @@ async fn delete_data(
     // rather than allowed through on a stale answer. Nodes running without a
     // chain connection (no signing key configured — local dev and tests) skip
     // the check: buckets can only be frozen on-chain.
-    if let Some(gc_chain) = &state.gc_chain {
-        let chain = gc_chain
-            .fetch_canonical_bucket(request.bucket_id)
+    if let Some(frozen_check) = &state.frozen_check {
+        let frozen = frozen_check
+            .is_frozen(request.bucket_id)
             .await
             .map_err(|e| Error::ChainStateUnavailable(e.to_string()))?;
-        if chain.frozen_start_seq.is_some() {
+        if frozen {
             return Err(Error::BucketFrozen {
                 bucket_id: request.bucket_id,
             });

@@ -31,7 +31,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                "storage_provider_node=debug,provider_http=debug,tower_http=debug".into()
+                "storage_provider_node=debug,provider_garbage_collector=debug,provider_http=debug,tower_http=debug".into()
             }),
         )
         .with(tracing_subscriber::fmt::layer())
@@ -151,10 +151,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_cors_origins(cli.rpc.cors_allowed_origins.clone())
         // The /delete frozen check reads chain state through the same
         // client; nodes without one skip the check.
-        .with_gc_chain(
+        .with_frozen_check(
             chain_client
                 .as_ref()
-                .map(|c| Arc::new(c.clone()) as Arc<dyn provider_garbage_collector::GcChainClient>),
+                .map(|c| Arc::new(c.clone()) as Arc<dyn provider_http::FrozenBucketCheck>),
         ),
     );
 
