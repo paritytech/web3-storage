@@ -366,9 +366,8 @@ export class S3Client {
   }
 
   /**
-   * Withdraw a challenge this account opened, before the provider responds
-   * and no later than the deadline. Finalized mode so the open-challenges
-   * refresh that follows does not return it.
+   * Cancel an open challenge this account created. Finalized mode so the
+   * open-challenges refresh that follows does not return it.
    */
   async cancelChallenge(challengeId: { deadline: number; index: number }): Promise<void> {
     const api = this.requireApi();

@@ -258,10 +258,10 @@ impl ChallengerClient {
         Ok(resolved)
     }
 
-    /// Withdraw a challenge this account opened, before the provider has
-    /// responded and no later than the deadline. The deposit is released in
-    /// full. Rejected with `NotChallengeChallenger` for anyone else and
-    /// `ChallengeExpired` past the deadline.
+    /// Cancel an open challenge this account created. The deposit is released
+    /// in full. Rejected with `NotChallengeChallenger` for anyone else and
+    /// `ChallengeNotFound` once the challenge was answered, cancelled or
+    /// resolved.
     pub async fn cancel_challenge(&self, challenge_id: ChallengeId) -> ClientResult<()> {
         let chain = self.base.chain()?;
         let tx = extrinsics::cancel_challenge((challenge_id.deadline, challenge_id.index));

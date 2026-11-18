@@ -1332,34 +1332,11 @@ fn cancel_challenge_fails_unknown_id() {
     });
 }
 
-/// The deadline block itself is still inside the window, the same `<=`
-/// contract `respond_to_challenge` uses.
+/// An expired challenge stays open until someone resolves it, and the
+/// challenger may cancel any open challenge. The cancel settles it once:
+/// full refund, no slash, and `resolve_expired_challenge` finds nothing left.
 #[test]
-fn cancel_challenge_works_at_deadline_block() {
-    new_test_ext().execute_with(|| {
-        frame_system::Pallet::<Test>::set_block_number(1);
-        let bucket_id = setup_with_snapshot(2, 1);
-        open_challenge(3, bucket_id);
-
-        frame_system::Pallet::<Test>::set_block_number(101);
-        assert_ok!(StorageProvider::cancel_challenge(
-            RuntimeOrigin::signed(3),
-            ChallengeId {
-                deadline: 101,
-                index: 0,
-            }
-        ));
-        assert!(Challenges::<Test>::get(101, 0).is_none());
-        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 0);
-        assert_ok!(StorageProvider::do_try_state());
-    });
-}
-
-/// Past the deadline only `resolve_expired_challenge` settles the challenge.
-/// Until someone calls it, the challenge stays stored but can no longer be
-/// cancelled.
-#[test]
-fn cancel_challenge_fails_after_deadline() {
+fn cancel_challenge_after_deadline_settles_without_slash() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
@@ -1368,14 +1345,24 @@ fn cancel_challenge_fails_after_deadline() {
             deadline: 101,
             index: 0,
         };
+        let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
 
         frame_system::Pallet::<Test>::set_block_number(102);
-        assert_noop!(
-            StorageProvider::cancel_challenge(RuntimeOrigin::signed(3), challenge_id),
-            Error::<Test>::ChallengeExpired
+        assert_ok!(StorageProvider::cancel_challenge(
+            RuntimeOrigin::signed(3),
+            challenge_id
+        ));
+
+        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 0);
+        assert_eq!(
+            Providers::<Test>::get(2).unwrap().stake,
+            provider_stake_before
         );
-        assert!(Challenges::<Test>::get(101, 0).is_some());
-        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 100);
+        assert_noop!(
+            StorageProvider::resolve_expired_challenge(RuntimeOrigin::signed(4), challenge_id),
+            Error::<Test>::ChallengeNotFound
+        );
+        assert_ok!(StorageProvider::do_try_state());
     });
 }
 

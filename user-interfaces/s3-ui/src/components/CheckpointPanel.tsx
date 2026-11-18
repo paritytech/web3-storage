@@ -170,7 +170,7 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
                   activeChallenge.challengeId.index === c.index;
                 const isMine =
                   signerAddress !== null && isSameAddress(c.challenger, signerAddress);
-                const cancelBucket = isMine && !isExpired && bucketId !== null ? bucketId : null;
+                const cancelBucket = isMine && bucketId !== null ? bucketId : null;
                 return (
                   <div
                     key={rowKey}
@@ -195,7 +195,7 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
                             variant="outline"
                             className="h-6 px-2 text-xs"
                             onClick={() => handleResolve(c)}
-                            disabled={resolving !== null}
+                            disabled={resolving !== null || cancelling !== null}
                           >
                             {resolving === rowKey ? "Resolving..." : "Resolve"}
                           </Button>
@@ -224,7 +224,7 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
                           data-testid="cancel-challenge"
                           variant="outline"
                           size="sm"
-                          disabled={cancelling !== null || challengeStatus === "submitting"}
+                          disabled={cancelling !== null || resolving !== null || challengeStatus === "submitting"}
                           onClick={async () => {
                             setCancelling(rowKey);
                             setCancelError(null);

@@ -755,7 +755,6 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 			.saturating_add(T::DbWeight::get().writes(6))
 	}
 	/// Storage: `StorageProvider::Challenges` (r:1 w:1)
-	/// Storage: `ParachainSystem::LastRelayChainBlockNumber` (r:1 w:0)
 	/// Storage: `StorageProvider::PendingChallenges` (r:1 w:1)
 	/// Storage: `StorageProvider::PendingChallengesByBucket` (r:1 w:1)
 	/// Storage: `Balances::Holds` (r:1 w:1)
@@ -765,7 +764,7 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 		// TODO: needs re-benchmarking
 		Weight::from_parts(40_000_000, 0)
 			.saturating_add(Weight::from_parts(0, 6196))
-			.saturating_add(T::DbWeight::get().reads(6))
+			.saturating_add(T::DbWeight::get().reads(5))
 			.saturating_add(T::DbWeight::get().writes(5))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)

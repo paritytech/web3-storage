@@ -1284,8 +1284,8 @@ pub mod pallet {
         SelfChallenge,
         /// No challenge with this id.
         ChallengeNotFound,
-        /// The challenge deadline has passed, so it can no longer be answered
-        /// or cancelled. Call `resolve_expired_challenge` to settle it.
+        /// The response deadline has passed. Call `resolve_expired_challenge`
+        /// to settle the challenge.
         ChallengeExpired,
         /// The deadline has not passed; the provider may still respond.
         ChallengeNotExpired,
@@ -2963,13 +2963,11 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Challenger only. Withdraw a challenge before the provider has
-        /// responded: the challenge is removed and the deposit is released in
-        /// full. The provider's stats do not change.
-        ///
-        /// Only valid up to the deadline, like `respond_to_challenge`. Past
-        /// it the provider can be slashed with `resolve_expired_challenge`
-        /// and cancelling is rejected (`ChallengeExpired`).
+        /// Challenger only. Cancel an open challenge, for example after
+        /// receiving the data off-chain: the challenge is removed and the
+        /// deposit is released in full. The provider's stats do not change.
+        /// Fails with `ChallengeNotFound` once the challenge was answered,
+        /// cancelled or resolved.
         #[pallet::call_index(44)]
         #[pallet::weight(T::WeightInfo::cancel_challenge())]
         pub fn cancel_challenge(
@@ -2986,12 +2984,6 @@ pub mod pallet {
             ensure!(
                 challenge.challenger == who,
                 Error::<T>::NotChallengeChallenger
-            );
-
-            let anchor_block = Self::current_anchor_block();
-            ensure!(
-                anchor_block <= challenge_id.deadline,
-                Error::<T>::ChallengeExpired
             );
 
             // Cancellation is a resolution: decrement the pending counters
