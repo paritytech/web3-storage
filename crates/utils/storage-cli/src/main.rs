@@ -12,15 +12,19 @@ mod commands;
 mod common;
 mod metrics;
 mod prepare;
+#[allow(dead_code)]
+mod soak;
 
 use anyhow::bail;
 use clap::Parser;
 
 use crate::cli::{Cli, Command};
 use crate::commands::provider::Provider;
+use crate::commands::soak::Soak;
 use crate::commands::stress_test::StressTest;
 use crate::metrics::{print_text, to_json, OpSummary, OutputFormat};
 use crate::prepare::PreparationReport;
+use crate::soak::SoakReport;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -36,6 +40,22 @@ async fn main() -> anyhow::Result<()> {
         Command::Provider(Provider::Register(args)) => {
             commands::provider::register(&cli.global, args).await
         }
+        Command::Soak(Soak::Gc(args)) => {
+            let report = commands::soak::gc::run(&cli.global, args).await?;
+            render_soak(cli.global.output, &report)
+        }
+    }
+}
+
+/// Print a soak report. Fails if the run recorded a failure.
+fn render_soak(output: OutputFormat, report: &SoakReport) -> anyhow::Result<()> {
+    match output {
+        OutputFormat::Text => print!("{report}"),
+        OutputFormat::Json => println!("{}", report.to_json()?),
+    }
+    match &report.failure {
+        Some(failure) => bail!("{failure}"),
+        None => Ok(()),
     }
 }
 

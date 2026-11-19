@@ -3,6 +3,7 @@
 //! Command-line argument parsing for the storage CLI.
 
 use crate::commands::provider::Provider;
+use crate::commands::soak::Soak;
 use crate::commands::stress_test::StressTest;
 use crate::metrics::OutputFormat;
 use clap::{Args, Parser, Subcommand};
@@ -56,4 +57,8 @@ pub enum Command {
     /// Provider registration.
     #[command(subcommand)]
     Provider(Provider),
+
+    /// Long-running correctness tests of the provider's background services.
+    #[command(subcommand)]
+    Soak(Soak),
 }

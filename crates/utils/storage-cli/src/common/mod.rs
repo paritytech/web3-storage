@@ -55,7 +55,7 @@ impl ProviderKey {
 }
 
 /// The SURI given inline, or else the trimmed contents of the keyfile.
-fn resolve_suri(suri: Option<&str>, keyfile: Option<&Path>) -> Result<String> {
+pub fn resolve_suri(suri: Option<&str>, keyfile: Option<&Path>) -> Result<String> {
     match (suri, keyfile) {
         (Some(suri), _) => Ok(suri.to_string()),
         (None, Some(path)) => {
