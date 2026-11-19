@@ -157,7 +157,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let challenge_events = events_tx.subscribe();
 
     // Start optional background services (failures are non-fatal)
-    let follower = Arc::new(SubxtChainFollower::new(transport, chain_tx));
+    let follower = Arc::new(SubxtChainFollower::new(
+        transport,
+        chain_tx,
+        sp_core::H256::zero(),
+    ));
     let _chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), replica_events, state.clone())
