@@ -18,7 +18,7 @@ use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
 use storage_subxt::api;
-use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
+use storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderRole;
 
 /// Client for storage providers.
 pub struct ProviderClient {

@@ -15,7 +15,7 @@ use provider_coordinator::{
 use provider_types::{ChainClientError, ProviderInfo, ProviderSettings, ProviderStats};
 use sp_core::H256;
 use sp_runtime::AccountId32;
-use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo as RuntimeProviderInfo;
+use storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderInfo as RuntimeProviderInfo;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::watch;
 
@@ -331,7 +331,7 @@ mod tests {
         use storage_subxt::api::runtime_types::{
             bounded_collections::bounded_vec::BoundedVec,
             frame_support::traits::tokens::fungible::HoldConsideration,
-            pallet_storage_provider::pallet::{
+            pallet_storage_provider::types::{
                 ProviderSettings as RuntimeProviderSettings, ProviderStats as RuntimeProviderStats,
             },
         };

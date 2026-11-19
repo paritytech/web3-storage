@@ -746,7 +746,7 @@ pub type NextChallengeIndex<T: Config> =
 
 /// Challenge identifier combining deadline and index.
 /// Keyed by deadline so expiry is checkable from the id alone.
-/// Defined in `storage_primitives`, generic over `BlockNumber`.
+/// Defined in the pallet, generic over `BlockNumber`.
 pub struct ChallengeId<BlockNumber> {
     /// Block by which provider must respond
     pub deadline: BlockNumber,
