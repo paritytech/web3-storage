@@ -10,7 +10,6 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use bitvec::prelude::{BitVec, Lsb0};
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use core::fmt::Debug;
 use primitive_types::H256;
@@ -23,12 +22,6 @@ pub mod mmr;
 pub use agreement_term::*;
 pub use merkle::*;
 pub use mmr::{bag_peaks, verify_mmr_proof, MmrLeaf, MmrProof, StorageMerge, LEAF_VERSION};
-
-/// The runtime's `Balance` type, for off-chain code that mirrors runtime types.
-pub type RuntimeBalance = u128;
-
-/// The runtime's `BlockNumber` type, for off-chain code that mirrors runtime types.
-pub type RuntimeBlockNumber = u32;
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
@@ -101,62 +94,6 @@ pub enum Visibility {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Provider Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Provider role for a specific bucket agreement.
-#[derive(
-    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum ProviderRole<Balance, BlockNumber> {
-    /// Receives data directly from writers.
-    /// - Admin-controlled (stored in bucket.primary_providers)
-    /// - Count toward min_providers for checkpoints
-    /// - Can be early-terminated by admin
-    Primary,
-    /// Syncs data from other providers autonomously.
-    /// - Permissionless (anyone can add)
-    /// - Does NOT count toward min_providers
-    /// - Cannot be early-terminated (runs to expiry)
-    /// - Receives per-sync payment from sync_balance
-    Replica {
-        /// Balance for per-sync payments (drawn down on each sync confirmation)
-        sync_balance: Balance,
-        /// Price per sync locked at creation/last extension
-        sync_price: Balance,
-        /// Minimum blocks between sync confirmations for this agreement.
-        min_sync_interval: BlockNumber,
-        /// Last confirmed sync. `None` if the replica hasn't confirmed sync yet.
-        last_sync: Option<ReplicaSyncRecord<BlockNumber>>,
-    },
-}
-
-pub type RuntimeProviderRole = ProviderRole<RuntimeBalance, RuntimeBlockNumber>;
-
-/// A replica's last confirmed sync: the commitment and the anchor block.
-/// `challenge_replica` targets leaves of this commitment.
-#[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
-    Debug,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ReplicaSyncRecord<BlockNumber> {
-    /// MMR commitment the replica confirmed sync to (root + covered range).
-    pub commitment: Commitment,
-    /// Block at which `confirm_replica_sync` was executed.
-    pub block: BlockNumber,
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Agreement Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -184,54 +121,6 @@ pub enum EndAction {
     },
 }
 
-/// Reason for removing a primary provider from a bucket.
-#[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
-    Debug,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum RemovalReason {
-    /// Provider was slashed for failing a challenge
-    Slashed,
-    /// Admin terminated agreement early
-    AdminTerminated,
-    /// Agreement expired naturally
-    Expired,
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Challenge Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Challenge identifier combining deadline and index.
-#[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    TypeInfo,
-    MaxEncodedLen,
-    Debug,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ChallengeId<BlockNumber> {
-    /// Block by which provider must respond
-    pub deadline: BlockNumber,
-    /// Index within the deadline's challenge list
-    pub index: u16,
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Commitment Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -239,10 +128,10 @@ pub struct ChallengeId<BlockNumber> {
 /// The `(mmr_root, start_seq, leaf_count)` triplet that identifies an MMR
 /// commitment over a contiguous range of leaves.
 ///
-/// One reusable type instead of three loose fields: it is a field group inside
-/// [`CommitmentPayload`], [`BucketSnapshot`], and [`ReplicaSyncRecord`], and it
-/// is the single argument the checkpoint/challenge extrinsics take in place of
-/// passing `mmr_root`, `start_seq`, and `leaf_count` separately.
+/// [`CommitmentPayload`] contains it, and the pallet stores it in
+/// `BucketSnapshot`, `ReplicaSyncRecord`, `Challenge` and
+/// `Bucket::historical_roots`. `checkpoint` and `challenge_offchain` take it
+/// as one argument.
 #[derive(
     Clone,
     Copy,
@@ -355,37 +244,6 @@ impl CommitmentPayload {
     }
 
     /// Check if a sequence number is within this commitment's range
-    pub fn contains_seq(&self, seq: u64) -> bool {
-        self.commitment.contains_seq(seq)
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Snapshot Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Bucket snapshot representing canonical state at a checkpoint.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct BucketSnapshot<BlockNumber> {
-    /// Canonical MMR commitment at this checkpoint (root + covered range).
-    pub commitment: Commitment,
-    /// Block at which checkpointed
-    pub checkpoint_block: BlockNumber,
-    /// Bit i is set if `primary_providers[i]` signed. The length always equals
-    /// `primary_providers.len()`: `checkpoint` builds it, adding a primary
-    /// appends an unset bit, removing a primary removes its bit, and
-    /// `extend_checkpoint` sets the bit of a late signer.
-    pub primary_signers: BitVec<u8, Lsb0>,
-}
-
-impl<BlockNumber> BucketSnapshot<BlockNumber> {
-    /// Get the canonical range end (exclusive)
-    pub fn range_end(&self) -> u64 {
-        self.commitment.range_end()
-    }
-
-    /// Check if a sequence number is within this snapshot's range
     pub fn contains_seq(&self, seq: u64) -> bool {
         self.commitment.contains_seq(seq)
     }

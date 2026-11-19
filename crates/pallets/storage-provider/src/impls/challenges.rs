@@ -4,9 +4,7 @@ use crate::*;
 use frame_support::pallet_prelude::*;
 use sp_core::H256;
 use sp_runtime::traits::Saturating;
-use storage_primitives::{
-    BucketId, ChallengeId, ChunkLocation, Commitment, MmrProof, ProviderRole, Visibility,
-};
+use storage_primitives::{BucketId, ChunkLocation, Commitment, MmrProof, Visibility};
 
 impl<T: Config> Pallet<T> {
     /// Check that `mmr_proof` proves the challenged leaf under the challenged
