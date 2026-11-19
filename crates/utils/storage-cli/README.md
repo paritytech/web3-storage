@@ -20,11 +20,35 @@ cargo run -p storage-cli -- stress-test upload --help
 | `--chain-rpc <URL>`    | `ws://127.0.0.1:2222`   | `CHAIN_RPC`    | Parachain RPC WebSocket endpoint.                  |
 | `--provider-url <URL>` | `http://127.0.0.1:3333` | `PROVIDER_URL` | Provider node HTTP endpoint.                       |
 | `--output <FORMAT>`    | `text`                  |                | Metrics summary format: `text` or `json`.          |
+| `--report <PATH>`      | none                    |                | File that receives one JSON line per record as it happens. See [Report file](#report-file). |
 
 Each command takes the secret of the account it signs as, named after the
 account's role: `--provider-suri`/`--provider-keyfile` or
 `--client-suri`/`--client-keyfile`. Exactly one of each pair is required. A
 keyfile contains the SURI.
+
+### Report file
+
+`--output` prints its summary when the command ends, so a command that stops unexpectedly prints nothing.
+With `--report <PATH>`, the command also appends one JSON line per record to the file as the record happens.
+A crash, a `kill`, or the second Ctrl-C of `soak gc` keeps every line written before it.
+The file is created if missing and appended to otherwise, so several runs can share one file.
+Every line has `run_id`, which is the same for all lines of one invocation, and `kind`.
+Without `--report`, no file is written.
+
+| `kind`    | Written by          | When                                    | Fields                                                                 |
+| --------- | ------------------- | --------------------------------------- | ---------------------------------------------------------------------- |
+| `start`   | every command       | before the command runs                 | `command`, `started_at` (Unix seconds)                                 |
+| `upload`  | `stress-test upload`| after each upload finishes              | `user`, `bucket_id`, `ok`, `bytes`, `elapsed_secs`, `error`            |
+| `cycle`   | `soak gc`           | after each finished prune cycle         | `lane`, `epoch`, `cycle`, `bucket_id`, `uploaded_bytes`, `erase_latency_secs`, `used_bytes_after` |
+| `barrier` | `soak gc`           | after each passed drain check           | `epoch`, `drain_secs`, `provider_rss_kb`, `gc_log`                     |
+| `failure` | `soak gc`           | when an invariant breaks                | `message`, `epoch`, `lane`, `cycle`                                    |
+| `end`     | every command       | after the command returns               | `elapsed_secs`, `error` (`null` on success)                            |
+
+A `start` line without an `end` line of the same `run_id` means the run stopped unexpectedly.
+The command opens the file before it contacts the chain or the provider, so an unwritable path fails at once.
+A failed write fails `soak gc` at that cycle or epoch.
+In `stress-test upload` it marks that one upload as failed and the load continues.
 
 ## `provider register`
 
@@ -119,6 +143,7 @@ be at least `--prepare-buckets`, so no bucket is opened and then never written.
 
 Progress goes to stderr. stdout carries the preparation report (text mode) and
 the metrics summary, so `--output json` stays parseable when piped.
+With `--report`, each upload is also written to the [report file](#report-file) as it finishes.
 
 ```
 preparation: 2 bucket(s) created in 14.210s
@@ -219,6 +244,7 @@ stdout carries the report: one line per epoch with the erase latency (min, p50, 
 The memory is read for a provider on this machine only, and is reported without a threshold.
 `--output json` prints the same data as `cycles`, `barriers` and `failure` objects.
 The command exits non-zero on the first broken invariant and names the epoch, lane and cycle.
+With `--report`, every cycle and drain check is also written to the [report file](#report-file) as it happens.
 
 ## Limitations
 
