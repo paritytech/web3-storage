@@ -215,9 +215,10 @@ fn escalate_membership_decode_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use storage_subxt::api::runtime_types::pallet_storage_provider::types::ChallengeId;
     use storage_subxt::api::runtime_types::storage_primitives::{
         agreement_term::{AgreementTerms, BucketTarget},
-        ChallengeId, Commitment,
+        Commitment,
     };
 
     #[test]

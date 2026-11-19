@@ -311,7 +311,7 @@ fn challenge_checkpoint_emits_event() {
         // Insert snapshot
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
-                bucket.snapshot = Some(storage_primitives::BucketSnapshot {
+                bucket.snapshot = Some(BucketSnapshot {
                     commitment: storage_primitives::Commitment {
                         mmr_root: sp_core::H256::repeat_byte(0xAB),
                         start_seq: 0,
@@ -334,7 +334,7 @@ fn challenge_checkpoint_emits_event() {
         ));
 
         let expected = RuntimeEvent::StorageProvider(crate::Event::ChallengeCreated {
-            challenge_id: storage_primitives::ChallengeId {
+            challenge_id: ChallengeId {
                 deadline: 101,
                 index: 0,
             },
@@ -482,7 +482,7 @@ fn remove_slashed_waits_for_open_challenge() {
         run_to_block(102);
         assert_ok!(StorageProvider::resolve_expired_challenge(
             RuntimeOrigin::signed(3),
-            storage_primitives::ChallengeId {
+            ChallengeId {
                 deadline: 101,
                 index: 0,
             },

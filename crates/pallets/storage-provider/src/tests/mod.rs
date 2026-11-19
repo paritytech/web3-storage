@@ -5,7 +5,7 @@
 use crate::{mock::*, *};
 use bitvec::prelude::Lsb0;
 use frame_support::{assert_err, assert_noop, assert_ok};
-use storage_primitives::{BucketTarget, ProviderRole, Role};
+use storage_primitives::{BucketTarget, Role};
 
 /// Helper function to create a test public key (32 bytes).
 fn test_public_key() -> frame_support::BoundedVec<u8, frame_support::traits::ConstU32<64>> {

@@ -272,7 +272,9 @@ mod tests {
     use super::*;
     use crate::error::MembershipError;
     use crate::http_auth::build_auth_header;
-    use crate::membership::{BucketAccess, Member, MembershipResolver, StaticMembershipResolver};
+    use crate::membership::{
+        AgreementRole, BucketAccess, Member, MembershipResolver, StaticMembershipResolver,
+    };
     use crate::test_support::{AgreementResolver, FlakyResolver};
     use sp_core::Pair;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -386,7 +388,7 @@ mod tests {
                 .await
                 .unwrap(),
             LocalBucketAgreement {
-                role: storage_primitives::RuntimeProviderRole::Primary,
+                role: AgreementRole::Primary,
                 max_bytes: 1_000,
                 expires_at: u32::MAX
             }
