@@ -198,6 +198,10 @@ pub enum ChallengeResponseResult {
         challenge_id: (u32, u16),
         error: String,
     },
+    /// The challenge no longer exists on chain: it was answered (possibly by
+    /// an earlier attempt of this responder), cancelled by the challenger or
+    /// resolved after its deadline. Nothing is left to submit.
+    ChallengeClosed { challenge_id: (u32, u16) },
     /// The proof data is provably absent from local storage. Unless it is
     /// restored before the deadline, the provider's stake is slashed.
     DataNotFound {
@@ -649,6 +653,20 @@ impl ChallengeResponder {
                 }
             }
             Err(e) => {
+                // The chain rejects a response to a missing challenge at
+                // transaction validation, with an error that does not name
+                // the cause. Re-read the challenge to tell the two apart.
+                if let Ok(None) = self
+                    .chain_client
+                    .fetch_challenge(challenge.deadline, challenge.index)
+                    .await
+                {
+                    tracing::info!(
+                        "Challenge {:?} closed before the response landed",
+                        challenge_id
+                    );
+                    return ChallengeResponseResult::ChallengeClosed { challenge_id };
+                }
                 tracing::error!("Failed to submit response: {}", e);
                 ChallengeResponseResult::SubmissionFailed {
                     challenge_id,

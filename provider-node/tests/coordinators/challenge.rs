@@ -19,6 +19,7 @@ struct MockChallengeChainClient {
     submitted: Mutex<Vec<((u32, u16), ChallengeResponse)>>,
     deleted_submitted: Mutex<Vec<((u32, u16), u64)>>,
     submit_error: Mutex<Option<String>>,
+    cancel_on_submit: bool,
 }
 
 impl MockChallengeChainClient {
@@ -28,6 +29,7 @@ impl MockChallengeChainClient {
             submitted: Mutex::new(Vec::new()),
             deleted_submitted: Mutex::new(Vec::new()),
             submit_error: Mutex::new(None),
+            cancel_on_submit: false,
         }
     }
 
@@ -41,6 +43,15 @@ impl MockChallengeChainClient {
     fn with_submit_error(self, err: String) -> Self {
         Self {
             submit_error: Mutex::new(Some(err)),
+            ..self
+        }
+    }
+
+    /// The challenger cancels the challenge before the response lands, so the
+    /// chain rejects the response and the challenge is gone.
+    fn with_cancel_on_submit(self) -> Self {
+        Self {
+            cancel_on_submit: true,
             ..self
         }
     }
@@ -75,6 +86,15 @@ impl ChallengeChainClient for MockChallengeChainClient {
             .lock()
             .unwrap()
             .push((challenge_id, response));
+        if self.cancel_on_submit {
+            self.challenges
+                .lock()
+                .unwrap()
+                .retain(|c| (c.deadline, c.index) != challenge_id);
+            return Err(ChallengeError::Chain {
+                reason: "Invalid Transaction: Transaction is outdated".to_string(),
+            });
+        }
         if let Some(err) = self.submit_error.lock().unwrap().as_ref() {
             return Err(ChallengeError::Chain {
                 reason: err.clone(),
@@ -614,6 +634,21 @@ async fn respond_once(
     ChallengeResponseResult,
     Vec<((u32, u16), ChallengeResponse)>,
 ) {
+    respond_once_with(
+        source,
+        MockChallengeChainClient::new().with_challenges(vec![challenge]),
+    )
+    .await
+}
+
+/// [`respond_once`] against a prepared `mock`.
+async fn respond_once_with(
+    source: Arc<dyn ChallengeProofSource>,
+    mock: MockChallengeChainClient,
+) -> (
+    ChallengeResponseResult,
+    Vec<((u32, u16), ChallengeResponse)>,
+) {
     let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
     let result_clone = Arc::clone(&result);
     let callback: Arc<dyn Fn(ChallengeResponseResult) + Send + Sync> = Arc::new(move |r| {
@@ -623,7 +658,7 @@ async fn respond_once(
         }
     });
 
-    let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
+    let mock = Arc::new(mock);
     let config = ChallengeResponderConfig {
         poll_interval: Duration::from_millis(50),
         auto_respond: true,
@@ -649,6 +684,29 @@ async fn respond_once(
     let result = result.lock().unwrap().take().unwrap();
     let submitted = std::mem::take(&mut *mock.submitted.lock().unwrap());
     (result, submitted)
+}
+
+/// A response that loses the race to `cancel_challenge` is rejected before
+/// dispatch with an error that does not say why. The responder reports the
+/// challenge as closed, so a cancelled challenge is not logged as a failed
+/// submission.
+#[tokio::test(start_paused = true)]
+async fn test_response_to_cancelled_challenge_reports_closed() {
+    let (storage, challenge, _dir) = test_storage_with_data();
+    let mock = MockChallengeChainClient::new()
+        .with_challenges(vec![challenge])
+        .with_cancel_on_submit();
+
+    let (result, _) = respond_once_with(proof_source(&storage), mock).await;
+    assert!(
+        matches!(
+            result,
+            ChallengeResponseResult::ChallengeClosed {
+                challenge_id: (1000, 0)
+            }
+        ),
+        "expected ChallengeClosed, got {result:?}"
+    );
 }
 
 /// A `chunk_index` at or past the leaf's chunk count has no chunk to prove;

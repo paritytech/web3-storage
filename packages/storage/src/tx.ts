@@ -324,8 +324,8 @@ export async function submitTx(
 /**
  * Like `submitTx` but waits for FINALIZATION (~6 blocks slower). Use only when
  * a later tx references this one's effect by id: a challenge id embeds its
- * creation block, so an in-block creation that gets reorged makes the response
- * fail with `ChallengeNotFound`. Finalizing pins the id.
+ * creation block, so an in-block creation that gets reorged makes the chain
+ * reject the response as `Stale`. Finalizing pins the id.
  */
 export async function submitTxFinalized(
   tx: SubmittableTx,

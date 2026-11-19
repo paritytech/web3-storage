@@ -195,7 +195,7 @@ web3-storage/
 ├── crates/
 │   ├── pallets/            # FRAME pallet: storage-provider
 │   │                       #   with a precompiles/ subfolder (pallet_revive precompile)
-│   ├── primitives/         # Shared types: storage, file-system
+│   ├── primitives/         # Shared types between the runtime and storage-provider-node
 │   ├── providers/          # Provider-node library crates
 │   ├── storage-subxt/      # Static subxt runtime bindings
 │   └── utils/              # Ultility crates
@@ -270,7 +270,7 @@ let data = b"Hello, decentralized storage!";
 let data_root = client.upload(bucket_id, data, ChunkingStrategy::default()).await?;
 
 // Verify upload
-let downloaded = client.download(bucket_id, &data_root, 0, data.len() as u64).await?;
+let downloaded = client.download(bucket_id, &data_root, data.len() as u64, 0, data.len() as u64).await?;
 assert_eq!(data, downloaded);
 ```
 

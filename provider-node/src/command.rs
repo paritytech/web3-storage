@@ -149,6 +149,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         .with_cors_origins(cli.rpc.cors_allowed_origins.clone())
+        .with_read_limits(cli.read_limits)
         // The /delete frozen check reads chain state through the same
         // client; nodes without one skip the check.
         .with_frozen_check(

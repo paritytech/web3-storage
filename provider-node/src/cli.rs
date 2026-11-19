@@ -43,6 +43,9 @@ pub struct Cli {
     pub rpc: RpcParams,
 
     #[clap(flatten)]
+    pub read_limits: provider_http::ReadLimits,
+
+    #[clap(flatten)]
     pub key: KeyParams,
 
     #[clap(flatten)]
@@ -410,6 +413,29 @@ mod tests {
         assert!(!cli.challenge_responder.enable_challenge_responder);
         assert_eq!(cli.challenge_responder.challenge_poll_interval, 300);
         assert_eq!(cli.garbage_collector.gc_scan_interval, 600);
+        assert_eq!(cli.read_limits, provider_http::ReadLimits::default());
+    }
+
+    #[test]
+    fn read_limits_parse_and_reject_zero() {
+        let cli = Cli::try_parse_from([
+            "storage-provider-node",
+            "--read-max-bytes",
+            "1048576",
+            "--read-max-chunks",
+            "64",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.read_limits,
+            provider_http::ReadLimits {
+                max_bytes: 1 << 20,
+                max_chunks: 64,
+            }
+        );
+        for flag in ["--read-max-bytes", "--read-max-chunks"] {
+            assert!(Cli::try_parse_from(["storage-provider-node", flag, "0"]).is_err());
+        }
     }
 
     #[test]

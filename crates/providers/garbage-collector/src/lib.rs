@@ -6,10 +6,10 @@
 //! it records a pruned range locally. Garbage-collection coordinator then erases
 //! a range when all of the following hold:
 //! - [`CanonicalBucketState::canonical_start_seq`] has reached
-//! [`PrunedRange::new_start_seq`], or the bucket or this node's agreement no
-//! longer exists on chain;
+//!   [`PrunedRange::new_start_seq`], or the bucket or this node's agreement no
+//!   longer exists on chain;
 //! - a deletion receipt signed by the bucket admin exists,
-//! so a later challenge over the erased data is answered with the [`ChallengeResponse::Deleted`] defense;
+//!   so a later challenge over the erased data is answered with the [`ChallengeResponse::Deleted`] defense;
 //! - no challenge against this provider is pending on the bucket.
 
 mod error;

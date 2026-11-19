@@ -14,7 +14,7 @@ provider-challenge = { workspace = true }
 provider-coordinator = { workspace = true }
 provider-events = { workspace = true }
 provider-garbage-collector = { workspace = true }
-provider-http = { workspace = true }
+provider-http = { workspace = true, features = ["clap"] }
 provider-replica = { workspace = true }
 provider-storage = { workspace = true }
 provider-types = { workspace = true, features = ["clap"] }

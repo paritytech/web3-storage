@@ -22,7 +22,7 @@ use provider_types::SigningRefused;
 use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_primitives::{AgreementTerms, BucketId, Role, MAX_READ_CHUNKS};
+use storage_primitives::{AgreementTerms, BucketId, Role};
 use storage_primitives::{Commitment, CommitmentPayload};
 use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
@@ -318,25 +318,20 @@ async fn read_chunks(
     let data_root = decode_hash(&query.data_root)?;
     require_bucket(&state, query.bucket_id, Role::Reader).await?;
 
-    let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
-    let start_chunk = query.offset / chunk_size;
-    let end_chunk = query
-        .offset
-        .saturating_add(query.length)
-        .div_ceil(chunk_size);
-    let requested = end_chunk - start_chunk;
-    if requested > MAX_READ_CHUNKS {
-        return Err(Error::ReadTooLarge {
-            requested,
-            max: MAX_READ_CHUNKS,
-        });
-    }
-
-    let chunks = state
+    let (offset, length, limits) = (query.offset, query.length, state.read_limits);
+    let read = state
         .blocking_storage(move |storage| {
-            storage.get_chunks_in_range(data_root, start_chunk..end_chunk)
+            storage.read_range(
+                data_root,
+                offset,
+                length,
+                limits.max_chunks,
+                limits.max_bytes,
+            )
         })
-        .await??
+        .await??;
+    let chunks = read
+        .chunks
         .into_iter()
         .map(|(hash, data, proof)| ChunkWithProof {
             hash,
@@ -345,7 +340,11 @@ async fn read_chunks(
         })
         .collect();
 
-    Ok(Json(ReadResponse { chunks }))
+    Ok(Json(ReadResponse {
+        start_chunk: read.start_chunk,
+        chunk_count: read.chunk_count,
+        chunks,
+    }))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
