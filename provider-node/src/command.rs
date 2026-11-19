@@ -133,7 +133,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             ProviderState::with_provider_id(deps, provider_id)
         }
     }
-    .with_cors_origins(cli.rpc.cors_allowed_origins.clone());
+    .with_cors_origins(cli.rpc.cors_allowed_origins.clone())
+    .with_read_limits(cli.read_limits);
 
     let state = Arc::new(state);
 

@@ -253,6 +253,24 @@ impl ChallengerClient {
         Ok(resolved)
     }
 
+    /// Cancel an open challenge this account created. The deposit is released
+    /// in full. Rejected with `NotChallengeCreator` for anyone else and
+    /// `ChallengeNotFound` once the challenge was answered, cancelled or
+    /// resolved.
+    pub async fn cancel_challenge(&self, challenge_id: ChallengeId) -> ClientResult<()> {
+        let chain = self.base.chain()?;
+        let tx = extrinsics::cancel_challenge((challenge_id.deadline, challenge_id.index));
+
+        chain.submit(&tx).await?;
+
+        tracing::info!(
+            "Challenge cancelled: deadline={}, index={}",
+            challenge_id.deadline,
+            challenge_id.index
+        );
+        Ok(())
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Monitoring & Strategy
     // ═════════════════════════════════════════════════════════════════════════

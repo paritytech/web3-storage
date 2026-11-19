@@ -14,7 +14,6 @@
 import {
   bagPeaks,
   bytesToBase64,
-  DEFAULT_CHUNK_SIZE,
   hashChildren,
   hashLeaf,
   hexToBytes,
@@ -24,6 +23,10 @@ import {
   parseNode,
   toHex,
 } from "@web3-storage/core";
+
+/** The provider's default read limits (`ReadLimits` in `crates/providers/http/src/lib.rs`). */
+const MAX_READ_BYTES = 4 * 1024 * 1024;
+const MAX_READ_CHUNKS = 1024;
 
 interface StoredNode {
   data: Uint8Array;
@@ -89,6 +92,12 @@ export class FakeProvider {
   readonly nodes = new Map<string, StoredNode>();
   readonly buckets = new Map<string, Leaf[]>();
   readonly calls: FakeCall[] = [];
+  private readonly endedAgreements = new Set<string>();
+
+  /** End this provider's agreement on a bucket: from then on every request to it answers 403 `no_agreement`. */
+  endAgreement(bucketId: bigint | number): void {
+    this.endedAgreements.add(String(bucketId));
+  }
 
   /** Replace a stored node's data without changing its key (simulates a bad provider). */
   tamper(hash: string, data: Uint8Array): void {
@@ -130,6 +139,8 @@ export class FakeProvider {
   }) as typeof fetch;
 
   private putNode(body: { bucket_id: number; hash: string; data?: string | null; children?: string[] | null }): Response {
+    const agreementError = this.requireAgreement(String(body.bucket_id));
+    if (agreementError) return agreementError;
     const hash = body.hash.toLowerCase();
     const parsed = parseNode(body);
     if (!parsed) return json(400, { error: "invalid_node" });
@@ -155,6 +166,8 @@ export class FakeProvider {
   }
 
   private commit(body: { bucket_id: number; data_roots: string[] }): Response {
+    const agreementError = this.requireAgreement(String(body.bucket_id));
+    if (agreementError) return agreementError;
     const roots = body.data_roots.map((r) => r.toLowerCase());
     const missing = roots.find((r) => !this.nodes.has(r));
     if (missing) return json(404, { error: "root_not_found", details: { data_root: missing } });
@@ -182,10 +195,16 @@ export class FakeProvider {
     return bagPeaks(mmrPeaks(leaves.map(leafHash)).map((p) => p.levels[p.levels.length - 1][0]));
   }
 
-  /** `require_bucket`: the query names a bucket, and the provider has data for it. */
+  /** `require_agreement`: the provider has an agreement on the bucket. */
+  private requireAgreement(bucketId: string): Response | null {
+    if (!this.endedAgreements.has(bucketId)) return null;
+    return json(403, { error: "no_agreement", details: { bucket_id: Number(bucketId) } });
+  }
+
+  /** `require_bucket`: the query names a bucket the provider has an agreement on and data for. */
   private requireBucket(bucketId: string | undefined): Response | null {
     if (bucketId === undefined) return json(400, { error: "bucket_id_required" });
-    return this.buckets.has(bucketId) ? null : json(404, { error: "bucket_not_found" });
+    return this.requireAgreement(bucketId) ?? (this.buckets.has(bucketId) ? null : json(404, { error: "bucket_not_found" }));
   }
 
   private getNode(query: Record<string, string>): Response {
@@ -217,16 +236,25 @@ export class FakeProvider {
   private read(query: Record<string, string>): Response {
     const bucketError = this.requireBucket(query.bucket_id);
     if (bucketError) return bucketError;
+    const isUint = (v: string | undefined) => v !== undefined && /^\d+$/.test(v);
+    if (!isUint(query.offset) || !isUint(query.length)) return json(400, { error: "invalid_query" });
     const dataRoot = query.data_root;
-    const offset = BigInt(query.offset);
-    const length = BigInt(query.length);
     const hashes = this.chunkHashes(dataRoot.toLowerCase());
-    const size = BigInt(DEFAULT_CHUNK_SIZE);
-    const start = Number(offset / size);
-    const end = Number((offset + length + size - 1n) / size);
+    // The chunk size is the size of the first chunk; only the last is shorter.
+    const first = hashes.length > 0 ? this.nodes.get(hashes[0])!.data.length : 1;
+    const chunkSize = BigInt(Math.max(first, 1));
+    const offset = BigInt(query.offset);
+    const start = Number(offset / chunkSize);
+    const length = BigInt(query.length);
+    const last = length === 0n ? start : Number((offset + length + chunkSize - 1n) / chunkSize);
+    const end = Math.min(last, start + MAX_READ_CHUNKS, hashes.length);
     const tree = levels(hashes.map(hexToBytes));
     const chunks = [];
-    for (let i = start; i < end && i < hashes.length; i++) {
+    let bytes = 0;
+    for (let i = start; i < end; i++) {
+      const data = this.nodes.get(hashes[i])!.data;
+      if (chunks.length > 0 && bytes + data.length > MAX_READ_BYTES) break;
+      bytes += data.length;
       const proof: string[] = [];
       let idx = i;
       for (const level of tree.slice(0, -1)) {
@@ -234,15 +262,15 @@ export class FakeProvider {
         if ((idx ^ 1) < level.length) proof.push(toHex(level[idx ^ 1]));
         idx >>= 1;
       }
-      const data = this.nodes.get(hashes[i])!.data;
       chunks.push({ hash: toHex(hashLeaf(data)), data: bytesToBase64(data), proof });
     }
-    return json(200, { chunks });
+    return json(200, { start_chunk: start, chunk_count: hashes.length, chunks });
   }
 
   private commitment(bucketId: string): Response {
-    const leaves = this.buckets.get(bucketId);
-    if (!leaves) return json(404, { error: "bucket_not_found" });
+    const bucketError = this.requireBucket(bucketId);
+    if (bucketError) return bucketError;
+    const leaves = this.buckets.get(bucketId)!;
     return json(200, {
       bucket_id: Number(bucketId),
       mmr_root: toHex(this.mmrRoot(leaves)),
@@ -255,8 +283,9 @@ export class FakeProvider {
   private mmrProof(query: Record<string, string>): Response {
     const { bucket_id, leaf_index, mmr_root, start_seq, leaf_count } = query;
     if (!(leaf_index && mmr_root && start_seq && leaf_count)) return json(400, { error: "invalid_query" });
-    const held = this.buckets.get(bucket_id);
-    if (!held) return json(404, { error: "bucket_not_found" });
+    const bucketError = this.requireBucket(bucket_id);
+    if (bucketError) return bucketError;
+    const held = this.buckets.get(bucket_id)!;
     const start = Number(start_seq);
     const end = start + Number(leaf_count);
     if (end > held.length) return json(404, { error: "leaves_not_held" });

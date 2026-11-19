@@ -6,10 +6,16 @@
 //! there is no external dependency. On-chain operations are not exercised
 //! here — see the end-to-end demo in `justfile` for those.
 
-use client_test_support::{make_client, start_test_provider};
+use client_test_support::{
+    make_client, start_test_provider, start_test_provider_without_agreement,
+};
 use sp_core::H256;
 use storage_client::{ChunkingStrategy, ClientError, EncryptionKey, Node, ENCRYPTION_OVERHEAD};
-use storage_primitives::{DEFAULT_CHUNK_SIZE, MAX_READ_CHUNKS};
+use storage_primitives::DEFAULT_CHUNK_SIZE;
+
+/// Chunks in one full `/read` response of the test provider.
+const PAGE_CHUNKS: usize =
+    (provider_http::ReadLimits::DEFAULT_MAX_BYTES / DEFAULT_CHUNK_SIZE as u64) as usize;
 
 // ============================================================================
 // Health
@@ -259,7 +265,13 @@ async fn test_upload_commit_download_roundtrip() {
     client.commit(1, vec![data_root]).await.unwrap();
 
     let retrieved = client
-        .download(1, &data_root, 0, original.len() as u64)
+        .download(
+            1,
+            &data_root,
+            original.len() as u64,
+            0,
+            original.len() as u64,
+        )
         .await
         .unwrap();
 
@@ -290,7 +302,7 @@ async fn test_download_more_than_one_read_page() {
     let client = make_client(url);
 
     let chunk_size = DEFAULT_CHUNK_SIZE as usize;
-    let len = chunk_size * MAX_READ_CHUNKS as usize + 100;
+    let len = chunk_size * PAGE_CHUNKS + 100;
     let data: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
     let data_root = client
         .upload(1, &data, ChunkingStrategy::default())
@@ -302,20 +314,37 @@ async fn test_download_more_than_one_read_page() {
     assert_eq!(full, data);
 
     let range = client
-        .download(1, &data_root, 10, len as u64 - 20)
+        .download(1, &data_root, len as u64, 10, len as u64 - 20)
         .await
         .unwrap();
     assert_eq!(range, &data[10..len - 10]);
 }
 
-/// Data of exactly one `/read` page: the read after the last full page
-/// returns no chunks and ends the download.
+/// A root of 32-byte chunks that takes more than one `/read` response: the
+/// client continues with the provider's chunk size, not 256 KiB.
+#[tokio::test]
+async fn test_download_full_of_small_chunks_over_several_pages() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let chunks = provider_http::ReadLimits::DEFAULT_MAX_CHUNKS as usize + 10;
+    let data: Vec<u8> = (0..chunks * 32).map(|i| (i % 251) as u8).collect();
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::Fixed(32))
+        .await
+        .unwrap();
+
+    let full = client.download_full(1, &data_root).await.unwrap();
+    assert_eq!(full, data);
+}
+
+/// Data of exactly one `/read` page: the chunk count ends the download.
 #[tokio::test]
 async fn test_download_exact_read_page() {
     let url = start_test_provider().await;
     let client = make_client(url);
 
-    let page_len = DEFAULT_CHUNK_SIZE as usize * MAX_READ_CHUNKS as usize;
+    let page_len = DEFAULT_CHUNK_SIZE as usize * PAGE_CHUNKS;
     let data: Vec<u8> = (0..page_len).map(|i| (i % 251) as u8).collect();
     let data_root = client
         .upload(1, &data, ChunkingStrategy::default())
@@ -334,7 +363,7 @@ async fn test_download_range_in_second_read_page() {
     let client = make_client(url);
 
     let chunk_size = DEFAULT_CHUNK_SIZE as usize;
-    let page_len = chunk_size * MAX_READ_CHUNKS as usize;
+    let page_len = chunk_size * PAGE_CHUNKS;
     let len = page_len + chunk_size * 2;
     let data: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
     let data_root = client
@@ -345,7 +374,7 @@ async fn test_download_range_in_second_read_page() {
 
     let offset = page_len + 7;
     let range = client
-        .download(1, &data_root, offset as u64, chunk_size as u64)
+        .download(1, &data_root, len as u64, offset as u64, chunk_size as u64)
         .await
         .unwrap();
     assert_eq!(range, &data[offset..offset + chunk_size]);
@@ -363,7 +392,7 @@ async fn test_download_offset_past_end() {
         .unwrap();
     client.commit(1, vec![data_root]).await.unwrap();
 
-    let retrieved = client.download(1, &data_root, 10, 5).await.unwrap();
+    let retrieved = client.download(1, &data_root, 4, 10, 5).await.unwrap();
     assert!(retrieved.is_empty());
 }
 
@@ -381,7 +410,7 @@ async fn test_download_length_past_end() {
     client.commit(1, vec![data_root]).await.unwrap();
 
     let retrieved = client
-        .download(1, &data_root, 0, 1024u64.pow(4))
+        .download(1, &data_root, original.len() as u64, 0, 1024u64.pow(4))
         .await
         .unwrap();
     assert_eq!(retrieved, original);
@@ -402,7 +431,7 @@ async fn test_download_partial_offset() {
 
     // Download chunk 0
     let chunk0 = client
-        .download(1, &data_root, 0, chunk_size as u64)
+        .download(1, &data_root, data.len() as u64, 0, chunk_size as u64)
         .await
         .unwrap();
     assert_eq!(chunk0, &data[..chunk_size]);
@@ -529,7 +558,10 @@ async fn test_encryption_roundtrip() {
     // ENCRYPTION_OVERHEAD bytes.  We must fetch the full ciphertext so the
     // cipher can verify the authentication tag before decrypting.
     let enc_len = (original.len() + ENCRYPTION_OVERHEAD) as u64;
-    let retrieved = client.download(1, &data_root, 0, enc_len).await.unwrap();
+    let retrieved = client
+        .download(1, &data_root, enc_len, 0, enc_len)
+        .await
+        .unwrap();
 
     assert_eq!(retrieved, original);
 }
@@ -583,7 +615,7 @@ async fn test_decryption_with_wrong_key_fails() {
     let client2 = make_client(url).with_encryption_key(&key2);
     let enc_len = (data.len() + ENCRYPTION_OVERHEAD) as u64;
 
-    let result = client2.download(1, &data_root, 0, enc_len).await;
+    let result = client2.download(1, &data_root, enc_len, 0, enc_len).await;
 
     assert!(
         result.is_err(),
@@ -783,6 +815,25 @@ async fn test_commitment_if_exists_is_none_for_an_unknown_bucket() {
     let url = start_test_provider().await;
     let client = make_client(url);
     assert!(client.get_commitment_if_exists(99).await.unwrap().is_none());
+}
+
+/// A provider that dropped the bucket answers 403 `no_agreement`. That must
+/// stay an error: returning `None` would make the bucket look empty.
+#[tokio::test]
+async fn test_commitment_if_exists_errors_without_an_agreement() {
+    let url = start_test_provider_without_agreement().await;
+    let client = make_client(url);
+    let result = client.get_commitment_if_exists(1).await;
+    assert!(
+        matches!(
+            result,
+            Err(ClientError::HttpStatus {
+                request: "GET /commitment",
+                status: 403
+            })
+        ),
+        "got {result:?}"
+    );
 }
 
 #[tokio::test]

@@ -30,6 +30,16 @@ pub enum AuthError {
     #[error("This node is a replica for the bucket and does not accept writes")]
     NotPrimary,
 
+    /// The request targets a bucket this provider has no storage agreement on.
+    /// Open an agreement with this provider for the bucket, then retry.
+    #[error("This provider has no agreement for bucket {0}")]
+    NoAgreement(BucketId),
+
+    /// This provider's agreement on the bucket has expired, so it takes no
+    /// more writes. Reads work until the agreement is removed.
+    #[error("This provider's agreement for bucket {0} has expired")]
+    AgreementExpired(BucketId),
+
     #[error("Membership lookup failed: {0}")]
     MembershipLookup(#[from] MembershipError),
 }

@@ -1153,11 +1153,12 @@ mod tests {
         DB::open_cf(&DiskStorage::db_options(), path, COLUMN_FAMILIES).unwrap()
     }
 
-    /// Read-only backend over a `DiskStorage` that counts `get_node` calls.
+    /// Read-only backend over a `DiskStorage` that counts node reads.
     /// The read tests use it to bound how many nodes a read visits.
     struct CountingReads<'a> {
         inner: &'a DiskStorage,
         get_node_calls: AtomicU64,
+        node_shape_calls: AtomicU64,
     }
 
     impl<'a> CountingReads<'a> {
@@ -1165,6 +1166,7 @@ mod tests {
             Self {
                 inner,
                 get_node_calls: Default::default(),
+                node_shape_calls: Default::default(),
             }
         }
     }
@@ -1178,6 +1180,7 @@ mod tests {
             self.inner.get_node(hash)
         }
         fn node_shape(&self, hash: &H256) -> Result<Option<NodeShape>, Error> {
+            self.node_shape_calls.fetch_add(1, Ordering::Relaxed);
             self.inner.node_shape(hash)
         }
         fn init_bucket(&self, _: BucketId, _: u64) -> Result<(), Error> {
@@ -1989,7 +1992,14 @@ mod tests {
                 "index {index}"
             );
         }
-        assert_eq!(reads.get_chunks_in_range(root, 1..4).unwrap().len(), 3);
+        assert_eq!(
+            reads
+                .read_chunks(root, 1, 3, u64::MAX)
+                .unwrap()
+                .chunks
+                .len(),
+            3
+        );
         assert_eq!(reads.get_node_calls.swap(0, Ordering::Relaxed), 3);
 
         // Every other chunk's data is gone; the remaining one still proves.
@@ -1999,7 +2009,7 @@ mod tests {
         let (data, proof) = storage.get_chunk_at_index(root, 3).unwrap();
         assert_eq!(data, vec![4u8; DEFAULT_CHUNK_SIZE as usize]);
         assert!(verify_merkle_proof(leaves[3], 3, 5, &proof, &root));
-        let range = storage.get_chunks_in_range(root, 3..4).unwrap();
+        let range = storage.read_chunks(root, 3, 1, u64::MAX).unwrap().chunks;
         assert_eq!(range.len(), 1);
         assert_eq!(range[0].0, leaves[3]);
     }
@@ -2865,7 +2875,7 @@ mod tests {
         let chunk = hash_leaf(&vec![0u8; DEFAULT_CHUNK_SIZE as usize]);
 
         let reads = CountingReads::new(&storage);
-        let range = reads.get_chunks_in_range(root, 0..1).unwrap();
+        let range = reads.read_chunks(root, 0, 1, u64::MAX).unwrap().chunks;
         assert!(reads.get_node_calls.swap(0, Ordering::Relaxed) < 1000);
         assert_eq!(range.len(), 1);
         assert!(verify_merkle_proof(chunk, 0, count, &range[0].2, &root));
@@ -2873,6 +2883,36 @@ mod tests {
         let (_, proof) = reads.get_chunk_at_index(root, count - 1).unwrap();
         assert!(reads.get_node_calls.swap(0, Ordering::Relaxed) < 1000);
         assert!(verify_merkle_proof(chunk, count - 1, count, &proof, &root));
+    }
+
+    /// A read of many chunks walks the tree once: the node reads grow with
+    /// the chunk count, not with the chunk count times the tree depth.
+    #[test]
+    fn read_of_many_chunks_walks_the_tree_once() {
+        let (storage, _dir) = storage_with_bucket(u64::MAX);
+        let root = diamond_tree(&storage, BUCKET, 21);
+        let count = 1u64 << 21;
+        let chunk = hash_leaf(&vec![0u8; DEFAULT_CHUNK_SIZE as usize]);
+
+        let reads = CountingReads::new(&storage);
+        let range = reads
+            .read_chunks(root, 1000, 1024, u64::MAX)
+            .unwrap()
+            .chunks;
+        assert_eq!(range.len(), 1024);
+        // One walk reads about 2 node shapes per chunk plus the path from
+        // the root; a walk per chunk would read 22 per chunk.
+        assert!(reads.node_shape_calls.load(Ordering::Relaxed) < 3 * 1024);
+        for (i, (hash, _, proof)) in range.iter().enumerate() {
+            assert_eq!(*hash, chunk);
+            assert!(verify_merkle_proof(
+                chunk,
+                1000 + i as u64,
+                count,
+                proof,
+                &root
+            ));
+        }
     }
 
     /// A chain of 70 nodes is deeper than any chunk tree. A read rejects it
@@ -2893,7 +2933,7 @@ mod tests {
 
             let reads = CountingReads::new(&storage);
             assert!(matches!(
-                reads.get_chunks_in_range(root, 0..1),
+                reads.read_chunks(root, 0, 1, u64::MAX),
                 Err(Error::NonCanonicalTree(_))
             ));
             assert!(
@@ -2914,7 +2954,7 @@ mod tests {
 
         delete(leaves[1]);
         assert!(matches!(
-            storage.get_chunks_in_range(root, 0..3),
+            storage.read_chunks(root, 0, 3, u64::MAX),
             Err(Error::NodeNotFound(_))
         ));
         assert!(matches!(
@@ -2929,7 +2969,7 @@ mod tests {
             Err(Error::NodeNotFound(_))
         ));
         assert!(matches!(
-            storage.get_chunks_in_range(root, 0..1),
+            storage.read_chunks(root, 0, 1, u64::MAX),
             Err(Error::NodeNotFound(_))
         ));
     }
@@ -2947,7 +2987,7 @@ mod tests {
             Err(Error::NodeNotFound(_))
         ));
         assert!(matches!(
-            storage.get_chunks_in_range(missing, 0..1),
+            storage.read_chunks(missing, 0, 1, u64::MAX),
             Err(Error::NodeNotFound(_))
         ));
     }
