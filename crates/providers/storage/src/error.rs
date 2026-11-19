@@ -110,4 +110,14 @@ pub enum Error {
     /// refuses rather than reporting phantom missing data.
     #[error("Incompatible on-disk format: {0}")]
     IncompatibleFormat(String),
+
+    /// The store contains data of another chain. Point the node at that chain,
+    /// or use another storage path for this one.
+    #[error("Store belongs to chain {stored:?}, connected chain is {connected:?}")]
+    ChainMismatch {
+        /// Genesis hash recorded in the store.
+        stored: H256,
+        /// Genesis hash of the chain the node is connected to.
+        connected: H256,
+    },
 }

@@ -9,8 +9,9 @@
 
 use super::types::FORMAT_VERSION;
 use super::{
-    canonical_size, BucketInfo, BucketState, ChunkTreeNode, CommitOutcome, DeletionReceipt,
-    EraseOutcome, NodeShape, PrunedRange, PrunedRangeInfo, StorageBackend, StorageStats,
+    canonical_size, BucketInfo, BucketState, ChainBinding, ChunkTreeNode, CommitOutcome,
+    DeletionReceipt, EraseOutcome, NodeShape, PrunedRange, PrunedRangeInfo, StorageBackend,
+    StorageStats,
 };
 use crate::error::Error;
 use codec::{DecodeAll, Encode};
@@ -49,6 +50,9 @@ use refcounts::{decode_refcount, encode_refcount, NodeKind, RefcountEntry};
 
 /// RocksDB key for the persisted format version.
 const KEY_FORMAT_VERSION: &[u8] = b"format_version";
+
+/// RocksDB key in `CF_METADATA` for the genesis hash of the chain this store serves.
+const KEY_CHAIN_GENESIS_HASH: &[u8] = b"chain_genesis_hash";
 
 /// How long a writer waits for another writer on the same bucket before
 /// failing with [`Error::BucketBusy`]. A `commit` holds the bucket for the
@@ -213,6 +217,35 @@ impl DiskStorage {
                  versioning and cannot be safely opened by this build"
                     .to_string(),
             )),
+        }
+    }
+
+    /// See [`StorageBackend::bind_chain`].
+    pub fn bind_chain(&self, genesis_hash: H256) -> Result<ChainBinding, Error> {
+        let cf = self
+            .db
+            .cf_handle(CF_METADATA)
+            .ok_or(Error::ColumnFamilyMissing(CF_METADATA))?;
+
+        match self.db.get_cf(&cf, KEY_CHAIN_GENESIS_HASH)? {
+            Some(raw) => {
+                let stored = H256(raw.as_slice().try_into().map_err(|_| {
+                    Error::IncompatibleFormat("corrupt chain_genesis_hash value".to_string())
+                })?);
+                if stored == genesis_hash {
+                    Ok(ChainBinding::Matched)
+                } else {
+                    Err(Error::ChainMismatch {
+                        stored,
+                        connected: genesis_hash,
+                    })
+                }
+            }
+            None => {
+                self.db
+                    .put_cf(&cf, KEY_CHAIN_GENESIS_HASH, genesis_hash.as_bytes())?;
+                Ok(ChainBinding::Recorded)
+            }
         }
     }
 
@@ -1136,6 +1169,10 @@ impl StorageBackend for DiskStorage {
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         self.get_mmr_peaks(bucket_id)
     }
+
+    fn bind_chain(&self, genesis_hash: H256) -> Result<ChainBinding, Error> {
+        self.bind_chain(genesis_hash)
+    }
 }
 
 #[cfg(test)]
@@ -1241,6 +1278,9 @@ mod tests {
             unreachable!("read-only")
         }
         fn get_mmr_peaks(&self, _: BucketId) -> Result<(H256, Vec<H256>), Error> {
+            unreachable!("read-only")
+        }
+        fn bind_chain(&self, _: H256) -> Result<ChainBinding, Error> {
             unreachable!("read-only")
         }
     }
@@ -1790,6 +1830,48 @@ mod tests {
             DiskStorage::new(dir.path()),
             Err(Error::IncompatibleFormat(_))
         ));
+    }
+
+    #[test]
+    fn bind_chain_records_on_a_fresh_store_and_matches_after_reopen() {
+        let dir = TempDir::new().unwrap();
+        let hash = H256::repeat_byte(0xaa);
+
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        assert_eq!(storage.bind_chain(hash).unwrap(), ChainBinding::Recorded);
+        drop(storage);
+
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        assert_eq!(storage.bind_chain(hash).unwrap(), ChainBinding::Matched);
+    }
+
+    #[test]
+    fn bind_chain_rejects_a_different_chain_after_reopen() {
+        let dir = TempDir::new().unwrap();
+        let stored = H256::repeat_byte(0xaa);
+        let connected = H256::repeat_byte(0xbb);
+
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        storage.bind_chain(stored).unwrap();
+        drop(storage);
+
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        assert!(matches!(
+            storage.bind_chain(connected),
+            Err(Error::ChainMismatch { stored: s, connected: c }) if s == stored && c == connected
+        ));
+        // The rejected hash must not replace the recorded one.
+        assert_eq!(storage.bind_chain(stored).unwrap(), ChainBinding::Matched);
+    }
+
+    #[test]
+    fn bind_chain_adopts_the_chain_for_a_store_with_data_but_no_recorded_chain() {
+        let (storage, _dir) = storage_with_bucket(1024);
+        let hash = H256::repeat_byte(0xaa);
+
+        assert_eq!(storage.bind_chain(hash).unwrap(), ChainBinding::Recorded);
+        assert_eq!(storage.bind_chain(hash).unwrap(), ChainBinding::Matched);
+        assert!(storage.get_bucket(1).unwrap().is_some());
     }
 
     /// Roots built by the provider equal the values the primitives and the
