@@ -413,7 +413,7 @@ where
                 )?;
                 pallet_storage_provider::Pallet::<Runtime>::resolve_expired_challenge(
                     frame_origin,
-                    storage_primitives::ChallengeId {
+                    pallet_storage_provider::ChallengeId {
                         deadline: (*deadline).into(),
                         index: *index,
                     },
