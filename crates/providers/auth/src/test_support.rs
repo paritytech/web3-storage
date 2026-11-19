@@ -6,12 +6,13 @@
 
 use crate::error::MembershipError;
 use crate::membership::{
-    BucketAccess, Invalidation, LocalBucketAgreement, MembershipInvalidations, MembershipResolver,
+    AgreementRole, BucketAccess, Invalidation, LocalBucketAgreement, MembershipInvalidations,
+    MembershipResolver,
 };
 use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use storage_primitives::{BucketId, Role, RuntimeProviderRole};
+use storage_primitives::{BucketId, Role};
 
 /// Resolver that succeeds once, then fails every call after - so a test can
 /// seed a fresh cache entry and then force the error arm on the very next
@@ -70,7 +71,7 @@ impl MembershipResolver for AgreementResolver {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(BucketAccess {
             local_agreement: Some(LocalBucketAgreement {
-                role: RuntimeProviderRole::Primary,
+                role: AgreementRole::Primary,
                 max_bytes: self.max_bytes,
                 expires_at: u32::MAX,
             }),

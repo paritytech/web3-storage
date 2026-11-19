@@ -3,9 +3,7 @@
 use crate::*;
 use frame_support::{pallet_prelude::*, traits::Consideration};
 use sp_runtime::traits::{CheckedAdd, CheckedMul, SaturatedConversion, Saturating, Zero};
-use storage_primitives::{
-    BucketId, BucketTarget, EndAction, ProviderRole, RemovalReason, Visibility,
-};
+use storage_primitives::{BucketId, BucketTarget, EndAction, Visibility};
 
 impl<T: Config> Pallet<T> {
     pub(crate) fn validate_duration(

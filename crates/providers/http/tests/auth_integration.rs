@@ -14,8 +14,8 @@ use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use common::{current_timestamp, make_auth_header, test_member_pair};
 use provider_auth::{
-    Authenticator, BucketAccess, Invalidation, LocalBucketAgreement, MembershipError,
-    MembershipInvalidations, MembershipResolver, StaticMembershipResolver,
+    AgreementRole, Authenticator, BucketAccess, Invalidation, LocalBucketAgreement,
+    MembershipError, MembershipInvalidations, MembershipResolver, StaticMembershipResolver,
 };
 use provider_http::{ChainState, ProviderDeps, ProviderState};
 use provider_storage::{temp_rocksdb, ChunkTreeNode, StorageBackend};
@@ -25,7 +25,7 @@ use sp_core::{sr25519, Pair};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_primitives::{BucketId, Commitment, Role, RuntimeProviderRole, Visibility};
+use storage_primitives::{BucketId, Commitment, Role, Visibility};
 
 type AccountId32 = sp_core::crypto::AccountId32;
 
@@ -64,7 +64,7 @@ impl AuthTestServer {
             members: vec![(alice_account, alice_role).into()],
             visibility: Visibility::Public,
             local_agreement: Some(LocalBucketAgreement {
-                role: RuntimeProviderRole::Primary,
+                role: AgreementRole::Primary,
                 max_bytes: u64::MAX,
                 expires_at: u32::MAX,
             }),
