@@ -7,7 +7,7 @@
 //!
 //! [`types`]: super::types
 
-use super::types::FORMAT_VERSION;
+use super::types::{NodeKind, RefcountEntry, FORMAT_VERSION};
 use super::{
     canonical_size, BucketInfo, BucketState, ChunkTreeNode, CommitOutcome, DeletionReceipt,
     EraseOutcome, NodeShape, PrunedRange, PrunedRangeInfo, StorageBackend, StorageStats,
@@ -42,10 +42,6 @@ const COLUMN_FAMILIES: [&str; 5] = [
     CF_NODE_REFS,
     CF_METADATA,
 ];
-
-mod refcounts;
-
-use refcounts::{decode_refcount, encode_refcount, NodeKind, RefcountEntry};
 
 /// RocksDB key for the persisted format version.
 const KEY_FORMAT_VERSION: &[u8] = b"format_version";
@@ -144,7 +140,7 @@ impl DiskStorage {
             .ok_or(Error::ColumnFamilyMissing(CF_NODE_REFS))?;
         self.db
             .get_cf(&cf, hash.as_bytes())?
-            .map(|value| decode_refcount(&value))
+            .map(|value| Ok(RefcountEntry::decode_all(&mut &value[..])?))
             .transpose()
     }
 
@@ -161,7 +157,7 @@ impl DiskStorage {
             .ok_or(Error::ColumnFamilyMissing(CF_NODE_REFS))?;
         txn.get_for_update_cf(&cf, hash.as_bytes(), true)
             .map_err(|error| bucket_write_error(bucket_id, error))?
-            .map(|value| decode_refcount(&value))
+            .map(|value| Ok(RefcountEntry::decode_all(&mut &value[..])?))
             .transpose()
     }
 
@@ -433,7 +429,7 @@ impl DiskStorage {
                     ChunkTreeNode::Internal { .. } => NodeKind::Internal,
                 },
             };
-            txn.put_cf(&cf_refcounts, key, encode_refcount(&entry))
+            txn.put_cf(&cf_refcounts, key, entry.encode())
                 .map_err(|error| bucket_write_error(bucket_id, error))?;
             self.put_bucket(&txn, bucket_id, &bucket)?;
             txn.commit()?;
@@ -599,7 +595,7 @@ impl DiskStorage {
                 count: entry.count.saturating_add(n),
                 ..entry
             };
-            txn.put_cf(&cf_refcounts, hash.as_bytes(), encode_refcount(&updated))
+            txn.put_cf(&cf_refcounts, hash.as_bytes(), updated.encode())
                 .map_err(|error| bucket_write_error(bucket_id, error))?;
         }
         self.put_bucket(&txn, bucket_id, &bucket)?;
@@ -912,7 +908,7 @@ impl DiskStorage {
                     count: new_count,
                     ..entry
                 };
-                txn.put_cf(&cf_refcounts, hash.as_bytes(), encode_refcount(&updated))
+                txn.put_cf(&cf_refcounts, hash.as_bytes(), updated.encode())
                     .map_err(write_error)?;
             }
         }
