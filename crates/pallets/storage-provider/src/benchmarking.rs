@@ -1041,7 +1041,11 @@ mod benchmarks {
         };
         let depth = size_only.chunk_count().unwrap().ilog2();
         let siblings: alloc::vec::Vec<H256> = (0..depth)
-            .map(|level| H256::from_low_u64_be(u64::from(level) + 1))
+            .map(|level| {
+                let mut sibling = [0u8; 32];
+                sibling[28..].copy_from_slice(&(level + 1).to_be_bytes());
+                H256(sibling)
+            })
             .collect();
         let data_root = siblings.iter().fold(
             storage_primitives::hash_leaf(&chunk_bytes),
