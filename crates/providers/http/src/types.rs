@@ -173,6 +173,18 @@ pub struct CheckpointSignatureResponse {
     pub provider_signature: String,
 }
 
+/// Bytes a bucket stores on this node against its agreement quota.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageResponse {
+    /// The bucket the figures are for.
+    pub bucket_id: BucketId,
+    /// Bytes stored and charged to the bucket, pruned-but-not-erased data
+    /// included; credited back when the GC erases.
+    pub used_bytes: u64,
+    /// `max_bytes` of the chain agreement; `u64::MAX` until the GC syncs it.
+    pub max_bytes: u64,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Proof Types
 // ─────────────────────────────────────────────────────────────────────────────

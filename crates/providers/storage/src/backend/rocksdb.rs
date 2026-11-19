@@ -1441,6 +1441,8 @@ impl StorageBackend for DiskStorage {
             mmr_root: state.mmr_root,
             start_seq: state.start_seq,
             leaf_count: state.leaf_count,
+            used_bytes: state.used_bytes,
+            max_bytes: state.max_bytes,
         }))
     }
 

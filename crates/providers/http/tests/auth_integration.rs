@@ -692,6 +692,7 @@ fn l0_gated_gets(commitment: &Commitment) -> Vec<String> {
     vec![
         "/mmr_peaks?bucket_id=1".into(),
         "/commitment?bucket_id=1".into(),
+        "/usage?bucket_id=1".into(),
         "/checkpoint-signature?bucket_id=1".into(),
         mmr_proof_path(commitment),
         "/replica/historical_roots?bucket_id=1".into(),

@@ -14,7 +14,7 @@
  * with a node that can sign valid terms). Ferdie is a bare registration used
  * for the announce/cancel paths, which need no agreement and no node.
  *
- * Usage: node e2e/08-provider-deregistration.js [chain_ws] [provider_url]
+ * Usage: node --import tsx e2e/08-provider-deregistration.ts [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";

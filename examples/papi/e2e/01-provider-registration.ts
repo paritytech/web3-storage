@@ -22,7 +22,7 @@
  * //Charlie is registered with the URL of the second provider node, which runs
  * as //Charlie for workflow 15.
  *
- * Usage: node e2e/01-provider-registration.js [chain_ws] [provider_url] [second_provider_url]
+ * Usage: node --import tsx e2e/01-provider-registration.ts [chain_ws] [provider_url] [second_provider_url]
  * (`provider_url` is not used; the runner passes the same arguments to every
  * workflow.)
  */

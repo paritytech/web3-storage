@@ -15,6 +15,7 @@ import {
   S3Client,
   type AvailableProvider,
   type BucketInfo,
+  type BucketUsage,
   type MatchingProviders,
   type QueryMatchingProvidersParams,
   type S3ObjectInfo,
@@ -131,7 +132,11 @@ selectedBucket$.subscribe((b) => {
 // Hooks
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Per-bucket usage read from each bucket's provider (keyed by bucket id string). */
+const bucketUsage$ = new BehaviorSubject<Map<string, BucketUsage>>(new Map());
+
 export const [useBuckets] = bind(buckets$, []);
+export const [useBucketUsage] = bind(bucketUsage$, new Map<string, BucketUsage>());
 export const [useSelectedBucket] = bind(selectedBucket$, null);
 export const [useCurrentPrefix] = bind(currentPrefix$, "");
 export const [useObjects] = bind(objects$, []);
@@ -146,12 +151,27 @@ export const [useEncryptionKey] = bind(encryptionKey$, null);
 // Bucket CRUD
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Fetch per-bucket usage from each provider; failures leave a bucket absent. */
+async function refreshBucketUsage(list: BucketInfo[]): Promise<void> {
+  const results = await Promise.allSettled(
+    list.map(async (b) => [b.bucketId.toString(), await client.getBucketUsage(b.bucketId)] as const),
+  );
+  const usage = new Map<string, BucketUsage>();
+  for (const result of results) {
+    if (result.status === "fulfilled") usage.set(result.value[0], result.value[1]);
+  }
+  bucketUsage$.next(usage);
+}
+
 export async function refreshBuckets(): Promise<void> {
   if (!client.hasApi() || !client.hasSigner()) return;
   loading$.next(true);
   try {
     const list = await client.listBuckets();
     buckets$.next(list);
+    // Provider-side usage is a can-fail enrichment: fire and forget so an
+    // unreachable provider never blocks or fails the bucket list itself.
+    void refreshBucketUsage(list);
 
     const sel = selectedBucket$.getValue();
     if (sel) {
