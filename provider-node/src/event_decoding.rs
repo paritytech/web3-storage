@@ -39,6 +39,10 @@ pub(crate) fn is_other_relevant_event(event: &RawEvent<'_, PolkadotConfig>) -> b
     event.is::<pallet_events::ChallengeCreated>()
         || event.is::<pallet_events::ReplicaAgreementEstablished>()
         || event.is::<pallet_events::BucketCheckpointed>()
+        || event.is::<pallet_events::StorageAgreementEstablished>()
+        || event.is::<pallet_events::AgreementToppedUp>()
+        || event.is::<pallet_events::AgreementExtended>()
+        || event.is::<pallet_events::AgreementEnded>()
         || event.is::<pallet_events::ProviderRegistered>()
         || event.is::<pallet_events::ProviderSettingsUpdated>()
         || event.is::<pallet_events::ProviderMultiaddrUpdated>()
@@ -137,19 +141,47 @@ fn block_event(event: StorageProviderEvent) -> Option<BlockEvent> {
             bucket_id,
             provider: AccountId32::new(provider.0),
         }),
-        StorageProviderEvent::BucketCheckpointed { bucket_id, .. } => {
-            Some(BlockEvent::BucketCheckpointed { bucket_id })
+        StorageProviderEvent::BucketCheckpointed {
+            bucket_id,
+            commitment,
+            ..
+        } => Some(BlockEvent::BucketCheckpointed {
+            bucket_id,
+            start_seq: commitment.start_seq,
+        }),
+        StorageProviderEvent::BucketDeleted { bucket_id } => {
+            Some(BlockEvent::BucketDeleted { bucket_id })
         }
+        // Every agreement-lifecycle event means the same thing to consumers:
+        // reconcile this bucket.
+        StorageProviderEvent::StorageAgreementEstablished {
+            bucket_id,
+            provider,
+            ..
+        }
+        | StorageProviderEvent::AgreementToppedUp {
+            bucket_id,
+            provider,
+            ..
+        }
+        | StorageProviderEvent::AgreementExtended {
+            bucket_id,
+            provider,
+            ..
+        }
+        | StorageProviderEvent::AgreementEnded {
+            bucket_id,
+            provider,
+            ..
+        } => Some(BlockEvent::AgreementChanged {
+            bucket_id,
+            provider: AccountId32::new(provider.0),
+        }),
         StorageProviderEvent::BucketCreated { bucket_id, .. }
         | StorageProviderEvent::MemberSet { bucket_id, .. }
         | StorageProviderEvent::MemberRemoved { bucket_id, .. }
-        | StorageProviderEvent::BucketDeleted { bucket_id }
         | StorageProviderEvent::BucketVisibilityChanged { bucket_id, .. }
-        | StorageProviderEvent::SlashedProviderRemoved { bucket_id, .. }
-        | StorageProviderEvent::StorageAgreementEstablished { bucket_id, .. }
-        | StorageProviderEvent::AgreementToppedUp { bucket_id, .. }
-        | StorageProviderEvent::AgreementEnded { bucket_id, .. }
-        | StorageProviderEvent::AgreementExtended { bucket_id, .. } => {
+        | StorageProviderEvent::SlashedProviderRemoved { bucket_id, .. } => {
             Some(BlockEvent::BucketMembershipChanged { bucket_id })
         }
         // A new arm above also needs a check in `is_membership_event` or
@@ -219,20 +251,85 @@ mod tests {
     }
 
     #[test]
-    fn bucket_checkpointed_maps_bucket_id() {
+    fn bucket_checkpointed_maps_bucket_id_and_start_seq() {
         let checkpointed = StorageProviderEvent::BucketCheckpointed {
             bucket_id: 22,
             commitment: Commitment {
                 mmr_root: subxt::utils::H256([1u8; 32]),
-                start_seq: 0,
+                start_seq: 5,
                 leaf_count: 1,
             },
             providers: vec![subxt::utils::AccountId32([4u8; 32])],
         };
         assert!(matches!(
             block_event(checkpointed),
-            Some(BlockEvent::BucketCheckpointed { bucket_id: 22 })
+            Some(BlockEvent::BucketCheckpointed {
+                bucket_id: 22,
+                start_seq: 5
+            })
         ));
+    }
+
+    #[test]
+    fn agreement_events_map_to_agreement_changed() {
+        let expect_changed = |ev: Option<BlockEvent>, id: u64| {
+            let Some(BlockEvent::AgreementChanged {
+                bucket_id,
+                provider,
+            }) = ev
+            else {
+                panic!("expected AgreementChanged");
+            };
+            assert_eq!(bucket_id, id);
+            assert_eq!(provider, AccountId32::new([6u8; 32]));
+        };
+
+        expect_changed(
+            block_event(StorageProviderEvent::AgreementEnded {
+                bucket_id: 44,
+                provider: subxt::utils::AccountId32([6u8; 32]),
+                payment_to_provider: 0,
+                burned: 0,
+            }),
+            44,
+        );
+        expect_changed(
+            block_event(StorageProviderEvent::AgreementExtended {
+                bucket_id: 45,
+                provider: subxt::utils::AccountId32([6u8; 32]),
+                new_expires_at: 100,
+                payment: 0,
+            }),
+            45,
+        );
+        expect_changed(
+            block_event(StorageProviderEvent::AgreementToppedUp {
+                bucket_id: 46,
+                provider: subxt::utils::AccountId32([6u8; 32]),
+                amount: 5,
+                new_max_bytes: 2048,
+            }),
+            46,
+        );
+        expect_changed(
+            block_event(StorageProviderEvent::StorageAgreementEstablished {
+                bucket_id: 48,
+                provider: subxt::utils::AccountId32([6u8; 32]),
+                owner: subxt::utils::AccountId32([2u8; 32]),
+                terms: AgreementTerms {
+                    owner: subxt::utils::AccountId32([2u8; 32]),
+                    max_bytes: 1024,
+                    duration: 100,
+                    price_per_byte: 1,
+                    valid_until: 50,
+                    nonce: 1,
+                    bucket: BucketTarget::Existing(48),
+                    replica_params: None,
+                },
+                expires_at: 150,
+            }),
+            48,
+        );
     }
 
     #[test]
@@ -306,7 +403,7 @@ mod tests {
         let ev = StorageProviderEvent::BucketDeleted { bucket_id: 8 };
         assert!(matches!(
             block_event(ev),
-            Some(BlockEvent::BucketMembershipChanged { bucket_id: 8 })
+            Some(BlockEvent::BucketDeleted { bucket_id: 8 })
         ));
     }
 
@@ -325,59 +422,16 @@ mod tests {
     }
 
     #[test]
-    fn provider_and_agreement_events_map_bucket_id() {
-        let provider = || subxt::utils::AccountId32([3u8; 32]);
-        let events = [
-            StorageProviderEvent::SlashedProviderRemoved {
-                bucket_id: 13,
-                provider: provider(),
-                payment_returned_to_owner: 0,
-            },
-            StorageProviderEvent::StorageAgreementEstablished {
-                bucket_id: 14,
-                provider: provider(),
-                owner: subxt::utils::AccountId32([2u8; 32]),
-                terms: AgreementTerms {
-                    owner: subxt::utils::AccountId32([2u8; 32]),
-                    max_bytes: 1024,
-                    duration: 100,
-                    price_per_byte: 1,
-                    valid_until: 50,
-                    nonce: 1,
-                    bucket: BucketTarget::Existing(14),
-                    replica_params: None,
-                },
-                expires_at: 150,
-            },
-            StorageProviderEvent::AgreementToppedUp {
-                bucket_id: 15,
-                provider: provider(),
-                amount: 1,
-                new_max_bytes: 2048,
-            },
-            StorageProviderEvent::AgreementEnded {
-                bucket_id: 16,
-                provider: provider(),
-                payment_to_provider: 0,
-                burned: 0,
-            },
-            StorageProviderEvent::AgreementExtended {
-                bucket_id: 17,
-                provider: provider(),
-                new_expires_at: 300,
-                payment: 1,
-            },
-        ];
-
-        for (event, expected) in events.into_iter().zip(13u64..) {
-            assert!(
-                matches!(
-                    block_event(event),
-                    Some(BlockEvent::BucketMembershipChanged { bucket_id }) if bucket_id == expected
-                ),
-                "bucket {expected}"
-            );
-        }
+    fn slashed_provider_removed_maps_bucket_id() {
+        let ev = StorageProviderEvent::SlashedProviderRemoved {
+            bucket_id: 13,
+            provider: subxt::utils::AccountId32([3u8; 32]),
+            payment_returned_to_owner: 0,
+        };
+        assert!(matches!(
+            block_event(ev),
+            Some(BlockEvent::BucketMembershipChanged { bucket_id: 13 })
+        ));
     }
 
     #[test]

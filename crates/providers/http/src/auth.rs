@@ -15,13 +15,15 @@ fn auth_header(headers: &axum::http::HeaderMap) -> Option<&str> {
         .and_then(|v| v.to_str().ok())
 }
 
+/// The account that signed the request, if any, once it holds role
+/// `required` on `bucket_id`.
 pub(crate) async fn require_role(
     state: &ProviderState,
     headers: &axum::http::HeaderMap,
     method: &str,
     bucket_id: u64,
     required: Role,
-) -> Result<(), Error> {
+) -> Result<Option<sp_core::crypto::AccountId32>, Error> {
     state
         .auth
         .require_role(auth_header(headers), method, bucket_id, required)

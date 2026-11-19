@@ -7043,6 +7043,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-garbage-collector"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "parking_lot",
+ "storage-primitives",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "provider-http"
 version = "0.1.0"
 dependencies = [
@@ -7129,6 +7141,7 @@ name = "provider-types"
 version = "0.1.0"
 dependencies = [
  "array-bytes 6.2.3",
+ "async-trait",
  "clap",
  "parity-scale-codec",
  "parking_lot",
@@ -7137,6 +7150,7 @@ dependencies = [
  "sp-core",
  "sp-crypto-hashing",
  "sp-runtime",
+ "storage-primitives",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -10016,6 +10030,7 @@ dependencies = [
  "provider-challenge",
  "provider-coordinator",
  "provider-events",
+ "provider-garbage-collector",
  "provider-http",
  "provider-replica",
  "provider-storage",

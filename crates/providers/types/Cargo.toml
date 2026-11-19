@@ -9,12 +9,14 @@ description = "Shared types used across the provider crates"
 
 [dependencies]
 array-bytes = { workspace = true }
+async-trait = { workspace = true }
 parking_lot = { workspace = true }
 provider-negotiation = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }
 sp-crypto-hashing = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
+storage-primitives = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 clap = { workspace = true, optional = true, features = ["derive"] }

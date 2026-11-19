@@ -56,6 +56,9 @@ pub struct Cli {
 
     #[clap(flatten)]
     pub auth: AuthParams,
+
+    #[clap(flatten)]
+    pub garbage_collector: GarbageCollectorParams,
 }
 
 /// Parameters for the storage backend.
@@ -332,6 +335,23 @@ pub struct ChallengeResponderParams {
     pub challenge_poll_interval: u64,
 }
 
+/// Parameters for the garbage collector background service.
+#[derive(Debug, clap::Args)]
+pub struct GarbageCollectorParams {
+    /// Seconds between safety-net garbage collector rescans of every bucket.
+    /// Erasure is normally triggered event-driven from the finalized-block
+    /// stream; this rescan only catches events lost to edge cases and runs
+    /// once at startup. Must be at least 1.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 600,
+        value_parser = clap::value_parser!(u64).range(1..),
+        env = "GC_SCAN_INTERVAL"
+    )]
+    pub gc_scan_interval: u64,
+}
+
 /// Parameters for replica synchronization.
 #[derive(Debug, clap::Args)]
 pub struct ReplicaSyncParams {
@@ -392,6 +412,7 @@ mod tests {
         assert_eq!(cli.replica_sync.replica_max_concurrent, 3);
         assert!(!cli.challenge_responder.enable_challenge_responder);
         assert_eq!(cli.challenge_responder.challenge_poll_interval, 300);
+        assert_eq!(cli.garbage_collector.gc_scan_interval, 600);
         assert_eq!(cli.read_limits, provider_http::ReadLimits::default());
     }
 
@@ -438,6 +459,8 @@ mod tests {
             "600",
             "--replica-max-concurrent",
             "5",
+            "--gc-scan-interval",
+            "120",
         ])
         .unwrap();
 
@@ -456,6 +479,14 @@ mod tests {
         assert_eq!(cli.replica_sync.replica_poll_interval, 30);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 600);
         assert_eq!(cli.replica_sync.replica_max_concurrent, 5);
+        assert_eq!(cli.garbage_collector.gc_scan_interval, 120);
+    }
+
+    /// A zero interval would panic in `tokio::time::interval`, so clap
+    /// rejects it before the node starts.
+    #[test]
+    fn gc_scan_interval_rejects_zero() {
+        assert!(Cli::try_parse_from(["storage-provider-node", "--gc-scan-interval", "0"]).is_err());
     }
 
     /// Values are the engine names, and each maps to the matching spec.

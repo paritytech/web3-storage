@@ -197,6 +197,78 @@ async fn test_check_exists() {
         .any(|h| h.as_str().unwrap() == non_existent_hash));
 }
 
+/// Upload `data` as a leaf chunk of bucket 1 and return its hash.
+async fn upload_chunk(server: &TestServer, data: &[u8]) -> (H256, reqwest::Response) {
+    let hash = storage_primitives::hash_leaf(data);
+    let response = server
+        .client
+        .put(server.url("/node"))
+        .json(&json!({
+            "bucket_id": 1,
+            "hash": format!("{hash:#x}"),
+            "data": BASE64.encode(data),
+            "children": null
+        }))
+        .send()
+        .await
+        .unwrap();
+    (hash, response)
+}
+
+#[tokio::test]
+async fn upload_and_commit_on_condemned_bucket_return_gone() {
+    let mut storage = None;
+    let server = TestServer::start(|deps| {
+        storage = Some(deps.storage.clone());
+        ProviderState::with_seed(deps, common::PROVIDER_SEED).expect("//Alice is a valid SURI")
+    })
+    .await;
+    let storage = storage.unwrap();
+
+    let (stored, response) = upload_chunk(&server, b"stored before condemnation").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (late, response) = upload_chunk(&server, b"stored, committed too late").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({ "bucket_id": 1, "data_roots": [format!("{stored:#x}")] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    storage.condemn_bucket(1).unwrap();
+    let leaf_count = |server: &TestServer| {
+        let request = server.client.get(server.url("/commitment?bucket_id=1"));
+        async move {
+            let body: Value = request.send().await.unwrap().json().await.unwrap();
+            body["leaf_count"].clone()
+        }
+    };
+    let before = leaf_count(&server).await;
+
+    let (_, response) = upload_chunk(&server, b"uploaded after condemnation").await;
+    assert_eq!(response.status(), StatusCode::GONE);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "bucket_condemned");
+    assert_eq!(body["details"]["bucket_id"], 1);
+
+    let response = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({ "bucket_id": 1, "data_roots": [format!("{late:#x}")] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::GONE);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "bucket_condemned");
+    assert_eq!(body["details"]["bucket_id"], 1);
+
+    assert_eq!(leaf_count(&server).await, before);
+}
+
 #[tokio::test]
 async fn test_commit_and_get_commitment() {
     let server = TestServer::new().await;
@@ -1446,6 +1518,314 @@ async fn test_replica_sync_status_endpoint() {
     assert!(body["local_mmr_root"].is_string());
     assert!(body["local_leaf_count"].as_u64().unwrap() > 0);
     assert_eq!(body["syncing"], false);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delete refusals: frozen buckets and unreadable chain state
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Scripted chain truth for the `/delete` refusal tests.
+struct StubFrozenCheck {
+    frozen: bool,
+    fail: bool,
+}
+
+#[async_trait::async_trait]
+impl provider_http::FrozenBucketCheck for StubFrozenCheck {
+    async fn is_frozen(&self, _bucket_id: u64) -> Result<bool, provider_types::ChainClientError> {
+        if self.fail {
+            return Err(provider_types::ChainClientError::Query {
+                what: "bucket",
+                reason: "chain down".into(),
+            });
+        }
+        Ok(self.frozen)
+    }
+}
+
+/// Hex of a well-formed SCALE `MultiSignature`, built from the typed value
+/// rather than a hand-assembled byte string.
+fn valid_sig_hex() -> String {
+    let sig: sp_runtime::MultiSignature = sp_core::sr25519::Signature::from([0u8; 64]).into();
+    array_bytes::bytes2hex("0x", codec::Encode::encode(&sig))
+}
+
+/// `/delete/confirm` body for `new_start_seq` with `admin`'s real signature
+/// over the deletion payload of `bucket_id`.
+fn receipt_body(
+    admin: &sr25519::Pair,
+    bucket_id: u64,
+    mmr_root: &str,
+    new_start_seq: u64,
+) -> Value {
+    let root = H256::from_slice(&array_bytes::hex2bytes(mmr_root).unwrap());
+    let payload = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root: root,
+            start_seq: new_start_seq,
+            leaf_count: 0,
+        },
+    );
+    let signature: sp_runtime::MultiSignature = admin.sign(&payload.encode()).into();
+    json!({
+        "bucket_id": bucket_id,
+        "mmr_root": mmr_root,
+        "new_start_seq": new_start_seq,
+        "admin": array_bytes::bytes2hex("0x", admin.public().0),
+        "signature": array_bytes::bytes2hex("0x", signature.encode()),
+    })
+}
+
+/// `receipt_body` for the prune `prune_one_chunk` made.
+fn signed_confirm_body(admin: &sr25519::Pair, mmr_root: &str) -> Value {
+    receipt_body(admin, 1, mmr_root, 1)
+}
+
+async fn confirm_deletion(server: &TestServer, body: &Value) -> reqwest::Response {
+    server
+        .client
+        .post(server.url("/delete/confirm"))
+        .json(body)
+        .send()
+        .await
+        .unwrap()
+}
+
+/// Upload and commit one chunk to bucket 1, prune it, and return the
+/// post-prune MMR root.
+async fn prune_one_chunk(server: &TestServer) -> String {
+    let data = b"chunk-to-confirm-deletion";
+    let hash = storage_primitives::hash_leaf(data);
+    let hash_hex = format!("{hash:#x}");
+    server
+        .client
+        .put(server.url("/node"))
+        .json(&json!({
+            "bucket_id": 1,
+            "hash": hash_hex,
+            "data": BASE64.encode(data),
+            "children": null,
+        }))
+        .send()
+        .await
+        .unwrap();
+    server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+        .send()
+        .await
+        .unwrap();
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .json(&json!({ "bucket_id": 1, "new_start_seq": 1 }))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    body["mmr_root"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn test_delete_on_frozen_bucket_is_forbidden() {
+    let server = TestServer::start(|deps| {
+        ProviderState::with_seed(deps, common::PROVIDER_SEED)
+            .expect("valid SURI")
+            .with_frozen_check(Some(std::sync::Arc::new(StubFrozenCheck {
+                frozen: true,
+                fail: false,
+            })))
+    })
+    .await;
+
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .json(&json!({ "bucket_id": 1, "new_start_seq": 1, "nonce": 0u64 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "bucket_frozen");
+}
+
+#[tokio::test]
+async fn test_delete_fails_closed_when_chain_unreadable() {
+    let server = TestServer::start(|deps| {
+        ProviderState::with_seed(deps, common::PROVIDER_SEED)
+            .expect("valid SURI")
+            .with_frozen_check(Some(std::sync::Arc::new(StubFrozenCheck {
+                frozen: false,
+                fail: true,
+            })))
+    })
+    .await;
+
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .json(&json!({ "bucket_id": 1, "new_start_seq": 1, "nonce": 0u64 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "chain_state_unavailable");
+}
+
+#[tokio::test]
+async fn test_delete_confirm_stores_a_signed_receipt() {
+    let server = TestServer::new().await;
+    let mmr_root = prune_one_chunk(&server).await;
+
+    let body = signed_confirm_body(&common::test_member_pair(), &mmr_root);
+    let resp = confirm_deletion(&server, &body).await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["stored"], true);
+}
+
+#[tokio::test]
+async fn test_delete_confirm_rejects_a_forged_receipt() {
+    let server = TestServer::new().await;
+    let mmr_root = prune_one_chunk(&server).await;
+    let admin = common::test_member_pair();
+
+    // Right admin, but the signature does not verify.
+    let mut forged = signed_confirm_body(&admin, &mmr_root);
+    forged["signature"] = json!(valid_sig_hex());
+    let resp = confirm_deletion(&server, &forged).await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_signature");
+
+    // Nothing was stored: a correctly signed receipt still attaches.
+    let resp = confirm_deletion(&server, &signed_confirm_body(&admin, &mmr_root)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_delete_confirm_rejects_a_receipt_for_another_admin() {
+    let server = TestServer::new().await;
+    let mmr_root = prune_one_chunk(&server).await;
+    // Validly signed, but by an account other than the request signer.
+    let other = sr25519::Pair::from_seed(&[9u8; 32]);
+
+    let resp = confirm_deletion(&server, &signed_confirm_body(&other, &mmr_root)).await;
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "not_authorized");
+}
+
+#[tokio::test]
+async fn test_delete_confirm_rejects_a_signature_scheme_the_admin_cannot_have() {
+    let server = TestServer::new().await;
+    let mmr_root = prune_one_chunk(&server).await;
+    let mut body = signed_confirm_body(&common::test_member_pair(), &mmr_root);
+    let ecdsa: sp_runtime::MultiSignature = sp_core::ecdsa::Signature::from_raw([1u8; 65]).into();
+    body["signature"] = json!(array_bytes::bytes2hex("0x", Encode::encode(&ecdsa)));
+
+    let resp = confirm_deletion(&server, &body).await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_signature");
+}
+
+#[tokio::test]
+async fn test_delete_confirm_rejects_a_forged_replacement() {
+    let server = TestServer::new().await;
+    let mmr_root = prune_one_chunk(&server).await;
+    let admin = common::test_member_pair();
+    let resp = confirm_deletion(&server, &signed_confirm_body(&admin, &mmr_root)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let mut forged = signed_confirm_body(&admin, &mmr_root);
+    forged["signature"] = json!(valid_sig_hex());
+    let resp = confirm_deletion(&server, &forged).await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_signature");
+}
+
+#[tokio::test]
+async fn test_delete_confirm_rejects_undecodable_signature() {
+    let server = TestServer::new().await;
+    // Valid hex, but not a SCALE MultiSignature: rejected at the
+    // boundary (400) instead of failing years later at defense time.
+    let resp = server
+        .client
+        .post(server.url("/delete/confirm"))
+        .json(&json!({
+            "bucket_id": 1,
+            "mmr_root": array_bytes::bytes2hex("0x", &[0u8; 32][..]),
+            "new_start_seq": 1,
+            "admin": array_bytes::bytes2hex("0x", &[7u8; 32][..]),
+            "signature": "0x0102",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_signature");
+}
+
+#[tokio::test]
+async fn test_delete_confirm_rejects_a_receipt_over_another_root() {
+    let server = TestServer::new().await;
+    let mmr_root = prune_one_chunk(&server).await;
+    let admin = common::test_member_pair();
+    let wrong_root = array_bytes::bytes2hex("0x", &[9u8; 32][..]);
+
+    // Validly signed, but over a root the provider did not return from /delete.
+    let resp = confirm_deletion(&server, &receipt_body(&admin, 1, &wrong_root, 1)).await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "mmr_root_mismatch");
+    assert_eq!(body["details"]["expected"], mmr_root);
+    assert_eq!(body["details"]["actual"], wrong_root);
+
+    // Nothing was stored: the receipt over the returned root still attaches.
+    let resp = confirm_deletion(&server, &signed_confirm_body(&admin, &mmr_root)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_delete_confirm_rejects_a_new_start_seq_no_prune_ended_at() {
+    let server = TestServer::new().await;
+    let mmr_root = prune_one_chunk(&server).await;
+
+    // The prune advanced start_seq to 1; a receipt for 5 matches no range.
+    let body = receipt_body(&common::test_member_pair(), 1, &mmr_root, 5);
+    let resp = confirm_deletion(&server, &body).await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_start_seq");
+}
+
+#[tokio::test]
+async fn test_delete_confirm_rejects_unknown_range() {
+    let server = TestServer::new().await;
+    // No prune happened: nothing to confirm.
+    let body = receipt_body(
+        &common::test_member_pair(),
+        1,
+        &array_bytes::bytes2hex("0x", &[0u8; 32][..]),
+        5,
+    );
+    let resp = confirm_deletion(&server, &body).await;
+    // Bucket 1 does not even exist locally yet.
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

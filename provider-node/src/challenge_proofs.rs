@@ -60,6 +60,25 @@ impl ChallengeProofSource for StorageProofSource {
                 },
             })
     }
+
+    fn deletion_receipt_covering(
+        &self,
+        bucket_id: storage_primitives::BucketId,
+        seq: u64,
+    ) -> Result<Option<provider_challenge::DeletionReceipt>, ChallengeError> {
+        let receipt = self
+            .0
+            .deletion_receipt_covering(bucket_id, seq)
+            .map_err(|e| ChallengeError::Storage {
+                reason: e.to_string(),
+            })?;
+        Ok(receipt.map(|r| provider_challenge::DeletionReceipt {
+            mmr_root: r.mmr_root,
+            new_start_seq: r.new_start_seq,
+            admin: r.admin,
+            signature: r.signature,
+        }))
+    }
 }
 
 #[cfg(test)]
