@@ -20,11 +20,35 @@ cargo run -p storage-cli -- stress-test upload --help
 | `--chain-rpc <URL>`    | `ws://127.0.0.1:2222`   | `CHAIN_RPC`    | Parachain RPC WebSocket endpoint.                  |
 | `--provider-url <URL>` | `http://127.0.0.1:3333` | `PROVIDER_URL` | Provider node HTTP endpoint.                       |
 | `--output <FORMAT>`    | `text`                  |                | Metrics summary format: `text` or `json`.          |
+| `--report <PATH>`      | none                    |                | File that receives one JSON line per record as it happens. See [Report file](#report-file). |
 
 Each command takes the secret of the account it signs as, named after the
 account's role: `--provider-suri`/`--provider-keyfile` or
 `--client-suri`/`--client-keyfile`. Exactly one of each pair is required. A
 keyfile contains the SURI.
+
+### Report file
+
+`--output` prints its summary when the command ends, so a command that stops unexpectedly prints nothing.
+With `--report <PATH>`, the command also appends one JSON line per record to the file as the record happens.
+A crash, a `kill`, or the second Ctrl-C of `soak gc` keeps every line written before it.
+The file is created if missing and appended to otherwise, so several runs can share one file.
+Every line has `run_id`, which is the same for all lines of one invocation, and `kind`.
+Without `--report`, no file is written.
+
+| `kind`    | Written by          | When                                    | Fields                                                                 |
+| --------- | ------------------- | --------------------------------------- | ---------------------------------------------------------------------- |
+| `start`   | every command       | before the command runs                 | `command`, `started_at` (Unix seconds)                                 |
+| `upload`  | `stress-test upload`| after each upload finishes              | `user`, `bucket_id`, `ok`, `bytes`, `elapsed_secs`, `error`            |
+| `cycle`   | `soak gc`           | after each finished prune cycle         | `lane`, `epoch`, `cycle`, `bucket_id`, `uploaded_bytes`, `erase_latency_secs`, `used_bytes_after` |
+| `barrier` | `soak gc`           | after each passed drain check           | `epoch`, `drain_secs`, `provider_rss_kb`, `gc_log`                     |
+| `failure` | `soak gc`           | when an invariant breaks                | `message`, `epoch`, `lane`, `cycle`                                    |
+| `end`     | every command       | after the command returns               | `elapsed_secs`, `error` (`null` on success)                            |
+
+A `start` line without an `end` line of the same `run_id` means the run stopped unexpectedly.
+The command opens the file before it contacts the chain or the provider, so an unwritable path fails at once.
+A failed write fails `soak gc` at that cycle or epoch.
+In `stress-test upload` it marks that one upload as failed and the load continues.
 
 ## `provider register`
 
@@ -119,6 +143,7 @@ be at least `--prepare-buckets`, so no bucket is opened and then never written.
 
 Progress goes to stderr. stdout carries the preparation report (text mode) and
 the metrics summary, so `--output json` stays parseable when piped.
+With `--report`, each upload is also written to the [report file](#report-file) as it finishes.
 
 ```
 preparation: 2 bucket(s) created in 14.210s
@@ -152,6 +177,74 @@ The provider must be registered on-chain and its node running (`just start-chain
 Buckets and agreements either exist already (default `discover` mode) or the run
 opens them with `--prepare-buckets N`. The client account pays for the prepared
 agreements at the provider's listed price.
+
+## `soak gc`
+
+Drives the provider's garbage collector through repeated prune cycles and bucket teardowns until a deadline.
+It is a manual correctness test, not part of `just e2e` or CI.
+It attaches to a running chain and provider and starts no process.
+
+Each lane is one client account with its own bucket, and lanes run in parallel.
+An epoch is one bucket per lane: the lane runs `--cycles-per-bucket` prune cycles, then ends its agreement.
+After each epoch the run waits until the provider holds no bucket, node or byte, which shows the garbage collector erased every retired bucket.
+
+A cycle uploads `--chunks-per-cycle` unique chunks and checkpoints them.
+It checks the provider's used bytes and quota, and checks that an upload over the remaining capacity is rejected with HTTP 507.
+It then prunes every chunk but the newest, confirms the deletion and checkpoints the prune.
+It waits until the provider reports only the surviving chunk as used, checks that the pruned chunks return 404, and checks that the surviving chunk downloads.
+
+### Setup
+
+Start the dev chain, then a provider with an empty storage path and a short garbage collector rescan interval.
+Condemned buckets are erased on a later pass, so the default 10 minute interval makes every drain check fail.
+
+```bash
+just start-e2e-chain
+GC_SCAN_INTERVAL=30 just PROVIDER_STORAGE_PATH=/tmp/soak-db start-provider 2>&1 | tee /tmp/provider.log
+just register-provider
+```
+
+### Run
+
+```bash
+just gc-soak \
+  --provider-account 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
+  --client-suri //Bob --client-suri //Dave \
+  --duration 30m \
+  --provider-log /tmp/provider.log
+```
+
+| Param                          | Default   | Description                                                                 |
+| ------------------------------ | --------- | --------------------------------------------------------------------------- |
+| `--client-suri <SURI>`         | -         | Client account of one lane. Repeat for more lanes.                          |
+| `--client-keyfile <FILE>`      | -         | File with a lane account's SURI. Repeat for more lanes. At least one account is required, and two lanes cannot share an account. |
+| `--provider-account <ACCOUNT>` | required  | Provider account (SS58 or `0x`-hex) the buckets are opened with.            |
+| `--cycles-per-bucket <N>`      | `5`       | Prune cycles before a bucket's agreement ends.                              |
+| `--chunks-per-cycle <N>`       | `3`       | Chunks uploaded per cycle. At least 2.                                      |
+| `--chunk-bytes <BYTES>`        | `100`     | Bytes per chunk, from 64 up to the chunk size limit.                        |
+| `--duration <DURATION>`        | `30m`     | Stop starting epochs after this long (`90s`, `30m`, `4h`). A started epoch always finishes. Excludes `--epochs`. |
+| `--epochs <N>`                 | -         | Stop after this many epochs.                                                |
+| `--agreement-duration <BLOCKS>`| `600`     | Agreement length of each bucket, in anchor blocks.                          |
+| `--gc-scan-interval <SECS>`    | `30`      | The provider's `GC_SCAN_INTERVAL`. A drain may take up to twice this plus 60 seconds. |
+| `--erase-timeout <SECS>`       | `120`     | Longest wait for one erasure.                                               |
+| `--provider-log <PATH>`        | -         | Provider log file. A "GC reconcile skipped" line fails the run, and `WARN` and `ERROR` lines of the garbage collector are counted. |
+
+Each lane pays for one agreement per epoch at the provider's listed price.
+The run prints the cost of one agreement at the start.
+Preflight fails when the provider already holds data, is not registered, or is not accepting primary agreements.
+
+The first Ctrl-C stops new cycles, ends the agreements, waits for the drain and prints the report.
+A second Ctrl-C exits at once.
+After a failure the run leaves its buckets as they are.
+
+### Output
+
+Progress goes to stderr.
+stdout carries the report: one line per epoch with the erase latency (min, p50, p95, max), the drain time, the provider's memory and the number of garbage collector warnings.
+The memory is read for a provider on this machine only, and is reported without a threshold.
+`--output json` prints the same data as `cycles`, `barriers` and `failure` objects.
+The command exits non-zero on the first broken invariant and names the epoch, lane and cycle.
+With `--report`, every cycle and drain check is also written to the [report file](#report-file) as it happens.
 
 ## Limitations
 

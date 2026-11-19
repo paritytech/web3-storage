@@ -918,3 +918,102 @@ async fn test_non_power_of_two_upload_matches_provider_root_and_verifies() {
         );
     }
 }
+
+// ============================================================================
+// Prune, usage and stats
+// ============================================================================
+
+/// Upload and commit `n` distinct single-chunk payloads; returns the roots.
+async fn commit_chunks(client: &storage_client::StorageUserClient, n: usize) -> Vec<H256> {
+    let mut roots = Vec::new();
+    for i in 0..n {
+        let root = client
+            .upload(
+                1,
+                format!("prune chunk {i}").as_bytes(),
+                ChunkingStrategy::default(),
+            )
+            .await
+            .unwrap();
+        client.commit(1, vec![root]).await.unwrap();
+        roots.push(root);
+    }
+    roots
+}
+
+#[tokio::test]
+async fn test_prune_returns_the_post_prune_commitment() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+    commit_chunks(&client, 3).await;
+
+    let pruned = client.prune(1, 2).await.unwrap();
+
+    assert_eq!(pruned.start_seq, 2);
+    assert_eq!(pruned.leaf_count, 1);
+}
+
+#[tokio::test]
+async fn test_prune_removes_the_pruned_leaf_from_the_commitment_range() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+    commit_chunks(&client, 2).await;
+
+    let before = client.get_commitment(1).await.unwrap();
+    let pruned = client.prune(1, 1).await.unwrap();
+
+    assert_ne!(pruned.mmr_root, before.mmr_root);
+}
+
+#[tokio::test]
+async fn test_confirm_deletion_is_accepted_after_a_prune() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+    commit_chunks(&client, 2).await;
+    let pruned = client.prune(1, 1).await.unwrap();
+
+    client.confirm_deletion(1, &pruned).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_confirm_deletion_rejects_an_unrecorded_mmr_root() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+    commit_chunks(&client, 2).await;
+    let mut pruned = client.prune(1, 1).await.unwrap();
+    pruned.mmr_root = H256::repeat_byte(0xab);
+
+    let err = client.confirm_deletion(1, &pruned).await.unwrap_err();
+
+    assert!(
+        matches!(err, ClientError::HttpStatus { status: 400, .. }),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_usage_counts_uploaded_bytes_and_reports_an_unsynced_quota() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+    commit_chunks(&client, 1).await;
+
+    let usage = client.usage(1).await.unwrap();
+
+    assert_eq!(usage.bucket_id, 1);
+    assert!(usage.used_bytes > 0);
+    assert_eq!(usage.max_bytes, u64::MAX);
+    assert!(!usage.quota_synced());
+}
+
+#[tokio::test]
+async fn test_provider_stats_total_nodes_grows_after_an_upload() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+    let before = client.provider_stats().await.unwrap();
+
+    commit_chunks(&client, 1).await;
+    let after = client.provider_stats().await.unwrap();
+
+    assert!(after.total_nodes > before.total_nodes);
+    assert!(after.total_bytes > before.total_bytes);
+}

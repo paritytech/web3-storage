@@ -153,8 +153,8 @@ pub use discovery::{
 pub use provider::{ProviderClient, ProviderSettings};
 pub use signer::Signer;
 pub use storage_user::{
-    CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,
-    HealthResponse, Node, StorageUserClient,
+    BucketUsage, CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,
+    HealthResponse, Node, ProviderStatsResponse, PruneResponse, StorageUserClient,
 };
 pub use verification::ClientVerifier;
 

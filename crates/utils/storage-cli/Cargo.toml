@@ -9,11 +9,13 @@ description = "Operator CLI for scalable Web3 storage (stress-test and ops tooli
 
 [dependencies]
 storage-client = { workspace = true }
+storage-primitives = { workspace = true, features = ["std"] }
 provider-types = { workspace = true, features = ["clap"] }
 clap = { workspace = true, features = ["derive", "env"] }
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 tokio = { workspace = true }
+futures = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 anyhow = { workspace = true }
 array-bytes = { workspace = true }
