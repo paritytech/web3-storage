@@ -114,7 +114,7 @@ let info = at
         api::storage().storage_provider().providers(),
         (convert::account(&account_id),),
     )
-    .await?; // -> Option<pallet::ProviderInfo>, fully typed
+    .await?; // -> Option<types::ProviderInfo>, fully typed
 ```
 
 ## Implementation Status
