@@ -2,20 +2,6 @@
 
 //! On-disk record types shared by every [`StorageBackend`] implementation.
 //!
-//! These are the SCALE-encoded shapes a backend writes to durable storage, kept
-//! separate from the engines that store them so a second engine (SQLite, or
-//! whatever comes next) persists the same records rather than inventing its own.
-//!
-//! # Encoding stability
-//!
-//! Their SCALE encoding *is* the on-disk format. Adding, removing, reordering,
-//! or retyping a field - here or in any type they embed, such as
-//! [`MmrLeaf`] - changes that format, and a provider restarted on data written
-//! by the previous build will fail to decode it. The golden-vector tests in
-//! [`tests::compatibility_tests`] pin the encoding byte-for-byte so such a change breaks the build
-//! instead of a live provider; when one is intended, bump [`FORMAT_VERSION`]
-//! alongside the new vectors.
-//!
 //! [`StorageBackend`]: super::StorageBackend
 
 use crate::error::Error;
@@ -25,11 +11,7 @@ use std::collections::BTreeMap;
 use storage_primitives::{hash_children, MmrLeaf, DEFAULT_CHUNK_SIZE};
 
 /// Version of the on-disk encoding of the records in this module.
-///
-/// Bump it whenever a change alters what [`ChunkTreeNode`] or [`BucketState`]
-/// encode to, so a build fails on a database in another format instead of
-/// misreading its bytes.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 1;
 
 /// One pruned-but-not-yet-erased leaf range: the retention stash keeping
 /// challenges over the range provable until erasure is permitted.
@@ -173,6 +155,35 @@ impl ChunkTreeNode {
     }
 }
 
+/// Whether a stored node is a chunk or an internal node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub enum NodeKind {
+    /// A leaf chunk.
+    Chunk,
+    /// An internal node over two children.
+    Internal,
+}
+
+/// What a backend records about a node besides its body: three little-endian
+/// u64s and a one-byte kind, 25 bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct RefcountEntry {
+    /// How many paths from committed leaves, live or stashed, across all
+    /// buckets, reach the node. Commit adds one per path and erasure subtracts
+    /// one per path; at zero, erasure deletes the node and this row.
+    pub count: u64,
+    /// The bucket charged for the node when it was first stored. When erasure
+    /// deletes the node, it subtracts `size` from this bucket's `used_bytes`
+    /// and 1 from its `node_count`.
+    pub charged_bucket: u64,
+    /// The bytes charged for the node: the data length for a chunk, 64 (two
+    /// child hashes) for an internal node.
+    pub size: u64,
+    /// Chunk or internal node. A tree walk reads a chunk's size from this row
+    /// and does not read the chunk.
+    pub kind: NodeKind,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,6 +320,34 @@ mod tests {
         }
 
         #[test]
+        fn refcount_entry() {
+            let golden = concat!(
+                // count: u64 = 3 (little-endian)
+                "0300000000000000",
+                // charged_bucket: u64 = 7
+                "0700000000000000",
+                // size: u64 = 1024
+                "0004000000000000",
+                // kind: variant 1 (Internal)
+                "01",
+            );
+            assert_golden(
+                RefcountEntry {
+                    count: 3,
+                    charged_bucket: 7,
+                    size: 1024,
+                    kind: NodeKind::Internal,
+                },
+                golden,
+            );
+            let bytes = array_bytes::hex2bytes(golden).unwrap();
+            assert_eq!(bytes.len(), 25);
+            // Truncated, or an unknown kind.
+            assert!(RefcountEntry::decode_all(&mut &bytes[..24]).is_err());
+            assert!(RefcountEntry::decode_all(&mut &[&bytes[..24], &[9]].concat()[..]).is_err());
+        }
+
+        #[test]
         fn decode_all_rejects_trailing_bytes() {
             let mut encoded = BucketState::new(1_000).encode();
             encoded.extend_from_slice(&[0xff, 0xff]);
@@ -317,6 +356,16 @@ mod tests {
             let mut encoded = ChunkTreeNode::Chunk(vec![1, 2, 3]).encode();
             encoded.push(0x00);
             assert!(ChunkTreeNode::decode_all(&mut &encoded[..]).is_err());
+
+            let mut encoded = RefcountEntry {
+                count: 1,
+                charged_bucket: 1,
+                size: 64,
+                kind: NodeKind::Chunk,
+            }
+            .encode();
+            encoded.push(0x00);
+            assert!(RefcountEntry::decode_all(&mut &encoded[..]).is_err());
         }
     }
 
