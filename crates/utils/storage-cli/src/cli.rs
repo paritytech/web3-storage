@@ -7,6 +7,7 @@ use crate::commands::soak::Soak;
 use crate::commands::stress_test::StressTest;
 use crate::metrics::OutputFormat;
 use clap::{Args, Parser, Subcommand};
+use std::path::PathBuf;
 
 /// Storage CLI for scalable Web3 storage — drive on-chain and off-chain
 /// storage operations from a single tool.
@@ -46,6 +47,11 @@ pub struct GlobalArgs {
     /// without metrics ignore it.
     #[arg(long, value_enum, value_name = "FORMAT", default_value_t = OutputFormat::Text)]
     pub output: OutputFormat,
+
+    /// File that receives one JSON line per record (upload, cycle, drain
+    /// check) as it happens, plus a start and an end line. Appended to.
+    #[arg(long, value_name = "PATH")]
+    pub report: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]

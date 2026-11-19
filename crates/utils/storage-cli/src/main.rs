@@ -12,7 +12,10 @@ mod commands;
 mod common;
 mod metrics;
 mod prepare;
+mod report;
 mod soak;
+
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::bail;
 use clap::Parser;
@@ -23,6 +26,7 @@ use crate::commands::soak::Soak;
 use crate::commands::stress_test::StressTest;
 use crate::metrics::{print_text, to_json, OpSummary, OutputFormat};
 use crate::prepare::PreparationReport;
+use crate::report::{ReportLine, Run};
 use crate::soak::SoakReport;
 
 #[tokio::main]
@@ -30,17 +34,44 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
+    let run = Run::open(cli.global.report.as_deref())?;
 
+    let started = Instant::now();
+    run.record(&ReportLine::Start {
+        command: command_name(&cli.command),
+        started_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs()),
+    })?;
+    let result = run_command(&cli, &run).await;
+    run.record(&ReportLine::End {
+        elapsed_secs: started.elapsed().as_secs_f64(),
+        error: result.as_ref().err().map(|e| format!("{e:#}")),
+    })?;
+    result
+}
+
+/// The subcommand as the operator typed it.
+fn command_name(command: &Command) -> &'static str {
+    match command {
+        Command::StressTest(StressTest::ProviderUpload(_)) => "stress-test upload",
+        Command::Provider(Provider::Register(_)) => "provider register",
+        Command::Soak(Soak::Gc(_)) => "soak gc",
+    }
+}
+
+async fn run_command(cli: &Cli, run: &Run) -> anyhow::Result<()> {
     match &cli.command {
         Command::StressTest(StressTest::ProviderUpload(args)) => {
-            let (summary, preparation) = commands::stress_test::upload(&cli.global, args).await?;
+            let (summary, preparation) =
+                commands::stress_test::upload(&cli.global, args, run).await?;
             render_metrics(cli.global.output, summary, preparation)
         }
         Command::Provider(Provider::Register(args)) => {
             commands::provider::register(&cli.global, args).await
         }
         Command::Soak(Soak::Gc(args)) => {
-            let report = commands::soak::gc::run(&cli.global, args).await?;
+            let report = commands::soak::gc::run(&cli.global, args, run).await?;
             render_soak(cli.global.output, &report)
         }
     }

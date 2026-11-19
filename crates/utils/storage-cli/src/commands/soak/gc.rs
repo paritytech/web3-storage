@@ -6,7 +6,7 @@
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use clap::Args;
@@ -23,6 +23,7 @@ use super::LaneKeys;
 use crate::cli::GlobalArgs;
 use crate::common::{build_config, signer_from_suri, BucketId};
 use crate::prepare::{self, PrepareParams};
+use crate::report::{ReportLine, Run};
 use crate::soak::{
     parse_duration, poll_until, provider_rss_kb, run_parallel, BarrierRecord, CycleRecord, LogTail,
     SoakFailure, SoakReport, StopSignal,
@@ -174,14 +175,36 @@ fn drain_error_message(error: &str, left: Option<&ProviderStatsResponse>) -> Str
     format!("{error} ({remaining})")
 }
 
+/// Append a finished cycle to the report. A failed write fails the lane's cycle.
+fn record_cycle(run: &Run, record: &CycleRecord) -> Result<(), SoakFailure> {
+    run.record(&ReportLine::Cycle(record.clone()))
+        .map_err(|e| SoakFailure {
+            message: format!("{e:#}"),
+            epoch: record.epoch,
+            lane: Some(record.lane),
+            cycle: Some(record.cycle),
+        })
+}
+
+/// Append a passed drain check to the report. A failed write fails the epoch.
+fn record_barrier(run: &Run, record: &BarrierRecord) -> Result<(), SoakFailure> {
+    run.record(&ReportLine::Barrier(record.clone()))
+        .map_err(|e| SoakFailure {
+            message: format!("{e:#}"),
+            epoch: record.epoch,
+            lane: None,
+            cycle: None,
+        })
+}
+
 /// Settings and clients shared by all lanes of a run.
-struct GcContext {
+struct GcContext<'a> {
     plan: GcPlan,
     provider_url: String,
     provider_account: String,
     agreement_duration: u32,
     price_per_byte: u128,
-    run_id: String,
+    run: &'a Run,
     stop: StopSignal,
     /// Cycles finished so far, by every lane.
     cycles: Mutex<Vec<CycleRecord>>,
@@ -202,7 +225,7 @@ struct Lane {
 
 /// Run the soak: epochs of parallel lanes, each followed by a drain check,
 /// until the deadline, the epoch count, Ctrl-C or the first failure.
-pub async fn run(global: &GlobalArgs, args: &GcArgs) -> Result<SoakReport> {
+pub async fn run(global: &GlobalArgs, args: &GcArgs, run: &Run) -> Result<SoakReport> {
     let suris = args.lanes.suris()?;
     let plan = args.plan();
     let provider_account = SubstrateClient::parse_account(&args.provider_account)
@@ -257,12 +280,7 @@ pub async fn run(global: &GlobalArgs, args: &GcArgs) -> Result<SoakReport> {
         provider_account: args.provider_account.clone(),
         agreement_duration: args.agreement_duration.get(),
         price_per_byte,
-        run_id: format!(
-            "{:x}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis())
-        ),
+        run,
         stop: StopSignal::new(),
         cycles: Mutex::new(Vec::new()),
     };
@@ -284,9 +302,13 @@ pub async fn run(global: &GlobalArgs, args: &GcArgs) -> Result<SoakReport> {
             Ok(()) => drain_barrier(&lanes[0].user, &ctx, epoch, log.as_mut()).await,
             Err(failure) => Err(failure),
         };
+        let outcome = outcome.and_then(|barrier| record_barrier(run, &barrier).map(|()| barrier));
         match outcome {
             Ok(barrier) => barriers.push(barrier),
             Err(f) => {
+                if let Err(e) = run.record(&ReportLine::Failure(f.clone())) {
+                    eprintln!("failed to write the failure to the report: {e:#}");
+                }
                 failure = Some(f);
                 break;
             }
@@ -303,7 +325,7 @@ pub async fn run(global: &GlobalArgs, args: &GcArgs) -> Result<SoakReport> {
 
 /// One lane of an epoch: open a bucket, run its cycles, end its agreement.
 /// After Ctrl-C the lane skips its remaining cycles.
-async fn run_lane(lane: &mut Lane, ctx: &GcContext, epoch: u32) -> Result<(), SoakFailure> {
+async fn run_lane(lane: &mut Lane, ctx: &GcContext<'_>, epoch: u32) -> Result<(), SoakFailure> {
     let index = lane.index;
     let fail = |cycle: Option<u32>, e: anyhow::Error| SoakFailure {
         message: format!("{e:#}"),
@@ -322,6 +344,7 @@ async fn run_lane(lane: &mut Lane, ctx: &GcContext, epoch: u32) -> Result<(), So
         let record = run_cycle(lane, ctx, epoch, cycle)
             .await
             .map_err(|e| fail(Some(cycle), e))?;
+        record_cycle(ctx.run, &record)?;
         ctx.cycles.lock().unwrap().push(record);
     }
     retire_bucket(lane, ctx).await.map_err(|e| fail(None, e))
@@ -329,7 +352,7 @@ async fn run_lane(lane: &mut Lane, ctx: &GcContext, epoch: u32) -> Result<(), So
 
 /// End the lane's agreement. The provider's garbage collector then condemns
 /// and erases the bucket.
-async fn retire_bucket(lane: &mut Lane, ctx: &GcContext) -> Result<()> {
+async fn retire_bucket(lane: &mut Lane, ctx: &GcContext<'_>) -> Result<()> {
     let bucket = lane.bucket.take().context("the lane has no bucket")?;
     lane.admin
         .terminate_agreement(bucket, ctx.provider_account.clone(), EndAction::Pay)
@@ -342,7 +365,7 @@ async fn retire_bucket(lane: &mut Lane, ctx: &GcContext) -> Result<()> {
 /// sample provider memory and the GC log lines.
 async fn drain_barrier(
     user: &StorageUserClient,
-    ctx: &GcContext,
+    ctx: &GcContext<'_>,
     epoch: u32,
     log: Option<&mut LogTail>,
 ) -> Result<BarrierRecord, SoakFailure> {
@@ -435,7 +458,7 @@ async fn preflight(
 }
 
 /// Open a bucket with a new agreement and reset the lane's expected usage.
-async fn open_bucket(lane: &mut Lane, ctx: &GcContext) -> Result<()> {
+async fn open_bucket(lane: &mut Lane, ctx: &GcContext<'_>) -> Result<()> {
     let report = prepare::prepare_buckets(
         &lane.admin,
         PrepareParams {
@@ -478,7 +501,7 @@ async fn expect_quota_rejection(lane: &Lane, bucket: BucketId, payload: &[u8]) -
 /// wait for the garbage collector to erase the pruned bytes.
 async fn run_cycle(
     lane: &mut Lane,
-    ctx: &GcContext,
+    ctx: &GcContext<'_>,
     epoch: u32,
     cycle: u32,
 ) -> Result<CycleRecord> {
@@ -490,7 +513,7 @@ async fn run_cycle(
     let mut hashes = Vec::new();
     let mut newest_leaf = 0;
     for index in 0..plan.chunks_per_cycle {
-        let payload = chunk_payload(&ctx.run_id, lane.index, epoch, cycle, index, chunk_size);
+        let payload = chunk_payload(&ctx.run.id, lane.index, epoch, cycle, index, chunk_size);
         let root = lane
             .user
             .upload(bucket, &payload, ChunkingStrategy::default())
@@ -555,7 +578,7 @@ async fn run_cycle(
     );
 
     let over_quota = chunk_payload(
-        &ctx.run_id,
+        &ctx.run.id,
         lane.index,
         epoch,
         cycle,
@@ -844,6 +867,56 @@ mod tests {
             "{message}"
         );
         assert!(drain_error_message("timed out", None).contains("no /stats response"));
+    }
+
+    fn cycle_record() -> CycleRecord {
+        CycleRecord {
+            lane: 1,
+            epoch: 2,
+            cycle: 3,
+            bucket_id: 9,
+            uploaded_bytes: 300,
+            erase_latency_secs: 1.0,
+            used_bytes_after: 100,
+        }
+    }
+
+    fn barrier_record() -> BarrierRecord {
+        BarrierRecord {
+            epoch: 4,
+            drain_secs: 6.0,
+            provider_rss_kb: None,
+            gc_log: None,
+        }
+    }
+
+    #[test]
+    fn a_failed_cycle_write_fails_that_lane_and_cycle() {
+        let failure = record_cycle(&Run::failing(), &cycle_record()).unwrap_err();
+        assert_eq!(
+            (failure.epoch, failure.lane, failure.cycle),
+            (2, Some(1), Some(3))
+        );
+        assert!(failure.message.contains("report"), "{}", failure.message);
+    }
+
+    #[test]
+    fn a_failed_barrier_write_fails_that_epoch() {
+        let failure = record_barrier(&Run::failing(), &barrier_record()).unwrap_err();
+        assert_eq!(
+            (failure.epoch, failure.lane, failure.cycle),
+            (4, None, None)
+        );
+    }
+
+    #[test]
+    fn without_a_report_file_recording_does_nothing() {
+        let run = Run {
+            id: "r".into(),
+            report: None,
+        };
+        record_cycle(&run, &cycle_record()).unwrap();
+        record_barrier(&run, &barrier_record()).unwrap();
     }
 
     #[test]

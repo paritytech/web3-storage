@@ -19,6 +19,7 @@ use crate::cli::GlobalArgs;
 use crate::common::{account_ss58, build_config, signer_from_suri, BucketId, ClientKey};
 use crate::metrics::{summarize, OpOutcome, OpSummary};
 use crate::prepare::{self, BucketSource, PreparationReport, PrepareParams};
+use crate::report::{ReportFile, ReportLine, Run, UploadRecord};
 
 // === Stress test subcommands ===
 #[derive(Debug, Subcommand)]
@@ -111,20 +112,52 @@ fn random_payload(size: usize) -> Vec<u8> {
     buf
 }
 
-/// Perform one upload, holding a concurrency permit (if any) for its duration.
-async fn do_upload(
-    client: Arc<StorageUserClient>,
+/// Append the outcome to the report. A failed write turns the outcome into a
+/// failed one, so the metrics show it and the run continues.
+fn record_upload(
+    report: Option<&ReportFile>,
+    user: usize,
     bucket: BucketId,
+    outcome: OpOutcome,
+) -> OpOutcome {
+    let Some(report) = report else {
+        return outcome;
+    };
+    match report.append(&ReportLine::Upload(UploadRecord::new(
+        user, bucket, &outcome,
+    ))) {
+        Ok(()) => outcome,
+        Err(e) => OpOutcome::failure(
+            outcome.bytes,
+            outcome.elapsed,
+            format!("failed to write the report line: {e:#}"),
+        ),
+    }
+}
+
+/// What every upload of a run shares.
+#[derive(Clone)]
+struct UploadShared {
     size: usize,
     sem: Option<Arc<Semaphore>>,
+    report: Option<Arc<ReportFile>>,
+}
+
+/// Perform one upload, holding a concurrency permit (if any) for its duration.
+async fn do_upload(
+    user_idx: usize,
+    client: Arc<StorageUserClient>,
+    bucket: BucketId,
+    shared: &UploadShared,
 ) -> OpOutcome {
     // Hold the permit until the upload completes; `acquire` only fails if the
     // semaphore is closed, which never happens here.
-    let _permit = match &sem {
+    let _permit = match &shared.sem {
         Some(s) => s.acquire().await.ok(),
         None => None,
     };
-    upload_once(&client, bucket, &random_payload(size)).await
+    let outcome = upload_once(&client, bucket, &random_payload(shared.size)).await;
+    record_upload(shared.report.as_deref(), user_idx, bucket, outcome)
 }
 
 /// Run a single user's `uploads` uploads, either sequentially or in parallel.
@@ -133,9 +166,8 @@ async fn run_user(
     client: Arc<StorageUserClient>,
     buckets: Arc<Vec<BucketId>>,
     uploads: usize,
-    size: usize,
     parallel: bool,
-    sem: Option<Arc<Semaphore>>,
+    shared: UploadShared,
 ) -> Vec<OpOutcome> {
     // Each user's uploads occupy a contiguous slice of the global index space so
     // the round-robin bucket assignment stays even across all users.
@@ -145,15 +177,15 @@ async fn run_user(
         for i in 0..uploads {
             let bucket = bucket_for(base + i, &buckets);
             let client = client.clone();
-            let sem = sem.clone();
-            set.spawn(async move { do_upload(client, bucket, size, sem).await });
+            let shared = shared.clone();
+            set.spawn(async move { do_upload(user_idx, client, bucket, &shared).await });
         }
         let mut out = Vec::with_capacity(uploads);
         while let Some(res) = set.join_next().await {
             match res {
                 Ok(outcome) => out.push(outcome),
                 Err(join_err) => out.push(OpOutcome::failure(
-                    size,
+                    shared.size,
                     Duration::ZERO,
                     format!("upload task panicked: {join_err}"),
                 )),
@@ -164,7 +196,7 @@ async fn run_user(
         let mut out = Vec::with_capacity(uploads);
         for i in 0..uploads {
             let bucket = bucket_for(base + i, &buckets);
-            out.push(do_upload(client.clone(), bucket, size, sem.clone()).await);
+            out.push(do_upload(user_idx, client.clone(), bucket, &shared).await);
         }
         out
     }
@@ -249,8 +281,14 @@ async fn run_load(
     clients: Vec<Arc<StorageUserClient>>,
     buckets: Arc<Vec<BucketId>>,
     args: &UploadArgs,
+    report: Option<Arc<ReportFile>>,
 ) -> Vec<OpOutcome> {
     let sem = (args.max_concurrency > 0).then(|| Arc::new(Semaphore::new(args.max_concurrency)));
+    let shared = UploadShared {
+        size: args.payload_size.get(),
+        sem,
+        report,
+    };
     let mut outcomes = Vec::with_capacity(clients.len() * args.uploads_per_user.get());
 
     // Build each user's future once; spawn it for parallelism or await it in
@@ -261,9 +299,8 @@ async fn run_load(
             client,
             buckets.clone(),
             args.uploads_per_user.get(),
-            args.payload_size.get(),
             args.parallel_uploads,
-            sem.clone(),
+            shared.clone(),
         )
     };
 
@@ -297,6 +334,7 @@ async fn run_load(
 pub async fn upload(
     global: &GlobalArgs,
     args: &UploadArgs,
+    run: &Run,
 ) -> Result<(OpSummary, Option<PreparationReport>)> {
     let signer = signer_from_suri(&args.client.suri()?)?;
     let account_ss58 = account_ss58(&signer);
@@ -370,7 +408,7 @@ pub async fn upload(
     let clients = build_clients_per_user(&config, &signer, args.users.get())?;
     // The clock starts after preparation, so the numbers cover uploads only.
     let started = Instant::now();
-    let outcomes = run_load(clients, Arc::new(buckets), args).await;
+    let outcomes = run_load(clients, Arc::new(buckets), args, run.report.clone()).await;
     Ok((summarize(Upload, &outcomes, started.elapsed()), preparation))
 }
 
@@ -457,6 +495,45 @@ mod tests {
         .unwrap();
         assert_eq!(w.args.prepare_buckets, 2);
         assert_eq!(w.args.bucket_source, Some(BucketSource::Auto));
+    }
+
+    #[test]
+    fn an_upload_is_appended_to_the_report_and_the_outcome_is_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.jsonl");
+        let report = ReportFile::open(&path, "r1").unwrap();
+        let outcome = OpOutcome::success(64, Duration::from_millis(250));
+
+        let kept = record_upload(Some(&report), 1, 7, outcome);
+
+        assert!(kept.ok && kept.bytes == 64);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let line: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(line["kind"], "upload");
+        assert_eq!(
+            (line["user"].as_u64(), line["bucket_id"].as_u64()),
+            (Some(1), Some(7))
+        );
+        assert_eq!(line["ok"], true);
+    }
+
+    #[test]
+    fn a_failed_report_write_fails_that_upload_and_keeps_its_size_and_time() {
+        let run = crate::report::Run::failing();
+        let outcome = OpOutcome::success(64, Duration::from_millis(250));
+
+        let kept = record_upload(run.report.as_deref(), 0, 5, outcome);
+
+        assert!(!kept.ok);
+        assert_eq!((kept.bytes, kept.elapsed), (64, Duration::from_millis(250)));
+        assert!(kept.err.unwrap().contains("report"));
+    }
+
+    #[test]
+    fn without_a_report_file_the_outcome_is_unchanged() {
+        let failed = OpOutcome::failure(8, Duration::from_secs(1), "boom".into());
+        let kept = record_upload(None, 0, 5, failed);
+        assert_eq!(kept.err.as_deref(), Some("boom"));
     }
 
     #[test]
