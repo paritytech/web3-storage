@@ -12,7 +12,6 @@ mod commands;
 mod common;
 mod metrics;
 mod prepare;
-#[allow(dead_code)]
 mod soak;
 
 use anyhow::bail;

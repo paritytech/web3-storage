@@ -9,7 +9,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -115,6 +115,26 @@ where
             );
         }
         tokio::time::sleep(step).await;
+    }
+}
+
+/// Run one future per lane to completion. The first failure aborts `stop`, so
+/// the other lanes stop at their next step, and is the one returned.
+pub async fn run_parallel<F>(stop: &StopSignal, lanes: Vec<F>) -> Result<(), SoakFailure>
+where
+    F: Future<Output = Result<(), SoakFailure>>,
+{
+    let first_failure = Mutex::new(None);
+    let lanes = lanes.into_iter().map(|lane| async {
+        if let Err(failure) = lane.await {
+            first_failure.lock().unwrap().get_or_insert(failure);
+            stop.abort();
+        }
+    });
+    futures::future::join_all(lanes).await;
+    match first_failure.into_inner().unwrap() {
+        Some(failure) => Err(failure),
+        None => Ok(()),
     }
 }
 
@@ -579,5 +599,54 @@ mod tests {
         assert!(json["barriers"][1]["provider_rss_kb"].is_null());
         assert_eq!(json["failure"]["epoch"], 1);
         assert!(json["failure"]["lane"].is_null());
+    }
+
+    type LaneFuture = std::pin::Pin<Box<dyn Future<Output = Result<(), SoakFailure>>>>;
+
+    fn failure(message: &str) -> SoakFailure {
+        SoakFailure {
+            message: message.into(),
+            epoch: 1,
+            lane: Some(0),
+            cycle: Some(2),
+        }
+    }
+
+    #[tokio::test]
+    async fn run_parallel_returns_the_first_failure_and_aborts_the_other_lanes() {
+        let stop = StopSignal::new();
+        let waiter_stop = stop.clone();
+        let waiter_aborted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = waiter_aborted.clone();
+        let failing: LaneFuture = Box::pin(async { Err(failure("boom")) });
+        let waiting: LaneFuture = Box::pin(async move {
+            let waited = poll_until::<(), _, _>(
+                "never",
+                Duration::from_secs(5),
+                Duration::from_millis(5),
+                &waiter_stop,
+                || async { Ok(None) },
+            )
+            .await;
+            seen.store(waited.is_err(), Ordering::SeqCst);
+            Err(failure("aborted"))
+        });
+
+        let err = run_parallel(&stop, vec![waiting, failing])
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.message, "boom");
+        assert!(waiter_aborted.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn run_parallel_succeeds_without_aborting_when_every_lane_succeeds() {
+        let stop = StopSignal::new();
+        let lanes: Vec<LaneFuture> = vec![Box::pin(async { Ok(()) }), Box::pin(async { Ok(()) })];
+
+        run_parallel(&stop, lanes).await.unwrap();
+
+        assert!(!stop.is_aborted());
     }
 }

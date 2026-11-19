@@ -9784,6 +9784,7 @@ dependencies = [
  "anyhow",
  "array-bytes 6.2.3",
  "clap",
+ "futures",
  "provider-types",
  "rand 0.8.8",
  "serde",

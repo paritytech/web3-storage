@@ -15,6 +15,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 tokio = { workspace = true }
+futures = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 anyhow = { workspace = true }
 array-bytes = { workspace = true }

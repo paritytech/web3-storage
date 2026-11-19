@@ -5,6 +5,7 @@
 
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -13,21 +14,28 @@ use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_client::substrate::SubstrateClient;
 use storage_client::{
-    AdminClient, ChunkingStrategy, ClientError, Commitment, ProviderClient, StorageUserClient,
+    AdminClient, ChunkingStrategy, ClientError, Commitment, ProviderClient, ProviderStatsResponse,
+    StorageUserClient,
 };
-use storage_primitives::DEFAULT_CHUNK_SIZE;
+use storage_primitives::{EndAction, DEFAULT_CHUNK_SIZE};
 
 use super::LaneKeys;
 use crate::cli::GlobalArgs;
 use crate::common::{build_config, signer_from_suri, BucketId};
 use crate::prepare::{self, PrepareParams};
-use crate::soak::{parse_duration, poll_until, CycleRecord, SoakFailure, SoakReport, StopSignal};
+use crate::soak::{
+    parse_duration, poll_until, provider_rss_kb, run_parallel, BarrierRecord, CycleRecord, LogTail,
+    SoakFailure, SoakReport, StopSignal,
+};
 
 /// Wait for the provider to read the quota from the chain agreement.
 const QUOTA_SYNC_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Pause between provider reads while waiting for a condition.
 const POLL_STEP: Duration = Duration::from_secs(1);
+
+/// Pause between `/stats` reads while waiting for the provider to drain.
+const DRAIN_POLL_STEP: Duration = Duration::from_secs(2);
 
 /// Run time when neither `--duration` nor `--epochs` is given.
 const DEFAULT_DURATION: Duration = Duration::from_secs(30 * 60);
@@ -137,6 +145,35 @@ pub fn chunk_payload(
     payload
 }
 
+/// Whether the run starts epoch number `epoch`. A run always starts one epoch;
+/// a deadline is checked only between epochs.
+fn should_start_epoch(stop_at: StopAt, epoch: u32, elapsed: Duration, signal: &StopSignal) -> bool {
+    if signal.should_finish() {
+        return false;
+    }
+    match stop_at {
+        StopAt::Epochs(epochs) => epoch < epochs,
+        StopAt::Deadline(deadline) => epoch == 0 || elapsed < deadline,
+    }
+}
+
+/// Whether the provider holds no bucket, node or byte.
+fn drained(stats: &ProviderStatsResponse) -> bool {
+    stats.total_buckets == 0 && stats.total_nodes == 0 && stats.total_bytes == 0
+}
+
+/// The drain failure text: the wait error and the totals the provider still reports.
+fn drain_error_message(error: &str, left: Option<&ProviderStatsResponse>) -> String {
+    let remaining = match left {
+        Some(stats) => format!(
+            "{} buckets, {} nodes, {} bytes remain",
+            stats.total_buckets, stats.total_nodes, stats.total_bytes
+        ),
+        None => "no /stats response".to_string(),
+    };
+    format!("{error} ({remaining})")
+}
+
 /// Settings and clients shared by all lanes of a run.
 struct GcContext {
     plan: GcPlan,
@@ -146,6 +183,8 @@ struct GcContext {
     price_per_byte: u128,
     run_id: String,
     stop: StopSignal,
+    /// Cycles finished so far, by every lane.
+    cycles: Mutex<Vec<CycleRecord>>,
 }
 
 /// One client account with its own bucket.
@@ -161,7 +200,8 @@ struct Lane {
     survivor: Option<H256>,
 }
 
-/// Run the settings checks, then one prune cycle on a new bucket of each lane.
+/// Run the soak: epochs of parallel lanes, each followed by a drain check,
+/// until the deadline, the epoch count, Ctrl-C or the first failure.
 pub async fn run(global: &GlobalArgs, args: &GcArgs) -> Result<SoakReport> {
     let suris = args.lanes.suris()?;
     let plan = args.plan();
@@ -224,37 +264,141 @@ pub async fn run(global: &GlobalArgs, args: &GcArgs) -> Result<SoakReport> {
                 .map_or(0, |d| d.as_millis())
         ),
         stop: StopSignal::new(),
+        cycles: Mutex::new(Vec::new()),
     };
+    ctx.stop.listen_for_ctrl_c();
+    let mut log = args.provider_log.clone().map(LogTail::open).transpose()?;
 
     let started = Instant::now();
-    let mut cycles = Vec::new();
+    let mut barriers = Vec::new();
     let mut failure = None;
-    for lane in &mut lanes {
-        let result = async {
-            open_bucket(lane, &ctx).await?;
-            run_cycle(lane, &ctx, 0, 0).await
+    for epoch in 0.. {
+        if !should_start_epoch(ctx.plan.stop, epoch, started.elapsed(), &ctx.stop) {
+            break;
         }
-        .await;
-        match result {
-            Ok(record) => cycles.push(record),
-            Err(e) => {
-                failure = Some(SoakFailure {
-                    message: format!("{e:#}"),
-                    epoch: 0,
-                    lane: Some(lane.index),
-                    cycle: Some(0),
-                });
+        let lane_runs = lanes
+            .iter_mut()
+            .map(|lane| run_lane(lane, &ctx, epoch))
+            .collect();
+        let outcome = match run_parallel(&ctx.stop, lane_runs).await {
+            Ok(()) => drain_barrier(&lanes[0].user, &ctx, epoch, log.as_mut()).await,
+            Err(failure) => Err(failure),
+        };
+        match outcome {
+            Ok(barrier) => barriers.push(barrier),
+            Err(f) => {
+                failure = Some(f);
                 break;
             }
         }
     }
     Ok(SoakReport {
         service: "gc",
-        cycles,
-        barriers: Vec::new(),
+        cycles: ctx.cycles.into_inner().unwrap(),
+        barriers,
         failure,
         elapsed: started.elapsed(),
     })
+}
+
+/// One lane of an epoch: open a bucket, run its cycles, end its agreement.
+/// After Ctrl-C the lane skips its remaining cycles.
+async fn run_lane(lane: &mut Lane, ctx: &GcContext, epoch: u32) -> Result<(), SoakFailure> {
+    let index = lane.index;
+    let fail = |cycle: Option<u32>, e: anyhow::Error| SoakFailure {
+        message: format!("{e:#}"),
+        epoch,
+        lane: Some(index),
+        cycle,
+    };
+    open_bucket(lane, ctx).await.map_err(|e| fail(None, e))?;
+    for cycle in 0..ctx.plan.cycles_per_bucket {
+        if ctx.stop.is_aborted() {
+            return Err(fail(Some(cycle), anyhow!("aborted: another lane failed")));
+        }
+        if cycle > 0 && ctx.stop.should_finish() {
+            break;
+        }
+        let record = run_cycle(lane, ctx, epoch, cycle)
+            .await
+            .map_err(|e| fail(Some(cycle), e))?;
+        ctx.cycles.lock().unwrap().push(record);
+    }
+    retire_bucket(lane, ctx).await.map_err(|e| fail(None, e))
+}
+
+/// End the lane's agreement. The provider's garbage collector then condemns
+/// and erases the bucket.
+async fn retire_bucket(lane: &mut Lane, ctx: &GcContext) -> Result<()> {
+    let bucket = lane.bucket.take().context("the lane has no bucket")?;
+    lane.admin
+        .terminate_agreement(bucket, ctx.provider_account.clone(), EndAction::Pay)
+        .await
+        .with_context(|| format!("failed to end the agreement of bucket {bucket}"))
+}
+
+/// After an epoch's agreements ended: wait until the provider holds no
+/// bucket, node or byte, which means every retired bucket was erased. Then
+/// sample provider memory and the GC log lines.
+async fn drain_barrier(
+    user: &StorageUserClient,
+    ctx: &GcContext,
+    epoch: u32,
+    log: Option<&mut LogTail>,
+) -> Result<BarrierRecord, SoakFailure> {
+    let fail = |message: String| SoakFailure {
+        message,
+        epoch,
+        lane: None,
+        cycle: None,
+    };
+    let last_stats = Mutex::new(None);
+    let started = Instant::now();
+    poll_until(
+        "the provider to drain",
+        ctx.plan.drain_timeout,
+        DRAIN_POLL_STEP,
+        &ctx.stop,
+        || async {
+            let stats = user.provider_stats().await?;
+            let done = drained(&stats);
+            *last_stats.lock().unwrap() = Some(stats);
+            Ok(done.then_some(()))
+        },
+    )
+    .await
+    .map_err(|e| {
+        fail(drain_error_message(
+            &format!("{e:#}"),
+            last_stats.lock().unwrap().as_ref(),
+        ))
+    })?;
+    let drain = started.elapsed();
+
+    let gc_log = log
+        .map(LogTail::read_new)
+        .transpose()
+        .map_err(|e| fail(format!("{e:#}")))?;
+    let record = BarrierRecord {
+        epoch,
+        drain_secs: drain.as_secs_f64(),
+        provider_rss_kb: provider_rss_kb(&ctx.provider_url),
+        gc_log,
+    };
+    eprintln!(
+        "  epoch {epoch} drained in {:.1}s; provider RSS {} KB",
+        record.drain_secs,
+        record
+            .provider_rss_kb
+            .map_or("unavailable".to_string(), |kb| kb.to_string()),
+    );
+    match gc_log {
+        Some(counts) if counts.reconcile_skipped > 0 => Err(fail(format!(
+            "the provider log has {} \"GC reconcile skipped\" line(s)",
+            counts.reconcile_skipped
+        ))),
+        _ => Ok(record),
+    }
 }
 
 /// Fail before any transaction when the provider holds data, or is not
@@ -621,6 +765,85 @@ mod tests {
         assert_eq!(plan.max_bytes, 6 * 200);
         assert_eq!(plan.drain_timeout, Duration::from_secs(2 * 45 + 60));
         assert_eq!(plan.erase_timeout, Duration::from_secs(90));
+    }
+
+    #[test]
+    fn a_run_stops_after_the_requested_epochs() {
+        let signal = StopSignal::new();
+        let stop_at = StopAt::Epochs(2);
+        assert!(should_start_epoch(stop_at, 0, Duration::ZERO, &signal));
+        assert!(should_start_epoch(stop_at, 1, Duration::ZERO, &signal));
+        assert!(!should_start_epoch(stop_at, 2, Duration::ZERO, &signal));
+    }
+
+    #[test]
+    fn a_deadline_ends_the_run_between_epochs_but_never_before_the_first() {
+        let signal = StopSignal::new();
+        let stop_at = StopAt::Deadline(Duration::from_secs(600));
+        assert!(should_start_epoch(
+            stop_at,
+            0,
+            Duration::from_secs(5000),
+            &signal
+        ));
+        assert!(should_start_epoch(
+            stop_at,
+            3,
+            Duration::from_secs(599),
+            &signal
+        ));
+        assert!(!should_start_epoch(
+            stop_at,
+            3,
+            Duration::from_secs(600),
+            &signal
+        ));
+    }
+
+    #[test]
+    fn ctrl_c_prevents_the_next_epoch() {
+        let signal = StopSignal::new();
+        signal.finish();
+        assert!(!should_start_epoch(
+            StopAt::Epochs(9),
+            1,
+            Duration::ZERO,
+            &signal
+        ));
+        assert!(!should_start_epoch(
+            StopAt::Deadline(Duration::from_secs(600)),
+            0,
+            Duration::ZERO,
+            &signal
+        ));
+    }
+
+    fn stats(buckets: u64, nodes: u64, bytes: u64) -> ProviderStatsResponse {
+        ProviderStatsResponse {
+            provider_id: "p".into(),
+            total_buckets: buckets,
+            total_nodes: nodes,
+            total_bytes: bytes,
+        }
+    }
+
+    #[test]
+    fn the_provider_is_drained_only_when_all_three_totals_are_zero() {
+        assert!(drained(&stats(0, 0, 0)));
+        assert!(!drained(&stats(1, 0, 0)));
+        assert!(!drained(&stats(0, 1, 0)));
+        assert!(!drained(&stats(0, 0, 1)));
+    }
+
+    #[test]
+    fn the_drain_failure_names_the_remaining_totals() {
+        let message = drain_error_message("timed out", Some(&stats(2, 5, 900)));
+        assert!(message.contains("timed out"), "{message}");
+        assert!(
+            message.contains("2 buckets, 5 nodes, 900 bytes remain"),
+            "{message}"
+        );
+        assert!(drain_error_message("timed out", None).contains("no /stats response"));
     }
 
     #[test]
