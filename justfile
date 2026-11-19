@@ -426,6 +426,12 @@ e2e-single NUM PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL
     fi
     node --import tsx "$FILE" "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ SECOND_PROVIDER_URL }}"
 
+# GC soak test: repeated prune cycles and bucket teardowns against a running
+# provider. Manual only, not run in CI. Needs a provider with an empty database
+# started with GC_SCAN_INTERVAL=30 (see examples/papi/soak/gc-soak.ts).
+gc-soak *ARGS: papi-setup
+    node --import tsx examples/papi/soak/gc-soak.ts --chain "{{ CHAIN_WS }}" --provider "{{ PROVIDER_URL }}" {{ ARGS }}
+
 # ============================================================
 # File system and S3 objects in a bucket
 # ============================================================

@@ -485,6 +485,135 @@ impl StorageUserClient {
             .map_err(|e| ClientError::Serialization(e.to_string()))
     }
 
+    /// Drop every leaf below `new_start_seq` (`POST /delete`, Admin only).
+    ///
+    /// The deletion becomes canonical once the returned commitment is
+    /// submitted as a checkpoint, and the provider erases the pruned bytes
+    /// once it also holds the receipt from [`Self::confirm_deletion`].
+    pub async fn prune(
+        &self,
+        bucket_id: BucketId,
+        new_start_seq: u64,
+    ) -> ClientResult<PruneResponse> {
+        let provider_url = self.base.get_provider_url()?;
+        let req = self
+            .base
+            .http
+            .post(format!("{provider_url}/delete"))
+            .json(&PruneRequest {
+                bucket_id,
+                new_start_seq,
+            });
+        let response = self.sign(req, "POST", bucket_id).send().await?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::HttpStatus {
+                request: "POST /delete",
+                status: response.status().as_u16(),
+            });
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| ClientError::Serialization(e.to_string()))
+    }
+
+    /// Sign the deletion authorization for `pruned` with the auth signer and
+    /// store it on the provider (`POST /delete/confirm`, Admin only).
+    pub async fn confirm_deletion(
+        &self,
+        bucket_id: BucketId,
+        pruned: &PruneResponse,
+    ) -> ClientResult<()> {
+        use codec::Encode;
+
+        let provider_url = self.base.get_provider_url()?;
+        // The pallet verifies a signature over the commitment with the leaf
+        // count pinned to 0.
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id,
+            storage_primitives::Commitment {
+                mmr_root: pruned.mmr_root,
+                start_seq: pruned.start_seq,
+                leaf_count: 0,
+            },
+        );
+        let keypair = self.auth_signer.keypair();
+        let signature = sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw(
+            keypair.sign(&payload.encode()).0,
+        ));
+
+        let request = DeleteConfirmRequest {
+            bucket_id,
+            mmr_root: format!("{:#x}", pruned.mmr_root),
+            new_start_seq: pruned.start_seq,
+            admin: array_bytes::bytes2hex("0x", keypair.public_key().0),
+            signature: array_bytes::bytes2hex("0x", signature.encode()),
+        };
+        let req = self
+            .base
+            .http
+            .post(format!("{provider_url}/delete/confirm"))
+            .json(&request);
+        let response = self.sign(req, "POST", bucket_id).send().await?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::HttpStatus {
+                request: "POST /delete/confirm",
+                status: response.status().as_u16(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Read the bucket's usage against its agreement quota (`GET /usage`,
+    /// Reader on a private bucket).
+    pub async fn usage(&self, bucket_id: BucketId) -> ClientResult<BucketUsage> {
+        let provider_url = self.base.get_provider_url()?;
+        let req = self
+            .base
+            .http
+            .get(format!("{provider_url}/usage"))
+            .query(&[("bucket_id", bucket_id.to_string())]);
+        let response = self.sign(req, "GET", bucket_id).send().await?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::HttpStatus {
+                request: "GET /usage",
+                status: response.status().as_u16(),
+            });
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| ClientError::Serialization(e.to_string()))
+    }
+
+    /// Read provider-wide totals (`GET /stats`, unauthenticated).
+    pub async fn provider_stats(&self) -> ClientResult<ProviderStatsResponse> {
+        let provider_url = self.base.get_provider_url()?;
+        let response = self
+            .base
+            .http
+            .get(format!("{provider_url}/stats"))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::HttpStatus {
+                request: "GET /stats",
+                status: response.status().as_u16(),
+            });
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| ClientError::Serialization(e.to_string()))
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Verification & Monitoring
     // ═════════════════════════════════════════════════════════════════════════
@@ -836,6 +965,70 @@ struct UploadNodeRequest {
     data: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<String>>,
+}
+
+/// Provider-signed commitment after a prune (`POST /delete`). Pass it to
+/// [`StorageUserClient::confirm_deletion`] and submit it as the checkpoint
+/// commitment.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct PruneResponse {
+    #[serde(deserialize_with = "h256_from_hex")]
+    pub mmr_root: H256,
+    pub start_seq: u64,
+    pub leaf_count: u64,
+    #[serde(deserialize_with = "multi_signature_from_hex")]
+    pub provider_signature: sp_runtime::MultiSignature,
+}
+
+impl PruneResponse {
+    /// The `(mmr_root, start_seq, leaf_count)` the provider signed.
+    pub fn commitment(&self) -> storage_primitives::Commitment {
+        storage_primitives::Commitment {
+            mmr_root: self.mmr_root,
+            start_seq: self.start_seq,
+            leaf_count: self.leaf_count,
+        }
+    }
+}
+
+/// Bytes a bucket uses on the provider against its agreement quota (`GET /usage`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+pub struct BucketUsage {
+    pub bucket_id: BucketId,
+    pub used_bytes: u64,
+    /// `u64::MAX` until the provider syncs the agreement quota.
+    pub max_bytes: u64,
+}
+
+impl BucketUsage {
+    /// Whether the provider has synced the quota from the chain agreement.
+    pub fn quota_synced(&self) -> bool {
+        self.max_bytes != u64::MAX
+    }
+}
+
+/// Provider-wide totals (`GET /stats`).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+pub struct ProviderStatsResponse {
+    pub provider_id: String,
+    pub total_buckets: u64,
+    pub total_nodes: u64,
+    pub total_bytes: u64,
+}
+
+#[derive(serde::Serialize)]
+struct PruneRequest {
+    bucket_id: u64,
+    new_start_seq: u64,
+}
+
+#[derive(serde::Serialize)]
+struct DeleteConfirmRequest {
+    bucket_id: u64,
+    mmr_root: String,
+    new_start_seq: u64,
+    admin: String,
+    signature: String,
 }
 
 #[derive(serde::Serialize)]
