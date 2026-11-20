@@ -1,0 +1,60 @@
+[package]
+name = "storage-formats"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+description = "File system and S3-style objects stored in a web3-storage bucket"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["http"]
+# The provider HTTP store, with storage-client.
+http = ["dep:storage-client"]
+# The wasm-bindgen exports for TypeScript (`packages/storage-formats`).
+wasm = [
+	"dep:getrandom",
+	"dep:js-sys",
+	"dep:serde",
+	"dep:serde-wasm-bindgen",
+	"dep:tsify-next",
+	"dep:wasm-bindgen",
+	"dep:wasm-bindgen-futures",
+]
+
+[dependencies]
+# Internal dependencies
+codec = { workspace = true, features = ["std"] }
+storage-client = { workspace = true, optional = true }
+storage-primitives = { workspace = true, features = ["std"] }
+
+async-trait = { workspace = true }
+
+bounded-collections = { workspace = true, features = ["scale-codec", "std"] }
+primitive-types = { workspace = true, features = ["codec", "std"] }
+
+# Utilities
+thiserror = { workspace = true }
+
+# Browser build (`wasm` feature). `getrandom` needs `js` on wasm32; `rand`
+# reaches it through the `std` features of primitive-types.
+getrandom = { workspace = true, optional = true, features = ["js"] }
+js-sys = { workspace = true, optional = true }
+serde = { workspace = true, optional = true, features = ["std"] }
+serde-wasm-bindgen = { workspace = true, optional = true }
+tsify-next = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+
+[dev-dependencies]
+array-bytes = { workspace = true }
+axum = { workspace = true }
+client-test-support = { workspace = true }
+reqwest = { workspace = true }
+sp-runtime = { workspace = true, features = ["std"] }
+subxt-signer = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { workspace = true }

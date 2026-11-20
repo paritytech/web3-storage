@@ -267,8 +267,9 @@
       "items": [
         "Before expiry only a bucket admin can end an agreement, and only a primary; the full remaining payment is paid or burned",
         "Replica agreements cannot be ended early",
-        "AgreementHasPendingChallenge blocks end_agreement and claim_expired_agreement",
-        "Anyone can call remove_slashed; the remaining payment returns to the owner"
+        "AgreementHasPendingChallenge blocks end_agreement, claim_expired_agreement and remove_slashed",
+        "Anyone can call remove_slashed; the remaining payment returns to the owner",
+        "From expires_at the provider node rejects writes (agreement_expired); once the agreement is removed it rejects every request (no_agreement)"
       ]
     }
   ]

@@ -9,6 +9,7 @@ built on top of the [`storage-client`](../../../clients/storage) SDK.
 
 ```bash
 cargo run -p storage-cli -- --help
+cargo run -p storage-cli -- provider register --help
 cargo run -p storage-cli -- stress-test upload --help
 ```
 
@@ -18,27 +19,52 @@ cargo run -p storage-cli -- stress-test upload --help
 | ---------------------- | ----------------------- | -------------- | -------------------------------------------------- |
 | `--chain-rpc <URL>`    | `ws://127.0.0.1:2222`   | `CHAIN_RPC`    | Parachain RPC WebSocket endpoint.                  |
 | `--provider-url <URL>` | `http://127.0.0.1:3333` | `PROVIDER_URL` | Provider node HTTP endpoint.                       |
-| `--suri <SURI>`        | —                       |                | Secret URI for the account, e.g. `//Alice`.        |
-| `--keyfile <FILE>`     | —                       |                | File whose contents are the SURI/seed.             |
 | `--output <FORMAT>`    | `text`                  |                | Metrics summary format: `text` or `json`.          |
 
-`--suri` and `--keyfile` are mutually exclusive; exactly one is required. The
-account they resolve to signs the `Authorization` header on every provider
-request, so it must be a member of the buckets being written to.
+Each command takes the secret of the account it signs as, named after the
+account's role: `--provider-suri`/`--provider-keyfile` or
+`--client-suri`/`--client-keyfile`. Exactly one of each pair is required. A
+keyfile contains the SURI.
+
+## `provider register`
+
+Registers the provider account as a storage provider, locking the
+1000-token minimum stake, and sets it to accept primary agreements at 1 per
+byte-block for 10 to 100,000 anchor blocks. If the account is already
+registered with the same signing key, it does nothing; with a different key, it
+exits with an error.
+
+```bash
+cargo run -p storage-cli -- \
+  provider register \
+  --provider-suri //Alice \
+  --multiaddr /ip4/127.0.0.1/tcp/3333
+```
+
+| Param                    | Default   | Description                                                           |
+| ------------------------ | --------- | --------------------------------------------------------------------- |
+| `--provider-suri <SURI>` | —         | Secret URI of the provider account, e.g. `//Alice`.                   |
+| `--provider-keyfile <FILE>` | —      | File with the provider account's SURI: the file the node's `--keyfile` reads. |
+| `--multiaddr <ADDR>`     | required  | Multiaddr at which clients reach the provider node.                   |
+| `--key-scheme <SCHEME>`  | `sr25519` | Signing key to register: `sr25519`, `ed25519`, `ecdsa` or `eth`. Must match the node's `--key-scheme`. |
+
+The extrinsics are always signed by the sr25519 account. The provider node can
+start before or after registration. If it starts after, it reads the
+registration when it connects and can sign terms on its first request.
 
 ## `stress-test upload`
 
 Drives configurable upload load against a provider: `--users` simulated clients
 each performing `--uploads-per-user` uploads, with either axis run sequentially
-or in parallel. Targets buckets the account already has a storage agreement with
+or in parallel. Targets buckets the client account already has a storage agreement with
 the given provider for, or buckets the run prepares itself with
 `--prepare-buckets`.
 
 ```bash
 cargo run -p storage-cli -- \
-  --suri //Bob \
   stress-test upload \
-  --provider <PROVIDER_SS58> \
+  --client-suri //Bob \
+  --provider-account <PROVIDER_SS58> \
   --prepare-buckets 2 \
   --users 10 \
   --uploads-per-user 5 \
@@ -48,7 +74,9 @@ cargo run -p storage-cli -- \
 
 | Param                        | Default            | Description                                                |
 | ---------------------------- | ------------------ | ---------------------------------------------------------- |
-| `--provider <ACCOUNT>`       | required           | Provider account (SS58 or `0x`-hex) whose agreements select the target buckets. |
+| `--client-suri <SURI>`       | —                  | Secret URI of the client account, e.g. `//Bob`.            |
+| `--client-keyfile <FILE>`    | —                  | File with the client account's SURI.                       |
+| `--provider-account <ACCOUNT>` | required         | Public account of the provider (SS58 or `0x`-hex) whose agreements select the target buckets. |
 | `--max-buckets-to-write <N>` | all buckets        | Cap the number of buckets written to (must be `>= 1`).     |
 | `--users <N>`                | `1`                | Number of simulated users, each with its own client.       |
 | `--uploads-per-user <X>`     | `1`                | Number of uploads each user performs.                      |
@@ -56,7 +84,11 @@ cargo run -p storage-cli -- \
 | `--parallel-users`           | off (sequential)   | Run users in parallel.                                     |
 | `--parallel-uploads`         | off (sequential)   | Run each user's uploads in parallel.                       |
 | `--max-concurrency <N>`      | `0` (unbounded)    | Cap total in-flight uploads across all users.              |
-| `--prepare-buckets <N>`      | `0` (off)          | Open `N` fresh buckets with a primary agreement to `--provider` before the run. |
+| `--prepare-buckets <N>`      | `0` (off)          | Open `N` fresh buckets with a primary agreement to `--provider-account` before the run. |
+| `--prepare-max-bytes <BYTES>`| per-bucket load + 10% | Quota negotiated per prepared bucket. Rejected if below what the run writes to one bucket. |
+| `--prepare-duration <BLOCKS>`| `100`              | Agreement duration for prepared buckets, in anchor blocks. |
+| `--prepare-price-per-byte <P>`| `1`               | Price per byte per block the run accepts. The provider rejects lower offers and signs at its listed price. |
+| `--bucket-source <MODE>`     | `create` if preparing, else `discover` | `discover`: existing buckets only. `create`: prepared buckets only. `auto`: existing first, prepare the shortfall up to `--prepare-buckets`. |
 
 Total uploads is `users × uploads-per-user`. The two `--parallel-*` flags are
 independent axes: `--parallel-users` alone runs each user's uploads in sequence
@@ -65,14 +97,14 @@ together maximise concurrency (bounded by `--max-concurrency` if set).
 
 **Behavior**
 
-1. Derives the account from `--suri`/`--keyfile`. Without `--prepare-buckets`,
+1. Derives the client account from `--client-suri`/`--client-keyfile`. This
+   account signs the `Authorization` header on every provider request, so it
+   must be a member of the buckets written to. Unless `--bucket-source create`,
    reads its buckets from chain (`MemberBuckets[account]`) and keeps those with a
-   `StorageAgreements[bucket][provider]` entry for the given `--provider`.
+   `StorageAgreements[bucket][provider]` entry for `--provider-account`.
 2. With `--prepare-buckets N`, negotiates terms with the provider node
    (`POST /negotiate`) and redeems them on-chain (`create_bucket_with_primary`)
-   once per bucket, 100 anchor blocks at 1 per byte-block with a quota of the
-   per-bucket load plus 10%, the same path as the SDK's `complete_workflow`
-   example, and targets only those buckets.
+   once per bucket, the same path as the SDK's `complete_workflow` example.
    Preparation runs before the measurement clock starts and never appears in the
    throughput or latency numbers. A preparation failure exits non-zero with no
    metrics summary.
@@ -80,8 +112,8 @@ together maximise concurrency (bounded by `--max-concurrency` if set).
 4. Runs the configured load over the provider's HTTP API, assigning each upload a
    target bucket round-robin so writes spread evenly across the selected buckets.
 
-`--max-buckets-to-write` is applied before preparation: with `--prepare-buckets`
-it must be at least that count, so no bucket is opened and then never written.
+`--max-buckets-to-write` is applied before preparation: in `create` mode it must
+be at least `--prepare-buckets`, so no bucket is opened and then never written.
 
 ### Output
 
@@ -116,9 +148,9 @@ summary.
 ### Required on-chain setup
 
 The provider must be registered on-chain and its node running (`just start-chain`,
-`just start-provider`, `cargo run -p storage-client --example register_provider`).
-Buckets and agreements either exist already or the run opens them with
-`--prepare-buckets N`. The signing account pays for the prepared
+`storage-cli provider register`, `just start-provider`).
+Buckets and agreements either exist already (default `discover` mode) or the run
+opens them with `--prepare-buckets N`. The client account pays for the prepared
 agreements at the provider's listed price.
 
 ## Limitations

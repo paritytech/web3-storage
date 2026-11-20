@@ -119,7 +119,7 @@
   <div class="container">
     <!-- Header -->
     <div class="header">
-      <p class="site-crumb"><a href="index.html">&larr; Scalable Web3 Storage</a></p>
+      <p class="site-crumb"><a href="index.html">&larr; Capacity - Scalable Web3 Storage</a></p>
       <div class="header-row"
            data-preset-badge-signal-flow="SIGNAL FLOW"
            data-preset-badge-blueprint="BLUEPRINT / REV 01"
@@ -623,8 +623,9 @@
         <ul>
           <li>&bull; Before expiry only a bucket admin can end an agreement, and only a primary; the full remaining payment is paid or burned</li>
           <li>&bull; Replica agreements cannot be ended early</li>
-          <li>&bull; AgreementHasPendingChallenge blocks end_agreement and claim_expired_agreement</li>
+          <li>&bull; AgreementHasPendingChallenge blocks end_agreement, claim_expired_agreement and remove_slashed</li>
           <li>&bull; Anyone can call remove_slashed; the remaining payment returns to the owner</li>
+          <li>&bull; From expires_at the provider node rejects writes (agreement_expired); once the agreement is removed it rejects every request (no_agreement)</li>
         </ul>
       </div>
     </div>

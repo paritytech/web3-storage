@@ -89,6 +89,7 @@ pub trait WeightInfo {
 	fn respond_to_challenge_deleted() -> Weight;
 	fn respond_to_challenge_superseded() -> Weight;
 	fn respond_to_challenge_chunk_out_of_range() -> Weight;
+	fn cancel_challenge() -> Weight;
 	fn confirm_replica_sync() -> Weight;
 	fn top_up_replica_sync_balance() -> Weight;
 	fn resolve_expired_challenge() -> Weight;
@@ -295,6 +296,7 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	/// Storage: `StorageProvider::Buckets` (r:1 w:1)
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	fn remove_slashed() -> Weight {
+		// TODO: needs re-benchmarking (one more storage read, #485)
 		// Proof Size summary in bytes:
 		//  Measured:  `1132`
 		//  Estimated: `4597`
@@ -722,6 +724,7 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	/// Storage: `System::Account` (r:2 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	fn respond_to_challenge_deleted() -> Weight {
+		// TODO: needs re-benchmarking (one more storage read, #485)
 		// Proof Size summary in bytes:
 		//  Measured:  `1579`
 		//  Estimated: `6700`
@@ -751,6 +754,7 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(380), added: 2855, mode: `MaxEncodedLen`)
 	fn respond_to_challenge_superseded() -> Weight {
+		// TODO: needs re-benchmarking (one more storage read, #485)
 		// Proof Size summary in bytes:
 		//  Measured:  `1381`
 		//  Estimated: `6196`
@@ -762,6 +766,18 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	// TODO: needs re-benchmarking
 	fn respond_to_challenge_chunk_out_of_range() -> Weight {
 		Self::respond_to_challenge_proof()
+	}
+	/// Storage: `StorageProvider::Challenges` (r:1 w:1)
+	/// Storage: `StorageProvider::PendingChallenges` (r:1 w:1)
+	/// Storage: `StorageProvider::PendingChallengesByBucket` (r:1 w:1)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Storage: `System::Account` (r:1 w:1)
+	fn cancel_challenge() -> Weight {
+		// Hand-written estimate until `/cmd bench` regenerates this file.
+		// TODO: needs re-benchmarking
+		Weight::from_parts(30_000_000, 6000)
+			.saturating_add(T::DbWeight::get().reads(5_u64))
+			.saturating_add(T::DbWeight::get().writes(5_u64))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(380), added: 2855, mode: `MaxEncodedLen`)
@@ -1028,6 +1044,7 @@ impl WeightInfo for () {
 	/// Storage: `StorageProvider::Buckets` (r:1 w:1)
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	fn remove_slashed() -> Weight {
+		// TODO: needs re-benchmarking (one more storage read, #485)
 		// Proof Size summary in bytes:
 		//  Measured:  `1132`
 		//  Estimated: `4597`
@@ -1455,6 +1472,7 @@ impl WeightInfo for () {
 	/// Storage: `System::Account` (r:2 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	fn respond_to_challenge_deleted() -> Weight {
+		// TODO: needs re-benchmarking (one more storage read, #485)
 		// Proof Size summary in bytes:
 		//  Measured:  `1579`
 		//  Estimated: `6700`
@@ -1484,6 +1502,7 @@ impl WeightInfo for () {
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(380), added: 2855, mode: `MaxEncodedLen`)
 	fn respond_to_challenge_superseded() -> Weight {
+		// TODO: needs re-benchmarking (one more storage read, #485)
 		// Proof Size summary in bytes:
 		//  Measured:  `1381`
 		//  Estimated: `6196`
@@ -1495,6 +1514,18 @@ impl WeightInfo for () {
 	// TODO: needs re-benchmarking
 	fn respond_to_challenge_chunk_out_of_range() -> Weight {
 		Self::respond_to_challenge_proof()
+	}
+	/// Storage: `StorageProvider::Challenges` (r:1 w:1)
+	/// Storage: `StorageProvider::PendingChallenges` (r:1 w:1)
+	/// Storage: `StorageProvider::PendingChallengesByBucket` (r:1 w:1)
+	/// Storage: `Balances::Holds` (r:1 w:1)
+	/// Storage: `System::Account` (r:1 w:1)
+	fn cancel_challenge() -> Weight {
+		// Hand-written estimate until `/cmd bench` regenerates this file.
+		// TODO: needs re-benchmarking
+		Weight::from_parts(30_000_000, 6000)
+			.saturating_add(RocksDbWeight::get().reads(5_u64))
+			.saturating_add(RocksDbWeight::get().writes(5_u64))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(380), added: 2855, mode: `MaxEncodedLen`)

@@ -8,7 +8,7 @@
 use crate::hash_children;
 use alloc::vec::Vec;
 use core::ops::Range;
-use sp_core::H256;
+use primitive_types::H256;
 
 /// An internal node of the tree.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -158,17 +158,17 @@ export function leafChunkCount(leaf: { leaf_version: number; data_size: number |
   if (chunkSize === undefined) {
     throw new Error(`unknown MMR leaf version ${leaf.leaf_version}`);
   }
-  const size = BigInt(leaf.data_size);
-  const count = (size + BigInt(chunkSize) - 1n) / BigInt(chunkSize);
-  return Number(count);
+  return chunkCount(leaf.data_size, chunkSize);
 }
 
 /**
- * Number of chunks (tree leaves) of data with `dataSize` bytes; empty data has
- * none.
+ * Number of chunks (tree leaves) of data with `dataSize` bytes, at
+ * `chunkSize` bytes per chunk; empty data has none.
  */
-export function chunkCount(dataSize: bigint | number): number {
-  return Math.ceil(Number(dataSize) / DEFAULT_CHUNK_SIZE);
+export function chunkCount(dataSize: bigint | number, chunkSize: number = DEFAULT_CHUNK_SIZE): number {
+  const size = BigInt(dataSize);
+  const step = BigInt(chunkSize);
+  return Number((size + step - 1n) / step);
 }
 
 /**
@@ -260,13 +260,7 @@ export function verifyMmrProof(proof: MmrProof, leafIndex: bigint, mmrRoot: Uint
   const hasRightPeaks = remaining > 1n << BigInt(height);
   if (proof.items.length !== peakIndex + height + (hasRightPeaks ? 1 : 0)) return false;
 
-  const leafBytes = concatBytes(
-    new Uint8Array([proof.leaf.leafVersion]),
-    proof.leaf.dataRoot,
-    u64le(proof.leaf.dataSize),
-    u64le(proof.leaf.totalSize),
-  );
-  let current = hashLeaf(leafBytes);
+  let current = mmrLeafHash(proof.leaf);
   for (let k = 0; k < height; k++) {
     const sibling = proof.items[peakIndex + k];
     const isRight = ((localIndex >> BigInt(k)) & 1n) === 1n;
@@ -275,6 +269,17 @@ export function verifyMmrProof(proof: MmrProof, leafIndex: bigint, mmrRoot: Uint
   // The bagged right peaks count as one peak: bagging folds from the right.
   const peaks = [...proof.items.slice(0, peakIndex), current, ...proof.items.slice(peakIndex + height)];
   return bytesEq(bagPeaks(peaks), mmrRoot);
+}
+
+/**
+ * Hash of an MMR leaf: the leaf hash of `leaf_version ++ data_root ++
+ * u64_le(data_size) ++ u64_le(total_size)`, as `MmrLeaf::hash` in
+ * crates/primitives/storage.
+ */
+export function mmrLeafHash(leaf: MmrLeaf): Uint8Array {
+  return hashLeaf(
+    concatBytes(new Uint8Array([leaf.leafVersion]), leaf.dataRoot, u64le(leaf.dataSize), u64le(leaf.totalSize)),
+  );
 }
 
 /**

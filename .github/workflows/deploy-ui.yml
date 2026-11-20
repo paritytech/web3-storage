@@ -5,7 +5,11 @@ on:
     branches: [dev]
     paths:
       - "user-interfaces/**"
+      - "docs/site/**"
       - "packages/**"
+      - "clients/storage-formats/**"
+      - "crates/primitives/storage/**"
+      - "Cargo.lock"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "package.json"
@@ -59,6 +63,9 @@ jobs:
           cp -r user-interfaces/drive-ui/dist _site/drive
           cp -r user-interfaces/photos/dist _site/photos
           cp -r user-interfaces/explorer/dist _site/explorer
+          # Architecture diagrams + dApp guide (static, derived from docs/design/)
+          cp -r docs/site _site/docs
+          rm -f _site/docs/design.sha256
           # Per-app 404.html for SPA routing within each app
           cp user-interfaces/s3-ui/dist/index.html _site/s3/404.html
           cp user-interfaces/provider/dist/index.html _site/provider/404.html

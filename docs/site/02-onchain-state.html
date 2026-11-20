@@ -119,7 +119,7 @@
   <div class="container">
     <!-- Header -->
     <div class="header">
-      <p class="site-crumb"><a href="index.html">&larr; Scalable Web3 Storage</a></p>
+      <p class="site-crumb"><a href="index.html">&larr; Capacity - Scalable Web3 Storage</a></p>
       <div class="header-row"
            data-preset-badge-signal-flow="SIGNAL FLOW"
            data-preset-badge-blueprint="BLUEPRINT / REV 01"
@@ -619,7 +619,7 @@
         <ul>
           <li>&bull; ProviderInfo also has multiaddr, public_key, stats</li>
           <li>&bull; role: Primary, or Replica { sync_balance, sync_price, min_sync_interval, last_sync }</li>
-          <li>&bull; PendingChallengesByBucket also gates claim_expired_agreement and delete_bucket</li>
+          <li>&bull; PendingChallengesByBucket also gates claim_expired_agreement, remove_slashed and delete_bucket</li>
           <li>&bull; AgreementNonces: AccountId → next expected terms.nonce; redemption advances it (NonceMismatch)</li>
           <li>&bull; ProviderInfo.deposit, StorageAgreement.deposit: StorageDeposit tickets; StorageAgreement.depositor opened the agreement and keeps the deposit on hold after a transfer</li>
         </ul>

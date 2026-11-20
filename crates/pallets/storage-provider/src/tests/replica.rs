@@ -37,10 +37,7 @@ fn add_replica_provider_works() {
         );
 
         let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
-        assert!(matches!(
-            agreement.role,
-            storage_primitives::ProviderRole::Replica { .. }
-        ));
+        assert!(matches!(agreement.role, ProviderRole::Replica { .. }));
         // sync_balance (price is 0, so only the sync balance) is escrowed and
         // the agreement's storage deposit is held.
         assert_eq!(held(HoldReason::AgreementPayment, 1), 100);
@@ -307,7 +304,7 @@ fn top_up_replica_sync_balance_works() {
 
         let agreement_before = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
         let sync_balance_before = match &agreement_before.role {
-            storage_primitives::ProviderRole::Replica { sync_balance, .. } => *sync_balance,
+            ProviderRole::Replica { sync_balance, .. } => *sync_balance,
             _ => panic!("expected replica"),
         };
 
@@ -320,7 +317,7 @@ fn top_up_replica_sync_balance_works() {
 
         let agreement_after = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
         let sync_balance_after = match &agreement_after.role {
-            storage_primitives::ProviderRole::Replica { sync_balance, .. } => *sync_balance,
+            ProviderRole::Replica { sync_balance, .. } => *sync_balance,
             _ => panic!("expected replica"),
         };
         assert_eq!(sync_balance_after, sync_balance_before + 50);
@@ -348,7 +345,7 @@ fn top_up_replica_sync_balance_fails_no_agreement() {
 /// and a replica provider (2) with an accepted replica agreement.
 fn setup_replica_with_snapshot() -> u64 {
     use sp_core::H256;
-    use storage_primitives::{BucketSnapshot, Commitment};
+    use storage_primitives::Commitment;
 
     // Provider 3 = primary
     register_provider(3, 200);
@@ -420,7 +417,7 @@ fn confirm_replica_sync_happy_path() {
         // Sync balance should decrease
         let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
         match &agreement.role {
-            storage_primitives::ProviderRole::Replica {
+            ProviderRole::Replica {
                 sync_balance,
                 last_sync,
                 ..
@@ -515,7 +512,7 @@ fn challenge_replica_binds_to_synced_range() {
 #[test]
 fn challenge_replica_binds_to_historical_sync_range() {
     use sp_core::H256;
-    use storage_primitives::{ChunkLocation, Commitment, ProviderRole};
+    use storage_primitives::{ChunkLocation, Commitment};
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_replica_with_snapshot();
@@ -690,7 +687,7 @@ fn confirm_replica_sync_fails_insufficient_balance() {
 
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
-                bucket.snapshot = Some(storage_primitives::BucketSnapshot {
+                bucket.snapshot = Some(BucketSnapshot {
                     commitment: storage_primitives::Commitment {
                         mmr_root: sp_core::H256::repeat_byte(0xAB),
                         start_seq: 0,
@@ -855,7 +852,7 @@ fn confirm_replica_sync_after_interval_with_new_root() {
         // Verify last_sync updated
         let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
         match &agreement.role {
-            storage_primitives::ProviderRole::Replica {
+            ProviderRole::Replica {
                 sync_balance,
                 last_sync,
                 ..
@@ -867,6 +864,154 @@ fn confirm_replica_sync_after_interval_with_new_root() {
             }
             _ => panic!("expected replica"),
         }
+    });
+}
+
+/// `Superseded` is a primary-only defense. A replica is liable for exactly
+/// the root it confirmed, so a newer canonical root does not defend it, while
+/// the primary challenged on the same old root is defended by it.
+#[test]
+fn replica_cannot_answer_with_superseded() {
+    use sp_core::H256;
+    use storage_primitives::ChunkLocation;
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+
+        // Replica 2 confirms the current root 0xAB (0..10).
+        let mut roots = [None; 7];
+        roots[0] = Some(H256::repeat_byte(0xAB));
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+
+        let target = ChunkLocation {
+            leaf_index: 3,
+            chunk_index: 0,
+        };
+        // (101, 0): the replica, bound to its confirmed root 0xAB.
+        assert_ok!(StorageProvider::challenge_replica(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            2,
+            target,
+        ));
+        // (101, 1): the primary, bound to the snapshot root 0xAB.
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            3,
+            target,
+        ));
+
+        // A new checkpoint replaces 0xAB with 0xCD over the same range.
+        super::challenge::advance_snapshot_root(bucket_id);
+
+        // The primary is defended by the newer canonical root.
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(3),
+            ChallengeId {
+                deadline: 101,
+                index: 1,
+            },
+            ChallengeResponse::<Test>::Superseded,
+        ));
+        // The replica is not; its challenge stays open.
+        assert_noop!(
+            StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101,
+                    index: 0,
+                },
+                ChallengeResponse::<Test>::Superseded,
+            ),
+            Error::<Test>::InvalidSupersededClaim
+        );
+        assert!(Challenges::<Test>::get(101, 0).is_some());
+    });
+}
+
+/// `Deleted` is a primary-only defense: the same admin-signed deletion that
+/// defends the primary is rejected from a replica.
+#[test]
+fn replica_cannot_answer_with_deleted() {
+    use codec::Encode;
+    use sp_core::{Pair, H256};
+    use storage_primitives::{ChunkLocation, Commitment, CommitmentPayload};
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+        // Signatures verify against a registered key, so the admin (account 1)
+        // registers one.
+        register_provider(1, 200);
+
+        let mut roots = [None; 7];
+        roots[0] = Some(H256::repeat_byte(0xAB));
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+
+        let target = ChunkLocation {
+            leaf_index: 3,
+            chunk_index: 0,
+        };
+        assert_ok!(StorageProvider::challenge_replica(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            2,
+            target,
+        ));
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            3,
+            target,
+        ));
+
+        // The admin signs a deletion of seq 0..4, which covers the challenged
+        // seq 3.
+        let deletion = Commitment {
+            mmr_root: H256::repeat_byte(0x77),
+            start_seq: 4,
+            leaf_count: 0,
+        };
+        let payload = CommitmentPayload::new(bucket_id, deletion);
+        let deleted = || ChallengeResponse::<Test>::Deleted {
+            new_mmr_root: deletion.mmr_root,
+            new_start_seq: deletion.start_seq,
+            admin: 1,
+            admin_signature: sp_runtime::MultiSignature::Sr25519(
+                provider_signer(1).sign(&payload.encode()),
+            ),
+        };
+
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(3),
+            ChallengeId {
+                deadline: 101,
+                index: 1,
+            },
+            deleted(),
+        ));
+        assert_noop!(
+            StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101,
+                    index: 0,
+                },
+                deleted(),
+            ),
+            Error::<Test>::InvalidDeletionClaim
+        );
+        assert!(Challenges::<Test>::get(101, 0).is_some());
     });
 }
 

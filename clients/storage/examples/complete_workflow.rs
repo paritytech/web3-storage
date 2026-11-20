@@ -4,7 +4,7 @@
 //!
 //!   1. Start the chain:        just start-chain
 //!   2. Start the provider:     just start-provider          (defaults to the //Alice key)
-//!   3. Register the provider:  cargo run --example register_provider
+//!   3. Register the provider:  just register-provider
 //!
 //! With those running, this example exercises only the user-facing flow against
 //! the live chain + provider node:
@@ -111,7 +111,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .upload(bucket_id, &data, ChunkingStrategy::default())
         .await?;
     let downloaded = user
-        .download(bucket_id, &data_root, 0, data.len() as u64)
+        .download(
+            bucket_id,
+            &data_root,
+            data.len() as u64,
+            0,
+            data.len() as u64,
+        )
         .await?;
     assert_eq!(downloaded, data, "downloaded bytes must match upload");
     println!("  Uploaded {} bytes and verified download", data.len());

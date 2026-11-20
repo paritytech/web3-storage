@@ -2,39 +2,52 @@
 
 //! On-disk record types shared by every [`StorageBackend`] implementation.
 //!
-//! These are the SCALE-encoded shapes a backend writes to durable storage, kept
-//! separate from the engines that store them so a second engine (SQLite, or
-//! whatever comes next) persists the same records rather than inventing its own.
-//!
-//! # Encoding stability
-//!
-//! Their SCALE encoding *is* the on-disk format. Adding, removing, reordering,
-//! or retyping a field - here or in any type they embed, such as
-//! [`MmrLeaf`] - changes that format, and a provider restarted on data written
-//! by the previous build will fail to decode it. The golden-vector tests in
-//! [`tests::compatibility_tests`] pin the encoding byte-for-byte so such a change breaks the build
-//! instead of a live provider; when one is intended, bump [`FORMAT_VERSION`]
-//! alongside the new vectors.
-//!
 //! [`StorageBackend`]: super::StorageBackend
 
 use crate::error::Error;
 use codec::{Decode, Encode};
 use sp_core::H256;
+use std::collections::BTreeMap;
 use storage_primitives::{hash_children, MmrLeaf, DEFAULT_CHUNK_SIZE};
 
 /// Version of the on-disk encoding of the records in this module.
-///
-/// Bump it whenever a change alters what [`ChunkTreeNode`] or [`BucketState`]
-/// encode to, so a build fails on a database in another format instead of
-/// misreading its bytes.
 pub const FORMAT_VERSION: u32 = 1;
 
-/// Per-bucket state a backend persists: the bucket's MMR and its quota usage.
+/// One pruned-but-not-yet-erased leaf range: the retention stash keeping
+/// challenges over the range provable until erasure is permitted.
+#[derive(Debug, Clone, PartialEq, Encode, Decode)]
+pub struct PrunedRange {
+    /// Global sequence number of `leaves[0]`.
+    pub first_seq: u64,
+    /// The removed leaves, contiguous from `first_seq`.
+    pub leaves: Vec<MmrLeaf>,
+    /// The start_seq this prune advanced the bucket to.
+    pub new_start_seq: u64,
+}
+
+/// An admin-signed deletion authorization: the durable evidence for the
+/// on-chain `Deleted` challenge defense. Kept after the bytes are erased —
+/// it is what makes the erasure permanently defensible.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct DeletionReceipt {
+    /// The post-prune MMR root the admin signed.
+    pub mmr_root: H256,
+    /// The start_seq the deletion advanced the bucket to.
+    pub new_start_seq: u64,
+    /// The admin account that signed the deletion authorization.
+    pub admin: sp_core::crypto::AccountId32,
+    /// The admin's signature over the deletion `CommitmentPayload`.
+    pub signature: sp_runtime::MultiSignature,
+}
+
+/// Per-bucket state a backend persists: the bucket's MMR, its quota usage,
+/// and its deletion lifecycle (stash, receipts, condemnation).
 #[derive(Debug, Clone, PartialEq, Encode, Decode)]
 pub struct BucketState {
     /// Root of the MMR over `leaves`.
     pub mmr_root: H256,
+    /// Peaks of the MMR over `leaves`, left to right. `mmr_root` is their bag.
+    pub peaks: Vec<H256>,
     /// Sequence number of `leaves[0]`; advances as `delete_before` prunes.
     pub start_seq: u64,
     /// MMR leaves still retained, oldest first.
@@ -45,6 +58,15 @@ pub struct BucketState {
     pub node_count: u64,
     /// Quota agreed on-chain for this bucket.
     pub max_bytes: u64,
+    /// Pruned-but-not-yet-erased leaf ranges (the pending-erasure queue).
+    pub pruned: Vec<PrunedRange>,
+    /// Admin-signed deletion receipts keyed by `new_start_seq` (one per
+    /// prune point), kept even after their ranges are erased — permanent
+    /// evidence for the on-chain `Deleted` defense.
+    pub deletion_receipts: BTreeMap<u64, DeletionReceipt>,
+    /// Set when the bucket was deleted on-chain (or the agreement ended).
+    /// The bucket row is removed once `leaves` and `pruned` are both empty.
+    pub condemned: bool,
 }
 
 impl BucketState {
@@ -52,11 +74,15 @@ impl BucketState {
     pub fn new(max_bytes: u64) -> Self {
         Self {
             mmr_root: H256::zero(),
+            peaks: Vec::new(),
             start_seq: 0,
             leaves: Vec::new(),
             used_bytes: 0,
             node_count: 0,
             max_bytes,
+            pruned: Vec::new(),
+            deletion_receipts: BTreeMap::new(),
+            condemned: false,
         }
     }
 
@@ -129,6 +155,35 @@ impl ChunkTreeNode {
     }
 }
 
+/// Whether a stored node is a chunk or an internal node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub enum NodeKind {
+    /// A leaf chunk.
+    Chunk,
+    /// An internal node over two children.
+    Internal,
+}
+
+/// What a backend records about a node besides its body: three little-endian
+/// u64s and a one-byte kind, 25 bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct RefcountEntry {
+    /// How many paths from committed leaves, live or stashed, across all
+    /// buckets, reach the node. Commit adds one per path and erasure subtracts
+    /// one per path; at zero, erasure deletes the node and this row.
+    pub count: u64,
+    /// The bucket charged for the node when it was first stored. When erasure
+    /// deletes the node, it subtracts `size` from this bucket's `used_bytes`
+    /// and 1 from its `node_count`.
+    pub charged_bucket: u64,
+    /// The bytes charged for the node: the data length for a chunk, 64 (two
+    /// child hashes) for an internal node.
+    pub size: u64,
+    /// Chunk or internal node. A tree walk reads a chunk's size from this row
+    /// and does not read the chunk.
+    pub kind: NodeKind,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +220,7 @@ mod tests {
             assert_golden(
                 BucketState {
                     mmr_root: H256::repeat_byte(0xab),
+                    peaks: vec![H256::repeat_byte(0xef)],
                     start_seq: 7,
                     leaves: vec![MmrLeaf {
                         leaf_version: LEAF_VERSION,
@@ -175,10 +231,16 @@ mod tests {
                     used_bytes: 999,
                     node_count: 5,
                     max_bytes: 1_000_000,
+                    pruned: Vec::new(),
+                    deletion_receipts: BTreeMap::new(),
+                    condemned: false,
                 },
                 concat!(
                     // mmr_root: H256 (0xab * 32)
                     "abababababababababababababababababababababababababababababababab",
+                    // peaks: Vec<H256>, compact length 1, then the peak (0xef * 32)
+                    "04",
+                    "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
                     // start_seq: u64 = 7 (little-endian)
                     "0700000000000000",
                     // leaves: Vec<MmrLeaf>, compact length 1
@@ -195,6 +257,12 @@ mod tests {
                     "0500000000000000",
                     // max_bytes: u64 = 1_000_000
                     "40420f0000000000",
+                    // pruned: Vec<PrunedRange>, compact length 0
+                    "00",
+                    // deletion_receipts: BTreeMap, compact length 0
+                    "00",
+                    // condemned: bool = false
+                    "00",
                 ),
             );
         }
@@ -252,6 +320,34 @@ mod tests {
         }
 
         #[test]
+        fn refcount_entry() {
+            let golden = concat!(
+                // count: u64 = 3 (little-endian)
+                "0300000000000000",
+                // charged_bucket: u64 = 7
+                "0700000000000000",
+                // size: u64 = 1024
+                "0004000000000000",
+                // kind: variant 1 (Internal)
+                "01",
+            );
+            assert_golden(
+                RefcountEntry {
+                    count: 3,
+                    charged_bucket: 7,
+                    size: 1024,
+                    kind: NodeKind::Internal,
+                },
+                golden,
+            );
+            let bytes = array_bytes::hex2bytes(golden).unwrap();
+            assert_eq!(bytes.len(), 25);
+            // Truncated, or an unknown kind.
+            assert!(RefcountEntry::decode_all(&mut &bytes[..24]).is_err());
+            assert!(RefcountEntry::decode_all(&mut &[&bytes[..24], &[9]].concat()[..]).is_err());
+        }
+
+        #[test]
         fn decode_all_rejects_trailing_bytes() {
             let mut encoded = BucketState::new(1_000).encode();
             encoded.extend_from_slice(&[0xff, 0xff]);
@@ -260,6 +356,16 @@ mod tests {
             let mut encoded = ChunkTreeNode::Chunk(vec![1, 2, 3]).encode();
             encoded.push(0x00);
             assert!(ChunkTreeNode::decode_all(&mut &encoded[..]).is_err());
+
+            let mut encoded = RefcountEntry {
+                count: 1,
+                charged_bucket: 1,
+                size: 64,
+                kind: NodeKind::Chunk,
+            }
+            .encode();
+            encoded.push(0x00);
+            assert!(RefcountEntry::decode_all(&mut &encoded[..]).is_err());
         }
     }
 

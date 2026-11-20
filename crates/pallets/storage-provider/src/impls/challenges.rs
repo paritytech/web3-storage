@@ -4,9 +4,7 @@ use crate::*;
 use frame_support::pallet_prelude::*;
 use sp_core::H256;
 use sp_runtime::traits::Saturating;
-use storage_primitives::{
-    BucketId, ChallengeId, ChunkLocation, Commitment, MmrProof, ProviderRole, Visibility,
-};
+use storage_primitives::{BucketId, ChunkLocation, Commitment, MmrProof, Visibility};
 
 impl<T: Config> Pallet<T> {
     /// Check that `mmr_proof` proves the challenged leaf under the challenged
@@ -31,6 +29,14 @@ impl<T: Config> Pallet<T> {
             Error::<T>::InvalidProof
         );
         Ok((data_root, chunk_count))
+    }
+
+    /// Whether the challenged provider has a primary agreement on the
+    /// bucket. `Deleted` and `Superseded` defend only primaries: a replica is
+    /// liable for exactly the root it confirmed.
+    pub(crate) fn responder_is_primary(challenge: &Challenge<T>) -> bool {
+        StorageAgreements::<T>::get(challenge.bucket_id, &challenge.provider)
+            .is_some_and(|agreement| matches!(agreement.role, ProviderRole::Primary))
     }
 
     /// Open a challenge against `provider`'s signature on the bucket's current
@@ -162,10 +168,10 @@ impl<T: Config> Pallet<T> {
 
         // Bump the pending-challenge counters. These are decremented
         // exactly once per resolution (defended in `respond_to_challenge`,
-        // or timed out in `resolve_expired_challenge`), so a
-        // fully-resolved provider/bucket returns to 0. They gate
-        // `complete_deregister` and agreement teardown so a provider can't
-        // escape a live challenge.
+        // withdrawn in `cancel_challenge`, or timed out in
+        // `resolve_expired_challenge`), and an entry that reaches 0 is
+        // deleted. They gate `complete_deregister` and agreement teardown so
+        // a provider can't escape a live challenge.
         PendingChallenges::<T>::mutate(&provider, |n| *n = n.saturating_add(1));
         PendingChallengesByBucket::<T>::mutate(bucket_id, &provider, |n| *n = n.saturating_add(1));
 

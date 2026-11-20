@@ -39,7 +39,7 @@ test("BucketCreated cross-tab", async ({ localPage, browser }) => {
   try {
     const { bucketId } = await createDriveViaApi(Bob, {
       maxCapacity: 10_000_000n,
-      storagePeriod: 10_000,
+      duration: 10_000,
     });
 
     // Tab A also reflects (sanity).
@@ -62,7 +62,7 @@ test("MemberSet and MemberRemoved cross-tab", async ({ localPage, browser }) => 
     // Bob's list, and removing him must make it disappear.
     const { bucketId } = await createDriveViaApi(Charlie, {
       maxCapacity: 10_000_000n,
-      storagePeriod: 10_000,
+      duration: 10_000,
     });
 
     await setMember(getApi(), Charlie, bucketId, Bob, "Reader");

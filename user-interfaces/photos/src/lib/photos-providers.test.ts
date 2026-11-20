@@ -1,20 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { describe, expect, it } from 'vitest'
-import { annotate, belowMinimumReason, type PhotosProvider } from './photos-providers'
+import { annotate, belowMinimumReason } from './photos-providers'
 
-const provider: PhotosProvider = {
-  account: '5prov',
-  multiaddr: '/ip4/127.0.0.1/tcp/3333',
+const provider: Parameters<typeof annotate>[0] = {
   url: 'http://127.0.0.1:3333',
-  pricePerByte: 1n,
   acceptingPrimary: true,
   availableCapacity: undefined,
-  maxCapacity: 0n,
   minAgreementBytes: 0n,
   minDuration: 10,
   maxDuration: 1000,
-  reputation: 100,
 }
 
 const want = { bytesNeeded: 1024n, durationBlocks: 100 }

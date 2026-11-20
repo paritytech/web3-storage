@@ -113,9 +113,9 @@ jobs:
             target/release/wbuild/*/*.compact.compressed.wasm
 
   # ── Zombienet smoke test (FS + S3) ────────────────────────────────────────
-  # Runs Layer 1 FS and S3 demos on a real relay-chain + parachain (zombienet)
+  # Runs the storage demo and the file-system demo on a real relay-chain + parachain (zombienet)
   # to validate production-like topology. Single runtime (web3-storage-paseo).
-  # Layer 0 breadth is handled comprehensively by e2e-integration-tests.
+  # Storage breadth is handled comprehensively by e2e-integration-tests.
   #
   # Pins the backend explicitly; the other jobs take the binary default.
   integration-tests:
@@ -211,8 +211,8 @@ jobs:
         with:
           min-blocks-per-minute: "20"
 
-      # One provider for all three demos: the L0 demo registers //Alice on-chain
-      # and the L1 demos reuse that registration, on the justfile's default
+      # One provider for both demos: the storage demo registers //Alice on-chain
+      # and the file-system demo reuses that registration, on the justfile's default
       # PROVIDER_URL.
       - name: Start provider (rocksdb)
         uses: ./.github/actions/start-provider
@@ -220,14 +220,11 @@ jobs:
           backend: rocksdb
           label: rocksdb
 
-      - name: Run L0 demo
+      - name: Run storage demo
         run: just demo
 
-      - name: Run file system integration test
-        run: just drain-tx-pool-then fs-demo-ci
-
-      - name: Run S3 integration test
-        run: just drain-tx-pool-then s3-demo-ci
+      - name: Run file system and S3 objects demo
+        run: just drain-tx-pool-then file-system-demo
 
       # Second provider (port 3433) following the same chain through the
       # embedded smoldot light client; passes once /info reports the on-chain
@@ -697,32 +694,31 @@ jobs:
         with:
           log-file: /tmp/omni-node.log
 
-      - name: Register provider on-chain
+      # Register before the node starts, so the node reads the registration
+      # when it connects. A node started first loads it only from the finalized
+      # registration blocks, and /negotiate returns 503 until then.
+      - name: storage-cli provider register
         run: |
-          echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
-          cargo run --release -p storage-client --example register_provider \
-            ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+          cargo run --release -p storage-cli -- \
+            provider register \
+            --provider-suri //Alice \
+            --multiaddr /ip4/127.0.0.1/tcp/3333
 
       - name: Start provider (Alice)
         uses: ./.github/actions/start-provider
         with:
           label: utils
 
-      # Seed: //Bob negotiates terms and opens a bucket + primary agreement
-      # against the //Alice provider, giving the CLI something to upload to.
-      - name: Seed bucket + agreement (//Bob → //Alice provider)
-        run: |
-          cargo run --release -p storage-client --example complete_workflow \
-            ws://127.0.0.1:2222 http://127.0.0.1:3333 //Bob
-
-      # Run the CLI's stress-test upload command against the //Alice provider using 
-      # the //Bob key.
+      # The CLI registers the provider and opens its own buckets, so the job
+      # runs no SDK example: it exercises the tool from a clean chain, as an
+      # operator would.
       - name: storage-cli stress-test upload
         run: |
           cargo run --release -p storage-cli -- \
-            --suri //Bob \
             stress-test upload \
-            --provider 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
+            --client-suri //Bob \
+            --provider-account 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
+            --prepare-buckets 2 \
             --users 2 \
             --uploads-per-user 5 \
             --payload-size 1048576 \

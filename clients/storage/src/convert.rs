@@ -11,6 +11,7 @@ use storage_subxt::api::runtime_types;
 
 use crate::agreement::AgreementTermsOf;
 use runtime_types::bounded_collections::bounded_vec::BoundedVec;
+use runtime_types::pallet_storage_provider::types::ChallengeId;
 use runtime_types::storage_primitives as rt;
 
 /// `sp_runtime::AccountId32` → `subxt::utils::AccountId32` (both wrap `[u8; 32]`).
@@ -83,6 +84,15 @@ pub fn commitment(c: &storage_primitives::Commitment) -> rt::Commitment {
     }
 }
 
+/// Generated twin → [`storage_primitives::Commitment`].
+pub fn to_sp_commitment(c: &rt::Commitment) -> storage_primitives::Commitment {
+    storage_primitives::Commitment {
+        mmr_root: c.mmr_root,
+        start_seq: c.start_seq,
+        leaf_count: c.leaf_count,
+    }
+}
+
 /// [`storage_primitives::ChunkLocation`] → generated twin.
 pub fn chunk_location(t: &storage_primitives::ChunkLocation) -> rt::ChunkLocation {
     rt::ChunkLocation {
@@ -127,8 +137,8 @@ pub fn end_action(a: storage_primitives::EndAction) -> rt::EndAction {
 }
 
 /// Build a generated `ChallengeId` from its parts.
-pub fn challenge_id(deadline: u32, index: u16) -> rt::ChallengeId<u32> {
-    rt::ChallengeId { deadline, index }
+pub fn challenge_id(deadline: u32, index: u16) -> ChallengeId<u32> {
+    ChallengeId { deadline, index }
 }
 
 /// [`storage_primitives::MmrProof`] → generated twin.
@@ -255,5 +265,15 @@ mod tests {
         assert_eq!(rp.sync_balance, 70);
         assert_eq!(rp.min_sync_interval, 80);
         assert_eq!(rp.sync_price, 90, "sync_price must survive the conversion");
+    }
+
+    #[test]
+    fn commitment_round_trips() {
+        let original = storage_primitives::Commitment {
+            mmr_root: sp_core::H256::repeat_byte(0x5c),
+            start_seq: 7,
+            leaf_count: 3,
+        };
+        assert_eq!(to_sp_commitment(&commitment(&original)), original);
     }
 }

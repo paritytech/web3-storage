@@ -10,8 +10,8 @@ use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 #[cfg(feature = "std")]
 use mmr_lib::util::{MemMMR, MemStore};
 use polkadot_ckb_merkle_mountain_range::{self as mmr_lib, Merge};
+use primitive_types::H256;
 use scale_info::TypeInfo;
-use sp_core::H256;
 
 /// Error of the MMR library.
 pub use mmr_lib::Error;
@@ -81,6 +81,23 @@ pub struct MmrProof {
 pub fn bag_peaks(peaks: &[H256]) -> H256 {
     mmr_lib::ancestry_proof::bagging_peaks_hashes::<H256, StorageMerge>(peaks.to_vec())
         .unwrap_or_default()
+}
+
+/// Append `leaf` to the MMR with `leaf_count` leaves whose peaks, left to
+/// right, are `peaks`. Afterwards `peaks` are the peaks of the MMR with one
+/// more leaf; the caller increments its leaf count.
+///
+/// `peaks` must hold `leaf_count.count_ones()` peaks, as [`peaks`] returns.
+/// Fails with [`Error::InconsistentStore`] if `peaks` has fewer.
+pub fn append(peaks: &mut Vec<H256>, leaf_count: u64, leaf: &MmrLeaf) -> Result<(), Error> {
+    let mut node = hash_leaf(&leaf.encode());
+    // Each trailing one bit of the leaf count is a peak the new node merges with.
+    for _ in 0..leaf_count.trailing_ones() {
+        let left = peaks.pop().ok_or(Error::InconsistentStore)?;
+        node = hash_children(left, node);
+    }
+    peaks.push(node);
+    Ok(())
 }
 
 /// Combine a peak with the bagged peaks to its right:
@@ -226,6 +243,28 @@ mod tests {
 
     fn h(hex: &str) -> H256 {
         hex.parse().unwrap()
+    }
+
+    #[test]
+    fn append_matches_the_rebuilt_mmr_for_every_leaf_count() {
+        let all: Vec<MmrLeaf> = (0..300u64)
+            .map(|i| MmrLeaf {
+                data_root: H256::from_low_u64_be(i + 1),
+                data_size: i,
+                total_size: 2 * i,
+                ..leaf(0)
+            })
+            .collect();
+        let mut peaks = Vec::new();
+        for (count, leaf) in all.iter().enumerate() {
+            let (root, rebuilt) = super::peaks(&all[..count]).unwrap();
+            assert_eq!(peaks, rebuilt, "peaks of {count} leaves");
+            assert_eq!(bag_peaks(&peaks), root, "root of {count} leaves");
+            append(&mut peaks, count as u64, leaf).unwrap();
+        }
+        let (root, rebuilt) = super::peaks(&all).unwrap();
+        assert_eq!(peaks, rebuilt);
+        assert_eq!(bag_peaks(&peaks), root);
     }
 
     #[test]

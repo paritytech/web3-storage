@@ -2,7 +2,7 @@
 
 //! `stress-test` subcommands.
 
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -16,22 +16,17 @@ use tokio::task::JoinSet;
 
 use crate::actions::upload::{upload_once, Upload};
 use crate::cli::GlobalArgs;
-use crate::common::{account_ss58, build_config, resolve_signer, BucketId};
+use crate::common::{account_ss58, build_config, signer_from_suri, BucketId, ClientKey};
 use crate::metrics::{summarize, OpOutcome, OpSummary};
 use crate::prepare::{self, BucketSource, PreparationReport, PrepareParams};
-
-/// Terms of prepared agreements: 100 anchor blocks at 1 per byte-block. The
-/// provider rejects lower offers and signs at its listed price.
-const PREPARE_DURATION_BLOCKS: u32 = 100;
-const PREPARE_PRICE_PER_BYTE: u128 = 1;
 
 // === Stress test subcommands ===
 #[derive(Debug, Subcommand)]
 pub enum StressTest {
     /// Drive configurable upload load against a provider: `users` simulated
     /// clients each performing `uploads-per-user` uploads, with either axis run
-    /// sequentially or in parallel. Targets buckets the account already has an
-    /// agreement with the given provider for, or buckets the run prepares
+    /// sequentially or in parallel. Targets buckets the client account already
+    /// has an agreement with the given provider for, or buckets the run prepares
     /// itself (`--prepare-buckets`).
     #[command(name = "upload")]
     ProviderUpload(UploadArgs),
@@ -40,10 +35,13 @@ pub enum StressTest {
 // === `stress-test upload` subcommand ===
 #[derive(Debug, Args)]
 pub struct UploadArgs {
-    /// Provider account (SS58 or 0x-hex) whose agreements select the target
-    /// buckets.
+    #[command(flatten)]
+    pub client: ClientKey,
+
+    /// Public account of the provider (SS58 or 0x-hex) whose agreements
+    /// select the target buckets.
     #[arg(long, value_name = "ACCOUNT")]
-    pub provider: String,
+    pub provider_account: String,
 
     /// Cap the number of buckets written to (1..N; default: all matching buckets).
     #[arg(long, value_name = "N")]
@@ -73,10 +71,30 @@ pub struct UploadArgs {
     #[arg(long, value_name = "N", default_value_t = 0)]
     pub max_concurrency: usize,
 
-    /// Prepare N fresh buckets, each with a primary agreement to `--provider`,
-    /// before the run. Setup only: excluded from the measured window. 0 = off.
+    /// Prepare N fresh buckets, each with a primary agreement to
+    /// `--provider-account`, before the run. Setup only: excluded from the
+    /// measured window. 0 = off.
     #[arg(long, value_name = "N", default_value_t = 0)]
     pub prepare_buckets: usize,
+
+    /// Quota negotiated per prepared bucket. Default: this run's per-bucket
+    /// load plus 10% headroom.
+    #[arg(long, value_name = "BYTES")]
+    pub prepare_max_bytes: Option<NonZeroU64>,
+
+    /// Agreement duration for prepared buckets, in anchor blocks.
+    #[arg(long, value_name = "BLOCKS", default_value = "100")]
+    pub prepare_duration: NonZeroU32,
+
+    /// Price per byte per block the run accepts for prepared buckets. The
+    /// provider rejects offers below its listed price and signs at that price.
+    #[arg(long, value_name = "P", default_value_t = 1)]
+    pub prepare_price_per_byte: u128,
+
+    /// Where target buckets come from. Default: `create` when
+    /// `--prepare-buckets` is set, `discover` otherwise.
+    #[arg(long, value_enum, value_name = "MODE")]
+    pub bucket_source: Option<BucketSource>,
 }
 
 /// Pick the target bucket for the `global_idx`-th upload of the whole run,
@@ -270,26 +288,27 @@ async fn run_load(
     outcomes
 }
 
-/// Drive configurable upload load against `--provider`.
+/// Drive configurable upload load against `--provider-account`.
 ///
-/// Target buckets are discovered on chain or, with `--prepare-buckets`,
-/// prepared by this run. Per-upload failures are folded into the metrics, so
+/// Target buckets are discovered on chain, prepared by this run, or both, per
+/// `--bucket-source`. Per-upload failures are folded into the metrics, so
 /// `Err` means a setup failure: bad provider, chain connection, no target
 /// buckets, or preparation.
 pub async fn upload(
     global: &GlobalArgs,
     args: &UploadArgs,
 ) -> Result<(OpSummary, Option<PreparationReport>)> {
-    let signer = resolve_signer(global)?;
+    let signer = signer_from_suri(&args.client.suri()?)?;
     let account_ss58 = account_ss58(&signer);
 
-    let provider_hex = SubstrateClient::parse_account(&args.provider)
-        .map_err(|e: storage_client::ClientError| anyhow!("invalid --provider account: {e}"))
+    let provider_hex = SubstrateClient::parse_account(&args.provider_account)
+        .map_err(|e: storage_client::ClientError| anyhow!("invalid --provider-account: {e}"))
         .map(|ac| array_bytes::bytes2hex("0x", ac.as_ref() as &[u8]))?;
 
     let config = build_config(global);
 
-    let source = BucketSource::resolve(args.prepare_buckets);
+    prepare::check_prepare_flags(args.prepare_buckets, args.prepare_max_bytes)?;
+    let source = BucketSource::resolve(args.bucket_source, args.prepare_buckets)?;
 
     // One chain connection serves both discovery and preparation.
     let mut admin = AdminClient::new(config.clone(), signer.clone())
@@ -318,17 +337,17 @@ pub async fn upload(
         let bucket_count = buckets.len().saturating_add(plan.to_prepare);
         let needed =
             prepare::bytes_per_bucket(total_uploads, args.payload_size.get(), bucket_count)?;
-        let max_bytes = prepare::default_max_bytes(needed)?;
+        let max_bytes = prepare::resolve_max_bytes(args.prepare_max_bytes, needed)?;
         let report = prepare::prepare_buckets(
             &admin,
             PrepareParams {
                 owner: AccountId32::from(signer.keypair().public_key().0),
-                provider: &args.provider,
+                provider: &args.provider_account,
                 provider_url: &global.provider_url,
                 count: plan.to_prepare,
                 max_bytes,
-                duration: PREPARE_DURATION_BLOCKS,
-                price_per_byte: PREPARE_PRICE_PER_BYTE,
+                duration: args.prepare_duration.get(),
+                price_per_byte: args.prepare_price_per_byte,
             },
         )
         .await?;
@@ -341,7 +360,7 @@ pub async fn upload(
             "account {account_ss58} has no buckets with an agreement to provider {} on {}. \
              Nothing to upload (no bucket or agreement was created); pass --prepare-buckets N \
              to open some.",
-            args.provider,
+            args.provider_account,
             global.chain_rpc
         );
     }
@@ -381,10 +400,20 @@ mod tests {
             "--users",
             "--uploads-per-user",
             "--payload-size",
+            "--prepare-max-bytes",
+            "--prepare-duration",
         ] {
             assert!(
-                Wrapper::try_parse_from(["stress-test-upload", "--provider", "//Alice", flag, "0"])
-                    .is_err(),
+                Wrapper::try_parse_from([
+                    "stress-test-upload",
+                    "--client-suri",
+                    "//Bob",
+                    "--provider-account",
+                    "//Alice",
+                    flag,
+                    "0",
+                ])
+                .is_err(),
                 "{flag} 0 should be rejected"
             );
         }
@@ -400,18 +429,34 @@ mod tests {
             args: UploadArgs,
         }
 
-        let w = Wrapper::try_parse_from(["stress-test-upload", "--provider", "//Alice"]).unwrap();
+        let w = Wrapper::try_parse_from([
+            "stress-test-upload",
+            "--client-suri",
+            "//Bob",
+            "--provider-account",
+            "//Alice",
+        ])
+        .unwrap();
         assert_eq!(w.args.prepare_buckets, 0);
+        assert!(w.args.prepare_max_bytes.is_none());
+        assert_eq!(w.args.prepare_duration.get(), 100);
+        assert_eq!(w.args.prepare_price_per_byte, 1);
+        assert!(w.args.bucket_source.is_none());
 
         let w = Wrapper::try_parse_from([
             "stress-test-upload",
-            "--provider",
+            "--client-suri",
+            "//Bob",
+            "--provider-account",
             "//Alice",
             "--prepare-buckets",
             "2",
+            "--bucket-source",
+            "auto",
         ])
         .unwrap();
         assert_eq!(w.args.prepare_buckets, 2);
+        assert_eq!(w.args.bucket_source, Some(BucketSource::Auto));
     }
 
     #[test]

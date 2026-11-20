@@ -4,7 +4,7 @@
 //! [`Config::StorageDeposit`]. Fixed sizes mean a ticket never has to be
 //! updated while its record exists.
 
-use crate::{pallet::Member, *};
+use crate::{Member, *};
 use frame_support::{pallet_prelude::*, traits::Footprint};
 use storage_primitives::{BucketId, Commitment, Visibility};
 

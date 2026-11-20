@@ -102,7 +102,7 @@
       "y": 226,
       "label": "PUT /node, children first",
       "variant": "emphasis",
-      "note": "Writer role; 507 quota_exceeded"
+      "note": "Writer role; 403 no_agreement or agreement_expired, 507 quota_exceeded"
     },
     {
       "id": "commit",
@@ -224,7 +224,8 @@
       "items": [
         "Signature only: challenge_offchain",
         "After checkpoint: challenge_checkpoint",
-        "Snapshot liability: primary_signers only"
+        "Snapshot liability: primary_signers only",
+        "A checkpoint voids shorter off-chain commitments to a different root for the leaves it covers (Superseded)"
       ]
     },
     {

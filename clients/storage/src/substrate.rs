@@ -158,7 +158,7 @@ pub mod extrinsics {
         max_capacity: u64,
         min_agreement_bytes: u64,
     ) -> impl Payload {
-        let settings = runtime_types::pallet_storage_provider::pallet::ProviderSettings {
+        let settings = runtime_types::pallet_storage_provider::types::ProviderSettings {
             min_duration,
             max_duration,
             price_per_byte,
@@ -186,7 +186,7 @@ pub mod extrinsics {
     /// Build a `create_bucket_with_primary` extrinsic payload.
     ///
     /// Bundles the SCALE-encoded provider-signed terms and signature into
-    /// the call shape Layer 0 expects. The chain hashes
+    /// the call shape the pallet expects. The chain hashes
     /// `blake2_256(TERM_CONTEXT | SCALE(terms))` and verifies the
     /// signature against the provider's registered public key.
     pub fn create_bucket_with_primary(
@@ -411,7 +411,7 @@ pub mod extrinsics {
         mmr_proof: &storage_primitives::MmrProof,
         chunk_proof: &[H256],
     ) -> impl Payload {
-        let response = runtime_types::pallet_storage_provider::pallet::ChallengeResponse::Proof {
+        let response = runtime_types::pallet_storage_provider::types::ChallengeResponse::Proof {
             chunk_data: convert::bounded(chunk_data.to_vec()),
             mmr_proof: convert::mmr_proof(mmr_proof),
             chunk_proof: chunk_proof.to_vec(),
@@ -421,6 +421,13 @@ pub mod extrinsics {
             convert::challenge_id(challenge_id.0, challenge_id.1),
             response,
         )
+    }
+
+    /// Create a cancel_challenge extrinsic payload.
+    pub fn cancel_challenge(challenge_id: (u32, u16)) -> impl Payload {
+        api::tx()
+            .storage_provider()
+            .cancel_challenge(convert::challenge_id(challenge_id.0, challenge_id.1))
     }
 
     /// Create a resolve_expired_challenge extrinsic payload.
@@ -492,7 +499,7 @@ pub async fn fetch_bucket<C>(
     at: &subxt::client::ClientAtBlock<PolkadotConfig, C>,
     bucket_id: storage_primitives::BucketId,
 ) -> Result<
-    Option<storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket>,
+    Option<storage_subxt::api::runtime_types::pallet_storage_provider::types::Bucket>,
     ClientError,
 >
 where

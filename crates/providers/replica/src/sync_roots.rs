@@ -3,7 +3,8 @@
 //! The replica's signed attestation of the sync roots it holds, and the
 //! trait that produces the signature over it.
 
-use provider_types::SigningRefused;
+use codec::Encode;
+use provider_types::{ProviderSigner, SigningRefused};
 use sp_core::H256;
 
 /// The roots array `confirm_replica_sync` takes: position 0 is the target
@@ -54,10 +55,18 @@ pub trait SyncRootsSigner: Send + Sync {
     ) -> Result<sp_runtime::MultiSignature, SigningRefused>;
 }
 
+impl SyncRootsSigner for ProviderSigner {
+    fn sign_sync_roots(
+        &self,
+        roots: &SyncRoots,
+    ) -> Result<sp_runtime::MultiSignature, SigningRefused> {
+        self.sign(&roots.encode())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codec::Encode;
     use sp_core::Pair;
     use sp_runtime::traits::{IdentifyAccount, Verify};
     use sp_runtime::MultiSigner;
@@ -96,5 +105,66 @@ mod tests {
         assert!(attestation
             .signature
             .verify(attestation.roots.encode().as_slice(), &account));
+    }
+
+    fn registration(public_key: Vec<u8>) -> provider_types::ProviderInfo {
+        provider_types::ProviderInfo {
+            multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+            public_key,
+            stake: 1_000,
+            committed_bytes: 0,
+            settings: provider_types::ProviderSettings {
+                min_duration: 10,
+                max_duration: 100,
+                price_per_byte: 1,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0,
+                min_agreement_bytes: 0,
+            },
+            stats: Default::default(),
+            deregister_at: None,
+        }
+    }
+
+    /// The pallet verifies a sync confirmation against the registered key, so
+    /// the node's signer must reject signing until the registration contains
+    /// the local key, and then sign the SCALE encoding of the roots.
+    #[test]
+    fn provider_signer_signs_roots_only_with_the_registered_key() {
+        let pair = sp_core::sr25519::Pair::from_string("//Alice", None).unwrap();
+        let account = MultiSigner::Sr25519(pair.public()).into_account();
+        let keypair = provider_types::ProviderKeypair::from_seed(
+            "//Alice",
+            provider_types::KeyScheme::Sr25519,
+        )
+        .unwrap();
+        let chain_state = std::sync::Arc::new(provider_types::ChainState::default());
+        let signer = ProviderSigner::new(keypair, chain_state.clone());
+        let roots: SyncRoots = [
+            Some(H256::repeat_byte(7)),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ];
+
+        assert!(matches!(
+            signer.sign_sync_roots(&roots),
+            Err(SigningRefused::Unregistered)
+        ));
+
+        *chain_state.provider_info.write() = Some(registration(vec![1; 32]));
+        assert!(matches!(
+            signer.sign_sync_roots(&roots),
+            Err(SigningRefused::KeyMismatch)
+        ));
+
+        *chain_state.provider_info.write() = Some(registration(signer.public_key_bytes().to_vec()));
+        let signature = signer.sign_sync_roots(&roots).unwrap();
+        assert!(signature.verify(roots.encode().as_slice(), &account));
     }
 }

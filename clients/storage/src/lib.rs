@@ -24,7 +24,7 @@
 //! let commitment = client.commit(1, vec![data_root]).await?;
 //!
 //! // Download and verify
-//! let retrieved = client.download(1, &data_root, 0, data.len() as u64).await?;
+//! let retrieved = client.download(1, &data_root, data.len() as u64, 0, data.len() as u64).await?;
 //! assert_eq!(retrieved, data);
 //! # Ok(())
 //! # }
@@ -138,16 +138,14 @@ pub use agreement::{sign_terms, AgreementTermsOf, NegotiateRequest, ReplicaTerms
 pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 pub use challenger::ChallengerClient;
 pub use checkpoint::{
-    AutoChallengeConfig, AutoChallengeResult, BatchedCheckpointConfig, BatchedInterval,
-    BucketCheckpointStatus, ChallengeEvidence, ChallengeReason, ChallengeRecommendation,
-    CheckpointCallback, CheckpointConfig, CheckpointLoopCommand, CheckpointLoopHandle,
-    CheckpointManager, CheckpointMetrics, CheckpointResult, CommitmentCollection,
-    ConflictResolution, ConflictType, ConflictingProvider, FailedChallenge, ProviderConflict,
-    ProviderHealthHistory, ProviderInfo, ProviderStatus, SubmittedChallenge,
+    BatchedCheckpointConfig, BatchedInterval, BucketCheckpointStatus, CheckpointCallback,
+    CheckpointConfig, CheckpointLoopCommand, CheckpointLoopHandle, CheckpointManager,
+    CheckpointMetrics, CheckpointResult, CommitmentCollection, ProviderHealthHistory, ProviderInfo,
+    ProviderStatus,
 };
 pub use checkpoint_persistence::{
-    CheckpointPersistence, PersistedBucketStatus, PersistedCheckpointState, PersistedConflict,
-    PersistedHealthHistory, PersistedMetrics, PersistenceConfig, StateBuilder,
+    CheckpointPersistence, PersistedBucketStatus, PersistedCheckpointState, PersistedHealthHistory,
+    PersistedMetrics, PersistenceConfig, StateBuilder,
 };
 pub use discovery::{
     DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements,

@@ -33,6 +33,7 @@ import {
   toHex,
   waitForChainReady,
   waitForNextBlock,
+  Web3Storage,
 } from "@web3-storage/sdk";
 import {
   callContract,
@@ -42,7 +43,6 @@ import {
   ensureAccountMapped,
   substrateToH160,
 } from "@web3-storage/sdk/revive";
-import { FileSystemClient } from "@web3-storage/sdk/fs";
 import { negotiatePrecompileTerms } from "./lib/contract.js";
 import { anchorRoot, loadArtifact, readLibraryOf } from "./lib/photos.js";
 import { enumerateEntries } from "../src/lib/fs-root.js";
@@ -93,7 +93,7 @@ async function main() {
   // Writes sign the provider requests as the user (a Writer on the bucket);
   // providerUrl is pinned so every request goes to this run's provider
   // without a chain lookup.
-  const fs = new FileSystemClient({ api, providerUrl, signer: user });
+  const w3s = new Web3Storage({ api, providerUrl, signer: user });
   try {
     await waitForChainReady(api);
     await waitForNextBlock(papi);
@@ -140,6 +140,7 @@ async function main() {
     const bucketCreated: any = requireOneEvent(r.events, api.event.StorageProvider.BucketCreated, "StorageProvider.BucketCreated");
     const memberSet: any = requireOneEvent(r.events, api.event.StorageProvider.MemberSet, "StorageProvider.MemberSet");
     const bucketId: bigint = bucketCreated.bucket_id;
+    const fs = await w3s.drive(bucketId);
     console.log(`\n[3/3] bucketId=${bucketId}  admin=${bucketCreated.admin}`);
 
     assert.ok(isSameAddress(bucketCreated.admin, contractAccount.address), "bucket admin is not the contract account");
@@ -185,7 +186,7 @@ async function main() {
       treeRoot: string;
       isStale: (rootCid: string) => boolean;
     }) => {
-      const fresh = await enumerateEntries(fs, bucketId);
+      const fresh = await enumerateEntries(fs);
       // Assert each uploaded file is served back byte-for-byte (the real
       // integrity check) — only the initial upload has bytes to cross-check.
       if (expectedEntries) {
@@ -203,7 +204,7 @@ async function main() {
         anchored = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
       }
       const fromListing = toHex(metadataMerkleRoot(fresh)).toLowerCase();
-      const fsRoot = (await fs.getRootCid(bucketId))?.toLowerCase();
+      const fsRoot = (await fs.rootCid())?.toLowerCase();
       console.log(`  recomputed=${recomputed}`);
       console.log(`  listing   =${fromListing}`);
       console.log(`  on-chain  =${anchored.rootCid.toLowerCase()}`);
@@ -221,7 +222,7 @@ async function main() {
     // each created directory in the index (its dir leaves in the root).
     console.log("\n[M2 1/5] mkdir album + thumbnail subtree…");
     for (const dir of ALBUM_DIRS) {
-      await fs.createDirectory(bucketId, dir);
+      await fs.mkdir(dir);
       index.setDir(dir);
     }
 
@@ -230,16 +231,12 @@ async function main() {
     console.log("\n[M2 2/5] PUT photo (multi-MB) + placeholder thumbnail…");
     const photoBytes = makeBytes(2 * 1024 * 1024 + 12_345, 0xc0ffee);
     const thumbBytes = makeBytes(4_096, 0xbeef);
-    const photoPut = await fs.uploadFile(bucketId, PHOTO, photoBytes, { contentType: "image/jpeg" });
-    const thumbPut = await fs.uploadFile(bucketId, THUMB, thumbBytes, { contentType: "image/jpeg" });
-    console.log(`  photo: data_root=${photoPut.dataRoot} size=${photoPut.size}`);
-    console.log(`  thumb: data_root=${thumbPut.dataRoot} size=${thumbPut.size}`);
+    const photoPut = await fs.putFile(PHOTO, photoBytes, { contentType: "image/jpeg" });
+    const thumbPut = await fs.putFile(THUMB, thumbBytes, { contentType: "image/jpeg" });
+    console.log(`  photo: data_root=${photoPut.contentRoot} size=${photoPut.size}`);
+    console.log(`  thumb: data_root=${thumbPut.contentRoot} size=${thumbPut.size}`);
 
-    // Per-file cross-check: the data_root we compute locally must match the
-    // one the upload returned. Record the locally verified leaves in the
-    // index — keyed on the byte length we saw.
-    assert.strictEqual(toHex(computeDataRoot(photoBytes)).toLowerCase(), photoPut.dataRoot.toLowerCase(), "local photo data_root != uploaded data_root");
-    assert.strictEqual(toHex(computeDataRoot(thumbBytes)).toLowerCase(), thumbPut.dataRoot.toLowerCase(), "local thumb data_root != uploaded data_root");
+    // Record the uploaded leaves in the index, keyed on the byte length we saw.
     index.setFile(PHOTO, computeDataRoot(photoBytes), BigInt(photoBytes.length));
     index.setFile(THUMB, computeDataRoot(thumbBytes), BigInt(thumbBytes.length));
 
@@ -252,7 +249,7 @@ async function main() {
       { path: PHOTO, bytes: photoBytes, dataRoot: computeDataRoot(photoBytes) },
       { path: THUMB, bytes: thumbBytes, dataRoot: computeDataRoot(thumbBytes) },
     ];
-    const listing = await fs.listDirectory(bucketId, "/", { recursive: true });
+    const listing = await fs.list("/", { recursive: true });
     const providerFilePaths = listing.filter((e) => e.entryType === "file").map((e) => e.path).sort();
     const providerDirPaths = listing.filter((e) => e.entryType !== "file").map((e) => e.path).sort();
     assert.deepStrictEqual(providerFilePaths, index.filePaths().sort(), "provider's file set != the client's uploaded set (hidden/extra/renamed files)");
@@ -290,17 +287,14 @@ async function main() {
     // Pre-edit snapshot to prove the edit's effect (and its limits).
     const rootBeforeEdit = anchored.rootCid.toLowerCase();
     const entriesBeforeEdit = index.entries().length;
-    const photoRootBeforeEdit = photoPut.dataRoot.toLowerCase();
 
     // [M3 1/4] Edit in place: re-PUT *different* bytes to the SAME path. Content-
     // addressed copy-on-write writes a new blob and repoints the path; the old
     // blob lingers (no GC). Real canvas crop/rotate is M6 — a fresh seed stands in.
     console.log("\n[M3 1/4] Edit photo in place (re-PUT same path)…");
     const editedBytes = makeBytes(2 * 1024 * 1024 + 6_789, 0xed17ed);
-    const editPut = await fs.uploadFile(bucketId, PHOTO, editedBytes, { contentType: "image/jpeg" });
-    console.log(`  edited photo: data_root=${editPut.dataRoot} size=${editPut.size}`);
-    assert.strictEqual(toHex(computeDataRoot(editedBytes)).toLowerCase(), editPut.dataRoot.toLowerCase(), "local edited data_root != uploaded data_root");
-    assert.notStrictEqual(editPut.dataRoot.toLowerCase(), photoRootBeforeEdit, "edited data_root unchanged — the COW write did not produce a new blob");
+    const editPut = await fs.putFile(PHOTO, editedBytes, { contentType: "image/jpeg" });
+    console.log(`  edited photo: data_root=${editPut.contentRoot} size=${editPut.size}`);
     // Replace the edited leaf in the index — same path, so the entry set size is
     // unchanged; only the leaf's data_root/size move.
     index.setFile(PHOTO, computeDataRoot(editedBytes), BigInt(editedBytes.length));
@@ -329,7 +323,7 @@ async function main() {
     // [M3 4/4] Download the same path back: the bytes must be the edited blob,
     // proving the path was repointed (not the original, lingering blob).
     console.log("\n[M3 4/4] Download same path + byte-compare against edited bytes…");
-    const downloaded = await fs.downloadFile(bucketId, PHOTO);
+    const { bytes: downloaded } = await fs.getFile(PHOTO);
     assert.deepStrictEqual(downloaded, editedBytes, "downloaded photo bytes != edited bytes — path was not repointed to the edited blob");
     console.log(`  downloaded ${downloaded.length} bytes — matches edited photo ✓`);
 

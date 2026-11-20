@@ -3,7 +3,7 @@
 use super::*;
 use codec::Encode;
 use sp_core::H256;
-use storage_primitives::{BucketSnapshot, ChunkLocation, Commitment};
+use storage_primitives::{ChunkLocation, Commitment};
 
 #[test]
 fn query_provider_info_returns_data() {
@@ -86,10 +86,7 @@ fn query_agreement_info_returns_data() {
         assert_eq!(response.owner, 1u64.encode());
         assert_eq!(response.provider, 2u64.encode());
         assert!(!response.extensions_blocked);
-        assert!(matches!(
-            response.role,
-            storage_primitives::ProviderRole::Primary
-        ));
+        assert!(matches!(response.role, ProviderRole::Primary));
     });
 }
 
@@ -380,7 +377,7 @@ fn query_challenges_at_returns_data() {
         });
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
-            storage_primitives::ChallengeId {
+            ChallengeId {
                 deadline: 101,
                 index: 0,
             },

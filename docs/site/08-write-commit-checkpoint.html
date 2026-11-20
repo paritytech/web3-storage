@@ -119,7 +119,7 @@
   <div class="container">
     <!-- Header -->
     <div class="header">
-      <p class="site-crumb"><a href="index.html">&larr; Scalable Web3 Storage</a></p>
+      <p class="site-crumb"><a href="index.html">&larr; Capacity - Scalable Web3 Storage</a></p>
       <div class="header-row"
            data-preset-badge-signal-flow="SIGNAL FLOW"
            data-preset-badge-blueprint="BLUEPRINT / REV 01"
@@ -238,7 +238,7 @@
           <rect x="222" y="206" width="142" height="16" rx="3" class="c-mask"/>
           <text x="293" y="216" class="t-backend" font-size="9" text-anchor="middle">PUT /node, children first</text>
         </g>
-        <text data-detail="fine" x="176" y="244" class="t-dim" font-size="7">Writer role; 507 quota_exceeded</text>
+        <text data-detail="fine" x="176" y="244" class="t-dim" font-size="7">Writer role; 403 no_agreement or agreement_expired, 507 quota_exceeded</text>
         </g>
 
         <g data-edge-from="writer" data-edge-to="primary_a" data-edge-label="POST /commit (data_roots)" data-edge-key="2" data-edge-id="commit">
@@ -612,6 +612,7 @@
           <li>&bull; Signature only: challenge_offchain</li>
           <li>&bull; After checkpoint: challenge_checkpoint</li>
           <li>&bull; Snapshot liability: primary_signers only</li>
+          <li>&bull; A checkpoint voids shorter off-chain commitments to a different root for the leaves it covers (Superseded)</li>
         </ul>
       </div>
 

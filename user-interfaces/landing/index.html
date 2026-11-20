@@ -139,12 +139,15 @@
       border-top: 1px dashed #2a2a3e;
       font-size: 0.85rem;
       display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: center;
-      gap: 0.35rem 0.85rem;
+      flex-direction: column;
+      gap: 0.5rem;
     }
-    .banner .credits .label { color: #888; }
+    .banner .credits .label {
+      align-self: flex-end;
+      color: #888;
+      font-size: 0.78rem;
+      font-style: italic;
+    }
     .banner .credits .links {
       display: flex;
       flex-wrap: wrap;
@@ -176,12 +179,12 @@
       The chain acts as a credible threat for accountability, not the hot path &mdash;
       normal reads and writes happen off-chain via HTTP and scale with provider capacity, not chain throughput.
       <div class="credits" data-testid="landing-credits">
-        <div class="label">Design by <a href="https://github.com/eskimor" target="_blank" rel="noopener noreferrer">eskimor</a></div>
         <div class="links">
-          <a href="https://github.com/paritytech/web3-storage/pull/170" target="_blank" rel="noopener noreferrer">Design PR</a>
-          <a href="https://github.com/paritytech/web3-storage/blob/dev/docs/design/scalable-web3-storage.md" target="_blank" rel="noopener noreferrer">Scalable Web3 Storage</a>
-          <a href="https://github.com/paritytech/web3-storage/blob/dev/docs/design/scalable-web3-storage-implementation.md" target="_blank" rel="noopener noreferrer">Implementation Details</a>
+          <a href="https://github.com/paritytech/web3-storage/blob/dev/docs/design/scalable-web3-storage.md" target="_blank" rel="noopener noreferrer">Protocol design</a>
+          <a href="https://github.com/paritytech/web3-storage/blob/dev/docs/design/scalable-web3-storage-implementation.md" target="_blank" rel="noopener noreferrer">Technical specification</a>
+          <a href="./docs/" data-testid="landing-docs-site">Diagrams &amp; dApp guide</a>
         </div>
+        <div class="label">Originally designed by <a href="https://github.com/eskimor" target="_blank" rel="noopener noreferrer">eskimor</a></div>
       </div>
     </div>
     <div class="picker" id="picker" data-testid="landing-picker">

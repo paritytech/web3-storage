@@ -111,7 +111,7 @@ _download BIN URL SHA256="":
     echo "{{BIN}} downloaded to .bin/{{BIN}}"
 
 # Download all required binaries
-download-binaries: download-polkadot-sdk-binaries download-zombienet download-frame-omni-bencher
+download-binaries: download-polkadot-sdk-binaries download-zombienet download-frame-omni-bencher download-try-runtime
     @echo "All binaries downloaded to .bin/"
 
 # Download Polkadot SDK binaries (polkadot, omni-node, chain-spec-builder)
@@ -244,19 +244,16 @@ start-second-provider BACKEND="rocksdb" PORT=SECOND_PROVIDER_PORT STORAGE_PATH="
 register-provider KEYFILE=PROVIDER_KEYFILE KEY_SCHEME=PROVIDER_KEY_SCHEME:
     #!/usr/bin/env bash
     set -euo pipefail
-    ARGS=("{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_MULTI_ADDR }}")
-    if [ -n "{{KEY_SCHEME}}" ]; then
-        KEYFILE_ARG="{{KEYFILE}}"
-        if [ -z "$KEYFILE_ARG" ]; then
-            KEYFILE_ARG=$(mktemp)
-            echo "//Alice" > "$KEYFILE_ARG" && chmod 600 "$KEYFILE_ARG"
-            trap "rm -f $KEYFILE_ARG" EXIT
-        fi
-        ARGS+=("$KEYFILE_ARG" "{{KEY_SCHEME}}")
-    elif [ -n "{{KEYFILE}}" ]; then
-        ARGS+=("{{KEYFILE}}")
+    ARGS=(--multiaddr "{{ PROVIDER_MULTI_ADDR }}")
+    if [ -n "{{KEYFILE}}" ]; then
+        ARGS+=(--provider-keyfile "{{KEYFILE}}")
+    else
+        ARGS+=(--provider-suri //Alice)
     fi
-    cargo run -p storage-client --example register_provider -- "${ARGS[@]}"
+    if [ -n "{{KEY_SCHEME}}" ]; then
+        ARGS+=(--key-scheme "{{KEY_SCHEME}}")
+    fi
+    cargo run -p storage-cli -- --chain-rpc "{{ CHAIN_WS }}" provider register "${ARGS[@]}"
 
 # Health check for provider node
 health:
@@ -286,23 +283,18 @@ subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtim
         --derive Clone \
         --derive Eq \
         --derive PartialEq \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Serialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Deserialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Serialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Deserialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Serialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Deserialize" \
+        --derive-for-type "pallet_storage_provider::types::ProviderInfo=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::types::ProviderInfo=serde::Deserialize" \
+        --derive-for-type "pallet_storage_provider::types::ProviderSettings=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::types::ProviderSettings=serde::Deserialize" \
+        --derive-for-type "pallet_storage_provider::types::ProviderStats=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::types::ProviderStats=serde::Deserialize" \
         --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=serde::Serialize" \
         --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=serde::Deserialize" \
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Serialize" \
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Encode" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Decode" \
-        --derive-for-type "pallet_storage_provider::pallet::StorageAgreement=codec::Decode" \
-        --derive-for-type "frame_support::traits::tokens::fungible::HoldConsideration=codec::Decode" \
-        --derive-for-type "storage_primitives::ProviderRole=codec::Decode" \
-        --derive-for-type "storage_primitives::ReplicaSyncRecord=codec::Decode" \
-        --derive-for-type "storage_primitives::Commitment=codec::Decode" \
         | rustfmt --edition=2021 --emit=stdout >> "{{ OUTPUT }}"
     echo "Generated {{ OUTPUT }}"
 
@@ -338,7 +330,7 @@ sc-coverage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob
 sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/sc-team-drive.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
-# Photos dApp (Layer 1) — namespaced module. Run `just photos` to list its recipes;
+# Photos dApp — namespaced module. Run `just photos` to list its recipes;
 # e.g. `just photos build`, `just photos deploy`, `just photos flow`.
 mod photos 'user-interfaces/photos/photos.just'
 
@@ -411,7 +403,7 @@ papi-provider-discovery BYTES="1073741824" DURATION="100" MAX_PRICE="10": papi-s
 # ============================================================
 
 # Run comprehensive E2E test suite (all workflows sequentially). Needs the
-# provider node (`just start-provider`) and, for workflows 01 and 15, the second
+# provider node (`just start-provider`) and, for workflows 01, 15 and 16, the second
 # provider node (`just start-second-provider`).
 e2e PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL: papi-setup
     npx c8 --reporter=text --reporter=json --report-dir=examples/papi/coverage \
@@ -430,38 +422,16 @@ e2e-single NUM PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL
     node --import tsx "$FILE" "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ SECOND_PROVIDER_URL }}"
 
 # ============================================================
-# File System (Layer 1)
+# File system and S3 objects in a bucket
 # ============================================================
 
-# Test the file system client
-fs-test-all:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cargo test -p file-system-client
-
-# File system integration test (used by CI; assumes chain + provider already running)
-fs-demo-ci:
-    cargo run --release -p file-system-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
-
-# ============================================================
-# S3-Compatible Interface (Layer 1)
-# ============================================================
-
-# Test the S3 client
-s3-test-all:
-    cargo test -p s3-client
-
-# S3 integration test (used by CI; assumes chain + provider already running)
-s3-demo-ci:
-    cargo run --release -p s3-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+# File system and S3 objects demo (used by CI; assumes chain + provider already running)
+file-system-demo:
+    cargo run --release -p storage-formats --example demo -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Write the MMR proof vectors that packages/core/src/merkle.test.ts reads
 mmr-proof-vectors:
     MMR_PROOF_VECTORS="{{justfile_directory()}}/.test-vectors/mmr-proofs.json" cargo test --locked -q -p storage-primitives mmr::tests::proof_vectors
-
-# Write the file-system bucket that packages/layer1/src/fixtures.test.ts reads
-fs-fixture:
-    FS_FIXTURE="{{justfile_directory()}}/.test-vectors/fs-bucket.json" cargo test --locked -q -p s3-client writes_fs_fixture
 
 # ─── UI Tests ─────────────────────────────────────────────────────────────────
 #
@@ -469,7 +439,7 @@ fs-fixture:
 # Requires a running local chain + provider node.
 
 # Run all UI unit tests (Vitest)
-test-ui-unit: mmr-proof-vectors fs-fixture
+test-ui-unit: mmr-proof-vectors
     pnpm run test:unit
 
 # Run drive-ui Playwright e2e (requires chain + provider running)

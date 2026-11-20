@@ -119,7 +119,7 @@
   <div class="container">
     <!-- Header -->
     <div class="header">
-      <p class="site-crumb"><a href="index.html">&larr; Scalable Web3 Storage</a></p>
+      <p class="site-crumb"><a href="index.html">&larr; Capacity - Scalable Web3 Storage</a></p>
       <div class="header-row"
            data-preset-badge-signal-flow="SIGNAL FLOW"
            data-preset-badge-blueprint="BLUEPRINT / REV 01"
@@ -594,8 +594,9 @@
         </div>
         <ul>
           <li>&bull; checkpoint needs min_providers primary signatures and records primary_signers</li>
+          <li>&bull; A checkpoint never moves back: start_seq never decreases; the end advances, and after a deletion may also stay (SnapshotNotForward)</li>
           <li>&bull; freeze_bucket: admin only, irreversible, needs a snapshot with min_providers acknowledgments</li>
-          <li>&bull; Frozen: start_seq cannot decrease below frozen_start_seq</li>
+          <li>&bull; Frozen: start_seq stays at frozen_start_seq; only the end advances</li>
         </ul>
       </div>
 

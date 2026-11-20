@@ -103,6 +103,9 @@ pub enum SyncResult {
     },
     /// Local state doesn't match expected root after sync.
     VerificationFailed { bucket_id: BucketId, reason: String },
+    /// Reading the local bucket failed: the storage backend, not the sync,
+    /// is the problem.
+    StorageFailed { bucket_id: BucketId, reason: String },
     /// Failed to submit confirm_replica_sync transaction.
     SubmissionFailed { bucket_id: BucketId, error: String },
     /// Already synced to this root.
@@ -172,12 +175,17 @@ pub trait ReplicaSyncChainClient: Send + Sync {
     ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError>;
 
     /// Fetch the bucket snapshot (latest checkpoint state) from chain.
+    ///
+    /// Returns the zero snapshot when the bucket does not exist or has no
+    /// checkpoint.
     async fn fetch_bucket_snapshot(
         &self,
         bucket_id: BucketId,
     ) -> Result<BucketSnapshot, ChainClientError>;
 
     /// Fetch primary provider HTTP endpoints for a bucket.
+    ///
+    /// Returns an empty list when the bucket does not exist.
     async fn fetch_primary_endpoints(
         &self,
         bucket_id: BucketId,
@@ -380,7 +388,7 @@ impl ReplicaSyncCoordinator {
                 our_account.as_ref().is_none_or(|me| me == provider)
             }
             BlockEvent::BucketCheckpointed { bucket_id } => {
-                self.storage.get_bucket(*bucket_id).is_some()
+                self.storage.get_bucket(*bucket_id).ok().flatten().is_some()
             }
             _ => false,
         }
@@ -539,6 +547,10 @@ impl ReplicaSyncCoordinator {
     }
 
     /// Get replica duties for buckets where this provider is a replica.
+    ///
+    /// Returns an error only when reading the anchor block or the agreement
+    /// list fails. Logs and skips a bucket whose snapshot, endpoint or local
+    /// storage read fails; the next pass retries it.
     pub async fn get_active_replica_duties(&self) -> Result<Vec<SyncDuty>, Error> {
         let mut duties = Vec::new();
 
@@ -552,59 +564,73 @@ impl ReplicaSyncCoordinator {
             .await?;
 
         for agreement in agreements {
-            if agreement.sync_balance < agreement.sync_price {
-                tracing::debug!(
-                    "Bucket {} has insufficient sync balance: {} < {}",
-                    agreement.bucket_id,
-                    agreement.sync_balance,
-                    agreement.sync_price
-                );
-                continue;
+            let bucket_id = agreement.bucket_id;
+            match self.duty_for(agreement, anchor_block).await {
+                Ok(Some(duty)) => duties.push(duty),
+                Ok(None) => {}
+                Err(e) => tracing::warn!("Skipping bucket {bucket_id} in this duty pass: {e}"),
             }
-
-            if let Some((_, last_block)) = agreement.last_sync {
-                let elapsed = anchor_block.saturating_sub(last_block);
-                if elapsed < agreement.min_sync_interval {
-                    tracing::debug!(
-                        "Bucket {} sync interval not elapsed: {} < {}",
-                        agreement.bucket_id,
-                        elapsed,
-                        agreement.min_sync_interval
-                    );
-                    continue;
-                }
-            }
-
-            let snapshot = self
-                .chain_client
-                .fetch_bucket_snapshot(agreement.bucket_id)
-                .await?;
-
-            if snapshot.mmr_root == H256::zero() {
-                continue;
-            }
-
-            if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id) {
-                if bucket.mmr_root == snapshot.mmr_root {
-                    continue;
-                }
-            }
-
-            let source_endpoints = self.fetch_source_endpoints(agreement.bucket_id).await?;
-
-            duties.push(SyncDuty {
-                bucket_id: agreement.bucket_id,
-                target_mmr_root: snapshot.mmr_root,
-                target_leaf_count: snapshot.leaf_count,
-                source_endpoints,
-                sync_balance: agreement.sync_balance,
-                sync_price: agreement.sync_price,
-                min_sync_interval: agreement.min_sync_interval,
-                last_sync: agreement.last_sync,
-            });
         }
 
         Ok(duties)
+    }
+
+    /// Sync duty for `agreement`, or `None` when the bucket needs no sync.
+    async fn duty_for(
+        &self,
+        agreement: ReplicaAgreementInfo,
+        anchor_block: u64,
+    ) -> Result<Option<SyncDuty>, Error> {
+        if agreement.sync_balance < agreement.sync_price {
+            tracing::trace!(
+                "Bucket {} has insufficient sync balance: {} < {}",
+                agreement.bucket_id,
+                agreement.sync_balance,
+                agreement.sync_price
+            );
+            return Ok(None);
+        }
+
+        if let Some((_, last_block)) = agreement.last_sync {
+            let elapsed = anchor_block.saturating_sub(last_block);
+            if elapsed < agreement.min_sync_interval {
+                tracing::trace!(
+                    "Bucket {} sync interval not elapsed: {} < {}",
+                    agreement.bucket_id,
+                    elapsed,
+                    agreement.min_sync_interval
+                );
+                return Ok(None);
+            }
+        }
+
+        let snapshot = self
+            .chain_client
+            .fetch_bucket_snapshot(agreement.bucket_id)
+            .await?;
+
+        if snapshot.mmr_root == H256::zero() {
+            return Ok(None);
+        }
+
+        if let Some(bucket) = self.storage.get_bucket(agreement.bucket_id)? {
+            if bucket.mmr_root == snapshot.mmr_root {
+                return Ok(None);
+            }
+        }
+
+        let source_endpoints = self.fetch_source_endpoints(agreement.bucket_id).await?;
+
+        Ok(Some(SyncDuty {
+            bucket_id: agreement.bucket_id,
+            target_mmr_root: snapshot.mmr_root,
+            target_leaf_count: snapshot.leaf_count,
+            source_endpoints,
+            sync_balance: agreement.sync_balance,
+            sync_price: agreement.sync_price,
+            min_sync_interval: agreement.min_sync_interval,
+            last_sync: agreement.last_sync,
+        }))
     }
 
     /// Endpoints to sync from, in try order: primaries first (most current),
@@ -647,8 +673,17 @@ impl ReplicaSyncCoordinator {
 
     /// Perform sync and submit confirmation.
     pub async fn sync_and_confirm(&self, duty: &SyncDuty) -> SyncResult {
+        let storage_failed = |e: provider_storage::Error| SyncResult::StorageFailed {
+            bucket_id: duty.bucket_id,
+            reason: e.to_string(),
+        };
+
         // Check if we already have this root
-        if let Some(bucket) = self.storage.get_bucket(duty.bucket_id) {
+        let local_bucket = match self.storage.get_bucket(duty.bucket_id) {
+            Ok(bucket) => bucket,
+            Err(e) => return storage_failed(e),
+        };
+        if let Some(bucket) = local_bucket {
             if bucket.mmr_root == duty.target_mmr_root {
                 return SyncResult::AlreadySynced {
                     bucket_id: duty.bucket_id,
@@ -721,8 +756,9 @@ impl ReplicaSyncCoordinator {
 
         // Verify final state
         let local_bucket = match self.storage.get_bucket(duty.bucket_id) {
-            Some(b) => b,
-            None => {
+            Ok(Some(b)) => b,
+            Err(e) => return storage_failed(e),
+            Ok(None) => {
                 return SyncResult::VerificationFailed {
                     bucket_id: duty.bucket_id,
                     reason: "Bucket not found after sync".to_string(),

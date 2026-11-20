@@ -123,7 +123,7 @@ for spec in docs/site/specs/*.json; do
   fi
   perl -0pi -e '
     s{</head>}{  <link rel="stylesheet" href="assets/diagram-page.css">\n</head>};
-    s{<div class="header">}{<div class="header">\n      <p class="site-crumb"><a href="index.html">&larr; Scalable Web3 Storage</a></p>};
+    s{<div class="header">}{<div class="header">\n      <p class="site-crumb"><a href="index.html">&larr; Capacity - Scalable Web3 Storage</a></p>};
   ' "$tmp/$page.html"
 
   if [[ $visual_check -eq 1 ]]; then
