@@ -14,8 +14,7 @@ use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
 use sp_runtime::Saturating;
 use storage_primitives::{
-    AgreementTerms, BucketId, BucketTarget, ChunkLocation, Commitment, ProviderRole, ReplicaTerms,
-    Visibility,
+    AgreementTerms, BucketId, BucketTarget, ChunkLocation, Commitment, ReplicaTerms, Visibility,
 };
 
 const SEED: u32 = 0;
@@ -69,7 +68,7 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
     // Enable provider for agreements
     let _ = Pallet::<T>::update_provider_settings(
         RawOrigin::Signed(provider.clone()).into(),
-        pallet::ProviderSettings {
+        ProviderSettings {
             min_duration: 1u32.into(),
             max_duration: 1000u32.into(),
             price_per_byte: 1u32.into(),
@@ -252,9 +251,9 @@ fn insert_challenge<T: Config>(
     challenger: &T::AccountId,
     commitment: Commitment,
     target: ChunkLocation,
-) -> storage_primitives::ChallengeId<BlockNumberFor<T>> {
+) -> ChallengeId<BlockNumberFor<T>> {
     let deadline: BlockNumberFor<T> = 200u32.into();
-    let challenge = pallet::Challenge::<T> {
+    let challenge = Challenge::<T> {
         bucket_id,
         provider: provider.clone(),
         challenger: challenger.clone(),
@@ -265,7 +264,7 @@ fn insert_challenge<T: Config>(
         created_at: deadline.saturating_sub(T::ChallengeTimeout::get()),
     };
     Challenges::<T>::insert(deadline, 0u16, challenge);
-    storage_primitives::ChallengeId { deadline, index: 0 }
+    ChallengeId { deadline, index: 0 }
 }
 
 /// The largest MMR proof `verify_mmr_proof` accepts, for `leaf` at index 0 of
@@ -407,7 +406,7 @@ mod benchmarks {
     #[benchmark]
     fn update_provider_settings() {
         let provider = create_provider::<T>(0);
-        let settings = pallet::ProviderSettings {
+        let settings = ProviderSettings {
             min_duration: 10u32.into(),
             max_duration: 10000u32.into(),
             price_per_byte: 100u32.into(),
@@ -1042,7 +1041,11 @@ mod benchmarks {
         };
         let depth = size_only.chunk_count().unwrap().ilog2();
         let siblings: alloc::vec::Vec<H256> = (0..depth)
-            .map(|level| H256::from_low_u64_be(u64::from(level) + 1))
+            .map(|level| {
+                let mut sibling = [0u8; 32];
+                sibling[28..].copy_from_slice(&(level + 1).to_be_bytes());
+                H256(sibling)
+            })
             .collect();
         let data_root = siblings.iter().fold(
             storage_primitives::hash_leaf(&chunk_bytes),
@@ -1065,7 +1068,7 @@ mod benchmarks {
             },
         );
 
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Proof {
+        let response: ChallengeResponse<T> = ChallengeResponse::Proof {
             chunk_data,
             mmr_proof,
             chunk_proof,
@@ -1101,8 +1104,7 @@ mod benchmarks {
                 chunk_index,
             },
         );
-        let response: pallet::ChallengeResponse<T> =
-            pallet::ChallengeResponse::ChunkOutOfRange { mmr_proof };
+        let response: ChallengeResponse<T> = ChallengeResponse::ChunkOutOfRange { mmr_proof };
 
         #[extrinsic_call]
         respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);
@@ -1155,7 +1157,7 @@ mod benchmarks {
             .expect("signing should work");
         let admin_signature = sp_runtime::MultiSignature::Sr25519(sig);
 
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Deleted {
+        let response: ChallengeResponse<T> = ChallengeResponse::Deleted {
             new_mmr_root,
             new_start_seq,
             admin: admin.clone(),
@@ -1205,10 +1207,53 @@ mod benchmarks {
             },
         );
 
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Superseded;
+        let response: ChallengeResponse<T> = ChallengeResponse::Superseded;
 
         #[extrinsic_call]
         respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);
+    }
+
+    /// Challenger withdraws before any response: one `take`, both pending
+    /// counters down, deposit released.
+    #[benchmark]
+    fn cancel_challenge() {
+        let admin = funded_account::<T>("admin", 0);
+        let provider = create_provider::<T>(0);
+        let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
+
+        // `insert_challenge` writes the challenge with `deposit: 100` but
+        // holds nothing and bumps no counters; set both up so the release
+        // and decrement paths do real work.
+        StorageProvider::<T>::hold_challenge_deposit(&admin, 100u32.into()).unwrap();
+        let challenge_id = insert_challenge::<T>(
+            bucket_id,
+            &provider,
+            &admin,
+            Commitment {
+                mmr_root: H256::zero(),
+                start_seq: 0,
+                leaf_count: 1,
+            },
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        );
+        PendingChallenges::<T>::insert(&provider, 1);
+        PendingChallengesByBucket::<T>::insert(bucket_id, &provider, 1);
+
+        #[extrinsic_call]
+        cancel_challenge(RawOrigin::Signed(admin.clone()), challenge_id);
+
+        assert!(Challenges::<T>::get(challenge_id.deadline, challenge_id.index).is_none());
+        assert!(!PendingChallenges::<T>::contains_key(&provider));
+        assert!(!PendingChallengesByBucket::<T>::contains_key(
+            bucket_id, &provider
+        ));
+        let still_held = <T::Currency as frame_support::traits::fungible::InspectHold<
+            T::AccountId,
+        >>::balance_on_hold(&HoldReason::ChallengeDeposit.into(), &admin);
+        assert_eq!(still_held, 0u32.into());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1283,7 +1328,7 @@ mod benchmarks {
         let challenger = funded_account::<T>("challenger", 0);
         let _ = StorageProvider::<T>::hold_challenge_deposit(&challenger, deposit);
         let bucket_id: BucketId = 0;
-        let challenge = pallet::Challenge::<T> {
+        let challenge = Challenge::<T> {
             bucket_id,
             provider: provider.clone(),
             challenger,
@@ -1310,7 +1355,7 @@ mod benchmarks {
         #[extrinsic_call]
         resolve_expired_challenge(
             RawOrigin::Signed(caller),
-            storage_primitives::ChallengeId { deadline, index: 0 },
+            ChallengeId { deadline, index: 0 },
         );
 
         assert!(Challenges::<T>::get(deadline, 0).is_none());

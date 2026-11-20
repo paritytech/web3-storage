@@ -2,7 +2,10 @@
 
 use super::*;
 use sp_core::H256;
-use storage_primitives::{BucketSnapshot, ChallengeId, ChunkLocation, Commitment, Role};
+use sp_runtime::transaction_validity::{
+    InvalidTransaction, TransactionSource, TransactionValidityError, ValidTransaction,
+};
+use storage_primitives::{ChunkLocation, Commitment, Role};
 
 /// Setup: register provider, create agreement, and insert a snapshot with provider signed.
 pub(super) fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
@@ -1223,6 +1226,322 @@ fn challenge_count_per_deadline_is_capped() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// cancel_challenge
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Open a checkpoint challenge from `challenger` against provider 2 on
+/// `bucket_id`. Every call in the same block gets deadline 101
+/// (block 1 + ChallengeTimeout 100) with the next free index.
+fn open_challenge(challenger: u64, bucket_id: u64) {
+    assert_ok!(StorageProvider::challenge_checkpoint(
+        RuntimeOrigin::signed(challenger),
+        bucket_id,
+        2,
+        ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
+    ));
+}
+
+#[test]
+fn cancel_challenge_refunds_deposit_and_resolves_counters() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        let free_before = Balances::free_balance(3);
+
+        open_challenge(3, bucket_id);
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 100);
+        assert_eq!(PendingChallenges::<Test>::get(2), 1);
+        assert_eq!(PendingChallengesByBucket::<Test>::get(bucket_id, 2), 1);
+
+        run_to_block(5);
+        assert_ok!(StorageProvider::cancel_challenge(
+            RuntimeOrigin::signed(3),
+            challenge_id
+        ));
+
+        assert!(Challenges::<Test>::get(101, 0).is_none());
+        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 0);
+        assert_eq!(Balances::free_balance(3), free_before);
+        assert!(!PendingChallenges::<Test>::contains_key(2));
+        assert!(!PendingChallengesByBucket::<Test>::contains_key(
+            bucket_id, 2
+        ));
+
+        // Cancellation does not change the provider's stats.
+        let stats = Providers::<Test>::get(2).unwrap().stats;
+        assert_eq!(stats.challenges_received_authorized, 0);
+        assert_eq!(stats.challenges_received_public, 0);
+        assert_eq!(stats.challenges_failed, 0);
+
+        let expected_event = RuntimeEvent::StorageProvider(crate::Event::ChallengeCancelled {
+            challenge_id,
+            bucket_id,
+            provider: 2,
+            challenger: 3,
+            deposit: 100,
+        });
+        assert!(frame_system::Pallet::<Test>::events()
+            .iter()
+            .any(|r| r.event == expected_event));
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+#[test]
+fn cancel_challenge_fails_not_challenger() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        // Neither the challenged provider nor a stranger may cancel.
+        assert_noop!(
+            StorageProvider::cancel_challenge(RuntimeOrigin::signed(2), challenge_id),
+            Error::<Test>::NotChallengeCreator
+        );
+        assert_noop!(
+            StorageProvider::cancel_challenge(RuntimeOrigin::signed(4), challenge_id),
+            Error::<Test>::NotChallengeCreator
+        );
+        assert!(Challenges::<Test>::get(101, 0).is_some());
+    });
+}
+
+#[test]
+fn cancel_challenge_fails_unknown_id() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        assert_noop!(
+            StorageProvider::cancel_challenge(
+                RuntimeOrigin::signed(3),
+                ChallengeId {
+                    deadline: 101,
+                    index: 0,
+                }
+            ),
+            Error::<Test>::ChallengeNotFound
+        );
+    });
+}
+
+/// An expired challenge stays open until someone resolves it, and the
+/// challenger may cancel any open challenge. The cancel settles it once:
+/// full refund, no slash, and `resolve_expired_challenge` finds nothing left.
+#[test]
+fn cancel_challenge_after_deadline_settles_without_slash() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+        let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
+
+        frame_system::Pallet::<Test>::set_block_number(102);
+        assert_ok!(StorageProvider::cancel_challenge(
+            RuntimeOrigin::signed(3),
+            challenge_id
+        ));
+
+        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 0);
+        assert_eq!(
+            Providers::<Test>::get(2).unwrap().stake,
+            provider_stake_before
+        );
+        assert_noop!(
+            StorageProvider::resolve_expired_challenge(RuntimeOrigin::signed(4), challenge_id),
+            Error::<Test>::ChallengeNotFound
+        );
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+#[test]
+fn cancel_challenge_fails_after_response() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        // A valid `Superseded` defense needs a newer canonical root.
+        run_to_block(2);
+        Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+            let bucket = maybe_bucket.as_mut().unwrap();
+            bucket.snapshot = Some(BucketSnapshot {
+                commitment: Commitment {
+                    mmr_root: H256::repeat_byte(0xCD),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
+                checkpoint_block: 1,
+                primary_signers: bitvec::bitvec![u8, Lsb0; 1],
+            });
+        });
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            challenge_id,
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        assert_noop!(
+            StorageProvider::cancel_challenge(RuntimeOrigin::signed(3), challenge_id),
+            Error::<Test>::ChallengeNotFound
+        );
+    });
+}
+
+/// Two challengers, same provider, same deadline. Cancelling one leaves the
+/// other addressable, funded, and counted.
+#[test]
+fn cancel_challenge_leaves_sibling_untouched() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+        open_challenge(4, bucket_id);
+        assert_eq!(PendingChallenges::<Test>::get(2), 2);
+
+        assert_ok!(StorageProvider::cancel_challenge(
+            RuntimeOrigin::signed(3),
+            ChallengeId {
+                deadline: 101,
+                index: 0,
+            }
+        ));
+
+        assert!(Challenges::<Test>::get(101, 0).is_none());
+        let sibling = Challenges::<Test>::get(101, 1).unwrap();
+        assert_eq!(sibling.challenger, 4);
+        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 0);
+        assert_eq!(held(HoldReason::ChallengeDeposit, 4), 100);
+        assert_eq!(PendingChallenges::<Test>::get(2), 1);
+        assert_eq!(PendingChallengesByBucket::<Test>::get(bucket_id, 2), 1);
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CheckChallengeResponse
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Validate a `respond_to_challenge` from `who` through
+/// `CheckChallengeResponse`, as the transaction pool and the block builder do.
+fn validate_response(
+    who: u64,
+    challenge_index: u16,
+    response: ChallengeResponse<Test>,
+) -> Result<ValidTransaction, TransactionValidityError> {
+    use frame_support::dispatch::GetDispatchInfo;
+    use sp_runtime::traits::DispatchTransaction;
+
+    let call = RuntimeCall::StorageProvider(crate::Call::respond_to_challenge {
+        challenge_id: ChallengeId {
+            deadline: 101,
+            index: challenge_index,
+        },
+        response,
+    });
+    crate::CheckChallengeResponse::<Test>::new()
+        .validate_only(
+            RuntimeOrigin::signed(who),
+            &call,
+            &call.get_dispatch_info(),
+            0,
+            TransactionSource::External,
+            0,
+        )
+        .map(|(valid, _, _)| valid)
+}
+
+/// A provider that races the challenger's `cancel_challenge` and loses must
+/// not pay for the response: once the cancel is in, the response fails
+/// validation, so the pool and the block builder drop it instead of
+/// including it and charging a fee sized by the chunk it carries.
+#[test]
+fn response_after_cancel_is_rejected_before_dispatch() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+        assert_ok!(validate_response(2, 0, ChallengeResponse::Superseded));
+
+        assert_ok!(StorageProvider::cancel_challenge(
+            RuntimeOrigin::signed(3),
+            ChallengeId {
+                deadline: 101,
+                index: 0,
+            }
+        ));
+
+        assert_eq!(
+            validate_response(2, 0, ChallengeResponse::Superseded),
+            Err(InvalidTransaction::Stale.into())
+        );
+    });
+}
+
+/// Only the challenged provider can answer, so no other account can put a
+/// response in the pool that would fail at dispatch.
+#[test]
+fn response_from_another_account_is_rejected_before_dispatch() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+
+        for who in [3, 4] {
+            assert_eq!(
+                validate_response(who, 0, ChallengeResponse::Superseded),
+                Err(InvalidTransaction::BadSigner.into())
+            );
+        }
+    });
+}
+
+/// Responses to the same challenge provide the same tag whatever they
+/// contain, so the pool keeps one of them. Responses to different challenges
+/// do not displace each other.
+#[test]
+fn responses_to_one_challenge_share_a_pool_tag() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+        open_challenge(4, bucket_id);
+        let deleted = ChallengeResponse::<Test>::Deleted {
+            new_mmr_root: H256::repeat_byte(0x77),
+            new_start_seq: 1,
+            admin: 1,
+            admin_signature: sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
+        };
+
+        let tags = |index, response| validate_response(2, index, response).unwrap().provides;
+        assert_eq!(
+            tags(0, ChallengeResponse::Superseded),
+            tags(0, deleted.clone())
+        );
+        assert_ne!(tags(0, deleted.clone()), tags(1, deleted));
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PR #125 challenge-overhaul tests.
 //
 // Kept in a nested module so they coexist with dev's top-level challenge tests
@@ -1233,8 +1552,7 @@ mod challenge_tests {
     use frame_support::{dispatch::Pays, pallet_prelude::DispatchResult, BoundedVec};
     use sp_core::H256;
     use storage_primitives::{
-        hash_children, hash_leaf, mmr, BucketSnapshot, ChallengeId, ChunkLocation, Commitment,
-        EndAction, MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
+        hash_children, hash_leaf, mmr, ChunkLocation, Commitment, EndAction, MmrLeaf, MmrProof,
     };
 
     // ─────────────────────────────────────────────────────────────────────────

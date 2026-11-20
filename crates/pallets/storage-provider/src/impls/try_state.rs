@@ -13,7 +13,7 @@ use crate::*;
 use alloc::collections::{BTreeMap, BTreeSet};
 use frame_support::{pallet_prelude::*, traits::fungible::InspectHold};
 use sp_runtime::{traits::Saturating, TryRuntimeError};
-use storage_primitives::{BucketId, ProviderRole};
+use storage_primitives::BucketId;
 
 impl<T: Config> Pallet<T> {
     /// Checks the pallet's storage invariants; run by `try-runtime`.
