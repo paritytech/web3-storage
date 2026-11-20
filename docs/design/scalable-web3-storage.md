@@ -649,6 +649,17 @@ below):
      from its stake (normal tx fee mechanism)
    - Challenger can cancel anytime before the response (deposit returned, pays
      only the cancel tx fee)
+     DRIFT-023: on `dev`, cancel_challenge also accepts an expired challenge
+     that nobody has resolved yet, and the provider is not slashed (test
+     cancel_challenge_after_deadline_settles_without_slash). This text lists
+     the cancel under the response window and does not cover a cancel after
+     the deadline; the Resolution list below slashes a provider with no proof
+     by the deadline. After a missed deadline, the challenger can still cancel
+     the challenge and prevent the slash, so the provider can pay the
+     challenger to cancel it; other accounts can prevent this only by
+     submitting resolve_expired_challenge first.
+     Proposal: restrict cancel_challenge to `anchor <= deadline`, or document
+     the post-deadline cancel here and in the Resolution list.
 
 3. Resolution
    - Valid proof: Challenge rejected. The provider's response fee is reimbursed
@@ -663,6 +674,9 @@ below):
    - No proof by the deadline: anyone submits `resolve_expired_challenge`
      (free on success); provider's full stake slashed; challenger made whole
      from the slash (deposit and tx fees refunded—no reward beyond costs)
+     DRIFT-021: on `dev` the deposit hold is released and the whole slash
+     goes to the Treasury; no tx fee is refunded. Details at Timeline 3d in
+     scalable-web3-storage-implementation.md.
 ```
 
 **Stake is never touched on a valid response.** The only thing in play is who
@@ -721,6 +735,7 @@ would make griefing cheap). Faster responses cost the provider less:
 The general public is not on this table: the challenger always pays 100%. (The
 failure case—no response by the deadline—is separate: the provider's full stake
 is slashed and the challenger is made whole from it, per Resolution above.)
+<!-- DRIFT-021: see the marker in the Resolution list above. -->
 
 The net effect: a provider's *monetary* challenge exposure is bounded to the
 counterparties it chose to accept—strangers can be a nuisance but can't drain
