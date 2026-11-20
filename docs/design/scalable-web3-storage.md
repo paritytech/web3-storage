@@ -649,17 +649,17 @@ below):
      from its stake (normal tx fee mechanism)
    - Challenger can cancel anytime before the response (deposit returned, pays
      only the cancel tx fee)
-     DRIFT-022: no cancel_challenge call exists on `dev`. Once created, a
-     challenge resolves only by respond_to_challenge or by
-     resolve_expired_challenge slashing the provider; the challenger cannot
-     withdraw it and the deposit stays held until then. Also referenced in the Resolution list below, in
-     point 3 of the cost-model rationale, and in the ProviderStats sketch in
-     scalable-web3-storage-implementation.md ("cancelled challenges are not
-     counted").
-     Proposal: implement cancel_challenge (challenger only, before a response:
-     remove the challenge, release the deposit, decrement the pending
-     counters, no stats change). The off-chain-resolution argument in point 3
-     depends on it. Implementation: #461 (open); tracked in #506.
+     DRIFT-023: on `dev`, cancel_challenge also accepts an expired challenge
+     that nobody has resolved yet, and the provider is not slashed (test
+     cancel_challenge_after_deadline_settles_without_slash). This text lists
+     the cancel under the response window and does not cover a cancel after
+     the deadline; the Resolution list below slashes a provider with no proof
+     by the deadline. After a missed deadline, the challenger can still cancel
+     the challenge and prevent the slash, so the provider can pay the
+     challenger to cancel it; other accounts can prevent this only by
+     submitting resolve_expired_challenge first.
+     Proposal: restrict cancel_challenge to `anchor <= deadline`, or document
+     the post-deadline cancel here and in the Resolution list.
 
 3. Resolution
    - Valid proof: Challenge rejected. The provider's response fee is reimbursed
@@ -669,7 +669,6 @@ below):
      with the MMR proof of the leaf alone; the chain derives the chunk count
      from the leaf's `data_size` and resolves the challenge as a valid proof
    - Cancelled by challenger: Deposit returned (challenger paid only tx fees)
-     DRIFT-022: not on `dev`, see the marker in step 2.
    - Invalid proof: Response rejected (provider pays the tx fee); the
      challenge stays open until the deadline
    - No proof by the deadline: anyone submits `resolve_expired_challenge`
@@ -1326,7 +1325,6 @@ This is exactly why the general public gets no cost split—it closes the floodi
 2. **Only counterparties get the split**: A provider is made to bear a fraction of the cost only for its own members or agreement owners—accounts it *chose* to deal with (it accepted their agreement) or that the admin added.
 
 3. **Challenge cancellation**: Any challenger can cancel before the response, paying only the tx fee. If the provider serves off-chain after a challenge is initiated, the challenger cancels and the provider never even responds on-chain. Cancelled challenges leave no trace in the provider's stats (see next point).
-<!-- DRIFT-022: no cancel_challenge call exists on `dev`; see the marker in the challenge Timeline above. -->
 
 4. **Reputation**: Challenge stats count only *responded-to* challenges (at resolution, never creation) and are split by tier—`challenges_received_authorized` vs `challenges_received_public`—so clients can weigh the two as they see fit. The challenges-*failed* count (the one that actually signals data loss) is unaffected, since the provider defends every one.
 

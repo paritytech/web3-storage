@@ -425,10 +425,6 @@ pub struct ProviderStats<T: Config> {
     /// Challenges from authorized challengers (member/agreement owner at
     /// challenge creation) that the provider responded to. Counted at
     /// resolution—cancelled challenges are not counted.
-    // DRIFT-022: no cancel_challenge call exists on `dev`; every challenge
-    // resolves as defended or slashed. See the marker in the challenge
-    // Timeline of scalable-web3-storage.md. Implementation: #461 (open);
-    // tracked in #506.
     pub challenges_received_authorized: u32,
     /// Same, for general-public challengers.
     pub challenges_received_public: u32,
