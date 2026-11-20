@@ -9,7 +9,7 @@ built on top of the [`storage-client`](../../../clients/storage) SDK.
 
 ```bash
 cargo run -p storage-cli -- --help
-cargo run -p storage-cli -- provider register --help
+cargo run -p storage-cli -- provider --help
 cargo run -p storage-cli -- stress-test upload --help
 ```
 
@@ -24,33 +24,54 @@ cargo run -p storage-cli -- stress-test upload --help
 Each command takes the secret of the account it signs as, named after the
 account's role: `--provider-suri`/`--provider-keyfile` or
 `--client-suri`/`--client-keyfile`. Exactly one of each pair is required. A
-keyfile contains the SURI.
+keyfile is the JSON file `provider generate-key` writes, or a file whose
+contents are the SURI. It must not be group- or world-readable.
 
-## `provider register`
+## `provider`
 
-Registers the provider account as a storage provider, locking the
-1000-token minimum stake, and sets it to accept primary agreements at 1 per
-byte-block for 10 to 100,000 anchor blocks. If the account is already
-registered with the same signing key, it does nothing; with a different key, it
-exits with an error.
+Manages a provider's on-chain registration with the `--provider-suri`/`--provider-keyfile` account.
+Each chain action submits one signed transaction, waits for it to be final and exits.
+The account is the same identity the provider node runs with (`storage-provider-node --keyfile`).
 
 ```bash
-cargo run -p storage-cli -- \
-  provider register \
-  --provider-suri //Alice \
-  --multiaddr /ip4/127.0.0.1/tcp/3333
+storage-cli provider generate-key --provider-keyfile ./provider.json
+storage-cli provider register --provider-keyfile ./provider.json --multiaddr /ip4/1.2.3.4/tcp/3333
+storage-cli provider update-settings --provider-keyfile ./provider.json --price-per-byte 7 --max-capacity 1073741824
+storage-cli provider deregister --provider-keyfile ./provider.json
 ```
 
-| Param                    | Default   | Description                                                           |
-| ------------------------ | --------- | --------------------------------------------------------------------- |
-| `--provider-suri <SURI>` | —         | Secret URI of the provider account, e.g. `//Alice`.                   |
-| `--provider-keyfile <FILE>` | —      | File with the provider account's SURI: the file the node's `--keyfile` reads. |
-| `--multiaddr <ADDR>`     | required  | Multiaddr at which clients reach the provider node.                   |
-| `--key-scheme <SCHEME>`  | `sr25519` | Signing key to register: `sr25519`, `ed25519`, `ecdsa` or `eth`. Must match the node's `--key-scheme`. |
+| Action            | Description                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| `generate-key`    | Create a new secret in `--provider-keyfile` and print, as JSON, the account it derives. Never overwrites an existing file. |
+| `register`        | Register the account as a provider with `--multiaddr` and `--stake` (default: the 1000-token minimum stake of the bundled runtimes). |
+| `update-settings` | Change the given settings; every other setting keeps its on-chain value. A no-op submits nothing.            |
+| `deregister`      | Announce deregistration. The stake is released by `complete_deregister` after the announcement period.        |
 
-The extrinsics are always signed by the sr25519 account. The provider node can
-start before or after registration. If it starts after, it reads the
-registration when it connects and can sign terms on its first request.
+`register --key-scheme <SCHEME>` names the scheme of the key `register` puts on chain: `sr25519`, `ed25519`, `ecdsa` or `eth`.
+It must match the node's `--key-scheme`.
+Without the flag, `register` uses a JSON keyfile's `keyScheme`, else `sr25519`.
+The extrinsics are always signed by the sr25519 account.
+`generate-key` supports only `sr25519` for now.
+
+The provider node can start before or after registration.
+If it starts after, it reads the registration when it connects and can sign terms on its first request.
+
+`generate-key` writes the keyfile with owner-only permissions.
+Its address uses the chain's SS58 prefix, read from `--chain-rpc`; when the chain is unreachable the generic prefix 42 is used and reported.
+The file is JSON with the field names `subkey generate --output-type json` uses:
+
+```json
+{
+  "secretPhrase": "<12-word BIP39 mnemonic>",
+  "keyScheme": "sr25519",
+  "accountId": "0x...",
+  "publicKey": "0x...",
+  "ss58Address": "1...",
+  "ss58Prefix": 0
+}
+```
+
+Every action validates the input and the provider's current on-chain state before it submits, so a rejected transaction and its fee are avoided: for example, `register` on an already registered account and `update-settings` with a `max_capacity` the stake cannot back fail without submitting.
 
 ## `stress-test upload`
 
@@ -75,7 +96,7 @@ cargo run -p storage-cli -- \
 | Param                        | Default            | Description                                                |
 | ---------------------------- | ------------------ | ---------------------------------------------------------- |
 | `--client-suri <SURI>`       | —                  | Secret URI of the client account, e.g. `//Bob`.            |
-| `--client-keyfile <FILE>`    | —                  | File with the client account's SURI.                       |
+| `--client-keyfile <FILE>`    | —                  | File with the client account's SURI, or a JSON keyfile.    |
 | `--provider-account <ACCOUNT>` | required         | Public account of the provider (SS58 or `0x`-hex) whose agreements select the target buckets. |
 | `--max-buckets-to-write <N>` | all buckets        | Cap the number of buckets written to (must be `>= 1`).     |
 | `--users <N>`                | `1`                | Number of simulated users, each with its own client.       |
@@ -148,7 +169,7 @@ summary.
 ### Required on-chain setup
 
 The provider must be registered on-chain and its node running (`just start-chain`,
-`storage-cli provider register`, `just start-provider`).
+`just register-provider`, `just start-provider`).
 Buckets and agreements either exist already (default `discover` mode) or the run
 opens them with `--prepare-buckets N`. The client account pays for the prepared
 agreements at the provider's listed price.

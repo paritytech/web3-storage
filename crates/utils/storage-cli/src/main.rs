@@ -12,12 +12,12 @@ mod commands;
 mod common;
 mod metrics;
 mod prepare;
+mod provider;
 
 use anyhow::bail;
 use clap::Parser;
 
 use crate::cli::{Cli, Command};
-use crate::commands::provider::Provider;
 use crate::commands::stress_test::StressTest;
 use crate::metrics::{print_text, to_json, OpSummary, OutputFormat};
 use crate::prepare::PreparationReport;
@@ -28,14 +28,13 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    match &cli.command {
+    match cli.command {
         Command::StressTest(StressTest::ProviderUpload(args)) => {
-            let (summary, preparation) = commands::stress_test::upload(&cli.global, args).await?;
+            let (summary, preparation) = commands::stress_test::upload(&cli.global, &args).await?;
             render_metrics(cli.global.output, summary, preparation)
         }
-        Command::Provider(Provider::Register(args)) => {
-            commands::provider::register(&cli.global, args).await
-        }
+        // The provider subcommand prints its own outcome.
+        Command::Provider(action) => commands::provider::run(&cli.global, action).await,
     }
 }
 

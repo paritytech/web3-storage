@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Subcommand};
-use sp_runtime::AccountId32;
 use storage_client::substrate::SubstrateClient;
 use storage_client::{AdminClient, ClientConfig, Signer, StorageUserClient};
 use tokio::sync::Semaphore;
@@ -341,7 +340,7 @@ pub async fn upload(
         let report = prepare::prepare_buckets(
             &admin,
             PrepareParams {
-                owner: AccountId32::from(signer.keypair().public_key().0),
+                owner: signer.account_id(),
                 provider: &args.provider_account,
                 provider_url: &global.provider_url,
                 count: plan.to_prepare,
