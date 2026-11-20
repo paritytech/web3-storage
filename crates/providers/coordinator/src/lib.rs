@@ -325,9 +325,9 @@ pub struct ChainStateCoordinatorHandle {
 
 impl ChainStateCoordinatorHandle {
     /// Resolves when the coordinator stops on a fatal error. `Err` if the
-    /// task panicked or was aborted.
-    pub async fn fatal_error(&mut self) -> Result<ChainClientError, tokio::task::JoinError> {
-        (&mut self.task).await
+    /// task panicked.
+    pub async fn fatal_error(self) -> Result<ChainClientError, tokio::task::JoinError> {
+        self.task.await
     }
 
     /// Stop the coordinator. Aborting the loop drops the stream, which aborts the
@@ -773,7 +773,7 @@ mod tests {
             expected,
             connected,
         });
-        let mut handle = ChainStateCoordinator::new(
+        let handle = ChainStateCoordinator::new(
             follower,
             provider_account(),
             Arc::new(ChainState::default()),

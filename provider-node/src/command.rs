@@ -160,7 +160,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // The replica sync coordinator and the challenge responder are optional;
     // their startup failures are non-fatal.
     let follower = Arc::new(SubxtChainFollower::new(transport, chain_tx, genesis_hash));
-    let mut chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
+    let chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), replica_events, state.clone())
             .await;
@@ -194,7 +194,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Either one ends the node instead of serving with stale chain state.
     tokio::select! {
         result = serve => result?,
-        error = chain_state_fatal_error(&mut chain_state_handle) => return Err(error),
+        error = chain_state_fatal_error(chain_state_handle) => return Err(error),
     }
 
     Ok(())
@@ -230,7 +230,7 @@ fn bind_storage_to_chain(
 /// Resolves with the error that stopped the chain-state coordinator, or never
 /// when there is no coordinator.
 async fn chain_state_fatal_error(
-    handle: &mut Option<ChainStateCoordinatorHandle>,
+    handle: Option<ChainStateCoordinatorHandle>,
 ) -> Box<dyn std::error::Error> {
     match handle {
         Some(handle) => match handle.fatal_error().await {
