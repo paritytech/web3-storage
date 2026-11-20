@@ -114,8 +114,10 @@ impl ChainStateCoordinator {
     /// The spawned task connects to the chain, follows finalized blocks, and
     /// reconnects automatically: a chain that is unreachable at startup or that
     /// drops the connection later is retried with a fixed backoff instead of
-    /// taking the coordinator down. Runs until the returned handle is dropped or
-    /// [`ChainStateCoordinatorHandle::stop`] is called.
+    /// taking the coordinator down. Runs until the returned handle is dropped,
+    /// [`ChainStateCoordinatorHandle::stop`] is called, or a connection reports
+    /// [`ChainClientError::ChainMismatch`]; the handle's
+    /// [`fatal_error`](ChainStateCoordinatorHandle::fatal_error) returns that error.
     pub fn start(self) -> ChainStateCoordinatorHandle {
         let task = tokio::spawn(self.run());
         ChainStateCoordinatorHandle { task }
@@ -315,7 +317,8 @@ pub async fn refresh_if_relevant_event(
 
 // ── ChainStateCoordinatorHandle ───────────────────────────────────────────────
 
-/// Keeps the coordinator alive. Drop or call [`stop`](Self::stop) to shut down.
+/// Handle to the coordinator task. Dropping it leaves the task running; call
+/// [`stop`](Self::stop) to shut it down.
 pub struct ChainStateCoordinatorHandle {
     task: JoinHandle<ChainClientError>,
 }

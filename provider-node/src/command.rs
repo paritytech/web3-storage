@@ -157,7 +157,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let replica_events = events_tx.subscribe();
     let challenge_events = events_tx.subscribe();
 
-    // Start optional background services (failures are non-fatal)
+    // The replica sync coordinator and the challenge responder are optional;
+    // their startup failures are non-fatal.
     let follower = Arc::new(SubxtChainFollower::new(transport, chain_tx, genesis_hash));
     let mut chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
     let _replica_sync_handle =
@@ -189,6 +190,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     );
+    // The chain-state coordinator stops only on a chain mismatch or a panic.
+    // Either one ends the node instead of serving with stale chain state.
     tokio::select! {
         result = serve => result?,
         error = chain_state_fatal_error(&mut chain_state_handle) => return Err(error),
