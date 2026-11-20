@@ -231,10 +231,7 @@ impl DiskStorage {
                 if stored == genesis_hash {
                     Ok(ChainBinding::Matched)
                 } else {
-                    Err(Error::ChainMismatch {
-                        stored,
-                        connected: genesis_hash,
-                    })
+                    Ok(ChainBinding::Mismatch { stored })
                 }
             }
             None => {
@@ -1848,14 +1845,14 @@ mod tests {
         let connected = H256::repeat_byte(0xbb);
 
         let storage = DiskStorage::new(dir.path()).unwrap();
-        storage.bind_chain(stored).unwrap();
+        assert_eq!(storage.bind_chain(stored).unwrap(), ChainBinding::Recorded);
         drop(storage);
 
         let storage = DiskStorage::new(dir.path()).unwrap();
-        assert!(matches!(
-            storage.bind_chain(connected),
-            Err(Error::ChainMismatch { stored: s, connected: c }) if s == stored && c == connected
-        ));
+        assert_eq!(
+            storage.bind_chain(connected).unwrap(),
+            ChainBinding::Mismatch { stored }
+        );
         // The rejected hash must not replace the recorded one.
         assert_eq!(storage.bind_chain(stored).unwrap(), ChainBinding::Matched);
     }

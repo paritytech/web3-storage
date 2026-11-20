@@ -114,8 +114,10 @@ impl ChainStateCoordinator {
     /// The spawned task connects to the chain, follows finalized blocks, and
     /// reconnects automatically: a chain that is unreachable at startup or that
     /// drops the connection later is retried with a fixed backoff instead of
-    /// taking the coordinator down. Runs until the returned handle is dropped or
-    /// [`ChainStateCoordinatorHandle::stop`] is called.
+    /// taking the coordinator down. Runs until the returned handle is dropped,
+    /// [`ChainStateCoordinatorHandle::stop`] is called, or a connection reports
+    /// [`ChainClientError::ChainMismatch`]; the handle's
+    /// [`fatal_error`](ChainStateCoordinatorHandle::fatal_error) returns that error.
     pub fn start(self) -> ChainStateCoordinatorHandle {
         let task = tokio::spawn(self.run());
         ChainStateCoordinatorHandle { task }
@@ -315,16 +317,17 @@ pub async fn refresh_if_relevant_event(
 
 // ── ChainStateCoordinatorHandle ───────────────────────────────────────────────
 
-/// Keeps the coordinator alive. Drop or call [`stop`](Self::stop) to shut down.
+/// Handle to the coordinator task. Dropping it leaves the task running; call
+/// [`stop`](Self::stop) to shut it down.
 pub struct ChainStateCoordinatorHandle {
     task: JoinHandle<ChainClientError>,
 }
 
 impl ChainStateCoordinatorHandle {
     /// Resolves when the coordinator stops on a fatal error. `Err` if the
-    /// task panicked or was aborted.
-    pub async fn fatal_error(&mut self) -> Result<ChainClientError, tokio::task::JoinError> {
-        (&mut self.task).await
+    /// task panicked.
+    pub async fn fatal_error(self) -> Result<ChainClientError, tokio::task::JoinError> {
+        self.task.await
     }
 
     /// Stop the coordinator. Aborting the loop drops the stream, which aborts the
@@ -770,7 +773,7 @@ mod tests {
             expected,
             connected,
         });
-        let mut handle = ChainStateCoordinator::new(
+        let handle = ChainStateCoordinator::new(
             follower,
             provider_account(),
             Arc::new(ChainState::default()),

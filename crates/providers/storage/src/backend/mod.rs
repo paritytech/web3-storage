@@ -147,12 +147,18 @@ pub struct EraseOutcome {
 }
 
 /// Result of [`StorageBackend::bind_chain`].
+#[must_use = "a store bound to another chain must not be served"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChainBinding {
     /// The store had no chain recorded; it now records the given genesis hash.
     Recorded,
     /// The store already records the given genesis hash.
     Matched,
+    /// The store records another chain. `bind_chain` did not change it.
+    Mismatch {
+        /// Genesis hash recorded in the store.
+        stored: H256,
+    },
 }
 
 /// Storage engine interface. Callers hold an `Arc<dyn StorageBackend>` rather
@@ -160,8 +166,10 @@ pub enum ChainBinding {
 pub trait StorageBackend: Send + Sync {
     /// Bind this store to the chain with `genesis_hash`.
     ///
-    /// Records the hash when the store has none. Fails with
-    /// [`Error::ChainMismatch`] when the store records a different chain.
+    /// Returns [`ChainBinding::Recorded`] after recording `genesis_hash` in a
+    /// store that records no chain, [`ChainBinding::Matched`] when the store
+    /// records `genesis_hash`, and [`ChainBinding::Mismatch`] when it records a
+    /// different chain.
     fn bind_chain(&self, genesis_hash: H256) -> Result<ChainBinding, Error>;
 
     /// Initialize a bucket with the given quota.
