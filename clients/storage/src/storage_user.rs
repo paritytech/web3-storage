@@ -12,7 +12,7 @@
 use crate::base::{BaseClient, ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
 use crate::substrate::parse_h256;
-use crate::verification::ClientVerifier;
+use crate::verification::{ClientVerifier, ProviderReadAccess};
 use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use sp_core::H256;
@@ -209,6 +209,8 @@ impl StorageUserClient {
     ///
     /// The data must use `DEFAULT_CHUNK_SIZE` chunks, as committed data does.
     /// For data of unknown size or chunk size, use [`Self::download_full`].
+    /// A range of no bytes, or one that starts at or past `size`, returns no
+    /// bytes without a request.
     ///
     /// # Example
     /// ```no_run
@@ -229,24 +231,9 @@ impl StorageUserClient {
         offset: u64,
         length: u64,
     ) -> ClientResult<Vec<u8>> {
-        let chunk_count = size.div_ceil(u64::from(DEFAULT_CHUNK_SIZE));
-        self.download_range(bucket_id, data_root, offset, length, Some(chunk_count))
-            .await
-    }
-
-    /// Read `offset..offset + length` of `data_root` in `DEFAULT_CHUNK_SIZE`
-    /// chunks, trim it to the range and decrypt it. Without `chunk_count`,
-    /// the proofs use the count the provider reports, so a provider can
-    /// return another chunk of the same data for the range; only checks of
-    /// the provider use that.
-    async fn download_range(
-        &self,
-        bucket_id: BucketId,
-        data_root: &H256,
-        offset: u64,
-        length: u64,
-        chunk_count: Option<u64>,
-    ) -> ClientResult<Vec<u8>> {
+        if length == 0 || offset >= size {
+            return Ok(Vec::new());
+        }
         let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
         let start_chunk = offset / chunk_size;
         let end_chunk = offset.saturating_add(length).div_ceil(chunk_size);
@@ -257,7 +244,7 @@ impl StorageUserClient {
                 start_chunk,
                 end_chunk,
                 Some(chunk_size),
-                chunk_count,
+                Some(size.div_ceil(chunk_size)),
             )
             .await?
             .data;
@@ -614,7 +601,9 @@ impl StorageUserClient {
     // Verification & Monitoring
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Perform a spot-check on a provider to verify data integrity.
+    /// Spot-check that the provider stores chunk `chunk_index` of
+    /// `data_root` with [`ProviderReadAccess::read_chunk`]. `chunk_count`
+    /// must come from the leaf's `data_size`, as `read_chunk` describes.
     ///
     /// Returns true if the check passed.
     pub async fn spot_check(
@@ -622,34 +611,21 @@ impl StorageUserClient {
         bucket_id: BucketId,
         data_root: &H256,
         chunk_index: u64,
+        chunk_count: u64,
     ) -> ClientResult<bool> {
-        use std::time::Instant;
-
-        let chunk_size = u64::from(DEFAULT_CHUNK_SIZE);
-        let offset = chunk_index * chunk_size;
         let provider_url = self.base.get_provider_url()?.to_string();
-
-        let start = Instant::now();
-        let result = self
-            .download_range(bucket_id, data_root, offset, chunk_size, None)
-            .await;
-        let duration = start.elapsed();
-
-        match result {
-            Ok(data) if !data.is_empty() => {
-                self.verifier.record_request(&provider_url, duration, true);
-                Ok(true)
-            }
-            _ => {
-                // Either download failed or the provider returned no data for this chunk,
-                // which means the data is unavailable.
-                self.verifier.record_request(&provider_url, duration, false);
-                Ok(false)
-            }
-        }
+        let start = std::time::Instant::now();
+        let passed = self
+            .read_chunk(bucket_id, data_root, chunk_index, chunk_count)
+            .await
+            .is_ok();
+        self.verifier
+            .record_request(&provider_url, start.elapsed(), passed);
+        Ok(passed)
     }
 
-    /// Perform multiple random spot-checks on a provider.
+    /// Perform multiple random spot-checks on a provider. `total_chunks` is
+    /// the chunk count of `data_root`, as in [`Self::spot_check`].
     ///
     /// Returns (passed_count, failed_count).
     pub async fn spot_check_batch(
@@ -667,7 +643,10 @@ impl StorageUserClient {
 
         for _ in 0..num_checks {
             let chunk_index = rng.gen_range(0..total_chunks);
-            if self.spot_check(bucket_id, data_root, chunk_index).await? {
+            if self
+                .spot_check(bucket_id, data_root, chunk_index, total_chunks)
+                .await?
+            {
                 passed += 1;
             } else {
                 failed += 1;
@@ -893,16 +872,28 @@ impl StorageUserClient {
 
 // Implement ProviderReadAccess for verification
 #[async_trait::async_trait]
-impl crate::verification::ProviderReadAccess for StorageUserClient {
-    async fn read_data(
+impl ProviderReadAccess for StorageUserClient {
+    async fn read_chunk(
         &self,
         bucket_id: BucketId,
         data_root: &H256,
-        offset: u64,
-        length: u64,
+        chunk_index: u64,
+        chunk_count: u64,
     ) -> Result<Vec<u8>, crate::ClientError> {
-        self.download_range(bucket_id, data_root, offset, length, None)
-            .await
+        let read = self
+            .read_chunks(
+                bucket_id,
+                data_root,
+                chunk_index,
+                chunk_index.saturating_add(1),
+                Some(u64::from(DEFAULT_CHUNK_SIZE)),
+                Some(chunk_count),
+            )
+            .await?;
+        if read.hashes.len() != 1 {
+            return Err(ClientError::VerificationFailed);
+        }
+        Ok(read.data)
     }
 
     fn provider_url(&self) -> &str {
@@ -1277,6 +1268,59 @@ mod tests {
         let without_count = read_chunks(body, 1, 2, 5, None).await;
         assert_eq!(without_count.unwrap(), CHUNKS[2], "the provider's count");
         assert_verification_failed(read_chunks(body, 1, 2, 5, Some(3)).await);
+    }
+
+    /// Results of `StorageUserClient::spot_check` and
+    /// `ClientVerifier::spot_check` of `chunk_index` in the 3-chunk test tree,
+    /// against a provider that answers every `/read` with `body`.
+    async fn spot_checks(body: fn(u64) -> String, chunk_index: u64) -> [bool; 2] {
+        let url = serve_read(body).await;
+        let mut client =
+            StorageUserClient::for_provider(&url, Signer::from_seed("//Alice").unwrap()).unwrap();
+        let chunk_count = CHUNKS.len() as u64;
+        let by_verifier = ClientVerifier::new()
+            .spot_check(&client, 1, &tree_root(), chunk_index, chunk_count)
+            .await
+            .unwrap();
+        let by_client = client
+            .spot_check(1, &tree_root(), chunk_index, chunk_count)
+            .await
+            .unwrap();
+        [by_client, by_verifier]
+    }
+
+    /// The test tree's chunks are shorter than `DEFAULT_CHUNK_SIZE`, so only
+    /// its last chunk, which may be short, passes a spot check.
+    #[tokio::test]
+    async fn spot_check_passes_a_chunk_with_its_proof() {
+        assert_eq!(
+            spot_checks(|_| read_body(2, 3, &[2]), 2).await,
+            [true, true]
+        );
+    }
+
+    /// A provider that lost the data cannot pass by reporting fewer chunks
+    /// than the leaf's data size gives and sending none.
+    #[tokio::test]
+    async fn spot_check_fails_a_smaller_chunk_count_with_no_chunks() {
+        assert_eq!(
+            spot_checks(|_| read_body(0, 0, &[]), 0).await,
+            [false, false]
+        );
+        assert_eq!(
+            spot_checks(|_| read_body(1, 1, &[]), 1).await,
+            [false, false]
+        );
+    }
+
+    /// A provider that lost chunk 1 cannot pass with chunk 2, whose proof
+    /// also verifies at index 1 of a tree of 2 chunks.
+    #[tokio::test]
+    async fn spot_check_fails_another_chunk_proven_under_a_smaller_count() {
+        assert_eq!(
+            spot_checks(|_| read_body(1, 2, &[2]), 1).await,
+            [false, false]
+        );
     }
 
     /// A first response that reaches the last chunk must still start at the

@@ -10,7 +10,9 @@ use client_test_support::{
     make_client, start_test_provider, start_test_provider_without_agreement,
 };
 use sp_core::H256;
-use storage_client::{ChunkingStrategy, ClientError, EncryptionKey, Node, ENCRYPTION_OVERHEAD};
+use storage_client::{
+    ChunkingStrategy, ClientError, ClientVerifier, EncryptionKey, Node, ENCRYPTION_OVERHEAD,
+};
 use storage_primitives::DEFAULT_CHUNK_SIZE;
 
 /// Chunks in one full `/read` response of the test provider.
@@ -380,7 +382,10 @@ async fn test_download_range_in_second_read_page() {
     assert_eq!(range, &data[offset..offset + chunk_size]);
 }
 
-/// An offset past the end of the data returns no bytes.
+/// An offset past the end of the data returns no bytes. The offset of one
+/// `DEFAULT_CHUNK_SIZE` is past the first chunk boundary, where the provider,
+/// which maps offsets with the 4-byte first chunk, and the client disagree on
+/// the chunk index.
 #[tokio::test]
 async fn test_download_offset_past_end() {
     let url = start_test_provider().await;
@@ -392,8 +397,29 @@ async fn test_download_offset_past_end() {
         .unwrap();
     client.commit(1, vec![data_root]).await.unwrap();
 
-    let retrieved = client.download(1, &data_root, 4, 10, 5).await.unwrap();
-    assert!(retrieved.is_empty());
+    for offset in [4, 10, u64::from(DEFAULT_CHUNK_SIZE)] {
+        let retrieved = client.download(1, &data_root, 4, offset, 5).await.unwrap();
+        assert!(retrieved.is_empty(), "offset {offset}");
+    }
+}
+
+/// A range of no bytes returns no bytes, not `VerificationFailed`, which
+/// reports a provider that sent wrong data.
+#[tokio::test]
+async fn test_download_empty_range() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let data_root = client
+        .upload(1, b"tiny", ChunkingStrategy::default())
+        .await
+        .unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
+
+    let zero_length = client.download(1, &data_root, 4, 0, 0).await.unwrap();
+    assert!(zero_length.is_empty());
+    let zero_size = client.download(1, &data_root, 0, 0, 4).await.unwrap();
+    assert!(zero_size.is_empty());
 }
 
 /// A length past the end of the data returns the data up to its end.
@@ -758,9 +784,41 @@ async fn test_spot_check_passes_for_valid_data() {
         .unwrap();
     client.commit(1, vec![data_root]).await.unwrap();
 
-    let passed = client.spot_check(1, &data_root, 0).await.unwrap();
+    let passed = client.spot_check(1, &data_root, 0, 1).await.unwrap();
 
     assert!(passed, "spot check on valid data should pass");
+}
+
+/// The provider stores ciphertext, so a spot check verifies a chunk of
+/// ciphertext against `data_root` and does not decrypt it: one chunk of the
+/// ciphertext does not decrypt on its own.
+#[tokio::test]
+async fn test_spot_check_passes_for_encrypted_data() {
+    let url = start_test_provider().await;
+    let key = EncryptionKey::generate();
+    let mut client = make_client(url).with_encryption_key(&key);
+
+    let data = vec![7u8; DEFAULT_CHUNK_SIZE as usize];
+    let data_root = client
+        .upload(1, &data, ChunkingStrategy::default())
+        .await
+        .unwrap();
+    client.commit(1, vec![data_root]).await.unwrap();
+
+    let chunk_count = (data.len() + ENCRYPTION_OVERHEAD).div_ceil(DEFAULT_CHUNK_SIZE as usize);
+    assert_eq!(chunk_count, 2);
+    for chunk_index in 0..chunk_count as u64 {
+        let passed = client
+            .spot_check(1, &data_root, chunk_index, chunk_count as u64)
+            .await
+            .unwrap();
+        assert!(passed, "chunk {chunk_index}");
+    }
+    let (passed, failed) = ClientVerifier::new()
+        .spot_check_batch(&client, 1, &data_root, 4, chunk_count as u64)
+        .await
+        .unwrap();
+    assert_eq!((passed, failed), (4, 0));
 }
 
 #[tokio::test]
@@ -769,7 +827,7 @@ async fn test_spot_check_returns_false_for_missing_data() {
     let mut client = make_client(url);
 
     let phantom = H256::from_slice(&[0xCC; 32]);
-    let passed = client.spot_check(1, &phantom, 0).await.unwrap();
+    let passed = client.spot_check(1, &phantom, 0, 1).await.unwrap();
 
     assert!(
         !passed,
