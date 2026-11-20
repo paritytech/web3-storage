@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! API types for the provider node.
 
@@ -125,7 +125,9 @@ pub struct CommitResponse {
 pub struct ReadQuery {
     pub bucket_id: BucketId,
     pub data_root: String,
+    /// First byte to read.
     pub offset: u64,
+    /// Bytes to read from `offset`.
     pub length: u64,
 }
 
@@ -140,6 +142,12 @@ pub struct ChunkWithProof {
 /// Response with chunks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadResponse {
+    /// Index of the first chunk in `chunks`.
+    pub start_chunk: u64,
+    /// Number of chunks under the data root.
+    pub chunk_count: u64,
+    /// Whole chunks that cover the requested bytes, cut at the provider's
+    /// limits.
     pub chunks: Vec<ChunkWithProof>,
 }
 

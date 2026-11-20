@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Error types for the provider node.
 
@@ -88,13 +88,9 @@ pub enum Error {
     ProviderDeregistering,
 
     #[error(
-        "Chain state not ready: current_anchor_block and request_timeout must both be non-zero"
+        "Chain state not ready: the node has not yet read the anchor block or the request timeout from the chain"
     )]
     ChainStateNotReady,
-
-    /// The node has not connected to the chain yet.
-    #[error(transparent)]
-    ChainNotConnected(#[from] crate::chain_connection::NotConnected),
 
     /// The node cannot sign with its registered key. Each reason keeps the
     /// response code it had when these were three separate variants.
@@ -278,6 +274,7 @@ impl IntoResponse for Error {
                 e @ (StorageError::RocksDb(_)
                 | StorageError::ColumnFamilyMissing(_)
                 | StorageError::IncompatibleFormat(_)
+                | StorageError::ChainMismatch { .. }
                 | StorageError::Mmr(_)
                 | StorageError::Serialization(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -347,6 +344,29 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "insufficient_role".to_string(),
                     details: None,
+                },
+            ),
+            Error::Auth(AuthError::NotPrimary) => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "not_primary".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "this node serves this bucket as a replica and rejects writes to it."
+                    })),
+                },
+            ),
+            Error::Auth(AuthError::NoAgreement(bucket_id)) => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "no_agreement".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
+                },
+            ),
+            Error::Auth(AuthError::AgreementExpired(bucket_id)) => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "agreement_expired".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id })),
                 },
             ),
             // Transient and worth retrying, unlike a decode failure.
@@ -476,17 +496,8 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "chain_state_not_ready".to_string(),
                     details: Some(serde_json::json!({
-                        "message": "current_anchor_block or request_timeout is 0; \
-                                    the node has not yet synced with the chain"
-                    })),
-                },
-            ),
-            Error::ChainNotConnected(_) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorResponse {
-                    error: "chain_unavailable".to_string(),
-                    details: Some(serde_json::json!({
-                        "message": "the node has not yet established a connection to the chain"
+                        "message": "the node has not yet read the anchor block or the \
+                                    request timeout from the chain"
                     })),
                 },
             ),
@@ -691,11 +702,6 @@ mod tests {
         );
         assert_eq!(
             status_of(SigningRefused::NoKey.into()),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-        // A connection that was never established is retryable.
-        assert_eq!(
-            status_of(crate::chain_connection::NotConnected.into()),
             StatusCode::SERVICE_UNAVAILABLE
         );
     }

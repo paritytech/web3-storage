@@ -27,12 +27,11 @@ pub use chain::{
     FinalizedBlocks,
 };
 
-use parking_lot::RwLock;
 use provider_events::{BlockEvent, BlockEventTx};
-use provider_types::{ChainClientError, ProviderInfo};
+use provider_types::ChainClientError;
+pub use provider_types::{ChainState, PalletConstants};
 use sp_runtime::AccountId32;
 use std::future::Future;
-use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -75,36 +74,6 @@ async fn with_timeout<T>(
             secs: budget.as_secs(),
         }),
     }
-}
-
-// ── ChainState ────────────────────────────────────────────────────────────────
-
-/// Live chain state kept in sync with the runtime by the chain-state coordinator.
-///
-/// Held behind `Arc` inside the provider node's `ProviderState` so the coordinator can hold
-/// its own handle without a back-reference to the whole node state.
-#[derive(Default)]
-pub struct ChainState {
-    /// The pallet's anchor block — the clock all on-chain durations (timeouts,
-    /// `valid_until`) are measured against — read via the
-    /// `StorageProviderApi::current_anchor_block` runtime API at the latest
-    /// finalized block. Whether that anchor is a relay, parachain, or other
-    /// block number is the pallet's concern, not the provider's. `0` means not
-    /// yet known.
-    pub current_anchor_block: AtomicU32,
-    /// Pallet constants fetched once per connection. `None` until the first
-    /// successful fetch; `/negotiate` returns 503 until this is `Some`.
-    pub constants: RwLock<Option<PalletConstants>>,
-    /// Provider's on-chain registration info. `None` until registered on chain;
-    /// re-fetched (full) on every relevant provider event so `committed_bytes`,
-    /// `stake`, and all settings stay current.
-    pub provider_info: RwLock<Option<ProviderInfo>>,
-}
-
-/// Pallet constants that only change across runtime upgrades.
-pub struct PalletConstants {
-    /// Chain-enforced validity window (in blocks) for provider-signed terms.
-    pub request_timeout: u32,
 }
 
 // ── ChainStateCoordinator ─────────────────────────────────────────────────────
@@ -152,9 +121,10 @@ impl ChainStateCoordinator {
         ChainStateCoordinatorHandle { task }
     }
 
-    /// Reconnect loop: (re)connect and follow finalized blocks forever, sleeping
+    /// Reconnect loop: (re)connect and follow finalized blocks, sleeping
     /// [`RECONNECT_DELAY`] between attempts so an unreachable chain doesn't spin.
-    async fn run(self) {
+    /// Returns only on [`ChainClientError::ChainMismatch`], which retrying cannot fix.
+    async fn run(self) -> ChainClientError {
         const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
         loop {
@@ -163,6 +133,7 @@ impl ChainStateCoordinator {
                     "chain-state coordinator: block stream ended; reconnecting in {}s",
                     RECONNECT_DELAY.as_secs()
                 ),
+                Err(Error::ChainClient(e @ ChainClientError::ChainMismatch { .. })) => return e,
                 Err(e) => tracing::warn!(
                     "chain-state coordinator: {e}; reconnecting in {}s",
                     RECONNECT_DELAY.as_secs()
@@ -346,10 +317,16 @@ pub async fn refresh_if_relevant_event(
 
 /// Keeps the coordinator alive. Drop or call [`stop`](Self::stop) to shut down.
 pub struct ChainStateCoordinatorHandle {
-    task: JoinHandle<()>,
+    task: JoinHandle<ChainClientError>,
 }
 
 impl ChainStateCoordinatorHandle {
+    /// Resolves when the coordinator stops on a fatal error. `Err` if the
+    /// task panicked or was aborted.
+    pub async fn fatal_error(&mut self) -> Result<ChainClientError, tokio::task::JoinError> {
+        (&mut self.task).await
+    }
+
     /// Stop the coordinator. Aborting the loop drops the stream, which aborts the
     /// underlying block subscription.
     pub async fn stop(self) {
@@ -377,7 +354,8 @@ fn escalate_block_read_failure(events_tx: &BlockEventTx, block_number: u32) {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use provider_types::{ProviderSettings, ProviderStats};
+    use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
+    use sp_runtime::testing::H256;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn provider_account() -> AccountId32 {
@@ -549,6 +527,25 @@ mod tests {
                 "chain connection",
                 "mock connect failure",
             ))
+        }
+    }
+
+    /// [`ChainFollower`] whose `connect()` always reports a chain mismatch,
+    /// counting attempts.
+    struct MismatchFollower {
+        attempts: Arc<AtomicUsize>,
+        expected: H256,
+        connected: H256,
+    }
+
+    #[async_trait]
+    impl ChainFollower for MismatchFollower {
+        async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            Err(ChainClientError::ChainMismatch {
+                expected: self.expected,
+                connected: self.connected,
+            })
         }
     }
 
@@ -761,5 +758,36 @@ mod tests {
         );
 
         handle.stop().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_stops_on_a_chain_mismatch_after_one_attempt() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let expected = H256::repeat_byte(1);
+        let connected = H256::repeat_byte(2);
+        let follower: Arc<dyn ChainFollower> = Arc::new(MismatchFollower {
+            attempts: attempts.clone(),
+            expected,
+            connected,
+        });
+        let mut handle = ChainStateCoordinator::new(
+            follower,
+            provider_account(),
+            Arc::new(ChainState::default()),
+            tokio::sync::broadcast::channel(16).0,
+        )
+        .start();
+
+        let fatal = tokio::time::timeout(Duration::from_secs(60), handle.fatal_error())
+            .await
+            .expect("the coordinator must stop on a chain mismatch")
+            .expect("the coordinator task must not panic");
+
+        assert!(matches!(
+            fatal,
+            ChainClientError::ChainMismatch { expected: e, connected: c }
+                if e == expected && c == connected
+        ));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 }

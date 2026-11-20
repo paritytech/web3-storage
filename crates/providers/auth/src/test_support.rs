@@ -5,7 +5,10 @@
 //! `verify` isn't defined twice.
 
 use crate::error::MembershipError;
-use crate::membership::{BucketAccess, Invalidation, MembershipInvalidations, MembershipResolver};
+use crate::membership::{
+    AgreementRole, BucketAccess, Invalidation, LocalBucketAgreement, MembershipInvalidations,
+    MembershipResolver,
+};
 use sp_core::crypto::AccountId32;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -52,6 +55,28 @@ impl MembershipResolver for CountingResolver {
             Role::Admin,
         )
             .into()]))
+    }
+}
+
+/// Resolver that gives this node a primary agreement with `max_bytes` on every
+/// bucket and counts how many times it was called.
+pub(crate) struct AgreementResolver {
+    pub(crate) max_bytes: u64,
+    pub(crate) calls: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl MembershipResolver for AgreementResolver {
+    async fn fetch_access(&self, _bucket_id: BucketId) -> Result<BucketAccess, MembershipError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(BucketAccess {
+            local_agreement: Some(LocalBucketAgreement {
+                role: AgreementRole::Primary,
+                max_bytes: self.max_bytes,
+                expires_at: u32::MAX,
+            }),
+            ..BucketAccess::private(vec![])
+        })
     }
 }
 

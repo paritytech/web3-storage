@@ -14,7 +14,6 @@ use crate::chain_connection::{self, ChainWatch};
 use crate::challenge_responder::{
     ChallengeChainClient, ChallengeError, ChallengeResponse, DetectedChallenge,
 };
-use crate::Error;
 use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
 use sp_core::crypto::Ss58Codec;
@@ -25,24 +24,17 @@ use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
-use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ChallengeResponse as RuntimeChallengeResponse;
+use storage_subxt::api::runtime_types::pallet_storage_provider::types::{
+    Bucket as OnChainBucket, ChallengeId as RuntimeChallengeId,
+    ChallengeResponse as RuntimeChallengeResponse, ProviderInfo as OnChainProviderInfo,
+    ProviderRole,
+};
 use storage_subxt::api::runtime_types::sp_runtime::MultiSignature as RuntimeMultiSignature;
 use storage_subxt::api::runtime_types::storage_primitives::{
     mmr::{MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof},
-    ChallengeId as RuntimeChallengeId, ChunkLocation as RuntimeChunkLocation,
-    Commitment as RuntimeCommitment,
+    ChunkLocation as RuntimeChunkLocation, Commitment as RuntimeCommitment,
 };
 use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};
-
-/// `StorageProvider` error variants that mean "this action already happened"
-/// — a retry after a dropped transaction watch may race an earlier attempt
-/// that landed, and these rejections prove the duty is done rather than
-/// failed. Matched against the pallet + error-variant names resolved from
-/// runtime metadata (see [`SubxtChainClient::is_already_done`]).
-const ALREADY_DONE_ERRORS: [&str; 2] = [
-    "ChallengeNotFound", // respond_to_challenge: challenge was taken on defense
-    "SyncTooFrequent",   // confirm_replica_sync: a sync already confirmed
-];
 
 /// Upper bound on one submit-and-watch pass. Generous next to normal
 /// finalization (a few blocks) so a slow chain isn't mistaken for a stuck one,
@@ -88,7 +80,7 @@ pub struct SubxtChainClient {
 /// Turning the configured seed into a keypair is all [`SubxtChainClient::new`]
 /// can fail at, and it happens once at startup: `command.rs` logs it and runs
 /// without a chain client. It never reaches a request, so it is deliberately
-/// not one of the HTTP [`Error`] variants.
+/// not an HTTP error.
 #[derive(Debug, thiserror::Error)]
 pub enum SignerSetupError {
     /// The `--keyfile` contents are not a valid seed URI.
@@ -122,8 +114,10 @@ impl SubxtChainClient {
 
     /// The current live connection, or an error while the chain has never
     /// been reached yet.
-    fn api(&self) -> Result<subxt::OnlineClient<subxt::PolkadotConfig>, Error> {
-        chain_connection::current_api(&self.chain_rx).map_err(Into::into)
+    fn api(
+        &self,
+    ) -> Result<subxt::OnlineClient<subxt::PolkadotConfig>, chain_connection::NotConnected> {
+        chain_connection::current_api(&self.chain_rx)
     }
 
     /// The block handle every chain read starts from: the live connection,
@@ -167,9 +161,10 @@ impl SubxtChainClient {
         )
     }
 
-    /// Whether the dispatch error is one of the pallet's duplicate
-    /// rejections ([`ALREADY_DONE_ERRORS`]): on a retry it proves the first
-    /// attempt landed and the duty is complete.
+    /// Whether the dispatch error is `StorageProvider::SyncTooFrequent`:
+    /// `confirm_replica_sync` rejects a second sync within
+    /// `min_sync_interval`, so on a retry it proves the first attempt landed
+    /// and the duty is complete.
     fn is_already_done(e: &TransactionFinalizedSuccessError) -> bool {
         let TransactionFinalizedSuccessError::SuccessError(
             TransactionEventsError::ExtrinsicFailed(DispatchError::Module(module_error)),
@@ -180,8 +175,7 @@ impl SubxtChainClient {
         let Ok(details) = module_error.details() else {
             return false;
         };
-        details.pallet.name() == "StorageProvider"
-            && ALREADY_DONE_ERRORS.contains(&details.variant.name.as_str())
+        details.pallet.name() == "StorageProvider" && details.variant.name == "SyncTooFrequent"
     }
 
     /// Sign, submit, and wait for finalized success, retrying once on
@@ -572,8 +566,6 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<Vec<String>, ChainClientError> {
-        use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
-
         let provider_account = self.signer.public_key().0.to_vec();
 
         let payload = storage_subxt::api::runtime_apis()
@@ -729,9 +721,6 @@ fn detected_challenge(
     })
 }
 
-/// Generated type of a `StorageProvider::Buckets` value.
-type OnChainBucket = storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Bucket;
-
 /// Latest checkpoint of a bucket, or the zero snapshot when the bucket does
 /// not exist or has no checkpoint.
 fn bucket_snapshot(bucket: Option<OnChainBucket>) -> BucketSnapshot {
@@ -746,10 +735,6 @@ fn bucket_snapshot(bucket: Option<OnChainBucket>) -> BucketSnapshot {
         },
     }
 }
-
-/// Generated type of a `StorageProvider::Providers` value.
-type OnChainProviderInfo =
-    storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
 
 /// HTTP endpoint a provider serves from, or `None` when it has no multiaddr.
 fn provider_endpoint(provider: &OnChainProviderInfo) -> Option<String> {
@@ -769,8 +754,6 @@ type AgreementFromRuntimeApi =
 /// `None` for a primary agreement — the coordinator only has duties for
 /// replicas.
 fn replica_agreement_info(agreement: AgreementFromRuntimeApi) -> Option<ReplicaAgreementInfo> {
-    use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
-
     let ProviderRole::Replica {
         sync_balance,
         sync_price,
@@ -1020,9 +1003,7 @@ mod tests {
     }
 
     /// Build an agreement response carrying `role`.
-    fn runtime_api_agreement(
-        role: storage_subxt::api::runtime_types::storage_primitives::ProviderRole<u128, u32>,
-    ) -> AgreementFromRuntimeApi {
+    fn runtime_api_agreement(role: ProviderRole<u128, u32>) -> AgreementFromRuntimeApi {
         AgreementFromRuntimeApi {
             bucket_id: 42,
             owner: vec![1u8; 32],
@@ -1039,16 +1020,13 @@ mod tests {
 
     #[test]
     fn primary_agreements_are_filtered_out() {
-        use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
-
         assert!(replica_agreement_info(runtime_api_agreement(ProviderRole::Primary)).is_none());
     }
 
     #[test]
     fn replica_agreement_carries_its_sync_terms_and_last_sync() {
-        use storage_subxt::api::runtime_types::storage_primitives::{
-            Commitment, ProviderRole, ReplicaSyncRecord,
-        };
+        use storage_subxt::api::runtime_types::pallet_storage_provider::types::ReplicaSyncRecord;
+        use storage_subxt::api::runtime_types::storage_primitives::Commitment;
 
         let info = replica_agreement_info(runtime_api_agreement(ProviderRole::Replica {
             sync_balance: 700,
@@ -1077,8 +1055,6 @@ mod tests {
 
     #[test]
     fn only_locally_stored_buckets_survive_the_local_bucket_filter() {
-        use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
-
         let replica = || ProviderRole::Replica {
             sync_balance: 700,
             sync_price: 25,
@@ -1107,8 +1083,6 @@ mod tests {
 
     #[test]
     fn replica_agreement_without_a_sync_yet_has_no_last_sync() {
-        use storage_subxt::api::runtime_types::storage_primitives::ProviderRole;
-
         let info = replica_agreement_info(runtime_api_agreement(ProviderRole::Replica {
             sync_balance: 0,
             sync_price: 1,

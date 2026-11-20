@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
-//! Shared test helpers for the provider-node integration suites.
+//! Shared test helpers for the provider-http integration suites.
 //!
 //! Tests use [`SignedClient`] to sign every request as `//Alice`.
 
@@ -9,14 +9,14 @@
 #![allow(dead_code)]
 
 use provider_auth::{build_auth_header, Authenticator, StaticMembershipResolver};
+use provider_http::{create_router, ProviderDeps, ProviderState};
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use storage_primitives::Role;
-pub use storage_provider_node::cli::StorageBackendKind;
-use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tempfile::TempDir;
 
 type AccountId32 = sp_core::crypto::AccountId32;
@@ -35,11 +35,8 @@ pub struct TestServer {
 
 impl TestServer {
     /// `state` picks the identity: seeded (signing) or provider-id only.
-    pub async fn start(
-        backend: StorageBackendKind,
-        state: impl FnOnce(ProviderDeps) -> ProviderState,
-    ) -> Self {
-        let (dir, deps) = Self::deps(backend);
+    pub async fn start(state: impl FnOnce(ProviderDeps) -> ProviderState) -> Self {
+        let (dir, deps) = Self::deps();
         let state = state(deps);
         publish_matching_registration(&state);
         Self::from_state(state, dir).await
@@ -48,23 +45,13 @@ impl TestServer {
     /// Like [`start`](Self::start), but leaves the chain-state coordinator's
     /// registration unpublished — covers the window before its first refresh,
     /// or a provider the chain does not know about.
-    pub async fn start_unregistered(
-        backend: StorageBackendKind,
-        state: impl FnOnce(ProviderDeps) -> ProviderState,
-    ) -> Self {
-        let (dir, deps) = Self::deps(backend);
+    pub async fn start_unregistered(state: impl FnOnce(ProviderDeps) -> ProviderState) -> Self {
+        let (dir, deps) = Self::deps();
         Self::from_state(state(deps), dir).await
     }
 
-    fn deps(backend: StorageBackendKind) -> (TempDir, ProviderDeps) {
-        let dir = tempfile::Builder::new()
-            .prefix(provider_storage::TEMP_DIR_PREFIX)
-            .tempdir()
-            .expect("temp dir");
-        let storage = backend
-            .spec(dir.path().to_path_buf())
-            .build()
-            .expect("backend opens");
+    fn deps() -> (TempDir, ProviderDeps) {
+        let (storage, dir) = provider_storage::temp_rocksdb();
         let deps = ProviderDeps {
             storage,
             auth: Arc::new(Authenticator::new(StaticMembershipResolver::private(vec![
@@ -75,6 +62,7 @@ impl TestServer {
     }
 
     async fn from_state(state: ProviderState, dir: TempDir) -> Self {
+        publish_anchor_block(&state);
         let (addr, client) = serve(state).await;
         Self {
             addr,
@@ -88,23 +76,33 @@ impl TestServer {
     }
 }
 
+/// Publish a non-zero anchor block, as the chain-state coordinator does on its
+/// first chain read. Before that the node rejects writes with
+/// `503 chain_state_not_ready`.
+pub fn publish_anchor_block(state: &ProviderState) {
+    state
+        .chain_state()
+        .current_anchor_block
+        .store(1, Ordering::Relaxed);
+}
+
 /// Publish a registration snapshot whose `public_key` matches this state's
 /// own signing key, as the chain-state coordinator would once the provider
 /// is registered on chain — signing endpoints refuse otherwise. Skipped for
 /// a keyless state, which has no key to register.
 pub fn publish_matching_registration(state: &ProviderState) {
-    let Some(keypair) = state.keypair.as_ref() else {
+    let Some(signer) = state.signer() else {
         return;
     };
     state
-        .chain_state
+        .chain_state()
         .provider_info
         .write()
         .replace(provider_types::ProviderInfo {
             multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
             // Must match the server's own signing key — signing refuses when
             // the registered key differs.
-            public_key: keypair.public_key_bytes(),
+            public_key: signer.public_key_bytes().to_vec(),
             stake: 1_000_000_000_000,
             committed_bytes: 0,
             settings: provider_types::ProviderSettings {
@@ -121,41 +119,6 @@ pub fn publish_matching_registration(state: &ProviderState) {
             deregister_at: None,
         });
 }
-
-/// Declare tests that run once per backend.
-///
-/// ```ignore
-/// common::backend_tests! {
-///     async fn health(backend) {
-///         let server = TestServer::new(backend).await;
-///         // ...
-///     }
-/// }
-/// ```
-///
-/// expands to one test per backend, named after it (`health::rocksdb`), so a
-/// failure says which one it happened on.
-///
-/// Allowed as unused: the suites that never parameterize by backend (auth,
-/// negotiate, chain-state) compile this module too.
-#[allow(unused_macros)]
-macro_rules! backend_tests {
-    ($(async fn $name:ident($backend:ident) $body:block)*) => {
-        $(
-            async fn $name($backend: common::StorageBackendKind) $body
-
-            mod $name {
-                #[tokio::test]
-                async fn rocksdb() {
-                    super::$name(super::common::StorageBackendKind::RocksDb).await
-                }
-            }
-        )*
-    };
-}
-
-#[allow(unused_imports)]
-pub(crate) use backend_tests;
 
 /// The account every test signs as.
 pub const TEST_MEMBER_SEED: &str = "//Alice";
