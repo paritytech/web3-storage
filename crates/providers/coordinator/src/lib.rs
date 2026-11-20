@@ -537,7 +537,7 @@ mod tests {
     /// counting attempts.
     struct MismatchFollower {
         attempts: Arc<AtomicUsize>,
-        stored: H256,
+        expected: H256,
         connected: H256,
     }
 
@@ -546,7 +546,7 @@ mod tests {
         async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
             self.attempts.fetch_add(1, Ordering::SeqCst);
             Err(ChainClientError::ChainMismatch {
-                stored: self.stored,
+                expected: self.expected,
                 connected: self.connected,
             })
         }
@@ -766,11 +766,11 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn run_stops_on_a_chain_mismatch_after_one_attempt() {
         let attempts = Arc::new(AtomicUsize::new(0));
-        let stored = H256::repeat_byte(1);
+        let expected = H256::repeat_byte(1);
         let connected = H256::repeat_byte(2);
         let follower: Arc<dyn ChainFollower> = Arc::new(MismatchFollower {
             attempts: attempts.clone(),
-            stored,
+            expected,
             connected,
         });
         let handle = ChainStateCoordinator::new(
@@ -788,8 +788,8 @@ mod tests {
 
         assert!(matches!(
             fatal,
-            ChainClientError::ChainMismatch { stored: s, connected: c }
-                if s == stored && c == connected
+            ChainClientError::ChainMismatch { expected: e, connected: c }
+                if e == expected && c == connected
         ));
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }

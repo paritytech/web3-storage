@@ -159,7 +159,7 @@ impl SubxtChainFollower {
         let connected = H256(api.genesis_hash().0);
         if connected != self.genesis_hash {
             return Err(ChainClientError::ChainMismatch {
-                stored: self.genesis_hash,
+                expected: self.genesis_hash,
                 connected,
             });
         }
@@ -1099,8 +1099,8 @@ mod tests {
 
         assert!(matches!(
             err,
-            ChainClientError::ChainMismatch { stored, connected }
-                if stored == other && connected == mock_genesis()
+            ChainClientError::ChainMismatch { expected, connected }
+                if expected == other && connected == mock_genesis()
         ));
         assert!(chain_rx.borrow().is_none());
     }

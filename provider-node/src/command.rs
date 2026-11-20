@@ -253,9 +253,10 @@ async fn chain_state_fatal_error(
 /// Error to report to the operator when the chain-state coordinator stops.
 fn coordinator_error(error: ChainClientError, storage_path: &Path) -> Box<dyn std::error::Error> {
     match error {
-        ChainClientError::ChainMismatch { stored, connected } => {
-            chain_mismatch_message(stored, connected, storage_path).into()
-        }
+        ChainClientError::ChainMismatch {
+            expected: stored,
+            connected,
+        } => chain_mismatch_message(stored, connected, storage_path).into(),
         e => e.into(),
     }
 }
@@ -436,8 +437,14 @@ mod tests {
         let connected = H256::repeat_byte(2);
         let path = Path::new("/var/lib/provider");
 
-        let err = coordinator_error(ChainClientError::ChainMismatch { stored, connected }, path)
-            .to_string();
+        let err = coordinator_error(
+            ChainClientError::ChainMismatch {
+                expected: stored,
+                connected,
+            },
+            path,
+        )
+        .to_string();
 
         assert_operator_message(&err, stored, connected, path);
     }
