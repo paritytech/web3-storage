@@ -3,6 +3,7 @@
 //! The error a provider chain-client trait reports, shared so that a chain
 //! failure keeps one shape across the provider crates and the node.
 
+use sp_core::H256;
 use std::fmt;
 
 /// Why a call against the chain failed.
@@ -41,6 +42,10 @@ pub enum ChainClientError {
     /// identically.
     #[error("{what} rejected: {reason}")]
     TxRejected { what: &'static str, reason: String },
+
+    /// The connected chain is not the chain this node's store is bound to.
+    #[error("Connected chain {connected:?} is not the bound chain {expected:?}")]
+    ChainMismatch { expected: H256, connected: H256 },
 }
 
 impl ChainClientError {

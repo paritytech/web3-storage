@@ -121,9 +121,10 @@ impl ChainStateCoordinator {
         ChainStateCoordinatorHandle { task }
     }
 
-    /// Reconnect loop: (re)connect and follow finalized blocks forever, sleeping
+    /// Reconnect loop: (re)connect and follow finalized blocks, sleeping
     /// [`RECONNECT_DELAY`] between attempts so an unreachable chain doesn't spin.
-    async fn run(self) {
+    /// Returns only on [`ChainClientError::ChainMismatch`], which retrying cannot fix.
+    async fn run(self) -> ChainClientError {
         const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
         loop {
@@ -132,6 +133,7 @@ impl ChainStateCoordinator {
                     "chain-state coordinator: block stream ended; reconnecting in {}s",
                     RECONNECT_DELAY.as_secs()
                 ),
+                Err(Error::ChainClient(e @ ChainClientError::ChainMismatch { .. })) => return e,
                 Err(e) => tracing::warn!(
                     "chain-state coordinator: {e}; reconnecting in {}s",
                     RECONNECT_DELAY.as_secs()
@@ -315,10 +317,16 @@ pub async fn refresh_if_relevant_event(
 
 /// Keeps the coordinator alive. Drop or call [`stop`](Self::stop) to shut down.
 pub struct ChainStateCoordinatorHandle {
-    task: JoinHandle<()>,
+    task: JoinHandle<ChainClientError>,
 }
 
 impl ChainStateCoordinatorHandle {
+    /// Resolves when the coordinator stops on a fatal error. `Err` if the
+    /// task panicked or was aborted.
+    pub async fn fatal_error(&mut self) -> Result<ChainClientError, tokio::task::JoinError> {
+        (&mut self.task).await
+    }
+
     /// Stop the coordinator. Aborting the loop drops the stream, which aborts the
     /// underlying block subscription.
     pub async fn stop(self) {
@@ -347,6 +355,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
+    use sp_runtime::testing::H256;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn provider_account() -> AccountId32 {
@@ -518,6 +527,25 @@ mod tests {
                 "chain connection",
                 "mock connect failure",
             ))
+        }
+    }
+
+    /// [`ChainFollower`] whose `connect()` always reports a chain mismatch,
+    /// counting attempts.
+    struct MismatchFollower {
+        attempts: Arc<AtomicUsize>,
+        expected: H256,
+        connected: H256,
+    }
+
+    #[async_trait]
+    impl ChainFollower for MismatchFollower {
+        async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            Err(ChainClientError::ChainMismatch {
+                expected: self.expected,
+                connected: self.connected,
+            })
         }
     }
 
@@ -730,5 +758,36 @@ mod tests {
         );
 
         handle.stop().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_stops_on_a_chain_mismatch_after_one_attempt() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let expected = H256::repeat_byte(1);
+        let connected = H256::repeat_byte(2);
+        let follower: Arc<dyn ChainFollower> = Arc::new(MismatchFollower {
+            attempts: attempts.clone(),
+            expected,
+            connected,
+        });
+        let mut handle = ChainStateCoordinator::new(
+            follower,
+            provider_account(),
+            Arc::new(ChainState::default()),
+            tokio::sync::broadcast::channel(16).0,
+        )
+        .start();
+
+        let fatal = tokio::time::timeout(Duration::from_secs(60), handle.fatal_error())
+            .await
+            .expect("the coordinator must stop on a chain mismatch")
+            .expect("the coordinator task must not panic");
+
+        assert!(matches!(
+            fatal,
+            ChainClientError::ChainMismatch { expected: e, connected: c }
+                if e == expected && c == connected
+        ));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 }
