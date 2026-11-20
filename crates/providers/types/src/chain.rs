@@ -44,8 +44,13 @@ pub enum ChainClientError {
     TxRejected { what: &'static str, reason: String },
 
     /// The connected chain is not the chain this node's store is bound to.
-    #[error("Connected chain {connected:?} is not the bound chain {expected:?}")]
-    ChainMismatch { expected: H256, connected: H256 },
+    #[error("Connected chain {connected:?} is not the chain {stored:?} recorded in the store")]
+    ChainMismatch {
+        /// Genesis hash recorded in the store.
+        stored: H256,
+        /// Genesis hash of the connected chain.
+        connected: H256,
+    },
 }
 
 impl ChainClientError {

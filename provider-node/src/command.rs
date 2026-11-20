@@ -18,6 +18,7 @@ use provider_auth::Authenticator;
 use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
 use provider_http::{create_router, ProviderDeps, ProviderState};
 use provider_storage::{ChainBinding, StorageBackend};
+use provider_types::ChainClientError;
 use sp_core::crypto::{AccountId32, Ss58Codec};
 use sp_core::H256;
 use std::net::SocketAddr;
@@ -60,7 +61,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // chain before any request reaches it.
     let handle = chain_connection::connect(&transport).await?;
     let genesis_hash = H256(handle.api.genesis_hash().0);
-    bind_storage_to_chain(&*storage, genesis_hash, &cli.storage.storage_path)?;
+    let storage_path = &cli.storage.storage_path;
+    bind_storage_to_chain(&*storage, genesis_hash, storage_path)?;
     chain_tx.send_replace(Some(handle));
 
     // The provider identity, resolved once: the sr25519 submission account
@@ -194,7 +196,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Either one ends the node instead of serving with stale chain state.
     tokio::select! {
         result = serve => result?,
-        error = chain_state_fatal_error(chain_state_handle) => return Err(error),
+        error = chain_state_fatal_error(chain_state_handle, storage_path) => return Err(error),
     }
 
     Ok(())
@@ -216,28 +218,45 @@ fn bind_storage_to_chain(
             Ok(())
         }
         Ok(ChainBinding::Matched) => Ok(()),
-        Err(provider_storage::Error::ChainMismatch { stored, connected }) => Err(format!(
-            "The data in {} belongs to chain {stored:?}, but the node is connected to chain \
-             {connected:?}. Connect to the chain that wrote this data, or use another \
-             --storage-path.",
-            storage_path.display()
-        )
-        .into()),
+        Ok(ChainBinding::Mismatch { stored }) => {
+            Err(chain_mismatch_message(stored, genesis_hash, storage_path).into())
+        }
         Err(e) => Err(e.into()),
     }
+}
+
+/// Operator message for a store that belongs to another chain.
+fn chain_mismatch_message(stored: H256, connected: H256, storage_path: &Path) -> String {
+    format!(
+        "The data in {} belongs to chain {stored:?}, but the node is connected to chain \
+         {connected:?}. Connect to the chain that wrote this data, or use another \
+         --storage-path.",
+        storage_path.display()
+    )
 }
 
 /// Resolves with the error that stopped the chain-state coordinator, or never
 /// when there is no coordinator.
 async fn chain_state_fatal_error(
     handle: Option<ChainStateCoordinatorHandle>,
+    storage_path: &Path,
 ) -> Box<dyn std::error::Error> {
     match handle {
         Some(handle) => match handle.fatal_error().await {
-            Ok(e) => e.into(),
+            Ok(e) => coordinator_error(e, storage_path),
             Err(e) => e.into(),
         },
         None => std::future::pending().await,
+    }
+}
+
+/// Error to report to the operator when the chain-state coordinator stops.
+fn coordinator_error(error: ChainClientError, storage_path: &Path) -> Box<dyn std::error::Error> {
+    match error {
+        ChainClientError::ChainMismatch { stored, connected } => {
+            chain_mismatch_message(stored, connected, storage_path).into()
+        }
+        e => e.into(),
     }
 }
 
@@ -375,5 +394,51 @@ async fn start_challenge_responder(
             tracing::error!("Failed to start challenge responder: {}", e);
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The error names both chains, the storage path and the flag to change it.
+    fn assert_operator_message(err: &str, stored: H256, connected: H256, storage_path: &Path) {
+        assert!(
+            err.contains(&format!("belongs to chain {stored:?}")),
+            "{err}"
+        );
+        assert!(
+            err.contains(&format!("connected to chain {connected:?}")),
+            "{err}"
+        );
+        assert!(err.contains(&storage_path.display().to_string()), "{err}");
+        assert!(err.contains("--storage-path"), "{err}");
+    }
+
+    #[test]
+    fn bind_storage_to_chain_rejects_another_chain_with_the_storage_path() {
+        let (storage, dir) = provider_storage::temp_rocksdb();
+        let stored = H256::repeat_byte(0xaa);
+        let connected = H256::repeat_byte(0xbb);
+
+        bind_storage_to_chain(&*storage, stored, dir.path()).unwrap();
+        bind_storage_to_chain(&*storage, stored, dir.path()).unwrap();
+        let err = bind_storage_to_chain(&*storage, connected, dir.path())
+            .unwrap_err()
+            .to_string();
+
+        assert_operator_message(&err, stored, connected, dir.path());
+    }
+
+    #[test]
+    fn coordinator_error_reports_a_chain_mismatch_with_the_storage_path() {
+        let stored = H256::repeat_byte(1);
+        let connected = H256::repeat_byte(2);
+        let path = Path::new("/var/lib/provider");
+
+        let err = coordinator_error(ChainClientError::ChainMismatch { stored, connected }, path)
+            .to_string();
+
+        assert_operator_message(&err, stored, connected, path);
     }
 }
