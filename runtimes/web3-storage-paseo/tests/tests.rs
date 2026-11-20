@@ -87,6 +87,7 @@ fn construct_extrinsic(
         // SetOrigin's substrate-signed path is a no-op; only the eth path
         // (built by `EthExtraImpl::get_eth_extension`) sets `is_eth_transaction`.
         pallet_revive::evm::tx_extension::SetOrigin::<Runtime>::default(),
+        pallet_storage_provider::CheckChallengeResponse::<Runtime>::new(),
     );
     let tx_ext: TxExtension =
         cumulus_pallet_weight_reclaim::StorageWeightReclaim::<Runtime, _>::from(inner);
@@ -599,6 +600,37 @@ fn should_update_provider_settings() {
 
         let provider = StorageProvider::providers(&who).expect("provider must be stored");
         assert_eq!(provider.settings, new_settings);
+    });
+}
+
+/// A response whose challenge is gone (answered, cancelled by the challenger
+/// or resolved) cannot succeed. The runtime rejects it as an invalid
+/// transaction instead of including it, so the provider that lost the race
+/// pays no fee.
+#[test]
+fn response_to_missing_challenge_is_rejected_without_fee() {
+    new_test_ext().execute_with(|| {
+        let account = Sr25519Keyring::Alice;
+        let who: AccountId = account.to_account_id();
+        let _ = Balances::deposit_creating(&who, 10 * UNIT);
+        let balance_before = Balances::free_balance(&who);
+
+        let result = construct_and_apply_extrinsic(
+            Some(account.pair()),
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::respond_to_challenge {
+                challenge_id: pallet_storage_provider::ChallengeId {
+                    deadline: 1,
+                    index: 0,
+                },
+                response: pallet_storage_provider::ChallengeResponse::Superseded,
+            }),
+        );
+
+        assert_eq!(
+            result,
+            Err(transaction_validity::InvalidTransaction::Stale.into())
+        );
+        assert_eq!(Balances::free_balance(&who), balance_before);
     });
 }
 

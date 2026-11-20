@@ -57,9 +57,6 @@ use sp_version::RuntimeVersion;
 #[cfg(feature = "runtime-benchmarks")]
 use xcm_config::AssetHubLocation;
 
-#[cfg(feature = "std")]
-use sp_version::NativeVersion;
-
 pub use frame_support::weights::constants::{
     BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight, WEIGHT_REF_TIME_PER_SECOND,
 };
@@ -133,6 +130,7 @@ pub type TxExtension = cumulus_pallet_weight_reclaim::StorageWeightReclaim<
         frame_metadata_hash_extension::CheckMetadataHash<Runtime>,
         // lets the runtime accept Ethereum-signed transactions via `pallet_revive::eth_transact`
         pallet_revive::evm::tx_extension::SetOrigin<Runtime>,
+        pallet_storage_provider::CheckChallengeResponse<Runtime>,
     ),
 >;
 
@@ -177,7 +175,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
-    spec_version: 4_019,
+    spec_version: 5_001,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     // Bumped whenever call encoding changes, so offline signers and stale-metadata
@@ -200,15 +198,6 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     transaction_version: 8,
     system_version: 1,
 };
-
-/// The version information used to identify this runtime when compiled natively.
-#[cfg(feature = "std")]
-pub fn native_version() -> NativeVersion {
-    NativeVersion {
-        runtime_version: VERSION,
-        can_author_with: Default::default(),
-    }
-}
 
 /// Aura consensus hook
 type ConsensusHook = cumulus_pallet_aura_ext::FixedVelocityConsensusHook<

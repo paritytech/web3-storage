@@ -83,6 +83,7 @@ impl EthExtra for EthExtraImpl {
             pallet_transaction_payment::ChargeTransactionPayment::<Runtime>::from(tip),
             frame_metadata_hash_extension::CheckMetadataHash::<Runtime>::new(false),
             pallet_revive::evm::tx_extension::SetOrigin::<Runtime>::new_from_eth_transaction(),
+            pallet_storage_provider::CheckChallengeResponse::<Runtime>::new(),
         )
             .into()
     }

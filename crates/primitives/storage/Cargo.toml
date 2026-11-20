@@ -8,10 +8,9 @@ repository.workspace = true
 description = "Shared primitives for scalable Web3 storage"
 
 [dependencies]
-bitvec = { workspace = true }
-codec = { workspace = true, features = ["bit-vec"] }
+codec = { workspace = true }
 polkadot-ckb-merkle-mountain-range = { workspace = true }
-scale-info = { workspace = true, features = ["bit-vec"] }
+scale-info = { workspace = true }
 primitive-types = { workspace = true, features = ["codec", "scale-info"] }
 sp-crypto-hashing = { workspace = true }
 serde = { workspace = true, optional = true }
@@ -25,7 +24,6 @@ sp-io = { workspace = true }
 [features]
 default = ["std"]
 std = [
-	"bitvec/std",
 	"codec/std",
 	"polkadot-ckb-merkle-mountain-range/std",
 	"primitive-types/std",
@@ -34,7 +32,7 @@ std = [
 	"sp-crypto-hashing/std",
 	"sp-io/std",
 ]
-serde = ["bitvec/serde", "dep:serde", "primitive-types/serde_no_std"]
+serde = ["dep:serde", "primitive-types/serde_no_std"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(substrate_runtime)'] }

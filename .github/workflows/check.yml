@@ -143,7 +143,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           shared-key: "web3-storage-cache-check"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' }}
@@ -170,7 +170,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           shared-key: "web3-storage-cache-clippy"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' }}
@@ -196,7 +196,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           shared-key: "web3-storage-cache-tests"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' }}
@@ -221,7 +221,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           shared-key: "web3-storage-cache-benchmarks"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' }}

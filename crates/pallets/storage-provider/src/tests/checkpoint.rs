@@ -252,7 +252,7 @@ fn zero_min_providers_in_state_still_needs_one_signature() {
 
         // Nor can it freeze a snapshot no provider signed.
         Buckets::<Test>::mutate(bucket_id, |b| {
-            b.as_mut().unwrap().snapshot = Some(storage_primitives::BucketSnapshot {
+            b.as_mut().unwrap().snapshot = Some(BucketSnapshot {
                 commitment: Commitment {
                     mmr_root: H256::repeat_byte(0xAA),
                     start_seq: 0,
