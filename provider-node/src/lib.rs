@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! # Storage Provider Node
+//!
+//! Off-chain provider node for scalable Web3 storage.
+//!
+//! The HTTP API (uploads, downloads, MMR commits, replica sync) lives in the
+//! `provider-http` crate. This crate runs it together with the chain-facing
+//! coordinators.
+
+pub(crate) mod chain_connection;
+pub(crate) mod chain_follower;
+pub mod challenge_proofs;
+pub mod cli;
+pub mod command;
+pub(crate) mod event_decoding;
+pub mod membership;
+pub(crate) mod subxt_client;
+
+pub use challenge_proofs::StorageProofSource;
+pub use provider_challenge::{
+    self as challenge_responder, ChallengeChainClient, ChallengeError, ChallengeProofSource,
+    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle, ChallengeResponse,
+    ChallengeResponseResult, DetectedChallenge, ProofTarget, ResponderCommand,
+};
+/// The chain-state coordinator lives in the `provider-coordinator` crate; keep
+/// the old module path working for existing consumers.
+pub use provider_coordinator as chain_state_coordinator;
+pub use provider_coordinator::{
+    refresh_if_relevant_event, refresh_provider_state, sync_constants, ChainState,
+    ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle, PalletConstants,
+};
+pub use provider_replica::{
+    ReplicaSync, ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    ReplicaSyncCoordinatorHandle, SignedSyncRoots, SyncCommand, SyncCoordinatorStatus, SyncDuty,
+    SyncResult, SyncRoots, SyncRootsSigner,
+};

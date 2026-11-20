@@ -1,0 +1,1096 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Subxt-based production chain client shared by all coordinators.
+//!
+//! A single [`SubxtChainClient`] holds one [`subxt::OnlineClient`] connection
+//! and one signing key, and implements every coordinator's chain-client trait
+//! (`ReplicaSyncChainClient`, `ChallengeChainClient`). Coordinators still
+//! depend on the narrow trait they need, so per-trait mocks keep working; the
+//! production wiring just hands each one a clone of the same client (a cheap
+//! `OnlineClient`/`Keypair` clone that shares the underlying WebSocket
+//! connection).
+
+use crate::chain_connection::{self, ChainWatch};
+use crate::challenge_responder::{
+    ChallengeChainClient, ChallengeError, ChallengeResponse, DetectedChallenge,
+};
+use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
+use provider_replica::{ChainClientError, ReplicaSyncChainClient, SignedSyncRoots};
+use sp_core::crypto::Ss58Codec;
+use sp_core::H256;
+use std::collections::HashSet;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::Duration;
+use storage_primitives::{BucketId, ChunkLocation, Commitment};
+use storage_subxt::api::runtime_types::bounded_collections::bounded_vec::BoundedVec;
+use storage_subxt::api::runtime_types::pallet_storage_provider::types::{
+    Bucket as OnChainBucket, ChallengeId as RuntimeChallengeId,
+    ChallengeResponse as RuntimeChallengeResponse, ProviderInfo as OnChainProviderInfo,
+    ProviderRole,
+};
+use storage_subxt::api::runtime_types::sp_runtime::MultiSignature as RuntimeMultiSignature;
+use storage_subxt::api::runtime_types::storage_primitives::{
+    mmr::{MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof},
+    ChunkLocation as RuntimeChunkLocation, Commitment as RuntimeCommitment,
+};
+use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};
+
+/// Upper bound on one submit-and-watch pass. Generous next to normal
+/// finalization (a few blocks) so a slow chain isn't mistaken for a stuck one,
+/// but it keeps [`SubxtChainClient::submit_lock`] — held until finalization —
+/// from being wedged forever by a watch that neither resolves nor errors.
+const SUBMIT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Outcome of one submit-and-watch pass (see
+/// [`SubxtChainClient::submit_and_finalize`]).
+enum Attempt {
+    /// The transaction landed, or a duplicate rejection proved an earlier
+    /// attempt did. Carries the finalized block hash, except on the
+    /// duplicate-rejection path: there we only learn that some earlier
+    /// submission landed, never which block took it.
+    Landed(Option<H256>),
+    /// Transport-level failure: the transaction may or may not have landed, so
+    /// resubmitting is safe only because a duplicate rejection counts as
+    /// success.
+    Retryable(ChainClientError),
+    /// The chain rejected the call itself; resubmitting would fail identically.
+    Rejected(ChainClientError),
+}
+
+/// Production implementation that talks to the chain via subxt.
+///
+/// Holds a receiver of the connection watch channel (owned by the chain-state
+/// coordinator) plus this provider's signing key. Cloning is cheap, so every
+/// background coordinator gets its own copy; each operation borrows the
+/// current connection, which survives follower reconnects transparently.
+#[derive(Clone)]
+pub struct SubxtChainClient {
+    chain_rx: ChainWatch,
+    signer: subxt_signer::sr25519::Keypair,
+    /// Serializes transaction submission across all clones. subxt 0.50 reads
+    /// the nonce from state at the anchored finalized block (not the pool), so
+    /// two concurrent submissions from the same signer would pick the same
+    /// nonce and one would be rejected. Held until finalization for the same
+    /// reason: the nonce only advances once the first transaction lands.
+    // ponytail: per-node serialization; a real nonce manager if duty-tx volume ever grows.
+    submit_lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+/// Turning the configured seed into a keypair is all [`SubxtChainClient::new`]
+/// can fail at, and it happens once at startup: `command.rs` logs it and runs
+/// without a chain client. It never reaches a request, so it is deliberately
+/// not an HTTP error.
+#[derive(Debug, thiserror::Error)]
+pub enum SignerSetupError {
+    /// The `--keyfile` contents are not a valid seed URI.
+    #[error("invalid seed URI: {0}")]
+    SecretUri(#[from] subxt_signer::SecretUriError),
+    /// The seed parsed but no sr25519 keypair could be derived from it.
+    #[error("cannot build keypair from seed: {0}")]
+    Keypair(#[from] subxt_signer::sr25519::Error),
+}
+
+impl SubxtChainClient {
+    /// Create the signing chain client from the connection watch channel and
+    /// the provider's seed URI (e.g. `//Alice` or a mnemonic), which
+    /// reproduces the provider's registered account — the identity every
+    /// on-chain action must be signed by.
+    pub fn new(chain_rx: ChainWatch, seed: &str) -> Result<Self, SignerSetupError> {
+        let uri: subxt_signer::SecretUri = seed.parse()?;
+        let signer = subxt_signer::sr25519::Keypair::from_uri(&uri)?;
+
+        tracing::info!(
+            "Chain client signing as {}",
+            sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
+        );
+
+        Ok(Self {
+            chain_rx,
+            signer,
+            submit_lock: Arc::new(tokio::sync::Mutex::new(())),
+        })
+    }
+
+    /// The current live connection, or an error while the chain has never
+    /// been reached yet.
+    fn api(
+        &self,
+    ) -> Result<subxt::OnlineClient<subxt::PolkadotConfig>, chain_connection::NotConnected> {
+        chain_connection::current_api(&self.chain_rx)
+    }
+
+    /// The block handle every chain read starts from: the live connection,
+    /// resolved to the current block. Both steps report the same failure, so
+    /// the mapping lives here rather than at each call site.
+    async fn at_current_block(
+        &self,
+    ) -> Result<
+        subxt::client::ClientAtBlock<
+            subxt::PolkadotConfig,
+            subxt::client::OnlineClientAtBlockImpl<subxt::PolkadotConfig>,
+        >,
+        ChainClientError,
+    > {
+        self.api()
+            .map_err(|e| ChainClientError::query("chain connection", e))?
+            .at_current_block()
+            .await
+            .map_err(|e| ChainClientError::query("current block", e))
+    }
+
+    /// Get the current anchor block (the clock every on-chain duration is
+    /// measured against), read at the latest finalized state via the pallet's
+    /// runtime API.
+    ///
+    /// Backs `get_current_block` on the replica-sync trait.
+    async fn current_anchor_block(&self) -> Result<u64, ChainClientError> {
+        let at = self.at_current_block().await?;
+        Ok(u64::from(fetch_current_anchor_block(&at).await?))
+    }
+
+    /// Whether the failure is the chain rejecting the call itself (a
+    /// dispatch error decoded from `System::ExtrinsicFailed`), as opposed to
+    /// the watch or transport dying before a verdict was seen.
+    fn is_dispatch_failure(e: &TransactionFinalizedSuccessError) -> bool {
+        matches!(
+            e,
+            TransactionFinalizedSuccessError::SuccessError(
+                TransactionEventsError::ExtrinsicFailed(_)
+            )
+        )
+    }
+
+    /// Whether the dispatch error is `StorageProvider::SyncTooFrequent`:
+    /// `confirm_replica_sync` rejects a second sync within
+    /// `min_sync_interval`, so on a retry it proves the first attempt landed
+    /// and the duty is complete.
+    fn is_already_done(e: &TransactionFinalizedSuccessError) -> bool {
+        let TransactionFinalizedSuccessError::SuccessError(
+            TransactionEventsError::ExtrinsicFailed(DispatchError::Module(module_error)),
+        ) = e
+        else {
+            return false;
+        };
+        let Ok(details) = module_error.details() else {
+            return false;
+        };
+        details.pallet.name() == "StorageProvider" && details.variant.name == "SyncTooFrequent"
+    }
+
+    /// Sign, submit, and wait for finalized success, retrying once on
+    /// transport-level failures (dropped socket, backend resubscription
+    /// killing the transaction watch).
+    ///
+    /// On the retry, a duplicate rejection ([`Self::is_already_done`]) is
+    /// treated as success: it means the first submission actually landed and
+    /// the duty is complete.
+    ///
+    /// Returns the finalized block hash, or `None` when success was inferred
+    /// from a duplicate rejection rather than observed directly.
+    async fn submit_and_finalize<C: subxt::tx::Payload>(
+        &self,
+        tx: &C,
+        what: &'static str,
+    ) -> Result<Option<H256>, ChainClientError> {
+        const RETRY_DELAY: Duration = Duration::from_secs(6);
+
+        // One transaction at a time across every clone (see `submit_lock`).
+        let _guard = self.submit_lock.lock().await;
+
+        let first_failure = match self.try_submit(tx, what, false).await {
+            Attempt::Landed(block_hash) => return Ok(block_hash),
+            Attempt::Rejected(e) => return Err(e),
+            Attempt::Retryable(e) => e,
+        };
+
+        tracing::warn!("{what}: {first_failure}; retrying once");
+        tokio::time::sleep(RETRY_DELAY).await;
+
+        match self.try_submit(tx, what, true).await {
+            Attempt::Landed(block_hash) => Ok(block_hash),
+            Attempt::Retryable(e) | Attempt::Rejected(e) => Err(e),
+        }
+    }
+
+    /// One submit-and-watch pass, bounded by [`SUBMIT_TIMEOUT`]. `retrying`
+    /// marks the second attempt, where a duplicate rejection proves the first
+    /// one landed.
+    ///
+    /// A timed-out pass is [`Attempt::Retryable`], so a transaction that did
+    /// land while the watch hung is still recognised by the duplicate-rejection
+    /// path on the resubmit. With both passes bounded, the total `submit_lock`
+    /// hold is at most `2 * SUBMIT_TIMEOUT + RETRY_DELAY`.
+    async fn try_submit<C: subxt::tx::Payload>(
+        &self,
+        tx: &C,
+        what: &'static str,
+        retrying: bool,
+    ) -> Attempt {
+        match tokio::time::timeout(SUBMIT_TIMEOUT, self.submit_once(tx, what, retrying)).await {
+            Ok(attempt) => attempt,
+            Err(_) => Attempt::Retryable(ChainClientError::tx_submit(
+                what,
+                format!("not finalized within {}s", SUBMIT_TIMEOUT.as_secs()),
+            )),
+        }
+    }
+
+    /// The single unbounded submit-and-watch pass that [`Self::try_submit`]
+    /// puts a deadline on.
+    async fn submit_once<C: subxt::tx::Payload>(
+        &self,
+        tx: &C,
+        what: &'static str,
+        retrying: bool,
+    ) -> Attempt {
+        let submitted = async {
+            self.at_current_block()
+                .await?
+                .transactions()
+                .sign_and_submit_then_watch_default(tx, &self.signer)
+                .await
+                .map_err(|e| ChainClientError::tx_submit(what, e))
+        }
+        .await;
+
+        let progress = match submitted {
+            Ok(progress) => progress,
+            Err(e) => return Attempt::Retryable(e),
+        };
+
+        // `wait_for_finalized_success` is split into its two stages so the block
+        // hash is available before the dispatch outcome is known; both stage
+        // errors convert into the combined type the classifiers below match on.
+        let finalized = async {
+            let in_block = progress.wait_for_finalized().await?;
+            let block_hash = in_block.block_hash();
+            in_block.wait_for_success().await?;
+            Ok::<_, TransactionFinalizedSuccessError>(block_hash)
+        }
+        .await;
+
+        match finalized {
+            Ok(block_hash) => Attempt::Landed(Some(H256::from(block_hash.0))),
+            Err(e) if retrying && Self::is_already_done(&e) => {
+                tracing::info!("{what}: duplicate rejected on retry ({e}); first attempt landed");
+                Attempt::Landed(None)
+            }
+            // Non-dispatch failure (e.g. the watch subscription died): the tx
+            // may or may not have landed, so resubmit and let the duplicate
+            // classification above decide.
+            Err(e) if !Self::is_dispatch_failure(&e) => Attempt::Retryable(
+                ChainClientError::tx_submit(what, format!("tx watch failed: {e}")),
+            ),
+            Err(e) => Attempt::Rejected(ChainClientError::tx_rejected(what, e)),
+        }
+    }
+
+    /// Convert a multiaddr string to an HTTP endpoint.
+    fn multiaddr_to_http_endpoint(multiaddr: &str) -> String {
+        let parts: Vec<&str> = multiaddr.split('/').filter(|s| !s.is_empty()).collect();
+
+        let mut host = "127.0.0.1".to_string();
+        let mut port = "3333".to_string();
+
+        let mut i = 0;
+        while i < parts.len() {
+            match parts[i] {
+                "ip4" | "ip6" => {
+                    if i + 1 < parts.len() {
+                        host = parts[i + 1].to_string();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "dns4" | "dns6" | "dns" => {
+                    if i + 1 < parts.len() {
+                        host = parts[i + 1].to_string();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "tcp" => {
+                    if i + 1 < parts.len() {
+                        port = parts[i + 1].to_string();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+
+        format!("http://{host}:{port}")
+    }
+
+    /// Convert a bind address (e.g. "0.0.0.0:3333") to a multiaddr string
+    /// (e.g. "/ip4/127.0.0.1/tcp/3333").
+    fn bind_addr_to_multiaddr(bind_addr: &str) -> String {
+        let parts: Vec<&str> = bind_addr.split(':').collect();
+        let (host, port) = if parts.len() == 2 {
+            (parts[0], parts[1])
+        } else {
+            ("127.0.0.1", "3333")
+        };
+        // 0.0.0.0 isn't useful as a client-facing address
+        let host = if host == "0.0.0.0" { "127.0.0.1" } else { host };
+        format!("/ip4/{host}/tcp/{port}")
+    }
+
+    /// Ensure the provider's on-chain multiaddr matches the address it
+    /// advertises.
+    ///
+    /// The advertised value is `public_multiaddr` when set (hosted deployments
+    /// behind a reverse proxy), otherwise one derived from `bind_addr` (local
+    /// dev). If the provider is registered and its recorded multiaddr differs,
+    /// submit an `update_provider_multiaddr` transaction. Reuses this client's
+    /// existing connection and signer rather than opening a new one.
+    pub async fn sync_multiaddr(
+        &self,
+        provider_id: &str,
+        bind_addr: &str,
+        public_multiaddr: Option<&str>,
+    ) {
+        let expected_multiaddr = match public_multiaddr {
+            Some(addr) => addr.to_string(),
+            None => Self::bind_addr_to_multiaddr(bind_addr),
+        };
+
+        // Read current on-chain provider info
+        let our_account: sp_core::crypto::AccountId32 =
+            match sp_core::crypto::Ss58Codec::from_ss58check(provider_id) {
+                Ok(a) => a,
+                Err(_) => {
+                    tracing::warn!("Invalid provider SS58 address, skipping multiaddr sync");
+                    return;
+                }
+            };
+        let storage_query = storage_subxt::api::storage()
+            .storage_provider()
+            .providers()
+            .unvalidated();
+
+        let api = match self.api() {
+            Ok(api) => api,
+            Err(e) => {
+                tracing::warn!("Failed to query storage for multiaddr sync: {}", e);
+                return;
+            }
+        };
+        let at = match api.at_current_block().await {
+            Ok(at) => at,
+            Err(e) => {
+                tracing::warn!("Failed to query storage for multiaddr sync: {}", e);
+                return;
+            }
+        };
+        let result = at
+            .storage()
+            .try_fetch(storage_query, (subxt_account(&our_account),))
+            .await;
+
+        let provider_value = match result {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                tracing::info!("Provider not registered on chain yet, skipping multiaddr sync");
+                return;
+            }
+            Err(e) => {
+                tracing::warn!("Failed to fetch provider info: {}", e);
+                return;
+            }
+        };
+
+        let provider = match provider_value.decode() {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Could not decode provider value: {}, skipping sync", e);
+                return;
+            }
+        };
+        let current = String::from_utf8_lossy(&provider.multiaddr.0).to_string();
+
+        if provider.multiaddr.0 == expected_multiaddr.as_bytes() {
+            tracing::info!(
+                "On-chain multiaddr matches advertised address: {}",
+                expected_multiaddr
+            );
+            return;
+        }
+
+        tracing::info!(
+            "On-chain multiaddr mismatch: chain=\"{}\" actual=\"{}\", updating...",
+            current,
+            expected_multiaddr
+        );
+
+        let tx = storage_subxt::api::tx()
+            .storage_provider()
+            .update_provider_multiaddr(BoundedVec(expected_multiaddr.as_bytes().to_vec()));
+
+        match self
+            .submit_and_finalize(&tx, "update_provider_multiaddr")
+            .await
+        {
+            Ok(_) => tracing::info!("Multiaddr updated on-chain to: {}", expected_multiaddr),
+            Err(e) => tracing::error!("Multiaddr update tx failed: {}", e),
+        }
+    }
+
+    /// Resolve each account to its HTTP endpoint from its on-chain multiaddr.
+    /// Skips accounts with no registration or an empty multiaddr.
+    async fn endpoints_for_accounts(
+        &self,
+        accounts: Vec<subxt::utils::AccountId32>,
+    ) -> Result<Vec<String>, ChainClientError> {
+        if accounts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let at = self.at_current_block().await?;
+        let mut endpoints = Vec::new();
+        for account in accounts {
+            let providers = storage_subxt::api::storage()
+                .storage_provider()
+                .providers()
+                .unvalidated();
+            let Some(value) = at
+                .storage()
+                .try_fetch(providers, (account,))
+                .await
+                .map_err(|e| ChainClientError::query("provider", e))?
+            else {
+                continue;
+            };
+            let provider = value
+                .decode()
+                .map_err(|e| ChainClientError::decode("provider", e))?;
+            endpoints.extend(provider_endpoint(&provider));
+        }
+
+        Ok(endpoints)
+    }
+
+    /// The `StorageProvider::Buckets` entry for `bucket_id`, or `None` when the
+    /// bucket does not exist.
+    async fn fetch_bucket(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<OnChainBucket>, ChainClientError> {
+        let buckets = storage_subxt::api::storage()
+            .storage_provider()
+            .buckets()
+            .unvalidated();
+        self.at_current_block()
+            .await?
+            .storage()
+            .try_fetch(buckets, (bucket_id,))
+            .await
+            .map_err(|e| ChainClientError::query("bucket", e))?
+            .map(|value| value.decode())
+            .transpose()
+            .map_err(|e| ChainClientError::decode("bucket", e))
+    }
+}
+
+#[async_trait::async_trait]
+impl ReplicaSyncChainClient for SubxtChainClient {
+    async fn get_current_block(&self) -> Result<u64, ChainClientError> {
+        self.current_anchor_block().await
+    }
+
+    /// This provider's replica agreements for the buckets it stores locally.
+    ///
+    /// Calls the pallet's `StorageProviderApi::provider_agreements` runtime
+    /// API, which filters the `StorageAgreements` map to this provider
+    /// on-chain, then keeps the `Replica` roles whose bucket appears in
+    /// `local_buckets` — syncing a bucket with no local storage behind it has
+    /// nothing to sync into.
+    async fn fetch_replica_agreements(
+        &self,
+        provider_account: &str,
+        local_buckets: Vec<BucketId>,
+    ) -> Result<Vec<ReplicaAgreementInfo>, ChainClientError> {
+        // Accepts both SS58 and 0x-prefixed hex, the two forms `--provider-id`
+        // is given in.
+        let account = sp_core::crypto::AccountId32::from_str(provider_account)
+            .map_err(|e| ChainClientError::invalid_account(provider_account, e))?;
+
+        let payload = storage_subxt::api::runtime_apis()
+            .storage_provider_api()
+            .provider_agreements(subxt_account(&account))
+            .unvalidated();
+
+        let agreements = self
+            .at_current_block()
+            .await?
+            .runtime_apis()
+            .call(payload)
+            .await
+            .map_err(|e| ChainClientError::query("provider agreements", e))?;
+
+        let local_buckets: HashSet<BucketId> = local_buckets.into_iter().collect();
+
+        Ok(agreements
+            .into_iter()
+            .filter(|agreement| local_buckets.contains(&agreement.bucket_id))
+            .filter_map(replica_agreement_info)
+            .collect())
+    }
+
+    async fn fetch_bucket_snapshot(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<BucketSnapshot, ChainClientError> {
+        Ok(bucket_snapshot(self.fetch_bucket(bucket_id).await?))
+    }
+
+    async fn fetch_primary_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError> {
+        let primaries = self
+            .fetch_bucket(bucket_id)
+            .await?
+            .map(|bucket| bucket.primary_providers.0)
+            .unwrap_or_default();
+        self.endpoints_for_accounts(primaries).await
+    }
+
+    async fn fetch_replica_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, ChainClientError> {
+        let provider_account = self.signer.public_key().0.to_vec();
+
+        let payload = storage_subxt::api::runtime_apis()
+            .storage_provider_api()
+            .bucket_agreements(bucket_id)
+            .unvalidated();
+
+        let agreements = self
+            .at_current_block()
+            .await?
+            .runtime_apis()
+            .call(payload)
+            .await
+            .map_err(|e| ChainClientError::query("bucket agreements", e))?;
+
+        let accounts: Vec<subxt::utils::AccountId32> = agreements
+            .into_iter()
+            .filter(|agreement| matches!(agreement.role, ProviderRole::Replica { .. }))
+            .map(|agreement| agreement.provider)
+            .filter(|provider| provider != &provider_account)
+            .filter_map(|provider| <[u8; 32]>::try_from(provider).ok())
+            .map(subxt::utils::AccountId32)
+            .collect();
+
+        self.endpoints_for_accounts(accounts).await
+    }
+
+    async fn submit_sync_confirmation(
+        &self,
+        bucket_id: BucketId,
+        attestation: SignedSyncRoots,
+    ) -> Result<(u8, u128), ChainClientError> {
+        let tx = storage_subxt::api::tx()
+            .storage_provider()
+            .confirm_replica_sync(
+                bucket_id,
+                attestation.roots.map(|root| root.map(to_runtime_hash)),
+                to_runtime_signature(&attestation.signature),
+            );
+
+        tracing::info!(
+            "Submitting confirm_replica_sync for bucket {} with roots {:?}",
+            bucket_id,
+            attestation.roots
+        );
+
+        self.submit_and_finalize(&tx, "confirm_replica_sync")
+            .await?;
+
+        tracing::info!(
+            "confirm_replica_sync submitted successfully for bucket {}",
+            bucket_id
+        );
+
+        Ok((0, 0)) // Position 0, payment extracted from events in production
+    }
+}
+
+/// The generated `Challenge` value held in `StorageProvider::Challenges`.
+type OnChainChallenge = storage_subxt::api::storage_provider::storage::challenges::Output;
+
+/// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
+/// the block every on-chain duration (timeouts, expiries, `valid_until`) is
+/// measured against. Reading it through the runtime API keeps the
+/// provider agnostic to whether the anchor is a relay, parachain, or other
+/// block number: the pallet decides via its `BlockNumberProvider`.
+pub(crate) async fn fetch_current_anchor_block<C>(
+    at: &subxt::client::ClientAtBlock<subxt::PolkadotConfig, C>,
+) -> Result<u32, ChainClientError>
+where
+    C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
+{
+    at.runtime_apis()
+        .call(
+            storage_subxt::api::runtime_apis()
+                .storage_provider_api()
+                .current_anchor_block()
+                .unvalidated(),
+        )
+        .await
+        .map_err(|e| ChainClientError::query("current anchor block", e))
+}
+
+/// Convert an account from the `sp_runtime` representation the node uses into
+/// the `subxt` one the generated bindings expect. Same 32 bytes either way.
+pub(crate) fn subxt_account(who: &sp_runtime::AccountId32) -> subxt::utils::AccountId32 {
+    subxt::utils::AccountId32(*<sp_runtime::AccountId32 as AsRef<[u8; 32]>>::as_ref(who))
+}
+
+/// `storage-primitives` and the generated bindings carry structurally identical
+/// proof types; only the `H256` differs (`sp_core` vs `subxt::utils`).
+fn to_runtime_hash(hash: H256) -> subxt::utils::H256 {
+    subxt::utils::H256(hash.0)
+}
+
+fn to_runtime_mmr_proof(mmr_proof: storage_primitives::MmrProof) -> RuntimeMmrProof {
+    RuntimeMmrProof {
+        leaf: RuntimeMmrLeaf {
+            leaf_version: mmr_proof.leaf.leaf_version,
+            data_root: to_runtime_hash(mmr_proof.leaf.data_root),
+            data_size: mmr_proof.leaf.data_size,
+            total_size: mmr_proof.leaf.total_size,
+        },
+        items: mmr_proof.items.into_iter().map(to_runtime_hash).collect(),
+    }
+}
+
+fn commitment(commitment: RuntimeCommitment) -> Commitment {
+    Commitment {
+        mmr_root: H256::from(commitment.mmr_root.0),
+        start_seq: commitment.start_seq,
+        leaf_count: commitment.leaf_count,
+    }
+}
+
+fn chunk_location(target: RuntimeChunkLocation) -> ChunkLocation {
+    ChunkLocation {
+        leaf_index: target.leaf_index,
+        chunk_index: target.chunk_index,
+    }
+}
+
+/// Convert a `MultiSignature` into the generated runtime type. Keeps the
+/// signature scheme, which the pallet checks against the registered key.
+fn to_runtime_signature(signature: &sp_runtime::MultiSignature) -> RuntimeMultiSignature {
+    use sp_runtime::MultiSignature as MS;
+    match signature {
+        MS::Ed25519(s) => RuntimeMultiSignature::Ed25519(s.0),
+        MS::Sr25519(s) => RuntimeMultiSignature::Sr25519(s.0),
+        MS::Ecdsa(s) => RuntimeMultiSignature::Ecdsa(s.0),
+        MS::Eth(s) => RuntimeMultiSignature::Eth(s.0),
+    }
+}
+
+/// Map an on-chain `Challenge` at `(deadline, index)` into the responder's
+/// `DetectedChallenge`, or `None` when it targets a different provider.
+fn detected_challenge(
+    deadline: u32,
+    index: u16,
+    challenge: OnChainChallenge,
+    our_bytes: &[u8; 32],
+) -> Option<DetectedChallenge> {
+    if &challenge.provider.0 != our_bytes {
+        return None;
+    }
+
+    Some(DetectedChallenge {
+        bucket_id: challenge.bucket_id,
+        deadline,
+        index,
+        commitment: commitment(challenge.commitment),
+        target: chunk_location(challenge.target),
+    })
+}
+
+/// Latest checkpoint of a bucket, or the zero snapshot when the bucket does
+/// not exist or has no checkpoint.
+fn bucket_snapshot(bucket: Option<OnChainBucket>) -> BucketSnapshot {
+    match bucket.and_then(|bucket| bucket.snapshot) {
+        Some(snapshot) => BucketSnapshot {
+            mmr_root: H256::from(snapshot.commitment.mmr_root.0),
+            leaf_count: snapshot.commitment.leaf_count,
+        },
+        None => BucketSnapshot {
+            mmr_root: H256::zero(),
+            leaf_count: 0,
+        },
+    }
+}
+
+/// HTTP endpoint a provider serves from, or `None` when it has no multiaddr.
+fn provider_endpoint(provider: &OnChainProviderInfo) -> Option<String> {
+    if provider.multiaddr.0.is_empty() {
+        return None;
+    }
+    Some(SubxtChainClient::multiaddr_to_http_endpoint(
+        &String::from_utf8_lossy(&provider.multiaddr.0),
+    ))
+}
+
+/// One agreement as returned by the `provider_agreements` runtime API.
+type AgreementFromRuntimeApi =
+    storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api::AgreementResponse;
+
+/// Narrow a `provider_agreements` entry to the replica-sync view of it, or
+/// `None` for a primary agreement — the coordinator only has duties for
+/// replicas.
+fn replica_agreement_info(agreement: AgreementFromRuntimeApi) -> Option<ReplicaAgreementInfo> {
+    let ProviderRole::Replica {
+        sync_balance,
+        sync_price,
+        min_sync_interval,
+        last_sync,
+    } = agreement.role
+    else {
+        return None;
+    };
+
+    Some(ReplicaAgreementInfo {
+        bucket_id: agreement.bucket_id,
+        sync_balance,
+        sync_price,
+        min_sync_interval: u64::from(min_sync_interval),
+        last_sync: last_sync.map(|record| {
+            (
+                H256::from(record.commitment.mmr_root.0),
+                u64::from(record.block),
+            )
+        }),
+    })
+}
+
+/// One challenge as returned by the `provider_challenges` runtime API.
+type ChallengeFromRuntimeApi =
+    storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api::ChallengeResponse;
+
+/// Map a `provider_challenges` entry into a `DetectedChallenge`. No provider
+/// check here: the runtime API filtered on-chain.
+fn detected_from_response(challenge: ChallengeFromRuntimeApi) -> DetectedChallenge {
+    DetectedChallenge {
+        bucket_id: challenge.bucket_id,
+        deadline: challenge.deadline,
+        index: challenge.index,
+        commitment: commitment(challenge.commitment),
+        target: chunk_location(challenge.target),
+    }
+}
+
+#[async_trait::async_trait]
+impl ChallengeChainClient for SubxtChainClient {
+    /// Poll for active challenges against this provider.
+    ///
+    /// Calls the pallet's `StorageProviderApi::provider_challenges` runtime API,
+    /// which filters the `Challenges` map to this provider on-chain. That makes
+    /// this one round trip returning only actionable challenges, rather than an
+    /// iteration over every unexpired deadline filtered client-side.
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, ChallengeError> {
+        let payload = storage_subxt::api::runtime_apis()
+            .storage_provider_api()
+            .provider_challenges(subxt::utils::AccountId32(self.signer.public_key().0))
+            .unvalidated();
+
+        let challenges = self
+            .at_current_block()
+            .await
+            .map_err(|e| ChallengeError::Chain {
+                reason: e.to_string(),
+            })?
+            .runtime_apis()
+            .call(payload)
+            .await
+            .map_err(|e| ChallengeError::Chain {
+                reason: format!("provider_challenges runtime API call failed: {e}"),
+            })?;
+
+        Ok(challenges.into_iter().map(detected_from_response).collect())
+    }
+
+    /// Point-read a single challenge at `(deadline, index)`.
+    ///
+    /// Backs the event-driven path: a `ChallengeCreated` event carries the
+    /// challenge id but not the proof parameters, so the responder fetches
+    /// the full `Challenge` value here. Returns `None` when the entry is
+    /// missing (already responded / resolved) or targets another provider.
+    async fn fetch_challenge(
+        &self,
+        deadline: u32,
+        index: u16,
+    ) -> Result<Option<DetectedChallenge>, ChallengeError> {
+        let our_bytes: [u8; 32] = self.signer.public_key().0;
+
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .challenges()
+            .unvalidated();
+        let at = self
+            .at_current_block()
+            .await
+            .map_err(|e| ChallengeError::Chain {
+                reason: e.to_string(),
+            })?;
+
+        let Some(value) = at
+            .storage()
+            .try_fetch(storage_address, (deadline, index))
+            .await
+            .map_err(|e| ChallengeError::Chain {
+                reason: format!("Failed to fetch challenge: {e}"),
+            })?
+        else {
+            return Ok(None);
+        };
+
+        // The chain answered, but the value it returned couldn't be decoded.
+        let challenge = value.decode().map_err(|e| ChallengeError::Chain {
+            reason: format!("Failed to decode challenge at {deadline}/{index}: {e}"),
+        })?;
+
+        Ok(detected_challenge(deadline, index, challenge, &our_bytes))
+    }
+
+    async fn submit_response(
+        &self,
+        challenge_id: (u32, u16),
+        response: ChallengeResponse,
+    ) -> Result<H256, ChallengeError> {
+        let (deadline, index) = challenge_id;
+        let response = match response {
+            ChallengeResponse::Proof {
+                chunk_data,
+                mmr_proof,
+                chunk_proof,
+            } => RuntimeChallengeResponse::Proof {
+                chunk_data: BoundedVec(chunk_data),
+                mmr_proof: to_runtime_mmr_proof(mmr_proof),
+                chunk_proof: chunk_proof.into_iter().map(to_runtime_hash).collect(),
+            },
+            ChallengeResponse::ChunkOutOfRange { mmr_proof } => {
+                RuntimeChallengeResponse::ChunkOutOfRange {
+                    mmr_proof: to_runtime_mmr_proof(mmr_proof),
+                }
+            }
+        };
+
+        let tx = storage_subxt::api::tx()
+            .storage_provider()
+            .respond_to_challenge(RuntimeChallengeId { deadline, index }, response);
+
+        // Zero only when success was inferred from a duplicate rejection, where
+        // the block that took the response is genuinely unknown.
+        let block_hash = self
+            .submit_and_finalize(&tx, "respond_to_challenge")
+            .await
+            .map_err(|e| ChallengeError::Chain {
+                reason: e.to_string(),
+            })?;
+
+        Ok(block_hash.unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use storage_subxt::api::runtime_types::storage_primitives::{
+        ChunkLocation as RuntimeChunkLocation, Commitment as RuntimeCommitment,
+    };
+
+    const OURS: [u8; 32] = [9u8; 32];
+
+    /// Build an on-chain `Challenge` targeting `provider`.
+    ///
+    /// Constructed from the generated type rather than from hand-rolled SCALE
+    /// bytes, so a change to the runtime's `Challenge` shape breaks the build
+    /// here instead of silently shifting a byte offset at runtime.
+    fn on_chain_challenge(provider: [u8; 32]) -> OnChainChallenge {
+        OnChainChallenge {
+            bucket_id: 42,
+            provider: subxt::utils::AccountId32(provider),
+            challenger: subxt::utils::AccountId32([2u8; 32]),
+            commitment: RuntimeCommitment {
+                mmr_root: subxt::utils::H256([3u8; 32]),
+                start_seq: 100,
+                leaf_count: 9,
+            },
+            target: RuntimeChunkLocation {
+                leaf_index: 7,
+                chunk_index: 5,
+            },
+            deposit: 1_000_000_000_000,
+            authorized: false,
+            created_at: 1,
+        }
+    }
+
+    #[test]
+    fn maps_challenge_targeting_us() {
+        let detected = detected_challenge(11, 3, on_chain_challenge(OURS), &OURS)
+            .expect("challenge targets us");
+
+        assert_eq!(detected.bucket_id, 42);
+        assert_eq!(detected.deadline, 11);
+        assert_eq!(detected.index, 3);
+        assert_eq!(detected.commitment.mmr_root.0, [3u8; 32]);
+        assert_eq!(detected.commitment.leaf_count, 9);
+        assert_eq!(detected.commitment.start_seq, 100);
+        // Both come from the nested `target: ChunkLocation`, and they are
+        // deliberately different values so a swapped mapping is caught.
+        assert_eq!(detected.target.leaf_index, 7);
+        assert_eq!(detected.target.chunk_index, 5);
+    }
+
+    #[test]
+    fn filters_challenge_targeting_another_provider() {
+        assert!(
+            detected_challenge(11, 3, on_chain_challenge([1u8; 32]), &OURS).is_none(),
+            "challenge for another provider is filtered out"
+        );
+    }
+
+    /// Build a `provider_challenges` response entry.
+    fn runtime_api_challenge() -> ChallengeFromRuntimeApi {
+        ChallengeFromRuntimeApi {
+            bucket_id: 42,
+            provider: OURS.to_vec(),
+            challenger: [2u8; 32].to_vec(),
+            commitment: RuntimeCommitment {
+                mmr_root: subxt::utils::H256([3u8; 32]),
+                start_seq: 100,
+                leaf_count: 9,
+            },
+            target: RuntimeChunkLocation {
+                leaf_index: 7,
+                chunk_index: 5,
+            },
+            deadline: 11,
+            index: 3,
+            deposit: 1_000_000_000_000,
+            authorized: false,
+        }
+    }
+
+    #[test]
+    fn maps_runtime_api_challenge() {
+        let detected = detected_from_response(runtime_api_challenge());
+
+        assert_eq!(detected.bucket_id, 42);
+        assert_eq!(detected.deadline, 11);
+        assert_eq!(detected.index, 3);
+        assert_eq!(detected.commitment.mmr_root.0, [3u8; 32]);
+        assert_eq!(detected.commitment.leaf_count, 9);
+        assert_eq!(detected.commitment.start_seq, 100);
+        assert_eq!(detected.target.leaf_index, 7);
+        assert_eq!(detected.target.chunk_index, 5);
+    }
+
+    /// Build an agreement response carrying `role`.
+    fn runtime_api_agreement(role: ProviderRole<u128, u32>) -> AgreementFromRuntimeApi {
+        AgreementFromRuntimeApi {
+            bucket_id: 42,
+            owner: vec![1u8; 32],
+            provider: OURS.to_vec(),
+            max_bytes: 1024,
+            payment_locked: 10,
+            price_per_byte: 2,
+            expires_at: 500,
+            extensions_blocked: false,
+            role,
+            started_at: 100,
+        }
+    }
+
+    #[test]
+    fn primary_agreements_are_filtered_out() {
+        assert!(replica_agreement_info(runtime_api_agreement(ProviderRole::Primary)).is_none());
+    }
+
+    #[test]
+    fn replica_agreement_carries_its_sync_terms_and_last_sync() {
+        use storage_subxt::api::runtime_types::pallet_storage_provider::types::ReplicaSyncRecord;
+        use storage_subxt::api::runtime_types::storage_primitives::Commitment;
+
+        let info = replica_agreement_info(runtime_api_agreement(ProviderRole::Replica {
+            sync_balance: 700,
+            sync_price: 25,
+            min_sync_interval: 600,
+            last_sync: Some(ReplicaSyncRecord {
+                commitment: Commitment {
+                    mmr_root: subxt::utils::H256([3u8; 32]),
+                    // Sits between `mmr_root` and `block`, so a mapping that
+                    // walked byte offsets instead of fields would read part of
+                    // this back as the block number.
+                    start_seq: u64::from(u32::MAX) + 1,
+                    leaf_count: 9,
+                },
+                block: 480,
+            }),
+        }))
+        .expect("replica role yields sync terms");
+
+        assert_eq!(info.bucket_id, 42);
+        assert_eq!(info.sync_balance, 700);
+        assert_eq!(info.sync_price, 25);
+        assert_eq!(info.min_sync_interval, 600);
+        assert_eq!(info.last_sync, Some((H256::from([3u8; 32]), 480)));
+    }
+
+    #[test]
+    fn only_locally_stored_buckets_survive_the_local_bucket_filter() {
+        let replica = || ProviderRole::Replica {
+            sync_balance: 700,
+            sync_price: 25,
+            min_sync_interval: 600,
+            last_sync: None,
+        };
+        let agreement_for = |bucket_id| AgreementFromRuntimeApi {
+            bucket_id,
+            ..runtime_api_agreement(replica())
+        };
+
+        // The runtime API answers with every agreement the provider holds; only
+        // the ones backed by local storage are actionable.
+        let from_chain = vec![agreement_for(42), agreement_for(43), agreement_for(44)];
+        let local_buckets: HashSet<BucketId> = [42, 44].into_iter().collect();
+
+        let kept: Vec<BucketId> = from_chain
+            .into_iter()
+            .filter(|agreement| local_buckets.contains(&agreement.bucket_id))
+            .filter_map(replica_agreement_info)
+            .map(|info| info.bucket_id)
+            .collect();
+
+        assert_eq!(kept, vec![42, 44]);
+    }
+
+    #[test]
+    fn replica_agreement_without_a_sync_yet_has_no_last_sync() {
+        let info = replica_agreement_info(runtime_api_agreement(ProviderRole::Replica {
+            sync_balance: 0,
+            sync_price: 1,
+            min_sync_interval: 10,
+            last_sync: None,
+        }))
+        .expect("replica role yields sync terms");
+
+        assert!(info.last_sync.is_none());
+    }
+}
