@@ -898,7 +898,9 @@ pub mod pallet {
         /// sync.
         SyncTooFrequent,
         /// None of the submitted roots match the bucket's current snapshot or
-        /// its recent root history.
+        /// its recent root history, or the matched state does not advance
+        /// over the replica's last confirmed sync. Resubmit after the
+        /// bucket's next checkpoint.
         InvalidSyncRoot,
         /// The sync balance cannot cover one more `sync_price`; top it up with
         /// `top_up_replica_sync_balance`.
@@ -2664,10 +2666,11 @@ pub mod pallet {
 
         /// Replica provider only. Attest, with a signature over `roots`, that
         /// the replica holds the bucket at one of them. If a root matches the
-        /// current snapshot or recent history, the replica is paid
-        /// `sync_price` from its sync balance. Rate-limited by
-        /// `min_sync_interval`. Fails with `AgreementExpired` once the anchor
-        /// block reaches the agreement's `expires_at`.
+        /// current snapshot or recent history and that state advances over
+        /// the last confirmed sync, the replica is paid `sync_price` from its
+        /// sync balance. Rate-limited by `min_sync_interval`. Fails with
+        /// `AgreementExpired` once the anchor block reaches the agreement's
+        /// `expires_at`.
         #[pallet::call_index(50)]
         #[pallet::weight(T::WeightInfo::confirm_replica_sync())]
         pub fn confirm_replica_sync(
@@ -2724,10 +2727,13 @@ pub mod pallet {
 
                     let matched = Self::find_matching_root(&bucket, &roots)?;
 
-                    // Check it's a new root
+                    // Pay only for catching up with a newer state. Every
+                    // matched root is a canonical state the checkpoint rule
+                    // ordered, so `moves_forward_from` rejects the same state
+                    // and any older one still kept in `historical_roots`.
                     if let Some(record) = last_sync {
                         ensure!(
-                            matched.commitment.mmr_root != record.commitment.mmr_root,
+                            matched.commitment.moves_forward_from(&record.commitment),
                             Error::<T>::InvalidSyncRoot
                         );
                     }
