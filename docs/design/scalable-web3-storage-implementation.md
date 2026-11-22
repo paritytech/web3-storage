@@ -558,6 +558,8 @@ pub struct Bucket<T: Config> {
     /// On each checkpoint, if current_block / prime != stored quotient, the entry
     /// is updated with (new_quotient, new_snapshot_commitment). This means each
     /// position remembers the commitment from the last time its prime boundary was crossed.
+    /// The whole commitment, not just the root: `confirm_replica_sync` checks that
+    /// it advances over the replica's `last_sync`.
     /// 
     /// Primes ensure positions don't align, maximizing coverage. A slow replica
     /// can match against older positions; `position_matched` in events tracks this.
@@ -660,7 +662,7 @@ pub enum ProviderRole<T: Config> {
         sync_price: BalanceOf<T>,
         /// Minimum blocks between sync confirmations for this agreement.
         /// Set at agreement creation based on expected bucket activity.
-        /// 0 means no time-based limit (only "new root" check applies).
+        /// 0 means no time-based limit (only the advance check applies).
         min_sync_interval: BlockNumberFor<T>,
         /// Last confirmed sync. None if the replica hasn't confirmed sync yet.
         last_sync: Option<ReplicaSyncRecord<BlockNumberFor<T>>>,
@@ -713,7 +715,7 @@ pub struct ReplicaTerms<Balance, BlockNumber> {
     /// pallet draws down `sync_price` from this on each accepted sync.
     pub sync_balance: Balance,
     /// Minimum blocks between sync confirmations the provider commits to.
-    /// 0 means no time-based limit (only "new root" check applies).
+    /// 0 means no time-based limit (only the advance check applies).
     pub min_sync_interval: BlockNumber,
     /// Price per sync locked at creation/last extension.
     pub sync_price: Balance,
@@ -1953,7 +1955,12 @@ impl<T: Config> Pallet<T> {
     /// 
     /// **Rate limiting:**
     /// Two checks prevent excessive sync confirmations:
-    /// 1. The matched root must differ from `last_sync.commitment.mmr_root` (must be new state)
+    /// 1. The matched root's commitment must advance over `last_sync.commitment`
+    ///    (`Commitment::moves_forward_from`): a larger `leaf_count` at the same
+    ///    `start_seq`, or a larger `start_seq` whose end does not move back, so a
+    ///    deletion is confirmable and paid. Both are canonical, so no proof is
+    ///    needed. The same or an older state still present in `historical_roots`
+    ///    is never paid again.
     /// 2. `current_block >= last_sync.block + min_sync_interval` (per-agreement)
     /// 
     /// The first check ensures payment only for actual sync work. The second
