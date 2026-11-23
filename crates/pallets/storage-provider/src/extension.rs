@@ -26,10 +26,11 @@ type RuntimeCallOf<T> = <T as frame_system::Config>::RuntimeCall;
 
 /// Rejects a `respond_to_challenge` at transaction validation when it cannot
 /// succeed: `Stale` if the challenge no longer exists (answered, cancelled or
-/// resolved), `BadSigner` if the signer is not the challenged provider. A
-/// rejected transaction is never included, so the sender pays no fee. A
-/// valid response provides its challenge id as a tag, so the transaction pool
-/// keeps one response per challenge. Every other call passes unchanged.
+/// resolved) or its deadline has passed, `BadSigner` if the signer is not the
+/// challenged provider. A rejected transaction is never included, so the
+/// sender pays no fee. A valid response provides its challenge id as a tag, so
+/// the transaction pool keeps one response per challenge. Every other call
+/// passes unchanged.
 #[derive(
     Encode,
     Decode,
@@ -63,7 +64,7 @@ where
 
     fn weight(&self, call: &RuntimeCallOf<T>) -> Weight {
         match call.is_sub_type() {
-            Some(Call::respond_to_challenge { .. }) => T::DbWeight::get().reads(1),
+            Some(Call::respond_to_challenge { .. }) => T::DbWeight::get().reads(2),
             _ => Weight::zero(),
         }
     }
@@ -83,6 +84,13 @@ where
         };
         let challenge = Challenges::<T>::get(challenge_id.deadline, challenge_id.index)
             .ok_or(InvalidTransaction::Stale)?;
+        // Past the deadline the dispatch fails with `ChallengeExpired` and the
+        // challenge waits for `resolve_expired_challenge`, so the response
+        // is dropped here instead of paying for a chunk-sized transaction.
+        ensure!(
+            crate::Pallet::<T>::current_anchor_block() <= challenge_id.deadline,
+            InvalidTransaction::Stale
+        );
         let signer = origin
             .as_system_origin_signer()
             .ok_or(InvalidTransaction::BadSigner)?;

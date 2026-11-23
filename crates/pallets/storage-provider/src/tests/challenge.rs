@@ -1497,6 +1497,28 @@ fn response_after_cancel_is_rejected_before_dispatch() {
     });
 }
 
+/// A response after the deadline fails at dispatch with `ChallengeExpired`
+/// while the challenge waits for `resolve_expired_challenge`, so the pool
+/// drops it instead of charging for the chunk it carries.
+#[test]
+fn response_after_the_deadline_is_rejected_before_dispatch() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+
+        run_to_block(101);
+        assert_ok!(validate_response(2, 0, ChallengeResponse::Superseded));
+
+        run_to_block(102);
+        assert!(Challenges::<Test>::contains_key(101, 0));
+        assert_eq!(
+            validate_response(2, 0, ChallengeResponse::Superseded),
+            Err(InvalidTransaction::Stale.into())
+        );
+    });
+}
+
 /// Only the challenged provider can answer, so no other account can put a
 /// response in the pool that would fail at dispatch.
 #[test]
