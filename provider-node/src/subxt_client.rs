@@ -411,7 +411,7 @@ impl SubxtChainClient {
             let provider = value
                 .decode()
                 .map_err(|e| ChainClientError::decode("provider", e))?;
-            endpoints.extend(provider_endpoint(&provider));
+            endpoints.extend(provider_endpoint(&provider.multiaddr.0));
         }
 
         Ok(endpoints)
@@ -485,7 +485,12 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
     ) -> Result<BucketSnapshot, ChainClientError> {
-        Ok(bucket_snapshot(self.fetch_bucket(bucket_id).await?))
+        let checkpoint = self
+            .fetch_bucket(bucket_id)
+            .await?
+            .and_then(|bucket| bucket.snapshot)
+            .map(|snapshot| snapshot.commitment);
+        Ok(bucket_snapshot(checkpoint))
     }
 
     async fn fetch_primary_endpoints(

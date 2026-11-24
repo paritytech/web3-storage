@@ -10,9 +10,7 @@ use provider_replica::coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use sp_core::H256;
 use std::collections::HashSet;
 use storage_primitives::{BucketId, ChunkLocation, Commitment};
-use storage_subxt::api::runtime_types::pallet_storage_provider::types::{
-    Bucket as OnChainBucket, ProviderInfo as OnChainProviderInfo, ProviderRole,
-};
+use storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderRole;
 use storage_subxt::api::runtime_types::sp_runtime::MultiSignature as RuntimeMultiSignature;
 use storage_subxt::api::runtime_types::storage_primitives::{
     mmr::{MmrLeaf as RuntimeMmrLeaf, MmrProof as RuntimeMmrProof},
@@ -96,13 +94,13 @@ pub(crate) fn detected_challenge(
     })
 }
 
-/// Latest checkpoint of a bucket, or the zero snapshot when the bucket does
-/// not exist or has no checkpoint.
-pub(crate) fn bucket_snapshot(bucket: Option<OnChainBucket>) -> BucketSnapshot {
-    match bucket.and_then(|bucket| bucket.snapshot) {
-        Some(snapshot) => BucketSnapshot {
-            mmr_root: H256::from(snapshot.commitment.mmr_root.0),
-            leaf_count: snapshot.commitment.leaf_count,
+/// Snapshot for the commitment of a bucket's latest checkpoint, or the zero
+/// snapshot when the bucket does not exist or has no checkpoint.
+pub(crate) fn bucket_snapshot(checkpoint: Option<RuntimeCommitment>) -> BucketSnapshot {
+    match checkpoint {
+        Some(commitment) => BucketSnapshot {
+            mmr_root: H256::from(commitment.mmr_root.0),
+            leaf_count: commitment.leaf_count,
         },
         None => BucketSnapshot {
             mmr_root: H256::zero(),
@@ -168,13 +166,14 @@ pub(crate) fn bind_addr_to_multiaddr(bind_addr: &str) -> String {
     format!("/ip4/{host}/tcp/{port}")
 }
 
-/// HTTP endpoint a provider serves from, or `None` when it has no multiaddr.
-pub(crate) fn provider_endpoint(provider: &OnChainProviderInfo) -> Option<String> {
-    if provider.multiaddr.0.is_empty() {
+/// HTTP endpoint for a provider's on-chain multiaddr, or `None` when the
+/// provider has none.
+pub(crate) fn provider_endpoint(multiaddr: &[u8]) -> Option<String> {
+    if multiaddr.is_empty() {
         return None;
     }
     Some(multiaddr_to_http_endpoint(&String::from_utf8_lossy(
-        &provider.multiaddr.0,
+        multiaddr,
     )))
 }
 
@@ -420,5 +419,136 @@ mod tests {
         .expect("replica role yields sync terms");
 
         assert!(info.last_sync.is_none());
+    }
+
+    #[test]
+    fn advertised_multiaddr_resolves_to_the_bind_address() {
+        let multiaddr = bind_addr_to_multiaddr("192.168.1.5:4000");
+
+        assert_eq!(multiaddr, "/ip4/192.168.1.5/tcp/4000");
+        assert_eq!(
+            multiaddr_to_http_endpoint(&multiaddr),
+            "http://192.168.1.5:4000",
+            "replicas reach this node through the multiaddr it registers"
+        );
+    }
+
+    #[test]
+    fn wildcard_bind_address_is_advertised_as_loopback() {
+        assert_eq!(
+            bind_addr_to_multiaddr("0.0.0.0:3333"),
+            "/ip4/127.0.0.1/tcp/3333",
+            "no client can connect to 0.0.0.0"
+        );
+    }
+
+    #[test]
+    fn dns_multiaddr_resolves_to_its_host_and_port() {
+        assert_eq!(
+            multiaddr_to_http_endpoint("/dns4/provider.example/tcp/8080"),
+            "http://provider.example:8080",
+            "a provider can register a DNS name instead of an IP address"
+        );
+    }
+
+    #[test]
+    fn provider_without_a_multiaddr_has_no_endpoint() {
+        assert_eq!(
+            provider_endpoint(b""),
+            None,
+            "replica sync skips a provider that registered no address"
+        );
+        assert_eq!(
+            provider_endpoint(b"/ip4/10.0.0.7/tcp/3333"),
+            Some("http://10.0.0.7:3333".to_string())
+        );
+    }
+
+    #[test]
+    fn bucket_snapshot_takes_root_and_leaf_count_from_the_checkpoint() {
+        let snapshot = bucket_snapshot(Some(RuntimeCommitment {
+            mmr_root: subxt::utils::H256([3u8; 32]),
+            start_seq: 100,
+            leaf_count: 9,
+        }));
+
+        assert_eq!(snapshot.mmr_root, H256::from([3u8; 32]));
+        assert_eq!(
+            snapshot.leaf_count, 9,
+            "replica sync compares its local leaf count with this value"
+        );
+    }
+
+    #[test]
+    fn bucket_without_a_checkpoint_has_the_zero_snapshot() {
+        let snapshot = bucket_snapshot(None);
+
+        assert_eq!(snapshot.mmr_root, H256::zero());
+        assert_eq!(
+            snapshot.leaf_count, 0,
+            "a bucket with no checkpoint has no leaves to sync"
+        );
+    }
+
+    #[test]
+    fn signature_keeps_its_scheme_and_bytes() {
+        let sr25519 =
+            sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw([7u8; 64]));
+        let ed25519 =
+            sp_runtime::MultiSignature::Ed25519(sp_core::ed25519::Signature::from_raw([8u8; 64]));
+
+        assert_eq!(
+            to_runtime_signature(&sr25519),
+            RuntimeMultiSignature::Sr25519([7u8; 64]),
+            "the pallet verifies the signature with the scheme of the registered key"
+        );
+        assert_eq!(
+            to_runtime_signature(&ed25519),
+            RuntimeMultiSignature::Ed25519([8u8; 64])
+        );
+
+        let ecdsa =
+            sp_runtime::MultiSignature::Ecdsa(sp_core::ecdsa::Signature::from_raw([9u8; 65]));
+        let eth =
+            sp_runtime::MultiSignature::Eth(sp_core::ecdsa::KeccakSignature::from_raw([10u8; 65]));
+
+        assert_eq!(
+            to_runtime_signature(&ecdsa),
+            RuntimeMultiSignature::Ecdsa([9u8; 65])
+        );
+        assert_eq!(
+            to_runtime_signature(&eth),
+            RuntimeMultiSignature::Eth([10u8; 65])
+        );
+    }
+
+    #[test]
+    fn mmr_proof_keeps_every_field() {
+        let runtime_proof = to_runtime_mmr_proof(storage_primitives::MmrProof {
+            leaf: storage_primitives::MmrLeaf {
+                leaf_version: 1,
+                data_root: H256::repeat_byte(2),
+                data_size: 3,
+                total_size: 4,
+            },
+            items: vec![H256::repeat_byte(5), H256::repeat_byte(6)],
+        });
+
+        assert_eq!(
+            runtime_proof,
+            RuntimeMmrProof {
+                leaf: RuntimeMmrLeaf {
+                    leaf_version: 1,
+                    data_root: subxt::utils::H256([2u8; 32]),
+                    data_size: 3,
+                    total_size: 4,
+                },
+                items: vec![
+                    subxt::utils::H256([5u8; 32]),
+                    subxt::utils::H256([6u8; 32])
+                ],
+            },
+            "the pallet recomputes the MMR root from these fields, so a swapped field fails the challenge response"
+        );
     }
 }
