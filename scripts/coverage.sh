@@ -31,13 +31,13 @@ COV_PACKAGES=(
 	provider-challenge
 	provider-types
 	storage-formats
+	storage-primitives
 )
 
 # Not measured, with the reason per crate.
 COV_SKIP_PACKAGES=(
 	storage-client # chain-bound SDK; integration tests self-skip without a live chain
 	client-test-support # dev-only helpers for the client crates' tests
-	storage-primitives # linked into the measured crates; own tests not run here
 	provider-events # pure types; no tests of its own
 	storage-parachain-runtime # exercised out of process (zombienet e2e)
 	storage-paseo-runtime # exercised out of process (zombienet e2e)
