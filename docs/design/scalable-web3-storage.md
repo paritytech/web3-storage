@@ -11,7 +11,7 @@
 
 | Version | Changes |
 |---------|---------|
-| 2.9 | Stake, agreements and provider signatures reworked for virtual providers (stake changeable and snapshotted per agreement; no stake-per-byte rule; quotes contain no price or version, the client pins `expected_version`; per-owner quote nonce; one-step deregistration; owner-only extension; replacement agreements (virtual providers only); provider refund; `ProviderSignatures` sets; `MaxPrimarySlots` counts physical signers; duplicate challenge responses dropped for free; `extend_challenge`; replica syncs must advance the commitment, `historical_roots` keep commitments; replacement agreements for replicas activate by `confirm_replica_sync`; an activation flag on `checkpoint` and `confirm_replica_sync` selects the pending replacement; replica syncs sign `ReplicaSyncPayload` (`version`, `genesis_hash`, `bucket_id`, `agreement_id`, `roots`); every provider-signed payload includes the genesis hash; `BucketId` and `AgreementId` are newtypes; every checkpoint meets the signature rules on its own and replaces the snapshot's signers; it repeats the current commitment or appends to its MMR with a consistency proof (`MmrConsistencyProof`), so canonical history is linear; a deletion is an admin checkpoint that starts a new MMR at the current end and re-appends the kept leaves, `Deleted` checks the snapshot; proof types use bounded lists (`chunk_proof` by `MaxProofDepth`, `MmrProof.items` by 49 with `leaf_count` capped at 2^48 in `checkpoint`); `/delete` takes `keep_from_seq` and `/checkpoint-signature` returns the consistency proof; a challenge records its kind, agreement, commitment, the virtual snapshot and liable signers (replica challenges cannot be answered with `Superseded`), so agreements and payments ignore open challenges; a frozen bucket can be deleted only with no agreements left; a slash bumps `version`, and calls that snapshot stake require `MinProviderStake`; `remove_slashed` removed: a slashed provider's agreement runs to expiry and the owner decides on payment; a challenge that ends in a slash refunds the challenger's deposit, and the challenger pays its own creation fee; a challenge on a deleted bucket settles as a cancellation (full refund, no slash), so open challenges do not block `delete_bucket`; slashed stake and burned payments go to the runtime-configured `OnSlash` and `OnBurn` handlers instead of a `Treasury` account; `last_stake_event` bumps another virtual of a slashed member only if the member's remaining stake is below what it owes there; a challenged provider keeps its stake locks, and a challenged virtual provider locks its members' stake (`pending_challenges`), which replaces the per-bucket pending-challenge map; provider discovery off-chain; `create_bucket_with_storage`, provider-initiated checkpoints, `find_matching_providers`, `challenge_candidates` removed; typed runtime API responses). **Read**: "Provider Stake", "Storage Agreements", "The Challenge Game", "MMR Commitments", "Freeze" here; impl doc "Pallet Config", "Append-only mode", "Commitment liability", "Changeable Stake" (incl. "Stake under open challenges"), "Stake vs. capacity", "Storage Model" (pruning rule), `Challenge`, `checkpoint`, "MMR Proof", "Verification", "Term Pinning", "Replacement agreements", `confirm_replica_sync`, "Provider Public Key & Signature Type", `CommitmentPayload` ("Chain binding"), "Transaction extension for raced calls", "Runtime API", "Off-Chain: Provider Node API"; [Virtual Provider Extension](./001-virtual-provider-extension.md). |
+| 2.9 | Virtual providers, and the rework of stake, agreements, signatures, checkpoints and challenges they need; Layer-0 hashing, MMR proofs and the provider API specified in detail.<br>**Virtual providers:** a group of physical providers acts as one provider. Commitments need a threshold of member signatures, each agreement snapshots the members it holds liable, a failure slashes the signers, and the group governs itself by seniority. Replacement agreements swap members without downtime. **Read**: [Virtual Provider Extension](./001-virtual-provider-extension.md).<br>**Stake and agreements:** stake can change; each agreement snapshots the stake it was made at, and open challenges keep it locked. Quotes carry no price; the client pins the provider's terms with `expected_version`. Only the owner extends an agreement, a provider can refund, and slashed and burned funds go to configurable handlers. **Read**: "Provider Stake", "Storage Agreements" here; impl "Changeable Stake", "Term Pinning", "Replacement agreements".<br>**Signatures and checkpoints:** every provider signature names its agreement and the chain; calls accept several provider signatures, as virtual providers need; checkpoints count signed slots instead of providers, and an appending checkpoint proves that it extends the previous state. **Read**: impl `CommitmentPayload`, `checkpoint`, "Commit".<br>**MMR and hashing:** each hash kind has its own prefix, the MMR root binds its range, the leaf format drops `total_size`, and proofs carry only hashes. **Read**: "MMR Commitments" here; impl "Hash Prefixes", "MMR Leaf", "MMR Proof".<br>**Provider API:** providers store only canonical chunk trees; the client names the state a commit builds on and computes the result itself, so the provider returns only signatures; a new primary catches up from an empty MMR; MMR reads and pruning are specified. **Read**: impl "Off-Chain: Provider Node API", "Commit", "Storage Model".<br>**Challenges:** a challenge stores everything its resolution needs, so agreements and payments continue while it is open; the challenge deposit is fixed and duplicate responses are free; a challenge on a deleted bucket settles as a cancellation; a provider may challenge itself, and only members can challenge a private bucket's primary. **Read**: "The Challenge Game" here; impl "Challenge Protocol", comment "Who may challenge" in "Extrinsics".<br>**Replicas and buckets:** a replica sync must advance the state; bucket members move to their own map, and only the last member can delete a bucket. **Read**: impl `confirm_replica_sync`, `BucketMembers`, `delete_bucket`.<br>**Removed:** provider-initiated checkpoints, on-chain provider discovery, `remove_slashed` and some calls and runtime APIs; some calls and events are renamed. **Read**: impl "Runtime API", "Events". |
 | 2.8 | Introduced storage deposits and `delete_bucket`. |
 | 2.7 | Layer-0 read access spelled out: bucket-bound reads gate at Reader on primaries; hash-keyed lookups (`/node`, `/read`, `/chunk_proof`, `/fetch_nodes`) take a bucket id but are **capability reads** — possession of the hash grants the bytes, with the enumeration surfaces gated; operator self-read allowance. **Read**: "Read access at Layer 0" under Bucket Visibility & Access. |
 | 2.6 | Chunk tree fixed: a binary RFC 9162 Merkle tree over 256 KiB chunks (only the last chunk is shorter), chunk and node hashes with different prefixes, no padding, chunk count derived from the leaf's `data_size`, empty data rejected, a `chunk_index` at or beyond the chunk count answered with the leaf alone. `MmrLeaf` starts with `leaf_version`, which defines the leaf's fields, `CHUNK_SIZE` and the tree shape. Proofs carry only hashes: `MmrProof { leaf, items }` with `polkadot-ckb-merkle-mountain-range` as the reference implementation and the leaf position taken from the challenge, a chunk proof is the sibling list, `GET /mmr_proof` returns `items` and `GET /chunk_proof` a sibling list. **Read**: "Content-Addressed Chunks", "MMR Commitments"; "Hash Prefixes", "Chunk Tree", "MMR Leaf", "MMR Proof", `POST /commit`, `GET /mmr_proof`, `GET /chunk_proof` and `verify_challenge_response` in [Implementation Details](./scalable-web3-storage-implementation.md). |
@@ -271,23 +271,22 @@ What if you don't trust aggregate metrics? What if you have strict requirements?
 trust, pay them directly, verify them yourself. Now you have at least one replica whose reliability you've personally
 established.
 
-Or simply **challenge directly.** Anyone can challenge any provider for any data they have a commitment for (exceptions: a provider cannot challenge itself, and a private bucket's primaries accept challenges only from members and primary-agreement owners). Don't trust
+Or simply **challenge directly.** Anyone can challenge any provider for any data they have a commitment for, with one exception: only the bucket's members can challenge a private bucket's primary. Don't trust
 that a provider still has the data? Fetch one random chunk. If they respond, you've verified (and recovered that chunk).
 If they don't, you challenge, they get slashed, and the world learns they're unreliable.
 
 Challenging always costs the on-chain price of the provider posting the chunk
 and its proofs—it is never free, for anyone, and it is never cheap. What differs
-is who covers it. If the data is your own (you're a bucket member or run a
-replica), the provider is made to bear part of that cost, but you still pay at
-least half. The split is *leverage* to pressure the provider into serving, not a
-way to make recovery affordable. You can keep challenging chunk by chunk, but at
-this price recovering anything sizeable is a last resort, not a bulk channel. If
-it's someone else's bucket and you're an outsider, you cover the full cost
-yourself. Either case is enough to detect a dead provider and extract a chunk
-you truly need; neither is a cheap way to pull data at scale. If you need more,
-fund your own replica (full control), or—in the read-incentive phase—pay the
-provider directly for bandwidth. If that turns out necessary, we might also bring
-back the cost split in a capped form for the general public.
+is who covers it. If you're a bucket member, or you own the challenged
+provider's agreement, the provider is made to bear part of that cost, but you
+still pay at least half. Everyone else covers the full cost. The split is
+*leverage* to pressure the provider into serving, not a way to make recovery
+affordable. You can keep challenging chunk by chunk, but at this price
+recovering anything sizeable is a last resort, not a bulk channel. Both tiers
+are enough to detect a dead provider and extract a chunk you truly need. If you
+need more, fund your own replica (full control), or—in the read-incentive
+phase—pay the provider directly for bandwidth. If that turns out necessary, we
+might also bring back the cost split in a capped form for the general public.
 
 ---
 
@@ -299,7 +298,7 @@ back the cost split in a capped form for the general public.
 │                                                                     │
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │                         BUCKET                                │  │
-│  │  ├── members: [Admin, Writers, Readers]                       │  │
+│  │  ├── members → Admin, Writers, Readers                        │  │
 │  │  ├── min_providers: 2                                         │  │
 │  │  ├── snapshot: { mmr_root, start_seq, leaf_count }            │  │
 │  │  ├── primary_providers: [A, B]  (admin-controlled)            │  │
@@ -358,8 +357,8 @@ The fundamental unit is the **bucket**—an on-chain container that groups relat
 ```
 Bucket (on-chain, stable identifier)
 ├── bucket_id: BucketId         // permanent, never reused
-├── members: [Admin, Writers, Readers]
-├── min_providers: u32          // quorum for checkpoints
+├── members → account → role    // Admin/Writer/Reader; separate map, at most `MaxMembers`
+├── min_providers: u32          // signed slots required per checkpoint
 ├── primary_providers: [A, B]   // admin-controlled, max `MaxPrimarySlots` signing slots
 ├── snapshot: { mmr_root, start_seq, leaf_count }
 └── storage agreements → providers
@@ -382,8 +381,8 @@ A content hash names data but doesn't guarantee anyone stores it. A bucket makes
 
 - **Permissionless persistence**: A frozen bucket (append-only) can be funded by anyone—not just the owner. You care
   about open-source documentation, or historical records? Fund a replica (permissionless), and the data survives even
-  if the original owner disappears. A frozen bucket can be deleted only while no agreement, primary or replica, exists. (Extending an existing *primary* agreement is owner-only — a third party keeps data
-  alive by adding its own replica, not by mutating someone else's agreement.)
+  if the original owner disappears. A frozen bucket can be deleted only while it has no agreement, primary or replica. Only an agreement's owner can extend it.
+  A third party keeps data alive by adding its own replica, not by changing someone else's agreement.
 
 ### Two Classes of Providers
 
@@ -391,6 +390,7 @@ Providers fall into two categories with different trust models:
 
 **Primary Providers** (admin-controlled):
 - Added only by bucket admin, by redeeming a provider-signed quote (`create_bucket_with_primary`, `add_primary_provider`)
+- The agreement's owner is a bucket admin until the agreement is settled (`transfer_agreement_ownership`, `set_member`, `remove_member`)
 - Receive writes directly from clients
 - Count toward `min_providers` for checkpoints
 - Limited to `MaxPrimarySlots` signing slots per bucket (prevents bloat)
@@ -436,36 +436,52 @@ primaries—real confidentiality is **client-side encryption** (see
 [Data Model](#data-model)). On top of encryption, `private` keeps casual
 parties from even the ciphertext. On-chain metadata
 (MMR root, sizes, leaf counts, checkpoints, challenge events) stays public
-regardless, and a challenge response posts the challenged chunk on-chain,
-publicly, forever. Strangers cannot trigger that—private-bucket primary
-challenges are restricted to members and primary-agreement owners (see
-[The Challenge Game](#the-challenge-game))—but a member challenging leaks the
-chunk by choice. Encryption makes the leak worthless.
+regardless. A challenge response also posts the challenged chunk on-chain,
+publicly and permanently. Strangers cannot trigger that on a private bucket's
+primary (see [The Challenge Game](#the-challenge-game)). A member can still
+choose to challenge and so leak the chunk. Encryption makes the leak
+worthless.
 
 #### Read access at Layer 0
 
-The visibility rule — "primaries serve reads only to members" — names the
-surfaces it can bind to. A primary's **bucket-bound reads** — the MMR shape (`/mmr_peaks`), commitments and checkpoint signatures,
-per-leaf proofs, existence probes, per-bucket listings — take a bucket id and
-gate at Reader: members only when `private`, anyone when `public`. The
-**hash-keyed lookups** (`GET /node`, `GET /read`, `GET /chunk_proof`,
-`POST /fetch_nodes`) also take a bucket id: a provider may store each bucket
-separately, and who reads can matter (under load a provider may serve the
-bucket owner first, to avoid costly challenges). They do not gate at Reader. A
-provider that keeps one content-addressed store, deduplicated across buckets,
-cannot tell whether a hash belongs to the bucket a request names. These are
-**capability reads** — possession of a blake2-256 hash *is* the read
-capability, the way possession of an unguessable URL is.
+This section lists the surfaces that the visibility rule can bind to.
 
-Hashes of private content are unguessable, and every surface that would
-*reveal* them — walking the MMR from its peaks, listing a node's buckets — is
-gated. The accepted limits: anyone a hash was ever shared with keeps byte
-access for as long as the data is hosted (revocation means re-encrypting),
-and an on-chain challenge response publishes the challenged leaf's `data_root`
-in its MMR proof, which opens the whole upload behind that leaf. With
-client-side encryption, those bytes are ciphertext. Gating hash-keyed reads at
-Reader needs the provider to check that a hash belongs to the named bucket:
-per-bucket storage, or an index of each node's buckets over a shared store.
+A primary's **bucket-bound reads** take a bucket id and gate at Reader:
+members only when `private`, anyone when `public`. They are:
+
+- the MMR: peaks via `/mmr_peaks`, nodes and leaves via `/fetch_mmr_nodes`;
+- commitments and checkpoint signatures;
+- per-leaf proofs;
+- existence probes;
+- per-bucket listings.
+
+The **hash-keyed lookups** of chunks and chunk-tree nodes (`GET /node`,
+`GET /read`, `GET /chunk_proof`, `POST /fetch_nodes`) also take a bucket id,
+because a provider may store each bucket separately, and who reads can matter:
+under load a provider may serve the bucket owner first, to avoid costly
+challenges.
+Hash-keyed lookups do not gate at Reader. A provider that keeps one
+content-addressed store, deduplicated across buckets, cannot tell whether a
+hash belongs to the bucket a request names. These lookups are **capability
+reads**: possession of a blake2-256 hash *is* the read capability, the way
+possession of an unguessable URL is.
+
+Hashes of private content are unguessable. Every surface that would *reveal*
+them is gated: the MMR's peaks, nodes and leaves, and listing a node's
+buckets. The design accepts two limits:
+
+- Anyone a hash was ever shared with keeps byte access for as long as the
+  data is hosted. Revocation means re-encrypting.
+- An on-chain challenge response publishes the challenged leaf's `data_root`,
+  which opens the whole upload behind that leaf.
+
+With client-side encryption, the bytes these two limits expose are
+ciphertext. On-chain proofs (challenge responses, `checkpoint` consistency
+proofs) also publish other MMR hashes. Those hashes open nothing, because MMR
+hashes are not a read capability.
+
+Gating hash-keyed reads at Reader would need per-bucket storage, or an index
+of each node's buckets over a shared store.
 
 Two serving allowances follow from roles, not membership: a **replica** serves
 every read to everyone (the rule above — visibility binds primaries only), and
@@ -473,12 +489,6 @@ a provider's **own account** passes any Reader check on its own node — the
 operator already has the disk, and provider accounts are never members, so its
 tooling (fetching its own proofs to answer a challenge) has no other identity.
 Neither grants writes.
-
-**Freeloading is hardened a bit for private buckets.** Provider
-accounts are not members, so on a private bucket a freeloader's only honest
-source is a replica. Born-private with zero replicas, a freeloading primary is
-sourceless and the first member challenge catches it—a permanent
-[Isolation Mode](#isolation-mode).
 
 #### No on-chain gate on replica creation
 
@@ -553,7 +563,7 @@ client's data. This signature is the client's guarantee:
 
 2. **After checkpoint**: The MMR root is on-chain, establishing the canonical bucket state. This adds:
    - **Synchronization**: All parties agree on the bucket's state at that point
-   - **Public verifiability**: Anyone (for a private bucket's primaries: members and primary-agreement owners) can challenge based on the on-chain commitment, not just signature holders
+   - **Public verifiability**: Anyone can challenge based on the on-chain commitment, not just signature holders (for a private bucket's primary: only the bucket's members)
    - **Multi-provider attestation**: Multiple primaries signed the same state
    - **Durability**: The commitment is in chain history—can't be lost if client loses the signature
 
@@ -617,11 +627,10 @@ committed to pay for the agreed duration. The one exception is a replacement (vi
 against a proven successor, settling it as an extension would (impl doc "Replacement agreements").
 
 **Refund**: a provider that finds it cannot serve an agreement adequately may give the remaining payment back to the
-owner at any time before settlement. The agreement runs on unpaid until expiry and the provider stays liable for
-everything it already committed to — a refund ends no obligation and avoids no slash. It replaces the burn: the provider
-loses the payment either way, but the client gets it back instead of paying extra to destroy it, and the provider's
-record shows `refunds` rather than `burns` — an admitted failure rather than a punished one. Nothing is left to exploit:
-a refund only gives money away.
+owner at any time before settlement. The agreement continues unpaid until expiry, and the provider stays liable for
+everything it already committed to. A refund replaces the burn. The provider loses the payment either way, but the
+client gets it back instead of paying extra to destroy it. The provider's record shows `agreements_refunded` instead of `agreements_burned`, which marks a failure the provider admitted.
+Nothing is left to exploit: a refund only gives money away.
 
 **Why binding?**
 - Providers need predictability to provision storage
@@ -637,7 +646,7 @@ Providers register with a global stake that covers all their agreements:
 Provider
 ├── stake: Balance          // stake for NEW agreements (raiseable/lowerable)
 ├── committed_bytes: u64    // sum of max_bytes across agreements (verifiable)
-├── stats: { agreements, extensions, burns, refunds,
+├── stats: { agreements_total, agreements_extended, agreements_burned, agreements_refunded,
 │            challenges_received_authorized,  // responded-to, from counterparties
 │            challenges_received_public,      // responded-to, from strangers
 │            challenges_failed }              // slashed — tier-independent
@@ -645,32 +654,31 @@ Provider
 ```
 
 **Full stake at risk**: A single failed challenge slashes the provider's *entire stake*, not just the stake for that
-bucket. This makes cheating economics absurd—deleting 1% of data to save $0.12/year risks losing thousands of dollars in
-stake.
+bucket. For a virtual provider, the slash is `per_provider_stake` from each liable member. Full-stake slashing makes
+cheating economics absurd: deleting 1% of data to save $0.12/year risks losing thousands of dollars in stake.
 
-**Stake is changeable, agreements snapshot it.** A provider can raise stake any time and lower it without weakening
-existing agreements: each agreement records the stake in force when it was struck (as it already does for price), and the
-provider stays liable at each agreement's snapshot until that agreement ends. `stake` is just the figure applied to *new*
-agreements; a lowering only frees capital once the agreements made under the higher figure expire and no open
-challenge can slash the provider. (This is done with
-O(1) bookkeeping, not by scanning agreements — see the implementation doc's "Changeable Stake".)
+**Stake is changeable, agreements snapshot it.** A provider can raise stake any time. It can lower stake without
+weakening existing agreements: each agreement records the stake in force when it was struck, and the provider stays
+liable at each agreement's snapshot until that agreement expires. `stake` is just the figure applied to *new* agreements.
+A lowering frees capital only once the agreements made under the higher figure expire and no open challenge can slash
+the provider. The pallet tracks this with O(1) bookkeeping, not by scanning agreements (see the implementation doc's
+"Changeable Stake").
 
 **Stake is not tied to capacity.** No stake-per-byte requirement is enforced, against either `committed_bytes` or the
 advertised `max_capacity`.
 
 ### The Challenge Game
 
-When a provider doesn't serve data, anyone can challenge on-chain (private
-buckets restrict primary challenges to members and primary-agreement owners—see
-below):
+When a provider doesn't serve data, anyone can challenge on-chain. A private
+bucket limits who can challenge its primaries (see below). The challenge flow:
 
 ```
 1. Challenger initiates
    - Specifies: bucket, provider, leaf_index, chunk_index
-   - Deposits: generously over-estimated challenge cost (the tx cost of the
+   - Deposits: the fixed `ChallengeDeposit` (the expected tx cost of the
      provider's on-chain response, with margin for fee fluctuations)
 
-2. Challenge window opens (~48 hours)
+2. Challenge window opens (`ChallengeTimeout`, in anchor blocks)
    - Provider must respond with chunk data + Merkle proofs
    - The provider pays the response transaction fee from its own account—never
      from its stake (normal tx fee mechanism)
@@ -688,9 +696,11 @@ below):
    - Invalid proof: Response rejected (provider pays the tx fee); the
      challenge stays open until the deadline
    - No proof by the deadline: anyone submits `resolve_expired_challenge`
-     (free on success); provider's full stake slashed; challenger's
-     deposit refunded; it pays its own fee for creating the challenge (no
-     reward from the slash)
+     (free on success)
+     - provider's full stake slashed
+     - challenger's deposit refunded
+     - the challenger pays its own fee for creating the challenge (no
+       reward from the slash)
 ```
 
 **Stake is never touched on a valid response.** The only thing in play is who
@@ -698,21 +708,25 @@ pays the *transaction cost* of the on-chain response. The challenger's deposit
 covers it; how much of that cost the provider is then made to bear depends on
 who is challenging.
 
-**Two tiers of challenger.** Every bucket has a set of **authorized accounts**:
-its members (Admin, Writers, Readers) plus the owner of any storage agreement on
-the bucket (so replica funders count too). Everyone else is the **general
-public**. The tier is evaluated once, at challenge creation, and stored in the
-challenge—becoming a member or agreement owner afterwards does not upgrade an
-open challenge (nor does losing the status downgrade one).
+**Two tiers of challenger.** The **authorized accounts** for a challenge are:
 
-**Visibility gates who may challenge primaries**—the flag's only on-chain
-effect. On a `Private` bucket, challenging a *primary* requires being a member
-or the owner of a primary agreement on the bucket (keyed on the challenged
-provider's role in its current agreement, whichever extrinsic is used): the
-public has no legitimate reliance on data it cannot read, and must not be able
-to force private bytes on-chain via the response. Replicas stay challengeable by
-*anyone*: their content is public, and this carries the anti-censorship
-guarantee.
+- the bucket's members (Admin, Writers, Readers);
+- the owner of the challenged agreement, which is the challenged provider's
+  agreement on the bucket.
+
+Everyone else is the **general public**. The pallet evaluates the tier once, at
+challenge creation, and stores it in the challenge. Becoming a member or the
+agreement's owner afterwards does not upgrade an open challenge. Losing that
+status does not downgrade one either.
+
+**Visibility gates who may challenge primaries.** This is the flag's only
+on-chain effect. On a `Private` bucket, challenging a *primary* requires being a
+member, because the public has no legitimate reliance on data it cannot read
+and must not be able to force private bytes on-chain through the response. The
+check uses the challenged provider's role in its current agreement, whichever
+extrinsic is used. Replicas remain challengeable by *anyone*. Their content is
+public, and the anti-censorship guarantee depends on anyone being able to
+challenge them.
 
 - **Authorized accounts** get a *split*: the provider is made to bear part of the
   response cost, the challenger's deposit covers the rest. The challenger's share
@@ -738,13 +752,13 @@ guarantee.
 rule is that the **challenger's share never drops below 50%** (a lower floor
 would make griefing cheap). Faster responses cost the provider less:
 
-| Response time | Challenger pays | Provider bears |
+| Response time (anchor blocks) | Challenger pays | Provider bears |
 | --- | --- | --- |
-| Block 1 | 90% | 10% |
-| Blocks 2-5 | 80% | 20% |
-| Blocks 6-24 | 70% | 30% |
-| Blocks 25-95 | 60% | 40% |
-| Blocks 96+ | 50% | 50% |
+| 1 | 90% | 10% |
+| 2-5 | 80% | 20% |
+| 6-24 | 70% | 30% |
+| 25-95 | 60% | 40% |
+| 96+ | 50% | 50% |
 
 The general public is not on this table: the challenger always pays 100%. (The
 failure case—no response by the deadline—is separate: the provider's full stake
@@ -1017,7 +1031,7 @@ The chunk count is not part of the commitment. It follows from the data size rec
 - Binary: inclusion proofs are shortest for a given chunk count (a tree of arity `a` needs `(a - 1) * log_a(n)` sibling hashes, which grows with `a`), and binary trees match RFC 9162 and the available libraries.
 - Fixed-size chunks: simple, and private (chunk boundaries reveal nothing about the content). Upper layers may use content-defined chunking.
 - No padding: every `chunk_index < n` addresses a real chunk, and the verifier derives `n` from `data_size` instead of trusting a chunk count.
-- Prefixes: a node's bytes never hash as a chunk, so a provider cannot answer a chunk challenge with an internal node instead of the chunk. "Hash Prefixes" in [Implementation Details](./scalable-web3-storage-implementation.md) lists every prefix.
+- Prefixes: each hash kind has its own prefix. A node's bytes never hash as a chunk, so a provider cannot answer a chunk challenge with an internal node instead of the chunk. "Hash Prefixes" in [Implementation Details](./scalable-web3-storage-implementation.md) lists every prefix.
 - `CHUNK_SIZE` is defined per `leaf_version` (256 KiB for version 1): `n` is derived from it for every leaf of that version, so changing it means a new leaf version, and existing leaves keep theirs.
 
 **Why content-addressed?**
@@ -1031,11 +1045,9 @@ Each bucket tracks state via a Merkle Mountain Range (MMR):
 
 ```
 BucketSnapshot
-├── mmr_root: H256       // root of the MMR
-├── start_seq: u64       // first leaf sequence number
-├── leaf_count: u64      // number of leaves
+├── commitment: Commitment   // { mmr_root, start_seq, leaf_count }
 ├── checkpoint_block: Block
-├── primary_signers: BitVec  // which primaries signed
+├── primary_signers: BitVec<u8, Lsb0> // which signing slots signed
 ```
 
 **Canonical range**: `[start_seq, start_seq + leaf_count)`
@@ -1046,10 +1058,9 @@ MmrLeaf
 ├── leaf_version: u8     // leaf format version; defines CHUNK_SIZE and the chunk tree
 ├── data_root: H256      // Merkle root of chunk tree
 ├── data_size: u64       // byte length of the data under data_root
-├── total_size: u64      // cumulative unique bytes in bucket
 ```
 
-The MMR hashes its leaves and nodes with the same `0x00` and `0x01` prefixes: a leaf hash is `blake2_256(0x00 ++ leaf.encode())`, and `leaf_version` is the first field, so a verifier reads the version before anything else. It bags its peaks right to left with `blake2_256(0x02 ++ peak ++ rest)`; a single peak is the root, and an empty MMR has a zero root.
+The MMR uses a different hash prefix for leaves, for nodes and for peak bagging. A leaf hash is `blake2_256(0x02 ++ leaf.encode())`. `leaf_version` is the first field, so a verifier reads the version before anything else. The root binds the commitment's range: `mmr_root = blake2_256(0x05 ++ start_seq ++ leaf_count ++ bag_peaks(peaks))`, with the peaks bagged right to left. The empty MMR's root uses the same formula, with no peaks. A commitment's `leaf_count` is at most 2^48. Proofs carry hashes only. The verifier derives every node position from the leaf counts it already has.
 
 `leaf_version` defines everything a verifier needs to check a leaf: its fields, its `CHUNK_SIZE`, the chunk tree shape and the hash prefixes. Version 1 is the format in this document. A new version can change any of them; leaves of different versions share one MMR, and each leaf verifies under its own version.
 
@@ -1335,13 +1346,13 @@ This is exactly why the general public gets no cost split—it closes the floodi
 
 1. **Outsiders pay the full cost, provider pays no money**: A public (non-authorized) challenger funds 100% of the provider's response cost; the provider's response fee is fully reimbursed and its stake is untouched. A crowd flooding a provider each pays a full deposit plus a tx fee per challenge, while the provider loses no money—the attackers' cost scales with the damage, so there is no cheap collective drain. What a stranger *can* still impose is non-financial: on-chain response work in-window and recorded challenges (reputation noise). That nuisance can't grind the provider's stake down or extract value, which is what financial griefing would require.
 
-2. **Only counterparties get the split**: A provider is made to bear a fraction of the cost only for its own members or agreement owners—accounts it *chose* to deal with (it accepted their agreement) or that the admin added.
+2. **Only counterparties get the split**: A provider bears a fraction of the cost only for challenges from the bucket's members and from the owner of the provider's own agreement. These are accounts the provider *chose* to deal with (it accepted their agreement) or that the admin added.
 
 3. **Challenge cancellation**: Any challenger can cancel before the response, paying only the tx fee. If the provider serves off-chain after a challenge is initiated, the challenger cancels and the provider never even responds on-chain. Cancelled challenges leave no trace in the provider's stats (see next point).
 
 4. **Reputation**: Challenge stats count only *responded-to* challenges (at resolution, never creation) and are split by tier—`challenges_received_authorized` vs `challenges_received_public`—so clients can weigh the two as they see fit. The challenges-*failed* count (the one that actually signals data loss) is unaffected, since the provider defends every one.
 
-5. **Response capacity, not money, is the binding constraint**: all of the above holds only while the provider responds to every challenge within the ~48-hour window—a miss costs the full stake. Flood scale is bounded (per-block weight limits, full-cost deposit per challenge), but providers must provision fee liquidity and tx submission for worst-case bursts.
+5. **Response capacity, not money, is the binding constraint**: all of the above holds only while the provider responds to every challenge within `ChallengeTimeout`. A missed response costs the full stake. Flood scale is bounded (per-block weight limits, full-cost deposit per challenge), but providers must provision fee liquidity and tx submission for worst-case bursts.
 
 ### Collusion: Providers Sharing Storage
 
