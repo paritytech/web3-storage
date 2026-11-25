@@ -208,6 +208,9 @@ pub mod pallet {
         /// is slashed. Sets the floor on challenge spam economics — too low
         /// and griefing is free; too high and legitimate challenges become
         /// unaffordable.
+        // DRIFT-005: this config item is missing from the design doc's Config
+        // sketch. Proposal: keep; add it to the design's sketch and values table.
+        // Fix in #553 (open draft).
         #[pallet::constant]
         type ChallengeDeposit: Get<BalanceOf<Self>>;
 
@@ -2595,6 +2598,11 @@ pub mod pallet {
         /// deposit is released in full. The provider's stats do not change.
         /// Fails with `ChallengeNotFound` once the challenge was answered,
         /// cancelled or resolved.
+        // DRIFT-023: no deadline check, so the challenger can also cancel an
+        // expired, unresolved challenge and the provider is not slashed. The
+        // design lists the cancel under the response window and slashes a
+        // provider with no proof by the deadline. Proposal: restrict to
+        // `anchor <= deadline`, or document the post-deadline cancel.
         #[pallet::call_index(44)]
         #[pallet::weight(T::WeightInfo::cancel_challenge())]
         pub fn cancel_challenge(
