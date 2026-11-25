@@ -2,7 +2,7 @@
 
 //! Transaction extension that drops challenge responses which cannot succeed.
 
-use crate::{Call, Challenges, Config};
+use crate::{Call, Challenges, Config, Pallet};
 use codec::{Decode, DecodeWithMemTracking, Encode};
 use core::marker::PhantomData;
 use frame_support::{
@@ -82,15 +82,15 @@ where
         let Some(Call::respond_to_challenge { challenge_id, .. }) = call.is_sub_type() else {
             return Ok((ValidTransaction::default(), (), origin));
         };
-        let challenge = Challenges::<T>::get(challenge_id.deadline, challenge_id.index)
-            .ok_or(InvalidTransaction::Stale)?;
-        // Past the deadline the dispatch fails with `ChallengeExpired` and the
-        // challenge waits for `resolve_expired_challenge`, so the response
-        // is dropped here instead of paying for a chunk-sized transaction.
+        // After the deadline, dispatch fails with `ChallengeExpired` and the
+        // challenge remains in storage until `resolve_expired_challenge`, so
+        // validation rejects the response and the sender pays no fee.
         ensure!(
-            crate::Pallet::<T>::current_anchor_block() <= challenge_id.deadline,
+            Pallet::<T>::current_anchor_block() <= challenge_id.deadline,
             InvalidTransaction::Stale
         );
+        let challenge = Challenges::<T>::get(challenge_id.deadline, challenge_id.index)
+            .ok_or(InvalidTransaction::Stale)?;
         let signer = origin
             .as_system_origin_signer()
             .ok_or(InvalidTransaction::BadSigner)?;

@@ -1497,9 +1497,8 @@ fn response_after_cancel_is_rejected_before_dispatch() {
     });
 }
 
-/// A response after the deadline fails at dispatch with `ChallengeExpired`
-/// while the challenge waits for `resolve_expired_challenge`, so the pool
-/// drops it instead of charging for the chunk it carries.
+/// A response after the deadline fails validation with `Stale`. The
+/// challenge remains in storage until `resolve_expired_challenge`.
 #[test]
 fn response_after_the_deadline_is_rejected_before_dispatch() {
     new_test_ext().execute_with(|| {
