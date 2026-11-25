@@ -15,6 +15,12 @@ on:
   pull_request:
   merge_group:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      check:
+        description: Run the migration checks, not only the snapshot refresh a dispatch does.
+        type: boolean
+        default: true
   schedule:
     - cron: '0 5 * * *' # Daily at 5 AM UTC — refresh cached snapshots
 
@@ -194,7 +200,7 @@ jobs:
     needs: [set-image, runtime-matrix, prepare-snapshots, changes]
     runs-on: parity-large
     timeout-minutes: 120
-    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' && needs.changes.outputs.runtime == 'true'
+    if: (inputs.check || (github.event_name != 'schedule' && github.event_name != 'workflow_dispatch')) && needs.changes.outputs.runtime == 'true'
     permissions:
       contents: read
     container:
@@ -284,7 +290,7 @@ jobs:
   confirmMigrationsPassed:
     runs-on: ubuntu-latest
     name: All migrations passed
-    if: always() && github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+    if: always() && (inputs.check || (github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'))
     needs: [changes, runtime-matrix, prepare-snapshots, check-migrations]
     steps:
       - name: Decide outcome
