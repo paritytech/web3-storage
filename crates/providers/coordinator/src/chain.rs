@@ -68,8 +68,4 @@ pub struct BlockContents {
     /// `ProviderMultiaddrUpdated`, `DeregisterAnnounced`,
     /// `DeregisterCancelled` and `ProviderDeregistered`.
     pub lifecycle: Vec<AccountId32>,
-    /// Whether the block enacted a new runtime (`System::CodeUpdated`). The
-    /// coordinator then reads every piece of chain state it keeps again, with
-    /// the new runtime.
-    pub runtime_upgraded: bool,
 }
