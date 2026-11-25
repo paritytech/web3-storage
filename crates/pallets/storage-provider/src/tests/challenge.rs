@@ -1536,6 +1536,30 @@ fn response_from_another_account_is_rejected_before_dispatch() {
     });
 }
 
+/// The extension declares two storage reads for a response (the anchor block
+/// and the challenge) and no weight for any other call.
+#[test]
+fn extension_weight_is_two_reads_for_a_response() {
+    use frame_support::{traits::Get, weights::Weight};
+    use sp_runtime::traits::TransactionExtension;
+
+    let extension = crate::CheckChallengeResponse::<Test>::new();
+    let response = RuntimeCall::StorageProvider(crate::Call::respond_to_challenge {
+        challenge_id: ChallengeId {
+            deadline: 101,
+            index: 0,
+        },
+        response: ChallengeResponse::Superseded,
+    });
+    let other = RuntimeCall::System(frame_system::Call::remark { remark: vec![] });
+
+    let db_weight: frame_support::weights::RuntimeDbWeight =
+        <Test as frame_system::Config>::DbWeight::get();
+
+    assert_eq!(extension.weight(&response), db_weight.reads(2));
+    assert_eq!(extension.weight(&other), Weight::zero());
+}
+
 /// Responses to the same challenge provide the same tag whatever they
 /// contain, so the pool keeps one of them. Responses to different challenges
 /// do not displace each other.
