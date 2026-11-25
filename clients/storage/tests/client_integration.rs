@@ -10,6 +10,7 @@ use client_test_support::{
     make_client, start_test_provider, start_test_provider_without_agreement,
 };
 use sp_core::H256;
+use std::num::NonZeroU64;
 use storage_client::{
     ChunkingStrategy, ClientError, ClientVerifier, EncryptionKey, Node, ENCRYPTION_OVERHEAD,
 };
@@ -814,11 +815,17 @@ async fn test_spot_check_passes_for_encrypted_data() {
             .unwrap();
         assert!(passed, "chunk {chunk_index}");
     }
-    let (passed, failed) = ClientVerifier::new()
-        .spot_check_batch(&client, 1, &data_root, 4, chunk_count as u64)
+    let total_chunks = NonZeroU64::new(chunk_count as u64).unwrap();
+    let by_verifier = ClientVerifier::new()
+        .spot_check_batch(&client, 1, &data_root, 4, total_chunks)
         .await
         .unwrap();
-    assert_eq!((passed, failed), (4, 0));
+    assert_eq!(by_verifier, (4, 0));
+    let by_client = client
+        .spot_check_batch(1, &data_root, 4, total_chunks)
+        .await
+        .unwrap();
+    assert_eq!(by_client, (4, 0));
 }
 
 #[tokio::test]

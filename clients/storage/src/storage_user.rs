@@ -16,6 +16,7 @@ use crate::verification::{ClientVerifier, ProviderReadAccess};
 use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use sp_core::H256;
+use std::num::NonZeroU64;
 use storage_primitives::{
     hash_children, hash_leaf, merkle_root, verify_merkle_proof, BucketId, DEFAULT_CHUNK_SIZE,
 };
@@ -625,7 +626,8 @@ impl StorageUserClient {
     }
 
     /// Perform multiple random spot-checks on a provider. `total_chunks` is
-    /// the chunk count of `data_root`, as in [`Self::spot_check`].
+    /// the chunk count of `data_root`, as in [`Self::spot_check`]; committed
+    /// data has at least one chunk.
     ///
     /// Returns (passed_count, failed_count).
     pub async fn spot_check_batch(
@@ -633,10 +635,11 @@ impl StorageUserClient {
         bucket_id: BucketId,
         data_root: &H256,
         num_checks: usize,
-        total_chunks: u64,
+        total_chunks: NonZeroU64,
     ) -> ClientResult<(usize, usize)> {
         use rand::Rng;
         let mut rng = rand::thread_rng();
+        let total_chunks = total_chunks.get();
 
         let mut passed = 0;
         let mut failed = 0;

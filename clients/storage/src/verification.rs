@@ -10,6 +10,7 @@
 use crate::ClientError as Error;
 use sp_core::H256;
 use std::collections::HashMap;
+use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 use storage_primitives::BucketId;
 
@@ -176,20 +177,22 @@ impl ClientVerifier {
     }
 
     /// Perform multiple random spot-checks on a provider. `total_chunks` is
-    /// the chunk count of `data_root`, as in [`Self::spot_check`].
+    /// the chunk count of `data_root`, as in [`Self::spot_check`]; committed
+    /// data has at least one chunk.
     pub async fn spot_check_batch<T>(
         &mut self,
         client: &T,
         bucket_id: BucketId,
         data_root: &H256,
         num_checks: usize,
-        total_chunks: u64,
+        total_chunks: NonZeroU64,
     ) -> Result<(usize, usize), Error>
     where
         T: ProviderReadAccess,
     {
         use rand::Rng;
         let mut rng = rand::thread_rng();
+        let total_chunks = total_chunks.get();
 
         let mut passed = 0;
         let mut failed = 0;

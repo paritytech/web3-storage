@@ -338,7 +338,10 @@ let mut client = StorageUserClient::new(ClientConfig::default(), Signer::from_se
 
 // Take the chunk count from the committed leaf (`MmrLeaf`), not from the
 // provider.
-let total_chunks = leaf.chunk_count().ok_or("unknown leaf version")?;
+let total_chunks = leaf
+    .chunk_count()
+    .and_then(NonZeroU64::new)
+    .ok_or("unknown leaf version or empty data")?;
 
 // Perform 10 random spot-checks
 let (passed, failed) = client.spot_check_batch(
