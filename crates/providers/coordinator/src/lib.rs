@@ -245,6 +245,14 @@ impl ChainStateCoordinator {
                 block.number,
             )
             .await;
+
+            if contents.runtime_upgraded {
+                tracing::info!(
+                    "chain-state coordinator: block {} enacted a new runtime; reconnecting to read chain state with it",
+                    block.number
+                );
+                break;
+            }
         }
 
         Ok(())
@@ -356,7 +364,7 @@ mod tests {
     use async_trait::async_trait;
     use provider_types::{ProviderInfo, ProviderSettings, ProviderStats};
     use sp_runtime::testing::H256;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     fn provider_account() -> AccountId32 {
         AccountId32::new([7u8; 32])
@@ -559,7 +567,11 @@ mod tests {
         FinalizedBlock {
             number,
             anchor_block,
-            contents: Some(BlockContents { events, lifecycle }),
+            contents: Some(BlockContents {
+                events,
+                lifecycle,
+                runtime_upgraded: false,
+            }),
         }
     }
 
@@ -725,6 +737,89 @@ mod tests {
             chain_state.current_anchor_block.load(Ordering::Relaxed),
             100
         );
+    }
+
+    /// A chain whose provider entry decodes only once the upgrade block is
+    /// delivered, as previewnet's did after the 4001 -> 5002 upgrade.
+    #[derive(Clone)]
+    struct UpgradingChain {
+        upgraded: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl ChainFollower for UpgradingChain {
+        async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
+            Ok(ChainConnection {
+                blocks: Box::new(self.clone()),
+                client: Box::new(self.clone()),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl FinalizedBlocks for UpgradingChain {
+        async fn next(&mut self) -> Option<FinalizedBlock> {
+            if self.upgraded.swap(true, Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
+            Some(FinalizedBlock {
+                number: 1,
+                anchor_block: Some(1),
+                contents: Some(BlockContents {
+                    events: vec![],
+                    lifecycle: vec![],
+                    runtime_upgraded: true,
+                }),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl ChainStateChainClient for UpgradingChain {
+        async fn get_provider_info(
+            &self,
+            _who: &AccountId32,
+        ) -> Result<Option<ProviderInfo>, ChainClientError> {
+            if self.upgraded.load(Ordering::SeqCst) {
+                Ok(Some(sample_provider_info()))
+            } else {
+                Err(ChainClientError::query(
+                    "Providers",
+                    "the entry does not decode",
+                ))
+            }
+        }
+
+        async fn fetch_request_timeout(&self) -> Result<Option<u32>, ChainClientError> {
+            Ok(Some(100))
+        }
+    }
+
+    /// A provider whose registration only decodes with the new runtime is
+    /// ready right after the upgrade, not after the next lifecycle event or a
+    /// stalled stream, which may never come.
+    #[tokio::test(start_paused = true)]
+    async fn run_reads_provider_info_again_after_a_runtime_upgrade() {
+        let chain_state = Arc::new(ChainState::default());
+        let handle = ChainStateCoordinator::new(
+            Arc::new(UpgradingChain {
+                upgraded: Arc::new(AtomicBool::new(false)),
+            }),
+            provider_account(),
+            chain_state.clone(),
+            tokio::sync::broadcast::channel(16).0,
+        )
+        .start();
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while chain_state.provider_info.read().is_none() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("provider info must be read again within seconds of the upgrade block");
+
+        handle.stop().await;
     }
 
     #[tokio::test(start_paused = true)]

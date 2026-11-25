@@ -13,6 +13,7 @@ use provider_events::BlockEvent;
 use sp_runtime::AccountId32;
 use storage_subxt::api::{
     storage_provider::{events as pallet_events, Event as StorageProviderEvent},
+    system::events as system_events,
     Event,
 };
 use subxt::{events::Event as RawEvent, PolkadotConfig};
@@ -66,8 +67,13 @@ pub fn decode_block_contents(
     let mut contents = BlockContents {
         events: Vec::new(),
         lifecycle: Vec::new(),
+        runtime_upgraded: false,
     };
     for event in events.iter().filter_map(|event| event.ok()) {
+        if event.is::<system_events::CodeUpdated>() {
+            contents.runtime_upgraded = true;
+            continue;
+        }
         // Only events a coordinator uses are decoded; the check compares
         // names, which is cheaper than a decode.
         let membership = is_membership_event(&event);
