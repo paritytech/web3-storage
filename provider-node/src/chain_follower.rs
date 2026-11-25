@@ -13,8 +13,9 @@ use provider_coordinator::{
     ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock, FinalizedBlocks,
 };
 use provider_types::{ChainClientError, ProviderInfo, ProviderSettings, ProviderStats};
+use sp_core::H256;
 use sp_runtime::AccountId32;
-use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo as RuntimeProviderInfo;
+use storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderInfo as RuntimeProviderInfo;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::watch;
 
@@ -134,27 +135,34 @@ impl ChainStateChainClient for SubxtChainStateClient {
 pub(crate) struct SubxtChainFollower {
     transport: ChainTransport,
     chain_tx: watch::Sender<Option<ChainHandle>>,
+    /// Genesis hash of the chain the store is bound to.
+    genesis_hash: H256,
 }
 
 impl SubxtChainFollower {
     pub(crate) fn new(
         transport: ChainTransport,
         chain_tx: watch::Sender<Option<ChainHandle>>,
+        genesis_hash: H256,
     ) -> Self {
         Self {
             transport,
             chain_tx,
+            genesis_hash,
         }
     }
-}
 
-#[async_trait::async_trait]
-impl ChainFollower for SubxtChainFollower {
-    async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
-        let handle = chain_connection::connect(&self.transport)
-            .await
-            .map_err(|e| ChainClientError::query("chain connection", e))?;
+    /// Check that `handle` is on the bound chain, start its block stream, and
+    /// publish it.
+    async fn accept(&self, handle: ChainHandle) -> Result<ChainConnection, ChainClientError> {
         let api = handle.api.clone();
+        let connected = H256(api.genesis_hash().0);
+        if connected != self.genesis_hash {
+            return Err(ChainClientError::ChainMismatch {
+                expected: self.genesis_hash,
+                connected,
+            });
+        }
         let blocks = api
             .stream_blocks()
             .await
@@ -168,6 +176,16 @@ impl ChainFollower for SubxtChainFollower {
             blocks: Box::new(SubxtFinalizedBlocks { blocks }),
             client: Box::new(SubxtChainStateClient { api }),
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl ChainFollower for SubxtChainFollower {
+    async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
+        let handle = chain_connection::connect(&self.transport)
+            .await
+            .map_err(|e| ChainClientError::query("chain connection", e))?;
+        self.accept(handle).await
     }
 }
 
@@ -313,7 +331,7 @@ mod tests {
         use storage_subxt::api::runtime_types::{
             bounded_collections::bounded_vec::BoundedVec,
             frame_support::traits::tokens::fungible::HoldConsideration,
-            pallet_storage_provider::pallet::{
+            pallet_storage_provider::types::{
                 ProviderSettings as RuntimeProviderSettings, ProviderStats as RuntimeProviderStats,
             },
         };
@@ -1043,6 +1061,50 @@ mod tests {
         ));
     }
 
+    fn mock_genesis() -> H256 {
+        H256::from_slice(&array_bytes::hex2bytes(GENESIS_HASH).unwrap())
+    }
+
+    fn unused_transport() -> ChainTransport {
+        ChainTransport::Rpc {
+            url: "ws://127.0.0.1:1".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn accept_publishes_a_connection_to_the_bound_chain() {
+        let (chain_tx, chain_rx) = watch::channel(None);
+        let follower = SubxtChainFollower::new(unused_transport(), chain_tx, mock_genesis());
+
+        let handle = ChainHandle::from_api(mock_api(vec![]).await);
+        follower
+            .accept(handle)
+            .await
+            .expect("a connection to the bound chain is accepted");
+
+        assert!(chain_rx.borrow().is_some());
+    }
+
+    #[tokio::test]
+    async fn accept_rejects_another_chain_and_publishes_nothing() {
+        let other = H256::repeat_byte(0x77);
+        let (chain_tx, chain_rx) = watch::channel(None);
+        let follower = SubxtChainFollower::new(unused_transport(), chain_tx, other);
+
+        let handle = ChainHandle::from_api(mock_api(vec![]).await);
+        let err = match follower.accept(handle).await {
+            Err(e) => e,
+            Ok(_) => panic!("a connection to another chain must be rejected"),
+        };
+
+        assert!(matches!(
+            err,
+            ChainClientError::ChainMismatch { expected, connected }
+                if expected == other && connected == mock_genesis()
+        ));
+        assert!(chain_rx.borrow().is_none());
+    }
+
     #[tokio::test]
     async fn subxt_chain_follower_connect_fails_fast_against_an_unreachable_url() {
         let (chain_tx, _chain_rx) = watch::channel(None);
@@ -1051,6 +1113,7 @@ mod tests {
                 url: "ws://127.0.0.1:1".to_string(),
             },
             chain_tx,
+            H256::zero(),
         );
 
         let err = match follower.connect().await {

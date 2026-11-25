@@ -618,7 +618,7 @@ fn response_to_missing_challenge_is_rejected_without_fee() {
         let result = construct_and_apply_extrinsic(
             Some(account.pair()),
             RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::respond_to_challenge {
-                challenge_id: storage_primitives::ChallengeId {
+                challenge_id: pallet_storage_provider::ChallengeId {
                     deadline: 1,
                     index: 0,
                 },

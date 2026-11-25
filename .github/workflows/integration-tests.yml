@@ -75,7 +75,7 @@ jobs:
         run: cat .github/env >> $GITHUB_ENV
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
@@ -139,7 +139,7 @@ jobs:
       # it also lands before the artifact download so the cached target/ can't
       # clobber it. save-if false — only the build job writes this cache.
       - name: Rust cache
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false
@@ -295,7 +295,7 @@ jobs:
       # Before the download so the cached target/ can't clobber it. save-if
       # false — only the build job writes this cache.
       - name: Rust cache
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false
@@ -497,7 +497,7 @@ jobs:
       # it also lands before the artifact download so the cached target/ can't
       # clobber it. save-if false — only the build job writes this cache.
       - name: Rust cache
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false
@@ -668,7 +668,7 @@ jobs:
       # Before the download so the cached target/ can't clobber it. save-if
       # false — only the build job writes this cache.
       - name: Rust cache
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false
@@ -781,7 +781,7 @@ jobs:
       # the artifact download so the cached target/ can't clobber the freshly
       # downloaded provider + wbuild. save-if false — only the build job writes it.
       - name: Rust cache
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false

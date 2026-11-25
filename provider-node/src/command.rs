@@ -17,8 +17,11 @@ use clap::Parser;
 use provider_auth::Authenticator;
 use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
 use provider_http::{create_router, ProviderDeps, ProviderState};
+use provider_storage::{ChainBinding, StorageBackend};
 use sp_core::crypto::{AccountId32, Ss58Codec};
+use sp_core::H256;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,19 +51,17 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // background coordinators.
     let (events_tx, _) = broadcast::channel::<BlockEvent>(EVENT_CHANNEL_CAPACITY);
 
-    // Connect eagerly so auth lookups and the one-shot multiaddr sync work
-    // right away; failure is non-fatal (the coordinator retries in the
-    // background and republishes).
-    match chain_connection::connect(&transport).await {
-        Ok(handle) => {
-            chain_tx.send_replace(Some(handle));
-        }
-        Err(e) => tracing::warn!("Chain unreachable at startup ({e}); retrying in the background"),
-    }
-
     let backend = cli.storage.spec();
     tracing::info!("Storage backend: {backend}");
     let storage = backend.build()?;
+
+    // Connect before serving anything, so auth lookups and the one-shot
+    // multiaddr sync work right away and the store is checked against the
+    // chain before any request reaches it.
+    let handle = chain_connection::connect(&transport).await?;
+    let genesis_hash = H256(handle.api.genesis_hash().0);
+    bind_storage_to_chain(&*storage, genesis_hash, &cli.storage.storage_path)?;
+    chain_tx.send_replace(Some(handle));
 
     // The provider identity, resolved once: the sr25519 submission account
     // derived from the seed (whatever the signing scheme), else --provider-id.
@@ -157,8 +158,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let challenge_events = events_tx.subscribe();
 
     // Start optional background services (failures are non-fatal)
-    let follower = Arc::new(SubxtChainFollower::new(transport, chain_tx));
-    let _chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
+    let follower = Arc::new(SubxtChainFollower::new(transport, chain_tx, genesis_hash));
+    let mut chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), replica_events, state.clone())
             .await;
@@ -184,13 +185,57 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind(&cli.rpc.bind_addr).await?;
     let app = create_router(state);
-    axum::serve(
+    let serve = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
+    );
+    tokio::select! {
+        result = serve => result?,
+        error = chain_state_fatal_error(&mut chain_state_handle) => return Err(error),
+    }
 
     Ok(())
+}
+
+/// Bind `storage` to the chain with `genesis_hash`. Fails when `storage`
+/// belongs to another chain.
+fn bind_storage_to_chain(
+    storage: &dyn StorageBackend,
+    genesis_hash: H256,
+    storage_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match storage.bind_chain(genesis_hash) {
+        Ok(ChainBinding::Recorded) => {
+            tracing::info!(
+                "Storage at {} is now bound to chain {genesis_hash:?}",
+                storage_path.display()
+            );
+            Ok(())
+        }
+        Ok(ChainBinding::Matched) => Ok(()),
+        Err(provider_storage::Error::ChainMismatch { stored, connected }) => Err(format!(
+            "The data in {} belongs to chain {stored:?}, but the node is connected to chain \
+             {connected:?}. Connect to the chain that wrote this data, or use another \
+             --storage-path.",
+            storage_path.display()
+        )
+        .into()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Resolves with the error that stopped the chain-state coordinator, or never
+/// when there is no coordinator.
+async fn chain_state_fatal_error(
+    handle: &mut Option<ChainStateCoordinatorHandle>,
+) -> Box<dyn std::error::Error> {
+    match handle {
+        Some(handle) => match handle.fatal_error().await {
+            Ok(e) => e.into(),
+            Err(e) => e.into(),
+        },
+        None => std::future::pending().await,
+    }
 }
 
 /// Start the chain-state coordinator, which keeps
