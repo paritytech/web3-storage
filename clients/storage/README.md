@@ -336,11 +336,19 @@ cargo run --example complete_workflow
 ```rust
 let mut client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
 
+// Take the chunk count from the committed leaf (`MmrLeaf`), not from the
+// provider.
+let total_chunks = leaf
+    .chunk_count()
+    .and_then(NonZeroU64::new)
+    .ok_or("unknown leaf version or empty data")?;
+
 // Perform 10 random spot-checks
 let (passed, failed) = client.spot_check_batch(
+    bucket_id,
     &data_root,
     10,    // number of checks
-    100,   // total chunks
+    total_chunks,
 ).await?;
 
 println!("Spot-checks: {} passed, {} failed", passed, failed);
