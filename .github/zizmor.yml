@@ -13,6 +13,7 @@ rules:
       - check-runtime-migration.yml
       - integration-tests.yml
       - release.yml
+      - build-release-artifacts.yml
       - cmd-run.yml
   # The release caches use release-specific keys (release-provider-{linux,macos})
   # written only by the dispatched release workflow (a trusted context); no
