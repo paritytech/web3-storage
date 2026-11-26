@@ -194,7 +194,7 @@ jobs:
         run: |
           set -euo pipefail
           TARGET=x86_64-unknown-linux-gnu
-          TAG="${VERSION:+v${VERSION}}"
+          TAG="${VERSION:+${GITHUB_REF_NAME}}"
           TAG="${TAG:-dispatch-${GITHUB_SHA:0:8}}"
           PKG="storage-provider-node-${TAG}-${TARGET}"
           mkdir -p "dist/${PKG}"
@@ -250,7 +250,7 @@ jobs:
         run: |
           set -euo pipefail
           TARGET=aarch64-apple-darwin
-          TAG="${VERSION:+v${VERSION}}"
+          TAG="${VERSION:+${GITHUB_REF_NAME}}"
           TAG="${TAG:-dispatch-${GITHUB_SHA:0:8}}"
           PKG="storage-provider-node-${TAG}-${TARGET}"
           mkdir -p "dist/${PKG}"
