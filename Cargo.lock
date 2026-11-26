@@ -9688,7 +9688,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "storage-paseo-runtime"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "cumulus-pallet-aura-ext",
  "cumulus-pallet-parachain-system",
@@ -9768,7 +9768,7 @@ dependencies = [
 
 [[package]]
 name = "storage-provider-node"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "array-bytes 6.2.3",
  "async-trait",
