@@ -6,8 +6,9 @@ use crate::{
     chain_connection::{self, ChainHandle},
     chain_follower::SubxtChainFollower,
     chain_state_coordinator::ChainStateCoordinator,
-    cli::{Cli, StorageParams, DEFAULT_PROVIDER_ID},
+    cli::{Cli, DEFAULT_PROVIDER_ID},
     membership::{BlockEventInvalidations, ChainMembershipResolver},
+    storage::{chain_mismatch_message, open_storage},
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
@@ -17,7 +18,6 @@ use clap::Parser;
 use provider_auth::Authenticator;
 use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
 use provider_http::{create_router, ProviderDeps, ProviderState};
-use provider_storage::StorageBackend;
 use provider_types::ChainClientError;
 use sp_core::crypto::{AccountId32, Ss58Codec};
 use sp_core::H256;
@@ -198,35 +198,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Open the store and bind it to the chain with `genesis_hash`. Fails when
-/// the store belongs to another chain.
-fn open_storage(
-    params: &StorageParams,
-    genesis_hash: H256,
-) -> Result<Arc<dyn StorageBackend>, Box<dyn std::error::Error>> {
-    let backend = params.spec();
-    tracing::info!("Storage backend: {backend}");
-    backend
-        .build(Some(genesis_hash))
-        .map_err(|error| match error {
-            provider_storage::Error::ChainMismatch {
-                expected,
-                connected,
-            } => chain_mismatch_message(expected, connected, &params.storage_path).into(),
-            error => error.into(),
-        })
-}
-
-/// Operator message for a store that belongs to another chain.
-fn chain_mismatch_message(expected: H256, connected: H256, storage_path: &Path) -> String {
-    format!(
-        "The data in {} belongs to chain {expected:?}, but the node is connected to chain \
-         {connected:?}. Connect to the chain that wrote this data, or use another \
-         --storage-path.",
-        storage_path.display()
-    )
-}
-
 /// Resolves with the error that stopped the chain-state coordinator, or never
 /// when there is no coordinator.
 async fn chain_state_fatal_error(
@@ -235,21 +206,14 @@ async fn chain_state_fatal_error(
 ) -> Box<dyn std::error::Error> {
     match handle {
         Some(handle) => match handle.fatal_error().await {
-            Ok(e) => coordinator_error(e, storage_path),
+            Ok(ChainClientError::ChainMismatch {
+                expected,
+                connected,
+            }) => chain_mismatch_message(expected, connected, storage_path).into(),
+            Ok(e) => e.into(),
             Err(e) => e.into(),
         },
         None => std::future::pending().await,
-    }
-}
-
-/// Error to report to the operator when the chain-state coordinator stops.
-fn coordinator_error(error: ChainClientError, storage_path: &Path) -> Box<dyn std::error::Error> {
-    match error {
-        ChainClientError::ChainMismatch {
-            expected,
-            connected,
-        } => chain_mismatch_message(expected, connected, storage_path).into(),
-        e => e.into(),
     }
 }
 
@@ -387,66 +351,5 @@ async fn start_challenge_responder(
             tracing::error!("Failed to start challenge responder: {}", e);
             None
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cli::StorageBackendKind;
-
-    /// The error names both chains, the storage path and the flag to change it.
-    fn assert_operator_message(err: &str, expected: H256, connected: H256, storage_path: &Path) {
-        assert!(
-            err.contains(&format!("belongs to chain {expected:?}")),
-            "{err}"
-        );
-        assert!(
-            err.contains(&format!("connected to chain {connected:?}")),
-            "{err}"
-        );
-        assert!(err.contains(&storage_path.display().to_string()), "{err}");
-        assert!(err.contains("--storage-path"), "{err}");
-    }
-
-    #[test]
-    fn open_storage_records_matches_and_rejects_another_chain() {
-        let dir = tempfile::tempdir().unwrap();
-        let params = StorageParams {
-            storage_backend: StorageBackendKind::RocksDb,
-            storage_path: dir.path().to_path_buf(),
-        };
-        let expected = H256::repeat_byte(0xaa);
-        let connected = H256::repeat_byte(0xbb);
-
-        // Each call reopens the store, as a node restart does.
-        open_storage(&params, expected).unwrap();
-        open_storage(&params, expected).unwrap();
-        let err = open_storage(&params, connected)
-            .err()
-            .expect("another chain must be rejected")
-            .to_string();
-        assert_operator_message(&err, expected, connected, dir.path());
-
-        // The rejected chain did not replace the recorded one.
-        open_storage(&params, expected).unwrap();
-    }
-
-    #[test]
-    fn coordinator_error_reports_a_chain_mismatch_with_the_storage_path() {
-        let expected = H256::repeat_byte(1);
-        let connected = H256::repeat_byte(2);
-        let path = Path::new("/var/lib/provider");
-
-        let err = coordinator_error(
-            ChainClientError::ChainMismatch {
-                expected,
-                connected,
-            },
-            path,
-        )
-        .to_string();
-
-        assert_operator_message(&err, expected, connected, path);
     }
 }
