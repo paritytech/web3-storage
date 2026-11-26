@@ -114,6 +114,7 @@ mod extend_topup;
 mod genesis;
 mod holds;
 mod member_buckets;
+mod migration_v1;
 mod misc;
 mod primary_provider;
 mod provider;

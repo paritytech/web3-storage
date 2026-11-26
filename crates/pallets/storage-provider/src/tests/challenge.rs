@@ -1497,6 +1497,27 @@ fn response_after_cancel_is_rejected_before_dispatch() {
     });
 }
 
+/// A response after the deadline fails validation with `Stale`. The
+/// challenge remains in storage until `resolve_expired_challenge`.
+#[test]
+fn response_after_the_deadline_is_rejected_before_dispatch() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+        open_challenge(3, bucket_id);
+
+        run_to_block(101);
+        assert_ok!(validate_response(2, 0, ChallengeResponse::Superseded));
+
+        run_to_block(102);
+        assert!(Challenges::<Test>::contains_key(101, 0));
+        assert_eq!(
+            validate_response(2, 0, ChallengeResponse::Superseded),
+            Err(InvalidTransaction::Stale.into())
+        );
+    });
+}
+
 /// Only the challenged provider can answer, so no other account can put a
 /// response in the pool that would fail at dispatch.
 #[test]
@@ -1513,6 +1534,30 @@ fn response_from_another_account_is_rejected_before_dispatch() {
             );
         }
     });
+}
+
+/// The extension declares two storage reads for a response (the anchor block
+/// and the challenge) and no weight for any other call.
+#[test]
+fn extension_weight_is_two_reads_for_a_response() {
+    use frame_support::{traits::Get, weights::Weight};
+    use sp_runtime::traits::TransactionExtension;
+
+    let extension = crate::CheckChallengeResponse::<Test>::new();
+    let response = RuntimeCall::StorageProvider(crate::Call::respond_to_challenge {
+        challenge_id: ChallengeId {
+            deadline: 101,
+            index: 0,
+        },
+        response: ChallengeResponse::Superseded,
+    });
+    let other = RuntimeCall::System(frame_system::Call::remark { remark: vec![] });
+
+    let db_weight: frame_support::weights::RuntimeDbWeight =
+        <Test as frame_system::Config>::DbWeight::get();
+
+    assert_eq!(extension.weight(&response), db_weight.reads(2));
+    assert_eq!(extension.weight(&other), Weight::zero());
 }
 
 /// Responses to the same challenge provide the same tag whatever they
