@@ -146,9 +146,24 @@ pub struct EraseOutcome {
     pub bytes_freed: u64,
 }
 
+/// Result of [`StorageBackend::bind_chain`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainBinding {
+    /// The store had no chain recorded; it now records the given genesis hash.
+    Recorded,
+    /// The store already records the given genesis hash.
+    Matched,
+}
+
 /// Storage engine interface. Callers hold an `Arc<dyn StorageBackend>` rather
 /// than a concrete engine.
 pub trait StorageBackend: Send + Sync {
+    /// Bind this store to the chain with `genesis_hash`.
+    ///
+    /// Records the hash when the store has none. Fails with
+    /// [`Error::ChainMismatch`] when the store records a different chain.
+    fn bind_chain(&self, genesis_hash: H256) -> Result<ChainBinding, Error>;
+
     /// Initialize a bucket with the given quota.
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
 

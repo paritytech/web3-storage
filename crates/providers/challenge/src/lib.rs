@@ -401,10 +401,10 @@ impl ChallengeResponder {
                 // While paused, stop consuming so events stay queued instead of
                 // being dropped. Replaying them on resume is safe: each one is
                 // point-read against live chain state, so anything already
-                // resolved is a no-op; an expired, unresolved one costs one
-                // rejected response (`ChallengeExpired`). A pause longer than
-                // the channel's capacity surfaces as `Lagged` below, which
-                // reconciles with a full scan.
+                // resolved is a no-op; the chain rejects a response to an
+                // expired, unresolved one at transaction validation, without
+                // a fee. A pause longer than the channel's capacity surfaces
+                // as `Lagged` below, which reconciles with a full scan.
                 event = events_rx.recv(), if events_open && !paused => {
                     if matches!(event, Err(broadcast::error::RecvError::Closed)) {
                         events_open = false;
@@ -555,9 +555,10 @@ impl ChallengeResponder {
                 }
             }
             Err(e) => {
-                // The chain rejects a response to a missing challenge at
-                // transaction validation, with an error that does not name
-                // the cause. Re-read the challenge to tell the two apart.
+                // The chain rejects a response to a missing or expired
+                // challenge at transaction validation, with an error that
+                // does not name the cause. Re-read the challenge to detect a
+                // missing one.
                 if let Ok(None) = self
                     .chain_client
                     .fetch_challenge(challenge.deadline, challenge.index)

@@ -1,6 +1,6 @@
 [package]
 name = "storage-provider-node"
-version = "0.5.0"
+version = "0.5.2"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true

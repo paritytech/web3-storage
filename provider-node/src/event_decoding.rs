@@ -13,6 +13,7 @@ use provider_events::BlockEvent;
 use sp_runtime::AccountId32;
 use storage_subxt::api::{
     storage_provider::{events as pallet_events, Event as StorageProviderEvent},
+    system::events as system_events,
     Event,
 };
 use subxt::{events::Event as RawEvent, PolkadotConfig};
@@ -58,7 +59,7 @@ pub(crate) fn is_other_relevant_event(event: &RawEvent<'_, PolkadotConfig>) -> b
 /// - a missed [`BlockEvent`] is covered by the coordinators' safety-net scans;
 /// - a missed lifecycle account is covered by the next lifecycle event for
 ///   the provider, except after `ProviderDeregistered`: then only the
-///   bootstrap refresh on reconnect corrects the state.
+///   next full state read (reconnect or runtime upgrade) corrects the state.
 pub fn decode_block_contents(
     events: &subxt::events::Events<PolkadotConfig>,
     block_number: u32,
@@ -68,6 +69,12 @@ pub fn decode_block_contents(
         lifecycle: Vec::new(),
     };
     for event in events.iter().filter_map(|event| event.ok()) {
+        if event.is::<system_events::CodeUpdated>() {
+            contents.events.push(BlockEvent::RuntimeUpgraded {
+                at_block: block_number,
+            });
+            continue;
+        }
         // Only events a coordinator uses are decoded; the check compares
         // names, which is cheaper than a decode.
         let membership = is_membership_event(&event);
@@ -163,8 +170,8 @@ fn block_event(event: StorageProviderEvent) -> Option<BlockEvent> {
 /// treated as unknown-scope rather than dropped: which bucket changed can no
 /// longer be named, so every cached member set is invalidated instead, the
 /// same reaction as a lagged or restarted feed - but via a variant of its own,
-/// since nothing actually reconnected and the other coordinators have no
-/// reason to run their full-scan reaction to this.
+/// since the other coordinators have no reason to run their full-scan
+/// reaction to this.
 fn escalate_membership_decode_failure(
     pallet: &str,
     event_name: &str,

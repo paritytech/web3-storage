@@ -31,6 +31,7 @@ pub use extension::CheckChallengeResponse;
 /// Pallet internals: the agreement, bucket, challenge, and payment logic behind
 /// the extrinsics and runtime APIs.
 pub mod impls;
+pub mod migrations;
 pub mod runtime_api;
 pub mod weights;
 pub use weights::WeightInfo;
@@ -79,7 +80,7 @@ pub mod pallet {
         BucketId, ChunkLocation, Commitment, CommitmentPayload, EndAction, Role, Visibility,
     };
 
-    const STORAGE_VERSION: StorageVersion = StorageVersion::new(0);
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
