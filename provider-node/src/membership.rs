@@ -101,7 +101,7 @@ impl MembershipResolver for ChainMembershipResolver {
                     .storage()
                     .try_fetch(
                         agreement_address,
-                        (bucket_id, crate::subxt_client::subxt_account(own)),
+                        (bucket_id, crate::runtime_conversions::subxt_account(own)),
                     )
                     .await
                     .map_err(|e| MembershipError::Unavailable(e.to_string()))?;
