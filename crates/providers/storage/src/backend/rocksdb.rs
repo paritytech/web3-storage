@@ -201,8 +201,8 @@ impl DiskStorage {
                 })?);
                 if stored != genesis_hash {
                     return Err(Error::ChainMismatch {
-                        stored,
-                        requested: genesis_hash,
+                        expected: stored,
+                        connected: genesis_hash,
                     });
                 }
             }
@@ -1833,24 +1833,24 @@ mod tests {
     #[test]
     fn open_records_the_chain_matches_it_and_rejects_another_chain() {
         let dir = TempDir::new().unwrap();
-        let stored = H256::repeat_byte(0xaa);
+        let expected = H256::repeat_byte(0xaa);
         let other = H256::repeat_byte(0xbb);
 
-        drop(DiskStorage::open(dir.path(), Some(stored)).unwrap());
-        drop(DiskStorage::open(dir.path(), Some(stored)).unwrap());
+        drop(DiskStorage::open(dir.path(), Some(expected)).unwrap());
+        drop(DiskStorage::open(dir.path(), Some(expected)).unwrap());
         let result = DiskStorage::open(dir.path(), Some(other));
         let Err(Error::ChainMismatch {
-            stored: recorded,
-            requested,
+            expected: recorded,
+            connected,
         }) = result
         else {
             panic!("expected a chain mismatch, got {:?}", result.err());
         };
-        assert_eq!((recorded, requested), (stored, other));
+        assert_eq!((recorded, connected), (expected, other));
 
         // The rejected chain did not replace the recorded one, and opening
         // without a chain skips the check.
-        drop(DiskStorage::open(dir.path(), Some(stored)).unwrap());
+        drop(DiskStorage::open(dir.path(), Some(expected)).unwrap());
         drop(DiskStorage::open(dir.path(), None).unwrap());
     }
 

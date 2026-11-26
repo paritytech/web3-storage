@@ -209,17 +209,18 @@ fn open_storage(
     backend
         .build(Some(genesis_hash))
         .map_err(|error| match error {
-            provider_storage::Error::ChainMismatch { stored, requested } => {
-                chain_mismatch_message(stored, requested, &params.storage_path).into()
-            }
+            provider_storage::Error::ChainMismatch {
+                expected,
+                connected,
+            } => chain_mismatch_message(expected, connected, &params.storage_path).into(),
             error => error.into(),
         })
 }
 
 /// Operator message for a store that belongs to another chain.
-fn chain_mismatch_message(stored: H256, connected: H256, storage_path: &Path) -> String {
+fn chain_mismatch_message(expected: H256, connected: H256, storage_path: &Path) -> String {
     format!(
-        "The data in {} belongs to chain {stored:?}, but the node is connected to chain \
+        "The data in {} belongs to chain {expected:?}, but the node is connected to chain \
          {connected:?}. Connect to the chain that wrote this data, or use another \
          --storage-path.",
         storage_path.display()
@@ -245,9 +246,9 @@ async fn chain_state_fatal_error(
 fn coordinator_error(error: ChainClientError, storage_path: &Path) -> Box<dyn std::error::Error> {
     match error {
         ChainClientError::ChainMismatch {
-            expected: stored,
+            expected,
             connected,
-        } => chain_mismatch_message(stored, connected, storage_path).into(),
+        } => chain_mismatch_message(expected, connected, storage_path).into(),
         e => e.into(),
     }
 }
@@ -395,9 +396,9 @@ mod tests {
     use crate::cli::StorageBackendKind;
 
     /// The error names both chains, the storage path and the flag to change it.
-    fn assert_operator_message(err: &str, stored: H256, connected: H256, storage_path: &Path) {
+    fn assert_operator_message(err: &str, expected: H256, connected: H256, storage_path: &Path) {
         assert!(
-            err.contains(&format!("belongs to chain {stored:?}")),
+            err.contains(&format!("belongs to chain {expected:?}")),
             "{err}"
         );
         assert!(
@@ -415,37 +416,37 @@ mod tests {
             storage_backend: StorageBackendKind::RocksDb,
             storage_path: dir.path().to_path_buf(),
         };
-        let stored = H256::repeat_byte(0xaa);
+        let expected = H256::repeat_byte(0xaa);
         let connected = H256::repeat_byte(0xbb);
 
         // Each call reopens the store, as a node restart does.
-        open_storage(&params, stored).unwrap();
-        open_storage(&params, stored).unwrap();
+        open_storage(&params, expected).unwrap();
+        open_storage(&params, expected).unwrap();
         let err = open_storage(&params, connected)
             .err()
             .expect("another chain must be rejected")
             .to_string();
-        assert_operator_message(&err, stored, connected, dir.path());
+        assert_operator_message(&err, expected, connected, dir.path());
 
         // The rejected chain did not replace the recorded one.
-        open_storage(&params, stored).unwrap();
+        open_storage(&params, expected).unwrap();
     }
 
     #[test]
     fn coordinator_error_reports_a_chain_mismatch_with_the_storage_path() {
-        let stored = H256::repeat_byte(1);
+        let expected = H256::repeat_byte(1);
         let connected = H256::repeat_byte(2);
         let path = Path::new("/var/lib/provider");
 
         let err = coordinator_error(
             ChainClientError::ChainMismatch {
-                expected: stored,
+                expected,
                 connected,
             },
             path,
         )
         .to_string();
 
-        assert_operator_message(&err, stored, connected, path);
+        assert_operator_message(&err, expected, connected, path);
     }
 }

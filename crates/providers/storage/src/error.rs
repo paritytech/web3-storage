@@ -113,11 +113,11 @@ pub enum Error {
 
     /// The store was opened for one chain but records another. Open it for
     /// the chain that wrote it, or use another store.
-    #[error("Store belongs to chain {stored:?}, not to chain {requested:?}")]
+    #[error("Store belongs to chain {expected:?}, not to chain {connected:?}")]
     ChainMismatch {
         /// Genesis hash recorded in the store.
-        stored: H256,
-        /// Genesis hash the store was opened for.
-        requested: H256,
+        expected: H256,
+        /// Genesis hash the store was opened with.
+        connected: H256,
     },
 }
