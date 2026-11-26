@@ -15,6 +15,7 @@ pub mod cli;
 pub mod command;
 pub(crate) mod event_decoding;
 pub mod membership;
+pub(crate) mod runtime_conversions;
 pub(crate) mod storage;
 pub(crate) mod subxt_client;
 

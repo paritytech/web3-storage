@@ -17,7 +17,7 @@ pub struct ChainState {
     /// block number is the pallet's concern, not the provider's. `0` means not
     /// yet known.
     pub current_anchor_block: AtomicU32,
-    /// Pallet constants fetched once per connection. `None` until the first
+    /// Pallet constants, read on connect and after a runtime upgrade. `None` until the first
     /// successful fetch; `/negotiate` returns 503 until this is `Some`.
     pub constants: RwLock<Option<PalletConstants>>,
     /// Provider's on-chain registration info. `None` until registered on chain;

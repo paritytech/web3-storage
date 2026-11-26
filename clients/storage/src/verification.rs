@@ -10,6 +10,7 @@
 use crate::ClientError as Error;
 use sp_core::H256;
 use std::collections::HashMap;
+use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 use storage_primitives::BucketId;
 
@@ -139,12 +140,10 @@ impl ClientVerifier {
         stats.update_reputation();
     }
 
-    /// Perform a spot-check on a provider.
-    ///
-    /// This:
-    /// 1. Reads a random chunk from the provider
-    /// 2. Verifies the chunk hash
-    /// 3. Optionally verifies the Merkle proof
+    /// Spot-check that the provider stores chunk `chunk_index` of
+    /// `data_root` with [`ProviderReadAccess::read_chunk`], and record the
+    /// result in the provider's stats. `chunk_count` must come from the
+    /// leaf's `data_size`, as `read_chunk` describes.
     ///
     /// Returns true if the spot-check passed.
     pub async fn spot_check<T>(
@@ -153,66 +152,47 @@ impl ClientVerifier {
         bucket_id: BucketId,
         data_root: &H256,
         chunk_index: u64,
+        chunk_count: u64,
     ) -> Result<bool, Error>
     where
         T: ProviderReadAccess,
     {
         let start = Instant::now();
-
-        // Read the chunk
-        let chunk_size = u64::from(storage_primitives::DEFAULT_CHUNK_SIZE);
-        let offset = chunk_index * chunk_size;
-        let result = client
-            .read_data(bucket_id, data_root, offset, chunk_size)
-            .await;
-
-        let duration = start.elapsed();
+        let passed = client
+            .read_chunk(bucket_id, data_root, chunk_index, chunk_count)
+            .await
+            .is_ok();
         let provider_url = client.provider_url();
+        self.record_request(provider_url, start.elapsed(), passed);
 
-        // Record the request
-        match &result {
-            Ok(_) => {
-                // Get the expected hash from the proof
-                // In a full implementation, we would fetch the chunk with proof
-                // and verify the proof chain up to the data_root
-
-                // For now, just record success
-                self.record_request(provider_url, duration, true);
-
-                // Update spot-check stats
-                let stats = self.provider_stats.get_mut(provider_url).unwrap();
-                stats.spot_checks_total += 1;
-
-                Ok(true)
-            }
-            Err(_) => {
-                self.record_request(provider_url, duration, false);
-
-                // Update spot-check stats
-                if let Some(stats) = self.provider_stats.get_mut(provider_url) {
-                    stats.spot_checks_total += 1;
-                    stats.spot_check_failures += 1;
-                }
-
-                Ok(false)
-            }
+        let stats = self
+            .provider_stats
+            .entry(provider_url.to_string())
+            .or_default();
+        stats.spot_checks_total += 1;
+        if !passed {
+            stats.spot_check_failures += 1;
         }
+        Ok(passed)
     }
 
-    /// Perform multiple random spot-checks on a provider.
+    /// Perform multiple random spot-checks on a provider. `total_chunks` is
+    /// the chunk count of `data_root`, as in [`Self::spot_check`]; committed
+    /// data has at least one chunk.
     pub async fn spot_check_batch<T>(
         &mut self,
         client: &T,
         bucket_id: BucketId,
         data_root: &H256,
         num_checks: usize,
-        total_chunks: u64,
+        total_chunks: NonZeroU64,
     ) -> Result<(usize, usize), Error>
     where
         T: ProviderReadAccess,
     {
         use rand::Rng;
         let mut rng = rand::thread_rng();
+        let total_chunks = total_chunks.get();
 
         let mut passed = 0;
         let mut failed = 0;
@@ -220,7 +200,7 @@ impl ClientVerifier {
         for _ in 0..num_checks {
             let chunk_index = rng.gen_range(0..total_chunks);
             match self
-                .spot_check(client, bucket_id, data_root, chunk_index)
+                .spot_check(client, bucket_id, data_root, chunk_index, total_chunks)
                 .await
             {
                 Ok(true) => passed += 1,
@@ -288,13 +268,18 @@ impl Default for ClientVerifier {
 /// This allows the verifier to work with different client types.
 #[async_trait::async_trait]
 pub trait ProviderReadAccess {
-    /// Read data from a data root in a bucket.
-    async fn read_data(
+    /// Read chunk `chunk_index` of `data_root` and verify its hash and proof
+    /// in a tree of `chunk_count` chunks. Returns the chunk as the provider
+    /// stores it, without decryption. `chunk_count` must come from the
+    /// leaf's `data_size` ([`storage_primitives::MmrLeaf::chunk_count`]), not
+    /// from the provider: with a count of its choice, a provider passes with
+    /// no chunk or with another chunk.
+    async fn read_chunk(
         &self,
         bucket_id: BucketId,
         data_root: &H256,
-        offset: u64,
-        length: u64,
+        chunk_index: u64,
+        chunk_count: u64,
     ) -> Result<Vec<u8>, Error>;
 
     /// Get the provider URL for tracking.
