@@ -675,7 +675,7 @@
           <li>&bull; A rejected response costs the provider its tx fee; the challenge stays open until the deadline</li>
           <li>&bull; No response by the deadline: anyone calls resolve_expired_challenge (free on success); only a timeout slashes</li>
           <li>&bull; cancel_challenge (challenger only, before the response): deposit released in full, provider stats untouched (ChallengeCancelled)</li>
-          <li>&bull; CheckChallengeResponse drops a response to a challenge that is gone (Stale) or from another signer (BadSigner) before inclusion: no fee</li>
+          <li>&bull; CheckChallengeResponse drops a response to a challenge that is gone or past its deadline (Stale) or from another signer (BadSigner) before inclusion: no fee</li>
         </ul>
       </div>
 

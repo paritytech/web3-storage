@@ -778,6 +778,39 @@ mod tests {
         );
     }
 
+    /// A block that stored a new runtime yields `RuntimeUpgraded`, so the
+    /// coordinator reads its chain state again instead of keeping what the old
+    /// runtime served.
+    #[tokio::test]
+    async fn code_updated_decodes_to_runtime_upgraded() {
+        use storage_subxt::api::runtime_types::{
+            frame_system::{pallet::Event as SystemEvent, EventRecord, Phase},
+            storage_paseo_runtime::RuntimeEvent,
+        };
+        let md = metadata();
+        let code_updated = EventRecord {
+            phase: Phase::Initialization,
+            event: RuntimeEvent::System(SystemEvent::CodeUpdated {
+                hash: subxt::utils::H256([1u8; 32]),
+            }),
+            topics: Vec::<subxt::utils::H256>::new(),
+        };
+        let events_ty = storage_value_type(&md, "System", "Events");
+        let events_bytes = encode_value(&md, events_ty, &vec![code_updated]);
+        let api = mock_api(vec![(
+            key_prefix("System", "Events"),
+            array_bytes::bytes2hex("0x", &events_bytes),
+        )])
+        .await;
+        let at = api.at_current_block().await.expect("block handle");
+        let events = at.events().fetch().await.expect("events fetch");
+
+        assert!(matches!(
+            decode_block_contents(&events, 7).events.as_slice(),
+            [BlockEvent::RuntimeUpgraded { at_block: 7 }]
+        ));
+    }
+
     #[tokio::test]
     async fn membership_changes_decode_to_their_bucket_ids() {
         let md = metadata();
