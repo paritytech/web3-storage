@@ -2,7 +2,7 @@
 
 //! Transaction extension that drops challenge responses which cannot succeed.
 
-use crate::{Call, Challenges, Config};
+use crate::{Call, Challenges, Config, Pallet};
 use codec::{Decode, DecodeWithMemTracking, Encode};
 use core::marker::PhantomData;
 use frame_support::{
@@ -26,10 +26,11 @@ type RuntimeCallOf<T> = <T as frame_system::Config>::RuntimeCall;
 
 /// Rejects a `respond_to_challenge` at transaction validation when it cannot
 /// succeed: `Stale` if the challenge no longer exists (answered, cancelled or
-/// resolved), `BadSigner` if the signer is not the challenged provider. A
-/// rejected transaction is never included, so the sender pays no fee. A
-/// valid response provides its challenge id as a tag, so the transaction pool
-/// keeps one response per challenge. Every other call passes unchanged.
+/// resolved) or its deadline has passed, `BadSigner` if the signer is not the
+/// challenged provider. A rejected transaction is never included, so the
+/// sender pays no fee. A valid response provides its challenge id as a tag, so
+/// the transaction pool keeps one response per challenge. Every other call
+/// passes unchanged.
 #[derive(
     Encode,
     Decode,
@@ -63,7 +64,7 @@ where
 
     fn weight(&self, call: &RuntimeCallOf<T>) -> Weight {
         match call.is_sub_type() {
-            Some(Call::respond_to_challenge { .. }) => T::DbWeight::get().reads(1),
+            Some(Call::respond_to_challenge { .. }) => T::DbWeight::get().reads(2),
             _ => Weight::zero(),
         }
     }
@@ -81,6 +82,13 @@ where
         let Some(Call::respond_to_challenge { challenge_id, .. }) = call.is_sub_type() else {
             return Ok((ValidTransaction::default(), (), origin));
         };
+        // After the deadline, dispatch fails with `ChallengeExpired` and the
+        // challenge remains in storage until `resolve_expired_challenge`, so
+        // validation rejects the response and the sender pays no fee.
+        ensure!(
+            Pallet::<T>::current_anchor_block() <= challenge_id.deadline,
+            InvalidTransaction::Stale
+        );
         let challenge = Challenges::<T>::get(challenge_id.deadline, challenge_id.index)
             .ok_or(InvalidTransaction::Stale)?;
         let signer = origin

@@ -15,4 +15,5 @@ pub type Migrations = (
     // applied.
     cumulus_pallet_parachain_system::migration::Migration<Runtime>,
     cumulus_pallet_xcmp_queue::migration::v7::MigrateV6ToV7<Runtime>,
+    pallet_storage_provider::migrations::v1::MigrateV0ToV1<Runtime, crate::Balances>,
 );
