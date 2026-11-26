@@ -4,12 +4,20 @@ on:
   workflow_call:
     inputs:
       tag:
-        description: Name the provider archive carries, e.g. v0.5.2-paseo.
+        description: Name the provider archive carries, e.g. v0.5.2-provider.
         type: string
         required: true
+      runtime:
+        description: Build the runtime.
+        type: boolean
+        default: true
+      provider-node:
+        description: Build the linux provider node.
+        type: boolean
+        default: true
       stamp-spec-version:
         description: >-
-          Build the runtime with a spec_version above the latest release's, so a
+          Build the runtime with a spec_version above the latest runtime release's, so a
           fork upgrade to it is a real upgrade. A release keeps the committed one.
         type: boolean
         default: false
@@ -22,11 +30,13 @@ permissions: {}
 
 jobs:
   set-image:
+    if: inputs.provider-node
     permissions:
       contents: read
     uses: ./.github/workflows/set-image.yml
 
   build-runtime:
+    if: inputs.runtime
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -86,6 +96,7 @@ jobs:
             ${{ steps.config.outputs.name }}_srtool_output.json
 
   build-provider-linux:
+    if: inputs.provider-node
     runs-on: parity-large
     timeout-minutes: 60
     needs: [set-image]

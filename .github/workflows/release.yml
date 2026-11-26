@@ -3,10 +3,18 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
+      component:
+        description: Component to release
+        type: choice
+        options:
+          - runtime
+          - provider-node
+        required: true
       version:
         description: >-
-          Release version, e.g. 0.5.2. Must equal provider-node/Cargo.toml.
-          Becomes the tag v<version>-paseo.
+          Release version, e.g. 0.5.2. Must equal the component's Cargo.toml.
+          The runtime becomes the tag v<version>-paseo, the provider node
+          v<version>-provider.
         type: string
         required: true
 
@@ -34,6 +42,7 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          COMPONENT: ${{ inputs.component }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
@@ -41,24 +50,31 @@ jobs:
             echo "::error::version must look like 0.5.2, got '$VERSION'"
             exit 1
           fi
-          TAG="v${VERSION}-paseo"
-          PKG_VERSION=$(awk -F'"' '/^version = / {print $2; exit}' provider-node/Cargo.toml)
+          case "$COMPONENT" in
+            runtime) MANIFEST=runtimes/web3-storage-paseo/Cargo.toml; TAG="v${VERSION}-paseo" ;;
+            provider-node) MANIFEST=provider-node/Cargo.toml; TAG="v${VERSION}-provider" ;;
+            *) echo "::error::unknown component '$COMPONENT'"; exit 1 ;;
+          esac
+          PKG_VERSION=$(awk -F'"' '/^version = / {print $2; exit}' "$MANIFEST")
           if [ "$PKG_VERSION" != "$VERSION" ]; then
-            echo "::error::provider-node/Cargo.toml is at $PKG_VERSION. Bump it to $VERSION first."
+            echo "::error::$MANIFEST is at $PKG_VERSION. Bump it to $VERSION first."
             exit 1
           fi
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
             echo "::error::tag $TAG already exists"
             exit 1
           fi
-          SPEC=$(sed -nE 's/^[[:space:]]*spec_version: ([0-9_]+),$/\1/p' runtimes/web3-storage-paseo/src/lib.rs | tr -d _)
-          LATEST=$(scripts/latest-release-spec-version.sh)
-          if [ -n "$LATEST" ] && [ "$SPEC" -le "$LATEST" ]; then
-            echo "::error::spec_version $SPEC is not above $LATEST, the latest release's. The fork upgrade would be a no-op and test nothing."
-            exit 1
+          if [ "$COMPONENT" = runtime ]; then
+            SPEC=$(sed -nE 's/^[[:space:]]*spec_version: ([0-9_]+),$/\1/p' runtimes/web3-storage-paseo/src/lib.rs | tr -d _)
+            LATEST=$(scripts/latest-release-spec-version.sh)
+            if [ -n "$LATEST" ] && [ "$SPEC" -le "$LATEST" ]; then
+              echo "::error::spec_version $SPEC is not above $LATEST, the latest runtime release's. The fork upgrade would be a no-op and test nothing."
+              exit 1
+            fi
+            echo "spec_version $SPEC (latest runtime release: ${LATEST:-none})"
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Releasing $TAG with spec_version $SPEC (latest release: ${LATEST:-none})"
+          echo "Releasing $TAG"
 
   build:
     needs: [validate]
@@ -67,8 +83,11 @@ jobs:
     uses: ./.github/workflows/build-release-artifacts.yml
     with:
       tag: ${{ needs.validate.outputs.tag }}
+      runtime: ${{ inputs.component == 'runtime' }}
+      provider-node: ${{ inputs.component == 'provider-node' }}
 
   build-provider-macos:
+    if: inputs.component == 'provider-node'
     runs-on: macos-latest
     timeout-minutes: 60
     needs: [validate]
@@ -122,6 +141,7 @@ jobs:
           path: dist/storage-provider-node-*.tar.gz*
 
   check-migration:
+    if: inputs.component == 'runtime'
     needs: [validate]
     permissions:
       contents: read
@@ -136,15 +156,16 @@ jobs:
     uses: paritytech/polkadot-pop-e2e/.github/workflows/release-gate.yml@main
     with:
       environment: previewnet
-      runtime_web3_storage: artifact:web3-storage-paseo-runtime
-      service_storage_provider_node: artifact:storage-provider-node
+      runtime_web3_storage: ${{ inputs.component == 'runtime' && 'artifact:web3-storage-paseo-runtime' || '' }}
+      service_storage_provider_node: ${{ inputs.component == 'provider-node' && 'artifact:storage-provider-node' || '' }}
       runs_on: parity-large
 
-  publish-release:
+  publish-runtime:
+    if: inputs.component == 'runtime'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    needs: [validate, build, build-provider-macos, check-migration, chain-tests]
+    needs: [validate, build, check-migration, chain-tests]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -157,17 +178,10 @@ jobs:
           name: web3-storage-paseo-runtime
           path: artifacts/web3-storage-paseo-runtime
 
-      - name: Download the provider archives
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          pattern: provider-node-*
-          path: artifacts
-
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
           find artifacts -name "*.wasm" -exec cp {} release-assets/ \;
-          find artifacts -name "storage-provider-node-*.tar.gz*" -exec cp {} release-assets/ \;
           ls -la release-assets/
 
       - name: Add runtime info to changelog
@@ -198,20 +212,6 @@ jobs:
           EOF
           done
 
-          {
-            echo
-            echo "## Provider node binaries"
-            echo
-            echo "| Target | sha256 |"
-            echo "|---|---|"
-            for SUM in release-assets/storage-provider-node-*.tar.gz.sha256; do
-              [ -f "$SUM" ] || continue
-              ARCHIVE=$(basename "$SUM" .sha256)
-              HASH=$(awk '{print $1}' "$SUM")
-              echo "| \`${ARCHIVE}\` | \`${HASH}\` |"
-            done
-          } >> RELEASE_NOTES.md
-
           cat RELEASE_NOTES.md
 
       # Use the runner's preinstalled gh CLI rather than a third-party action;
@@ -226,6 +226,59 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "$RELEASE_NAME" \
             --notes-file RELEASE_NOTES.md \
-            release-assets/*.wasm \
+            release-assets/*.wasm
+
+  publish-provider-node:
+    if: inputs.component == 'provider-node'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    needs: [validate, build, build-provider-macos, chain-tests]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the provider archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: provider-node-*
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -name "storage-provider-node-*.tar.gz*" -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+      - name: Write release notes
+        run: |
+          {
+            echo "## Provider node binaries"
+            echo
+            echo "| Target | sha256 |"
+            echo "|---|---|"
+            for SUM in release-assets/storage-provider-node-*.tar.gz.sha256; do
+              [ -f "$SUM" ] || continue
+              ARCHIVE=$(basename "$SUM" .sha256)
+              HASH=$(awk '{print $1}' "$SUM")
+              echo "| \`${ARCHIVE}\` | \`${HASH}\` |"
+            done
+          } > RELEASE_NOTES.md
+
+          cat RELEASE_NOTES.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "storage-provider-node v${VERSION}" \
+            --latest=false \
+            --notes-file RELEASE_NOTES.md \
             release-assets/storage-provider-node-*.tar.gz \
             release-assets/storage-provider-node-*.tar.gz.sha256
