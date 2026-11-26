@@ -3034,8 +3034,9 @@ that fails still pays. A runtime `TransactionExtension`,
 `CheckChallengeResponse` (the `CheckNonce` pattern), handles this:
 
 - `respond_to_challenge { challenge_id, .. }`: `validate` fails with `Stale` if
-  the challenge does not exist and with `BadSigner` if the signer is not the
-  challenged provider. Otherwise `provides: [challenge_id]`.
+  the challenge does not exist or the anchor block is past its deadline, and
+  with `BadSigner` if the signer is not the challenged provider. Otherwise
+  `provides: [challenge_id]`.
 
 A transaction that fails `validate` is rejected by the first pool that sees it
 and never gossiped further. The pool keeps at most one ready transaction per

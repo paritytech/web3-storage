@@ -8,7 +8,8 @@
 
 use crate::chain_connection::{self, ChainHandle, ChainTransport};
 use crate::event_decoding::decode_block_contents;
-use crate::subxt_client::{fetch_current_anchor_block, subxt_account};
+use crate::runtime_conversions::subxt_account;
+use crate::subxt_client::fetch_current_anchor_block;
 use provider_coordinator::{
     ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock, FinalizedBlocks,
 };
