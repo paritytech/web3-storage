@@ -138,14 +138,6 @@ fn try_state_detects_leftover_empty_entries() {
         create_bucket(1, 1);
         assert_ok!(StorageProvider::do_try_state());
 
-        PendingChallenges::<Test>::insert(2, 0);
-        assert!(StorageProvider::do_try_state().is_err());
-        PendingChallenges::<Test>::remove(2);
-
-        PendingChallengesByBucket::<Test>::insert(0, 2, 0);
-        assert!(StorageProvider::do_try_state().is_err());
-        PendingChallengesByBucket::<Test>::remove(0, 2);
-
         MemberBuckets::<Test>::insert(5, frame_support::BoundedVec::default());
         assert!(StorageProvider::do_try_state().is_err());
     });
@@ -169,6 +161,75 @@ fn try_state_detects_agreement_nonce_of_missing_account() {
 
         // An entry for an account that does not exist is caught.
         AgreementNonces::<Test>::insert(1, 1);
+        assert!(StorageProvider::do_try_state().is_err());
+    });
+}
+
+/// Open a challenge against provider 2 on a bucket with a snapshot. Opened at
+/// block 1 with `ChallengeTimeout` 100, so its id is `(deadline 101, index 0)`.
+fn bucket_with_an_open_challenge() -> u64 {
+    use storage_primitives::ChunkLocation;
+    frame_system::Pallet::<Test>::set_block_number(1);
+    let bucket_id = super::challenge::setup_with_snapshot(2, 1);
+    assert_ok!(StorageProvider::challenge_checkpoint(
+        RuntimeOrigin::signed(3),
+        bucket_id,
+        2,
+        ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
+    ));
+    bucket_id
+}
+
+/// The pending-challenge counters match the open challenges on state the
+/// pallet's own extrinsics produce, with a challenge open and after it is
+/// cancelled.
+#[test]
+fn try_state_holds_with_an_open_and_a_cancelled_challenge() {
+    new_test_ext().execute_with(|| {
+        bucket_with_an_open_challenge();
+        assert_ok!(StorageProvider::do_try_state());
+
+        assert_ok!(StorageProvider::cancel_challenge(
+            RuntimeOrigin::signed(3),
+            ChallengeId {
+                deadline: 101,
+                index: 0,
+            }
+        ));
+        assert_ok!(StorageProvider::do_try_state());
+    });
+}
+
+/// A pending-challenge counter that does not equal the number of open
+/// challenges is caught: too high, missing, zero, or present for a provider
+/// or bucket with no challenge.
+#[test]
+fn try_state_detects_pending_challenge_counter_mismatch() {
+    new_test_ext().execute_with(|| {
+        let bucket_id = bucket_with_an_open_challenge();
+        assert_ok!(StorageProvider::do_try_state());
+
+        PendingChallenges::<Test>::insert(2, 2);
+        assert!(StorageProvider::do_try_state().is_err());
+        PendingChallenges::<Test>::insert(2, 1);
+        assert_ok!(StorageProvider::do_try_state());
+
+        PendingChallengesByBucket::<Test>::remove(bucket_id, 2);
+        assert!(StorageProvider::do_try_state().is_err());
+        PendingChallengesByBucket::<Test>::insert(bucket_id, 2, 1);
+        assert_ok!(StorageProvider::do_try_state());
+
+        PendingChallenges::<Test>::insert(7, 0);
+        assert!(StorageProvider::do_try_state().is_err());
+        PendingChallenges::<Test>::insert(7, 1);
+        assert!(StorageProvider::do_try_state().is_err());
+        PendingChallenges::<Test>::remove(7);
+        assert_ok!(StorageProvider::do_try_state());
+
+        PendingChallengesByBucket::<Test>::insert(bucket_id, 7, 1);
         assert!(StorageProvider::do_try_state().is_err());
     });
 }
