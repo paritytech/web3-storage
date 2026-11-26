@@ -778,10 +778,11 @@ mod tests {
         );
     }
 
-    /// A block that enacted a new runtime is flagged, so the coordinator reads
-    /// its chain state again instead of keeping what the old runtime served.
+    /// A block that stored a new runtime yields `RuntimeUpgraded`, so the
+    /// coordinator reads its chain state again instead of keeping what the old
+    /// runtime served.
     #[tokio::test]
-    async fn code_updated_marks_the_block_as_a_runtime_upgrade() {
+    async fn code_updated_decodes_to_runtime_upgraded() {
         use storage_subxt::api::runtime_types::{
             frame_system::{pallet::Event as SystemEvent, EventRecord, Phase},
             storage_paseo_runtime::RuntimeEvent,
@@ -804,7 +805,10 @@ mod tests {
         let at = api.at_current_block().await.expect("block handle");
         let events = at.events().fetch().await.expect("events fetch");
 
-        assert!(decode_block_contents(&events, 0).runtime_upgraded);
+        assert!(matches!(
+            decode_block_contents(&events, 7).events.as_slice(),
+            [BlockEvent::RuntimeUpgraded { at_block: 7 }]
+        ));
     }
 
     #[tokio::test]
