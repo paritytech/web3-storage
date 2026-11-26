@@ -6,7 +6,7 @@ use crate::{
     chain_connection::{self, ChainHandle},
     chain_follower::SubxtChainFollower,
     chain_state_coordinator::ChainStateCoordinator,
-    cli::{Cli, DEFAULT_PROVIDER_ID},
+    cli::{Cli, StorageParams, DEFAULT_PROVIDER_ID},
     membership::{BlockEventInvalidations, ChainMembershipResolver},
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
@@ -17,7 +17,7 @@ use clap::Parser;
 use provider_auth::Authenticator;
 use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
 use provider_http::{create_router, ProviderDeps, ProviderState};
-use provider_storage::{ChainBinding, StorageBackend};
+use provider_storage::StorageBackend;
 use provider_types::ChainClientError;
 use sp_core::crypto::{AccountId32, Ss58Codec};
 use sp_core::H256;
@@ -52,17 +52,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // background coordinators.
     let (events_tx, _) = broadcast::channel::<BlockEvent>(EVENT_CHANNEL_CAPACITY);
 
-    let backend = cli.storage.spec();
-    tracing::info!("Storage backend: {backend}");
-    let storage = backend.build()?;
-
-    // Connect before serving anything, so auth lookups and the one-shot
-    // multiaddr sync work right away and the store is checked against the
-    // chain before any request reaches it.
+    // Connect before opening the store, so the store is checked against the
+    // chain before any request reaches it, and auth lookups and the one-shot
+    // multiaddr sync work right away.
     let handle = chain_connection::connect(&transport).await?;
     let genesis_hash = H256(handle.api.genesis_hash().0);
-    let storage_path = &cli.storage.storage_path;
-    bind_storage_to_chain(&*storage, genesis_hash, storage_path)?;
+    let storage = open_storage(&cli.storage, genesis_hash)?;
     chain_tx.send_replace(Some(handle));
 
     // The provider identity, resolved once: the sr25519 submission account
@@ -194,6 +189,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     // The chain-state coordinator stops only on a chain mismatch or a panic.
     // Either one ends the node instead of serving with stale chain state.
+    let storage_path = &cli.storage.storage_path;
     tokio::select! {
         result = serve => result?,
         error = chain_state_fatal_error(chain_state_handle, storage_path) => return Err(error),
@@ -202,27 +198,22 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Bind `storage` to the chain with `genesis_hash`. Fails when `storage`
-/// belongs to another chain.
-fn bind_storage_to_chain(
-    storage: &dyn StorageBackend,
+/// Open the store and bind it to the chain with `genesis_hash`. Fails when
+/// the store belongs to another chain.
+fn open_storage(
+    params: &StorageParams,
     genesis_hash: H256,
-    storage_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    match storage.bind_chain(genesis_hash) {
-        Ok(ChainBinding::Recorded) => {
-            tracing::info!(
-                "Storage at {} is now bound to chain {genesis_hash:?}",
-                storage_path.display()
-            );
-            Ok(())
-        }
-        Ok(ChainBinding::Matched) => Ok(()),
-        Ok(ChainBinding::Mismatch { stored }) => {
-            Err(chain_mismatch_message(stored, genesis_hash, storage_path).into())
-        }
-        Err(e) => Err(e.into()),
-    }
+) -> Result<Arc<dyn StorageBackend>, Box<dyn std::error::Error>> {
+    let backend = params.spec();
+    tracing::info!("Storage backend: {backend}");
+    backend
+        .build(Some(genesis_hash))
+        .map_err(|error| match error {
+            provider_storage::Error::ChainMismatch { stored, requested } => {
+                chain_mismatch_message(stored, requested, &params.storage_path).into()
+            }
+            error => error.into(),
+        })
 }
 
 /// Operator message for a store that belongs to another chain.
@@ -401,6 +392,7 @@ async fn start_challenge_responder(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::StorageBackendKind;
 
     /// The error names both chains, the storage path and the flag to change it.
     fn assert_operator_message(err: &str, stored: H256, connected: H256, storage_path: &Path) {
@@ -417,18 +409,26 @@ mod tests {
     }
 
     #[test]
-    fn bind_storage_to_chain_rejects_another_chain_with_the_storage_path() {
-        let (storage, dir) = provider_storage::temp_rocksdb();
+    fn open_storage_records_matches_and_rejects_another_chain() {
+        let dir = tempfile::tempdir().unwrap();
+        let params = StorageParams {
+            storage_backend: StorageBackendKind::RocksDb,
+            storage_path: dir.path().to_path_buf(),
+        };
         let stored = H256::repeat_byte(0xaa);
         let connected = H256::repeat_byte(0xbb);
 
-        bind_storage_to_chain(&*storage, stored, dir.path()).unwrap();
-        bind_storage_to_chain(&*storage, stored, dir.path()).unwrap();
-        let err = bind_storage_to_chain(&*storage, connected, dir.path())
-            .unwrap_err()
+        // Each call reopens the store, as a node restart does.
+        open_storage(&params, stored).unwrap();
+        open_storage(&params, stored).unwrap();
+        let err = open_storage(&params, connected)
+            .err()
+            .expect("another chain must be rejected")
             .to_string();
-
         assert_operator_message(&err, stored, connected, dir.path());
+
+        // The rejected chain did not replace the recorded one.
+        open_storage(&params, stored).unwrap();
     }
 
     #[test]

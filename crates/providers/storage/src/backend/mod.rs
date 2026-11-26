@@ -67,10 +67,11 @@ pub enum StorageBackendSpec {
 }
 
 impl StorageBackendSpec {
-    /// Build the backend.
-    pub fn build(&self) -> Result<Arc<dyn StorageBackend>, Error> {
+    /// Build the backend, bound to the chain with `genesis_hash` when given.
+    /// See [`DiskStorage::open`].
+    pub fn build(&self, genesis_hash: Option<H256>) -> Result<Arc<dyn StorageBackend>, Error> {
         match self {
-            Self::RocksDb { path } => Ok(Arc::new(DiskStorage::new(path)?)),
+            Self::RocksDb { path } => Ok(Arc::new(DiskStorage::open(path, genesis_hash)?)),
         }
     }
 }
@@ -146,32 +147,9 @@ pub struct EraseOutcome {
     pub bytes_freed: u64,
 }
 
-/// Result of [`StorageBackend::bind_chain`].
-#[must_use = "a store bound to another chain must not be served"]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChainBinding {
-    /// The store had no chain recorded; it now records the given genesis hash.
-    Recorded,
-    /// The store already records the given genesis hash.
-    Matched,
-    /// The store records another chain. `bind_chain` did not change it.
-    Mismatch {
-        /// Genesis hash recorded in the store.
-        stored: H256,
-    },
-}
-
 /// Storage engine interface. Callers hold an `Arc<dyn StorageBackend>` rather
 /// than a concrete engine.
 pub trait StorageBackend: Send + Sync {
-    /// Bind this store to the chain with `genesis_hash`.
-    ///
-    /// Returns [`ChainBinding::Recorded`] after recording `genesis_hash` in a
-    /// store that records no chain, [`ChainBinding::Matched`] when the store
-    /// records `genesis_hash`, and [`ChainBinding::Mismatch`] when it records a
-    /// different chain.
-    fn bind_chain(&self, genesis_hash: H256) -> Result<ChainBinding, Error>;
-
     /// Initialize a bucket with the given quota.
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
 

@@ -110,4 +110,14 @@ pub enum Error {
     /// refuses rather than reporting phantom missing data.
     #[error("Incompatible on-disk format: {0}")]
     IncompatibleFormat(String),
+
+    /// The store was opened for one chain but records another. Open it for
+    /// the chain that wrote it, or use another store.
+    #[error("Store belongs to chain {stored:?}, not to chain {requested:?}")]
+    ChainMismatch {
+        /// Genesis hash recorded in the store.
+        stored: H256,
+        /// Genesis hash the store was opened for.
+        requested: H256,
+    },
 }

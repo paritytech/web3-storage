@@ -274,6 +274,7 @@ impl IntoResponse for Error {
                 e @ (StorageError::RocksDb(_)
                 | StorageError::ColumnFamilyMissing(_)
                 | StorageError::IncompatibleFormat(_)
+                | StorageError::ChainMismatch { .. }
                 | StorageError::Mmr(_)
                 | StorageError::Serialization(_)) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
