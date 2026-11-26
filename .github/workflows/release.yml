@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v[0-9]*-paseo'
-      - 'storage-provider-node-v[0-9]*'
+      - 'v[0-9]*-provider'
   workflow_dispatch:
     inputs:
       component:
@@ -42,16 +42,17 @@ jobs:
             VERSION=""
           else
             case "${REF_NAME}" in
-              storage-provider-node-v*)
+              v*-provider)
                 COMPONENT=provider-node
-                VERSION="${REF_NAME#storage-provider-node-v}"
+                VERSION="${REF_NAME#v}"
+                VERSION="${VERSION%-provider}"
                 ;;
               v*-paseo)
                 COMPONENT=runtime
                 VERSION="${REF_NAME#v}"
                 VERSION="${VERSION%-paseo}"
                 ;;
-              *) echo "::error::Tag '${REF_NAME}' is not a runtime (v<version>-paseo) or provider-node (storage-provider-node-v<version>) tag."; exit 1 ;;
+              *) echo "::error::Tag '${REF_NAME}' is not a runtime (v<version>-paseo) or provider-node (v<version>-provider) tag."; exit 1 ;;
             esac
           fi
           echo "component=${COMPONENT}" >> "$GITHUB_OUTPUT"
