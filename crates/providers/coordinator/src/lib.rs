@@ -62,7 +62,9 @@ pub(crate) enum Error {
 /// Every wait in the reconnect loop goes through this: an operation that can
 /// hang forever (e.g. a wedged smoldot backend with no timeout of its own)
 /// must turn into an `Err` so the loop can rebuild the connection instead of
-/// hanging with a stale handle still published.
+/// hanging with a stale handle still published. The one exception is the
+/// first timeout of a state read while following blocks, which the next block
+/// repeats.
 async fn with_timeout<T>(
     what: &'static str,
     budget: Duration,
@@ -165,8 +167,8 @@ impl ChainStateCoordinator {
     }
 
     /// Bootstrap state from the connection and follow its finalized blocks
-    /// until the stream ends or stalls. Returns `Err` if a state read times
-    /// out. Split from
+    /// until the stream ends or stalls. Returns `Err` if the state read on
+    /// connect times out, or two state reads in a row after it. Split from
     /// [`Self::connect_and_follow`] so tests can drive the full pipeline over
     /// a mock connection.
     async fn follow(&self, connection: ChainConnection) -> Result<(), Error> {
@@ -177,8 +179,8 @@ impl ChainStateCoordinator {
         /// The connection is already warp-synced by `connect`, so the first
         /// block gets the same budget as every other.
         const STALL_TIMEOUT: Duration = Duration::from_secs(60);
-        /// Budget for one read of the chain state, on connect or after a
-        /// runtime upgrade: ordinary RPC round-trips on
+        /// Budget for one read of the chain state, on connect or while
+        /// following blocks: ordinary RPC round-trips on
         /// an already-synced connection, but on the light client they have no
         /// timeout of their own and a wedged backend would otherwise hang the
         /// reconnect loop forever.
@@ -199,10 +201,15 @@ impl ChainStateCoordinator {
         )
         .await?;
 
-        // Makes the loop read the state again at the next block. Set at a
-        // block that stored a new runtime: the following block is the first
+        // Makes the loop read the state again at the current block. Set at a
+        // block after one that stored a new runtime: it is the first
         // one the new runtime executes and the one its migrations run in.
-        let mut read_again = false;
+        // Also set at a block after one whose events are unknown.
+        let mut read_at_this_block = false;
+        // Whether the last read in this loop timed out. The loop then reads at
+        // the next block on the same connection, which still delivers blocks.
+        // A second timeout in a row rebuilds the connection.
+        let mut last_read_timed_out = false;
 
         loop {
             let block = match tokio::time::timeout(STALL_TIMEOUT, blocks.next()).await {
@@ -223,47 +230,59 @@ impl ChainStateCoordinator {
                     .store(anchor_block, std::sync::atomic::Ordering::Relaxed);
             }
 
-            let Some(contents) = block.contents else {
-                escalate_block_read_failure(&self.events_tx, block.number);
-                // The block may have stored a new runtime, and its events are
-                // lost for every coordinator.
-                read_again = true;
-                continue;
+            // Whether the next block needs a state read: this block stored a
+            // new runtime, or its events are unknown, so it may have.
+            let (read_at_next_block, lifecycle) = match block.contents {
+                Some(contents) => {
+                    let runtime_upgraded = contents
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, BlockEvent::RuntimeUpgraded { .. }));
+                    // Fan out the coordinator-relevant events. Send failures
+                    // just mean no coordinator is subscribed.
+                    for event in contents.events {
+                        let _ = self.events_tx.send(event);
+                    }
+                    (runtime_upgraded, contents.lifecycle)
+                }
+                None => {
+                    escalate_block_read_failure(&self.events_tx, block.number);
+                    (true, Vec::new())
+                }
             };
 
-            let runtime_upgraded = contents
-                .events
-                .iter()
-                .any(|event| matches!(event, BlockEvent::RuntimeUpgraded { .. }));
-
-            // Fan out the coordinator-relevant events. Send failures just mean
-            // no coordinator is subscribed.
-            for event in contents.events {
-                let _ = self.events_tx.send(event);
-            }
-
-            if read_again {
+            if read_at_this_block {
                 tracing::info!(
                     "chain-state coordinator: reading chain state again at block {}",
                     block.number
                 );
-                with_timeout(
+                let read = with_timeout(
                     "Chain state read",
                     BOOTSTRAP_TIMEOUT,
                     self.read_chain_state(chain),
                 )
-                .await?;
+                .await;
+                match read {
+                    Ok(()) => last_read_timed_out = false,
+                    Err(e) if last_read_timed_out => return Err(e),
+                    Err(e) => {
+                        tracing::warn!(
+                            "chain-state coordinator: {e}; reading again at the next block"
+                        );
+                        last_read_timed_out = true;
+                    }
+                }
             } else {
                 refresh_if_relevant_event(
                     chain,
                     &self.chain_state,
                     &self.provider_account,
-                    &contents.lifecycle,
+                    &lifecycle,
                     block.number,
                 )
                 .await;
             }
-            read_again = runtime_upgraded;
+            read_at_this_block = read_at_next_block || last_read_timed_out;
         }
 
         Ok(())
@@ -372,10 +391,10 @@ impl ChainStateCoordinatorHandle {
     }
 }
 
-/// A finalized block's handle or events could not be fetched at all, so its
-/// membership events (if any) are lost rather than merely dropped one at a
+/// A finalized block's handle or events could not be fetched, or its event
+/// list does not decode, so its membership events (if any) are lost rather than merely dropped one at a
 /// time - the same "no bucket id left to invalidate" situation an undecodable
-/// event escalates to, and for the same reason: a plain `continue` here would
+/// event escalates to, and for the same reason: dropping the block without this event would
 /// let a revoked member keep authorizing for a full `--auth-cache-ttl` on a
 /// node that is otherwise connected and healthy.
 fn escalate_block_read_failure(events_tx: &BlockEventTx, block_number: u32) {
@@ -770,6 +789,10 @@ mod tests {
         blocks: Vec<Option<Vec<BlockEvent>>>,
         delivered_blocks: Arc<AtomicUsize>,
         connects: Arc<AtomicUsize>,
+        /// The chain state reads that never complete, by position: 0 is the
+        /// read on the first connect.
+        hanging_reads: Vec<usize>,
+        reads: Arc<AtomicUsize>,
     }
 
     #[async_trait]
@@ -815,6 +838,10 @@ mod tests {
         /// The number of the last delivered block, so a test can tell at
         /// which block the coordinator last read the chain state.
         async fn fetch_request_timeout(&self) -> Result<Option<u32>, ChainClientError> {
+            let read = self.reads.fetch_add(1, Ordering::SeqCst);
+            if self.hanging_reads.contains(&read) {
+                return std::future::pending().await;
+            }
             Ok(Some(self.delivered_blocks.load(Ordering::SeqCst) as u32))
         }
     }
@@ -824,6 +851,23 @@ mod tests {
     /// number of the block at which it last read the chain state (0 is the
     /// read on connect).
     async fn run_scripted(blocks: Vec<Option<Vec<BlockEvent>>>) -> (Vec<BlockEvent>, u32) {
+        // The clock is paused, so this returns once the coordinator waits for
+        // a block that never arrives. It is shorter than the reconnect delay.
+        let (events, last_read, connects) =
+            run_scripted_for(blocks, vec![], Duration::from_secs(1)).await;
+        assert_eq!(connects, 1);
+        (events, last_read)
+    }
+
+    /// Run the coordinator over a [`ScriptedChain`] for `run_for` of the
+    /// paused clock. Returns the events it sent, the number of the block at
+    /// which it last read the chain state (0 is the read on connect) and the
+    /// number of connects.
+    async fn run_scripted_for(
+        blocks: Vec<Option<Vec<BlockEvent>>>,
+        hanging_reads: Vec<usize>,
+        run_for: Duration,
+    ) -> (Vec<BlockEvent>, u32, usize) {
         let chain_state = Arc::new(ChainState::default());
         let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
         let connects = Arc::new(AtomicUsize::new(0));
@@ -832,6 +876,8 @@ mod tests {
                 blocks,
                 delivered_blocks: Arc::new(AtomicUsize::new(0)),
                 connects: connects.clone(),
+                hanging_reads,
+                reads: Arc::new(AtomicUsize::new(0)),
             }),
             provider_account(),
             chain_state.clone(),
@@ -839,12 +885,9 @@ mod tests {
         )
         .start();
 
-        // The clock is paused, so this returns once the coordinator waits for
-        // a block that never arrives. It is shorter than the reconnect delay.
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(run_for).await;
         handle.stop().await;
 
-        assert_eq!(connects.load(Ordering::SeqCst), 1);
         let mut events = Vec::new();
         while let Ok(event) = events_rx.try_recv() {
             events.push(event);
@@ -855,7 +898,72 @@ mod tests {
             .as_ref()
             .expect("the coordinator read the constants")
             .request_timeout;
-        (events, last_read)
+        (events, last_read, connects.load(Ordering::SeqCst))
+    }
+
+    /// Block 1 stores a new runtime and the read at block 2 times out. The
+    /// coordinator reads again at block 3 on the same connection, and not at
+    /// block 4.
+    #[tokio::test(start_paused = true)]
+    async fn run_reads_chain_state_at_the_next_block_after_a_read_timeout() {
+        // 60 s for the read that times out; the stall timeout ends the
+        // connection 60 s after block 4.
+        let (events, last_read, connects) = run_scripted_for(
+            vec![
+                Some(vec![BlockEvent::RuntimeUpgraded { at_block: 1 }]),
+                Some(vec![]),
+                Some(vec![]),
+                Some(vec![]),
+            ],
+            vec![1],
+            Duration::from_secs(90),
+        )
+        .await;
+
+        assert_eq!(connects, 1);
+        assert_eq!(last_read, 3);
+        assert!(
+            matches!(
+                events.as_slice(),
+                [
+                    BlockEvent::Resubscribed { .. },
+                    BlockEvent::RuntimeUpgraded { at_block: 1 },
+                    BlockEvent::Resubscribed { .. },
+                ]
+            ),
+            "unexpected events: {events:?}"
+        );
+    }
+
+    /// The reads at blocks 2 and 3 both time out, so the coordinator rebuilds
+    /// the connection and reads the state on the new one.
+    #[tokio::test(start_paused = true)]
+    async fn run_reconnects_after_two_read_timeouts_in_a_row() {
+        // 120 s for the two reads, then the 5 s reconnect delay.
+        let (events, last_read, connects) = run_scripted_for(
+            vec![
+                Some(vec![BlockEvent::RuntimeUpgraded { at_block: 1 }]),
+                Some(vec![]),
+                Some(vec![]),
+            ],
+            vec![1, 2],
+            Duration::from_secs(150),
+        )
+        .await;
+
+        assert_eq!(connects, 2);
+        assert_eq!(last_read, 3);
+        assert!(
+            matches!(
+                events.as_slice(),
+                [
+                    BlockEvent::Resubscribed { .. },
+                    BlockEvent::RuntimeUpgraded { at_block: 1 },
+                    BlockEvent::Resubscribed { .. },
+                ]
+            ),
+            "unexpected events: {events:?}"
+        );
     }
 
     /// Block 1 stores a new runtime. The coordinator reads the state again at
@@ -906,6 +1014,29 @@ mod tests {
                     BlockEvent::MembershipScopeUnknown { at_block: 1 },
                     BlockEvent::RuntimeUpgraded { at_block: 2 },
                     BlockEvent::Resubscribed { .. },
+                    BlockEvent::Resubscribed { .. },
+                ]
+            ),
+            "unexpected events: {events:?}"
+        );
+        assert_eq!(last_read, 3);
+    }
+
+    /// While no block is readable, the coordinator still reads the state at
+    /// every block after the first unreadable one.
+    #[tokio::test(start_paused = true)]
+    async fn run_reads_chain_state_at_each_block_while_blocks_are_unreadable() {
+        let (events, last_read) = run_scripted(vec![None, None, None]).await;
+
+        assert!(
+            matches!(
+                events.as_slice(),
+                [
+                    BlockEvent::Resubscribed { .. },
+                    BlockEvent::MembershipScopeUnknown { at_block: 1 },
+                    BlockEvent::MembershipScopeUnknown { at_block: 2 },
+                    BlockEvent::Resubscribed { .. },
+                    BlockEvent::MembershipScopeUnknown { at_block: 3 },
                     BlockEvent::Resubscribed { .. },
                 ]
             ),
