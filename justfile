@@ -238,22 +238,32 @@ start-second-provider BACKEND="rocksdb" PORT=SECOND_PROVIDER_PORT STORAGE_PATH="
     trap "rm -f $CHARLIE_KEY" EXIT
     just start-provider "{{BACKEND}}" "{{PORT}}" "{{STORAGE_PATH}}" "$CHARLIE_KEY"
 
-# Register provider on-chain (idempotent). Requires a running chain.
+# Register provider on-chain (idempotent) and set it to accept agreements at
+# 1 per byte-block for 10 to 100,000 anchor blocks. Requires a running chain.
 # KEY_SCHEME registers a non-sr25519 signing key (the node's --key-scheme
 # must match); extrinsics are still submitted from the sr25519 account.
 register-provider KEYFILE=PROVIDER_KEYFILE KEY_SCHEME=PROVIDER_KEY_SCHEME:
     #!/usr/bin/env bash
     set -euo pipefail
-    ARGS=(--multiaddr "{{ PROVIDER_MULTI_ADDR }}")
     if [ -n "{{KEYFILE}}" ]; then
-        ARGS+=(--provider-keyfile "{{KEYFILE}}")
+        KEY=(--provider-keyfile "{{KEYFILE}}")
     else
-        ARGS+=(--provider-suri //Alice)
+        KEY=(--provider-suri //Alice)
     fi
+    REGISTER=(--multiaddr "{{ PROVIDER_MULTI_ADDR }}")
     if [ -n "{{KEY_SCHEME}}" ]; then
-        ARGS+=(--key-scheme "{{KEY_SCHEME}}")
+        REGISTER+=(--key-scheme "{{KEY_SCHEME}}")
     fi
-    cargo run -p storage-cli -- --chain-rpc "{{ CHAIN_WS }}" provider register "${ARGS[@]}"
+    CLI=(cargo run -p storage-cli -- --chain-rpc "{{ CHAIN_WS }}" provider)
+    # register rejects an already registered account without submitting.
+    if ! OUTPUT=$("${CLI[@]}" register "${KEY[@]}" "${REGISTER[@]}" 2>&1); then
+        echo "$OUTPUT"
+        grep -q "already registered as a provider" <<<"$OUTPUT" || exit 1
+    else
+        echo "$OUTPUT"
+    fi
+    "${CLI[@]}" update-settings "${KEY[@]}" \
+        --price-per-byte 1 --min-duration 10 --max-duration 100000
 
 # Health check for provider node
 health:
@@ -409,6 +419,11 @@ e2e PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL: papi-setu
     npx c8 --reporter=text --reporter=json --report-dir=examples/papi/coverage \
         --include="examples/papi/**" --include="packages/sdk/src/**" \
         node --import tsx examples/papi/e2e/runner.bin.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ SECOND_PROVIDER_URL }}"
+
+# Funds a generated account from //Bob, so CHAIN_WS must be a dev chain.
+# Run the Rust e2e test of `storage-cli provider` (needs `just start-e2e-chain`)
+storage-cli-provider-e2e:
+    E2E_CHAIN_WS="{{ CHAIN_WS }}" cargo test --release -p storage-cli --test provider_e2e -- --ignored --nocapture
 
 # Run a single E2E workflow by number (e.g. just e2e-single 01)
 e2e-single NUM PROVIDER_URL=PROVIDER_URL SECOND_PROVIDER_URL=SECOND_PROVIDER_URL: papi-setup

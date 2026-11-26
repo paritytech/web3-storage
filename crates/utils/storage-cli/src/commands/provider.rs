@@ -1,105 +1,462 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! `provider` subcommands.
+//! `provider` subcommand: provider management from the command line, backed
+//! by the `provider` module over the SDK's chain client.
 
-use anyhow::{anyhow, bail, Context, Result};
+use std::path::{Path, PathBuf};
+
+use crate::provider::ProviderManager;
+use anyhow::{anyhow, Context, Result};
 use clap::{Args, Subcommand};
+use provider_types::Keyfile;
 use provider_types::{KeyScheme, ProviderKeypair};
-use sp_runtime::AccountId32;
-use storage_client::{ProviderClient, ProviderSettings};
+use sp_core::crypto::{Ss58AddressFormat, Ss58Codec};
+use storage_client::substrate::SubstrateClient;
+use storage_client::{ProviderClient, ProviderSettings, ProviderSettingsUpdate, Signer};
 
 use crate::cli::GlobalArgs;
-use crate::common::{account_ss58, build_config, signer_from_suri, ProviderKey};
+use crate::common::{build_config, key_scheme_name, ProviderKey};
+use crate::provider::GENERIC_SS58_PREFIX;
 
-/// Stake locked at registration: `MinProviderStake` of the bundled runtimes
-/// (1000 tokens at 12 decimals).
-const STAKE: u128 = 1_000_000_000_000_000;
+/// Stake locked at registration by default: `MinProviderStake` of the
+/// bundled runtimes (1000 tokens at 12 decimals).
+pub const MIN_PROVIDER_STAKE: u128 = 1_000_000_000_000_000;
 
+/// `storage-cli provider`: one signed provider management transaction, then
+/// exit. The account is `--provider-suri` or `--provider-keyfile`.
 #[derive(Debug, Subcommand)]
-pub enum Provider {
-    /// Register the provider account as a storage provider that accepts
-    /// primary agreements at 1 per byte-block. Does nothing if the account is
-    /// already registered with the same signing key. The provider node can start
-    /// before or after this command.
+pub enum ProviderAction {
+    /// Create a new secret in `--provider-keyfile` and print, as JSON, the
+    /// account it derives. Fails if the file exists. Reads the chain's SS58
+    /// prefix from `--chain-rpc` for the address; when the chain is
+    /// unreachable the generic prefix 42 is used and reported in the output.
+    GenerateKey {
+        /// Path of the keyfile to create.
+        #[arg(long, value_name = "FILE")]
+        provider_keyfile: PathBuf,
+
+        /// Scheme of the signing key the keyfile records. Only sr25519 is
+        /// supported for now; any other value is rejected.
+        #[arg(long, value_enum, value_name = "SCHEME")]
+        key_scheme: Option<KeyScheme>,
+
+        /// Mnemonic length in words.
+        #[arg(
+            long,
+            value_name = "COUNT",
+            default_value_t = crate::provider::DEFAULT_MNEMONIC_WORDS,
+            value_parser = mnemonic_word_count
+        )]
+        words: usize,
+    },
+
+    /// Register the account as a provider.
     Register(RegisterArgs),
+
+    /// Change the provider's settings. Only the given flags change; every
+    /// other setting keeps its on-chain value.
+    UpdateSettings(UpdateSettingsArgs),
+
+    /// Announce deregistration. The chain releases the stake once
+    /// `complete_deregister` is called after the announcement period.
+    Deregister {
+        #[command(flatten)]
+        provider: ProviderKey,
+    },
 }
 
+/// Flags of `provider register`.
 #[derive(Debug, Args)]
 pub struct RegisterArgs {
     #[command(flatten)]
     pub provider: ProviderKey,
 
-    /// Multiaddr at which clients reach the provider node.
-    #[arg(long, value_name = "MULTIADDR")]
+    /// Network address clients connect to, e.g.
+    /// `/ip4/1.2.3.4/tcp/3333` or
+    /// `/dns4/example.com/tcp/443/tls/http/http-path/web3-storage-provider`.
+    #[arg(long, value_name = "MULTIADDR", env = "PUBLIC_MULTIADDR")]
     pub multiaddr: String,
 
-    /// Scheme of the signing key to register. Must match the provider node's
-    /// `--key-scheme`. The extrinsics are always signed by the sr25519
-    /// account.
-    #[arg(long, value_enum, value_name = "SCHEME", default_value_t = KeyScheme::Sr25519)]
-    pub key_scheme: KeyScheme,
+    /// Stake to lock, in the chain's smallest unit. Must be at least the
+    /// chain's minimum provider stake.
+    #[arg(long, value_name = "AMOUNT", default_value_t = MIN_PROVIDER_STAKE)]
+    pub stake: u128,
+
+    /// Scheme of the signing key to register as the on-chain `public_key`.
+    /// Must match the provider node's `--key-scheme`. Defaults to a JSON
+    /// keyfile's `keyScheme`, else sr25519. The extrinsics are always signed
+    /// by the sr25519 account.
+    #[arg(long, value_enum, value_name = "SCHEME")]
+    pub key_scheme: Option<KeyScheme>,
 }
 
-/// Register the `--provider-suri`/`--provider-keyfile` account as a provider
-/// and open it for primary agreements.
-pub async fn register(global: &GlobalArgs, args: &RegisterArgs) -> Result<()> {
-    let suri = args.provider.suri()?;
-    let signer = signer_from_suri(&suri)?;
-    let provider_ss58 = account_ss58(&signer);
-    let provider_account = AccountId32::from(signer.keypair().public_key().0);
-    let signing_key = ProviderKeypair::from_seed(&suri, args.key_scheme)
-        .map_err(|error| {
-            anyhow!(
-                "failed to derive the {:?} signing key: {error}",
-                args.key_scheme
-            )
-        })?
-        .public_key_bytes();
+/// Flags of `provider update-settings`.
+#[derive(Debug, Args)]
+pub struct UpdateSettingsArgs {
+    #[command(flatten)]
+    pub provider: ProviderKey,
 
-    let mut client = ProviderClient::new(build_config(global), signer)
-        .context("failed to construct chain client")?;
-    client
-        .connect()
-        .await
-        .with_context(|| format!("failed to connect to chain RPC {}", global.chain_rpc))?;
+    #[command(flatten)]
+    pub settings: SettingsUpdateArgs,
+}
 
-    let registration = client
-        .get_provider_info(&provider_account)
-        .await
-        .with_context(|| format!("failed to read the registration of {provider_ss58}"))?;
-    if let Some(registration) = registration {
-        if registration.public_key != signing_key {
-            bail!(
-                "provider {provider_ss58} is already registered with key {}, not with the {:?} \
-                 key {} derived from this seed. Deregister first, or pass the seed and \
-                 --key-scheme that produced the registered key.",
-                array_bytes::bytes2hex("0x", &registration.public_key),
-                args.key_scheme,
-                array_bytes::bytes2hex("0x", &signing_key),
+/// `--words` of `provider generate-key`: one of the BIP39 word counts.
+fn mnemonic_word_count(value: &str) -> Result<usize, String> {
+    let counts = crate::provider::MNEMONIC_WORD_COUNTS;
+    match value.parse::<usize>() {
+        Ok(words) if counts.contains(&words) => Ok(words),
+        _ => Err(format!(
+            "must be one of {}",
+            counts.map(|c| c.to_string()).join(", ")
+        )),
+    }
+}
+
+/// Flags of `provider update-settings`; each one is optional.
+#[derive(Debug, Default, Args)]
+pub struct SettingsUpdateArgs {
+    /// Shortest agreement duration, in anchor blocks, to accept. The chain
+    /// counts blocks in `u32`.
+    #[arg(long, value_name = "BLOCKS")]
+    pub min_duration: Option<u32>,
+
+    /// Longest agreement duration, in anchor blocks, to accept. The chain
+    /// counts blocks in `u32`.
+    #[arg(long, value_name = "BLOCKS")]
+    pub max_duration: Option<u32>,
+
+    /// Price per byte per anchor block, in the chain's smallest unit.
+    #[arg(long, value_name = "AMOUNT")]
+    pub price_per_byte: Option<u128>,
+
+    /// Whether to accept new primary agreements.
+    #[arg(long, value_name = "BOOL")]
+    pub accepting_primary: Option<bool>,
+
+    /// Price per confirmed replica sync, in the chain's smallest unit.
+    /// Setting it makes the provider accept replica agreements.
+    #[arg(long, value_name = "AMOUNT", conflicts_with = "no_replicas")]
+    pub replica_sync_price: Option<u128>,
+
+    /// Stop accepting replica agreements.
+    #[arg(long)]
+    pub no_replicas: bool,
+
+    /// Whether to accept extensions of existing agreements.
+    #[arg(long, value_name = "BOOL")]
+    pub accepting_extensions: Option<bool>,
+
+    /// Capacity limit in bytes; 0 means unlimited.
+    #[arg(long, value_name = "BYTES")]
+    pub max_capacity: Option<u64>,
+
+    /// Smallest agreement size in bytes to accept; 0 means no minimum.
+    #[arg(long, value_name = "BYTES")]
+    pub min_agreement_bytes: Option<u64>,
+}
+
+impl SettingsUpdateArgs {
+    /// The partial update these flags describe.
+    pub fn update(&self) -> ProviderSettingsUpdate {
+        let replica_sync_price = if self.no_replicas {
+            Some(None)
+        } else {
+            self.replica_sync_price.map(Some)
+        };
+        ProviderSettingsUpdate {
+            min_duration: self.min_duration,
+            max_duration: self.max_duration,
+            price_per_byte: self.price_per_byte,
+            accepting_primary: self.accepting_primary,
+            replica_sync_price,
+            accepting_extensions: self.accepting_extensions,
+            max_capacity: self.max_capacity,
+            min_agreement_bytes: self.min_agreement_bytes,
+        }
+    }
+}
+
+/// Run one provider action.
+///
+/// Connects once, signs with the account's sr25519 keypair (the account the
+/// provider is keyed by on chain), and prints the outcome.
+pub async fn run(global: &GlobalArgs, action: ProviderAction) -> Result<()> {
+    let (provider, key_scheme) = match action {
+        ProviderAction::GenerateKey {
+            provider_keyfile,
+            key_scheme,
+            words,
+        } => {
+            // Reject an unsupported scheme before connecting anywhere.
+            let scheme = supported_scheme(key_scheme.unwrap_or_default())?;
+            let ss58_prefix = match SubstrateClient::connect(&global.chain_rpc).await {
+                Ok(client) => ss58_prefix(&client).await?,
+                Err(e) => {
+                    eprintln!(
+                        "Cannot read the chain's SS58 prefix ({e}); the address uses prefix {GENERIC_SS58_PREFIX}"
+                    );
+                    GENERIC_SS58_PREFIX
+                }
+            };
+            let output = generate_key(&provider_keyfile, scheme, words, ss58_prefix)?;
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            return Ok(());
+        }
+        ProviderAction::Register(ref args) => (&args.provider, args.key_scheme),
+        ProviderAction::UpdateSettings(ref args) => (&args.provider, None),
+        ProviderAction::Deregister { ref provider } => (provider, None),
+    };
+
+    let key = provider.load(key_scheme)?;
+    let signer = Signer::from_seed(&key.seed).context("failed to derive keypair from SURI")?;
+    let mut client = ProviderClient::new(build_config(global), signer.clone())?;
+    client.connect().await?;
+    let ss58_prefix = ss58_prefix(client.chain()?).await?;
+    let manager = ProviderManager::new(client, &signer, ss58_prefix);
+    let account = manager.account();
+
+    match action {
+        // Returned above; the chain operations follow.
+        ProviderAction::GenerateKey { .. } => {}
+        ProviderAction::Register(RegisterArgs {
+            multiaddr, stake, ..
+        }) => {
+            let public_key = ProviderKeypair::from_seed(&key.seed, key.scheme)
+                .map_err(anyhow::Error::msg)?
+                .public_key_bytes();
+            let block_hash = manager
+                .register(multiaddr.clone(), public_key, stake)
+                .await?;
+            println!(
+                "Registered provider {account} at {multiaddr} with stake {stake}{}",
+                included_in(&block_hash)
             );
         }
-        eprintln!("Provider {provider_ss58} is already registered with this key");
-        return Ok(());
+        ProviderAction::UpdateSettings(args) => {
+            let outcome = manager.update_settings(&args.settings.update()).await?;
+            match outcome.block_hash {
+                Some(block_hash) => println!(
+                    "Updated settings of provider {account}{}",
+                    included_in(&block_hash)
+                ),
+                None => println!("Settings of provider {account} already match; nothing submitted"),
+            }
+            print_settings(&outcome.settings);
+        }
+        ProviderAction::Deregister { .. } => {
+            let block_hash = manager.deregister().await?;
+            println!(
+                "Announced deregistration of provider {account}{}. Call complete_deregister after the announcement period to release the stake.",
+                included_in(&block_hash)
+            );
+        }
     }
 
-    eprintln!("Registering provider {provider_ss58} at {}", args.multiaddr);
-    client
-        .register(args.multiaddr.clone(), signing_key, STAKE)
-        .await
-        .with_context(|| format!("failed to register provider {provider_ss58}"))?;
-    client
-        .update_settings(ProviderSettings {
-            price_per_byte: 1,
-            min_duration: 10,
-            max_duration: 100_000,
-            accepting_primary: true,
-            replica_sync_price: None,
-            accepting_extensions: true,
-            max_capacity: 0,
-            min_agreement_bytes: 0,
-        })
-        .await
-        .with_context(|| format!("failed to update the settings of provider {provider_ss58}"))?;
-    eprintln!("Provider {provider_ss58} registered and accepting primary agreements");
     Ok(())
+}
+
+/// The chain's `System::SS58Prefix` constant: the prefix every address the
+/// subcommand prints uses, so they match the chain's own tools.
+async fn ss58_prefix(client: &SubstrateClient) -> Result<u16> {
+    client
+        .ss58_prefix()
+        .await
+        .context("failed to read the chain's SS58Prefix")
+}
+
+/// `generate-key` supports sr25519 only for now.
+fn supported_scheme(scheme: KeyScheme) -> Result<KeyScheme> {
+    match scheme {
+        KeyScheme::Sr25519 => Ok(scheme),
+        other => Err(anyhow!(
+            "key scheme {} is not supported by storage-cli provider generate-key yet; only sr25519 is",
+            key_scheme_name(other)
+        )),
+    }
+}
+
+/// Create the keyfile and return its public part for printing: the keyfile
+/// without `secretPhrase`, plus the path. The secret is only in the file,
+/// which is the copy to back up; a terminal is often logged.
+///
+/// The keyfile records, in the field names `subkey generate --output-type
+/// json` uses, the sr25519 submission account the provider is keyed by on
+/// chain (`ss58Address`, `accountId`) and the key that `register` puts on
+/// chain (`keyScheme`, `publicKey`).
+fn generate_key(
+    path: &Path,
+    scheme: KeyScheme,
+    words: usize,
+    ss58_prefix: u16,
+) -> Result<serde_json::Value> {
+    let mnemonic = crate::provider::generate_mnemonic(words)?;
+    let account = Signer::from_seed(&mnemonic)
+        .context("failed to derive keypair from mnemonic")?
+        .account_id();
+    let public_key = ProviderKeypair::from_seed(&mnemonic, scheme)
+        .map_err(anyhow::Error::msg)?
+        .public_key_bytes();
+    let keyfile = Keyfile {
+        secret_phrase: mnemonic,
+        key_scheme: Some(key_scheme_name(scheme)),
+        identity: [
+            ("ss58Prefix", serde_json::Value::from(ss58_prefix)),
+            (
+                "ss58Address",
+                account
+                    .to_ss58check_with_version(Ss58AddressFormat::custom(ss58_prefix))
+                    .into(),
+            ),
+            (
+                "accountId",
+                array_bytes::bytes2hex("0x", account.as_ref() as &[u8]).into(),
+            ),
+            ("publicKey", array_bytes::bytes2hex("0x", public_key).into()),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect(),
+    };
+    crate::provider::write_keyfile(path, &keyfile)?;
+
+    let mut public = serde_json::Map::new();
+    public.insert("keyfile".into(), path.display().to_string().into());
+    public.insert("keyScheme".into(), key_scheme_name(scheme).into());
+    public.extend(keyfile.identity);
+    Ok(serde_json::Value::Object(public))
+}
+
+/// One `name: value` line per setting, in the pallet's field order.
+fn print_settings(settings: &ProviderSettings) {
+    let replica_sync_price = match settings.replica_sync_price {
+        Some(price) => price.to_string(),
+        None => "none (not accepting replicas)".to_string(),
+    };
+    println!("  min_duration: {}", settings.min_duration);
+    println!("  max_duration: {}", settings.max_duration);
+    println!("  price_per_byte: {}", settings.price_per_byte);
+    println!("  accepting_primary: {}", settings.accepting_primary);
+    println!("  replica_sync_price: {replica_sync_price}");
+    println!("  accepting_extensions: {}", settings.accepting_extensions);
+    println!("  max_capacity: {}", settings.max_capacity);
+    println!("  min_agreement_bytes: {}", settings.min_agreement_bytes);
+}
+
+/// The block that included the transaction, for the outcome line.
+fn included_in(block_hash: &sp_core::H256) -> String {
+    format!(
+        " (finalized in block {})",
+        array_bytes::bytes2hex("0x", block_hash.0)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::tests::provider_keyfile;
+    use sp_core::crypto::AccountId32;
+    use sp_core::{sr25519, Pair};
+
+    /// A generated mnemonic is a secret every signing scheme and the
+    /// submission account derive from: the BIP39 phrase `generate_mnemonic`
+    /// produces is the format `sp_core` parses.
+    #[test]
+    fn generated_mnemonic_derives_under_every_scheme() {
+        let mnemonic = crate::provider::generate_mnemonic(12).unwrap();
+        sr25519::Pair::from_string(&mnemonic, None).unwrap();
+        for scheme in [
+            KeyScheme::Sr25519,
+            KeyScheme::Ed25519,
+            KeyScheme::Ecdsa,
+            KeyScheme::Eth,
+        ] {
+            let key = ProviderKeypair::from_seed(&mnemonic, scheme)
+                .unwrap()
+                .public_key_bytes();
+            assert!(
+                key.len() == 32 || key.len() == 33,
+                "{scheme:?}: {}",
+                key.len()
+            );
+        }
+    }
+
+    /// `generate-key` writes a JSON keyfile that `--keyfile` loads, with the
+    /// scheme recorded, and its output names the account that file derives,
+    /// encoded with the requested SS58 prefix. Any scheme other than sr25519
+    /// is rejected before anything is written.
+    #[test]
+    fn generate_key_writes_a_loadable_keyfile() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("provider.json");
+
+        let err = supported_scheme(KeyScheme::Ecdsa).unwrap_err().to_string();
+        assert!(err.contains("ecdsa") && err.contains("sr25519"), "{err}");
+
+        let scheme = supported_scheme(KeyScheme::default()).unwrap();
+        let output = generate_key(&path, scheme, 24, 0).unwrap();
+        let loaded = provider_keyfile(path.clone()).load(None).unwrap();
+        assert_eq!(loaded.scheme, KeyScheme::Sr25519);
+        let seed = loaded.seed;
+        assert_eq!(seed.split(' ').count(), 24);
+        let file: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(file["secretPhrase"], seed);
+        assert_eq!(file["keyScheme"], "sr25519");
+        assert_eq!(file["ss58Address"], output["ss58Address"]);
+
+        let expected =
+            AccountId32::from(sr25519::Pair::from_string(&seed, None).unwrap().public().0);
+        let (decoded, format) =
+            AccountId32::from_ss58check_with_version(output["ss58Address"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(decoded, expected);
+        assert_eq!(format, Ss58AddressFormat::custom(0));
+        assert_eq!(output["ss58Prefix"], 0);
+        assert_eq!(
+            output["accountId"],
+            array_bytes::bytes2hex("0x", expected.as_ref() as &[u8])
+        );
+        assert_eq!(output["keyScheme"], "sr25519");
+        assert_eq!(output["publicKey"], output["accountId"]);
+        assert_eq!(output["keyfile"], path.display().to_string());
+        assert!(output.get("secretPhrase").is_none());
+
+        let err = generate_key(&path, scheme, 24, 0).unwrap_err().to_string();
+        assert!(err.contains("exists"), "{err}");
+    }
+
+    #[test]
+    fn update_settings_flags_map_to_a_partial_update() {
+        assert_eq!(
+            SettingsUpdateArgs::default().update(),
+            ProviderSettingsUpdate::default()
+        );
+
+        let args = SettingsUpdateArgs {
+            min_duration: Some(10),
+            price_per_byte: Some(7),
+            accepting_primary: Some(false),
+            replica_sync_price: Some(3),
+            max_capacity: Some(1024),
+            ..Default::default()
+        };
+        assert_eq!(
+            args.update(),
+            ProviderSettingsUpdate {
+                min_duration: Some(10),
+                price_per_byte: Some(7),
+                accepting_primary: Some(false),
+                replica_sync_price: Some(Some(3)),
+                max_capacity: Some(1024),
+                ..Default::default()
+            }
+        );
+
+        let args = SettingsUpdateArgs {
+            no_replicas: true,
+            ..Default::default()
+        };
+        assert_eq!(args.update().replica_sync_price, Some(None));
+    }
 }

@@ -125,6 +125,105 @@ pub struct ProviderInfo {
     pub reputation: u8,
 }
 
+/// Why a provider operation did not submit a transaction, or why the chain
+/// rejected the one it submitted.
+#[derive(Debug, thiserror::Error)]
+pub enum ProviderInfoError {
+    /// The signing account is already a registered provider.
+    #[error("account {account} is already registered as a provider")]
+    AlreadyRegistered {
+        /// The signing account.
+        account: String,
+    },
+
+    /// The signing account is not a registered provider.
+    #[error("account {account} is not a registered provider")]
+    NotRegistered {
+        /// The signing account.
+        account: String,
+    },
+
+    /// The provider has announced its deregistration. The pallet rejects
+    /// settings updates and a second announcement until it is cancelled or
+    /// completed.
+    #[error(
+        "provider {account} has announced deregistration, completable at anchor block {deregister_at}"
+    )]
+    DeregisterAnnounced {
+        /// The signing account.
+        account: String,
+        /// Anchor block at which `complete_deregister` becomes callable.
+        deregister_at: u32,
+    },
+
+    /// The provider still has committed bytes. The pallet rejects a
+    /// deregistration until every agreement has ended.
+    #[error(
+        "provider {account} still has {committed_bytes} committed bytes; its agreements must end before it can deregister"
+    )]
+    HasActiveAgreements {
+        /// The signing account.
+        account: String,
+        /// Bytes committed across live agreements.
+        committed_bytes: u64,
+    },
+
+    /// The registration input or the merged settings fail a check the
+    /// chain would also reject them for.
+    #[error("invalid input: {0}")]
+    Settings(#[from] crate::SettingsError),
+
+    /// A chain read or write failed, or the chain rejected the transaction.
+    #[error(transparent)]
+    Chain(#[from] ClientError),
+}
+
+impl ProviderInfo {
+    /// The provider's settings, as [`ProviderClient::update_settings`] takes them.
+    ///
+    /// [`ProviderClient::update_settings`]: crate::ProviderClient::update_settings
+    pub fn settings(&self) -> crate::ProviderSettings {
+        crate::ProviderSettings {
+            price_per_byte: self.price_per_byte,
+            min_duration: self.min_duration,
+            max_duration: self.max_duration,
+            accepting_primary: self.accepting_primary,
+            replica_sync_price: self.replica_sync_price,
+            accepting_extensions: self.accepting_extensions,
+            max_capacity: self.max_capacity,
+            min_agreement_bytes: self.min_agreement_bytes,
+        }
+    }
+
+    /// The record of a registered provider with no announced deregistration.
+    pub fn active_provider(
+        account: &str,
+        provider: Option<ProviderInfo>,
+    ) -> Result<ProviderInfo, ProviderInfoError> {
+        let provider = provider.ok_or_else(|| ProviderInfoError::NotRegistered {
+            account: account.to_string(),
+        })?;
+        match provider.deregister_at {
+            Some(deregister_at) => Err(ProviderInfoError::DeregisterAnnounced {
+                account: account.to_string(),
+                deregister_at,
+            }),
+            None => Ok(provider),
+        }
+    }
+
+    /// A provider can announce deregistration only with no committed bytes.
+    pub fn check_deregister(&self, account: &str) -> Result<(), ProviderInfoError> {
+        if self.committed_bytes > 0 {
+            return Err(ProviderInfoError::HasActiveAgreements {
+                account: account.to_string(),
+                committed_bytes: self.committed_bytes,
+            });
+        }
+        Ok(())
+    }
+}
+
 impl From<rt_api::ProviderInfoResponse> for ProviderInfo {
     fn from(p: rt_api::ProviderInfoResponse) -> Self {
         Self {

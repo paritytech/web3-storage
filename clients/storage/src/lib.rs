@@ -113,6 +113,7 @@ pub mod convert;
 pub mod discovery;
 pub mod encryption;
 pub mod provider;
+pub mod settings;
 pub mod signer;
 pub mod storage_user;
 pub mod substrate;
@@ -125,7 +126,7 @@ pub use provider_negotiation as agreement;
 /// `storage-indexers`.
 ///
 /// The stream constructors deliberately return [`IndexerError`] rather than
-/// wrapping it in [`ClientError`](base::ClientError): the streams are a
+/// wrapping it in [`ClientError`]: the streams are a
 /// standalone building block usable without the rest of this SDK, and their
 /// failure modes (transport, connect, subscribe) are its whole error surface.
 pub use storage_indexers::{
@@ -151,11 +152,13 @@ pub use discovery::{
     DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements,
 };
 pub use provider::{ProviderClient, ProviderSettings};
+pub use settings::{ProviderSettingsUpdate, SettingsError};
 pub use signer::Signer;
 pub use storage_user::{
     CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,
     HealthResponse, Node, StorageUserClient,
 };
+pub use substrate::FinalizedTx;
 pub use verification::ClientVerifier;
 
 // Commitment / ChunkLocation appear in the public challenge & checkpoint method

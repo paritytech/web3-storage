@@ -12,7 +12,8 @@
 //! Tests are skipped (not failed) when the chain is unreachable.
 
 use client_test_support::{alice_provider, bob_provider, chain_guard, chain_setup, dev_account};
-use storage_client::ProviderSettings;
+use storage_client::substrate::{extrinsics, SubstrateClient};
+use storage_client::{ClientError, ProviderSettings, Signer};
 
 /// After `chain_setup`, Alice is a registered provider, so `get_provider_info`
 /// returns `Some(info)` with the settings established by setup.
@@ -487,4 +488,140 @@ async fn test_add_stake_increases_stake() {
         stake_before + increment,
         "stake should increase by exactly {increment} (before={stake_before}, after={stake_after})"
     );
+}
+
+/// `chain_setup` registers Alice with these settings; re-submitting them is a
+/// successful no-op transaction.
+fn alice_settings_tx() -> impl subxt::tx::Payload {
+    extrinsics::update_provider_settings(
+        1,
+        1_000_000,
+        1_000_000,
+        true,
+        None,
+        true,
+        10 * 1024 * 1024 * 1024,
+        0,
+    )
+}
+
+async fn alice_chain() -> SubstrateClient {
+    SubstrateClient::connect(client_test_support::CHAIN_WS)
+        .await
+        .expect("chain was already reachable in chain_setup")
+        .with_signer(Signer::from_seed("//Alice").unwrap())
+}
+
+/// `submit` returns the hash of the finalized block that includes the
+/// transaction.
+#[tokio::test]
+async fn test_submit_returns_the_finalized_block_hash() {
+    let _guard = chain_guard().await;
+
+    if chain_setup().await.is_none() {
+        eprintln!("Chain not reachable — skipping test_submit_returns_the_finalized_block_hash");
+        return;
+    }
+    let chain = alice_chain().await;
+
+    let finalized = chain
+        .submit(&alice_settings_tx())
+        .await
+        .expect("a valid settings update finalizes");
+
+    assert_ne!(finalized.block_hash, sp_core::H256::zero());
+    let block = chain
+        .api()
+        .at_block(finalized.block_hash)
+        .await
+        .expect("the reported block exists");
+    assert_eq!(block.block_hash(), finalized.block_hash);
+}
+
+/// A transaction the chain includes but fails to dispatch is `TxRejected`,
+/// naming the block and the dispatch error.
+#[tokio::test]
+async fn test_submit_reports_a_failed_dispatch_as_tx_rejected() {
+    let _guard = chain_guard().await;
+
+    if chain_setup().await.is_none() {
+        eprintln!(
+            "Chain not reachable — skipping test_submit_reports_a_failed_dispatch_as_tx_rejected"
+        );
+        return;
+    }
+    let chain = alice_chain().await;
+
+    // Alice is already registered, so the pallet rejects a second registration.
+    let tx = extrinsics::register_provider(b"/ip4/127.0.0.1/tcp/3333".to_vec(), vec![0; 32], 1);
+    let Err(err) = chain.submit(&tx).await else {
+        panic!("a second registration must fail");
+    };
+
+    match err {
+        ClientError::TxRejected { block_hash, reason } => {
+            assert_ne!(block_hash, sp_core::H256::zero());
+            assert!(reason.contains("AlreadyRegistered"), "reason: {reason}");
+        }
+        other => panic!("expected TxRejected, got {other:?}"),
+    }
+}
+
+/// The dev chain's `MinStakePerByte` and `SS58Prefix` runtime constants, read
+/// over the client's own connection.
+#[tokio::test]
+async fn test_reads_runtime_constants() {
+    let _guard = chain_guard().await;
+
+    if chain_setup().await.is_none() {
+        eprintln!("Chain not reachable — skipping test_reads_runtime_constants");
+        return;
+    }
+    let provider = alice_provider()
+        .await
+        .expect("chain was already reachable in chain_setup");
+
+    assert_eq!(provider.min_stake_per_byte().await.unwrap(), 1_000);
+    let prefix = provider.chain().unwrap().ss58_prefix().await.unwrap();
+    assert!(prefix == 0 || prefix == 42, "prefix {prefix}");
+}
+
+/// Before `connect`, there is no chain to hand out.
+#[tokio::test]
+async fn test_chain_before_connect_is_a_config_error() {
+    let provider =
+        storage_client::ProviderClient::with_defaults(Signer::from_seed("//Alice").unwrap())
+            .unwrap();
+    assert!(matches!(provider.chain(), Err(ClientError::Config(_))));
+}
+
+/// A provider write reports the finalized block it landed in.
+#[tokio::test]
+async fn test_update_settings_returns_the_finalized_block() {
+    let _guard = chain_guard().await;
+
+    if chain_setup().await.is_none() {
+        eprintln!(
+            "Chain not reachable — skipping test_update_settings_returns_the_finalized_block"
+        );
+        return;
+    }
+    let provider = alice_provider()
+        .await
+        .expect("chain was already reachable in chain_setup");
+
+    let finalized = provider
+        .update_settings(ProviderSettings {
+            price_per_byte: 1_000_000,
+            min_duration: 1,
+            max_duration: 1_000_000,
+            accepting_primary: true,
+            replica_sync_price: None,
+            accepting_extensions: true,
+            max_capacity: 10 * 1024 * 1024 * 1024,
+            min_agreement_bytes: 0,
+        })
+        .await
+        .unwrap();
+    assert_ne!(finalized.block_hash, sp_core::H256::zero());
 }

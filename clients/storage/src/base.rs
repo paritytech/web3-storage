@@ -49,6 +49,15 @@ pub enum ClientError {
     #[error("Chain error: {0}")]
     Chain(String),
 
+    /// The chain included the transaction and its dispatch failed.
+    #[error("Transaction rejected in block {block_hash:?}: {reason}")]
+    TxRejected {
+        /// Block that recorded the failed dispatch.
+        block_hash: sp_core::H256,
+        /// The dispatch error, as subxt displays it.
+        reason: String,
+    },
+
     /// The provider node answered `/negotiate` with a non-success status.
     /// `code` and `details` come from the node's JSON error body, and are
     /// `None` when the body is not one.

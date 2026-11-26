@@ -11,7 +11,8 @@ description = "Shared types used across the provider crates"
 array-bytes = { workspace = true }
 parking_lot = { workspace = true }
 provider-negotiation = { workspace = true }
-serde = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }
 sp-crypto-hashing = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
@@ -24,3 +25,4 @@ clap = ["dep:clap"]
 
 [dev-dependencies]
 codec = { workspace = true, features = ["std"] }
+tempfile = { workspace = true }

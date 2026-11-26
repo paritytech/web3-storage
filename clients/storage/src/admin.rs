@@ -38,11 +38,6 @@ impl AdminClient {
         })
     }
 
-    /// The admin account: the signer's public key.
-    fn admin_account(&self) -> AccountId32 {
-        AccountId32::new(self.signer.keypair().public_key().0)
-    }
-
     /// Create with default configuration.
     pub fn with_defaults(signer: Signer) -> ClientResult<Self> {
         Self::new(ClientConfig::default(), signer)
@@ -92,10 +87,14 @@ impl AdminClient {
         visibility: storage_primitives::Visibility,
     ) -> ClientResult<BucketId> {
         let tx = extrinsics::create_bucket(min_providers, visibility);
-        let events = self.base.chain()?.submit(&tx).await?;
+        let events = self.base.chain()?.submit(&tx).await?.events;
         let bucket_id = created_bucket_id(&events)?;
 
-        tracing::info!("Created bucket {} for {}", bucket_id, self.admin_account());
+        tracing::info!(
+            "Created bucket {} for {}",
+            bucket_id,
+            self.signer.account_id()
+        );
         Ok(bucket_id)
     }
 
@@ -150,7 +149,7 @@ impl AdminClient {
             &signature,
             visibility,
         );
-        let events = self.base.chain()?.submit(&tx).await?;
+        let events = self.base.chain()?.submit(&tx).await?.events;
         let bucket_id = created_bucket_id(&events)?;
 
         tracing::info!(
@@ -543,7 +542,7 @@ impl AdminClient {
         let chain = self.base.chain()?;
 
         let at = chain.at_current_block().await?;
-        fetch_member_bucket_ids(&at, &self.admin_account()).await
+        fetch_member_bucket_ids(&at, &self.signer.account_id()).await
     }
 }
 
