@@ -382,6 +382,7 @@ jobs:
         run: |
           gh release create "$TAG" \
             --title "storage-provider-node v${VERSION}" \
+            --latest=false \
             --notes-file RELEASE_NOTES.md \
             release-assets/storage-provider-node-*.tar.gz \
             release-assets/storage-provider-node-*.tar.gz.sha256
