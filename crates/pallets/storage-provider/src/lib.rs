@@ -1931,6 +1931,8 @@ pub mod pallet {
         /// Price change rules:
         /// - If provider's current price <= agreement's locked price: anyone can extend
         /// - If provider's current price > agreement's locked price: only owner can extend
+        ///   (`NotAgreementOwner`)
+        /// - For a replica the same rule also applies to the sync price
         ///
         /// This enables permissionless persistence for frozen buckets while protecting
         /// owners from unwanted price increases.
@@ -1974,9 +1976,18 @@ pub mod pallet {
 
                     let anchor_block = Self::current_anchor_block();
 
-                    // Check if price increased
-                    let price_increased =
-                        provider_info.settings.price_per_byte > agreement.price_per_byte;
+                    // Check if price increased. For a replica the per-sync
+                    // price is re-rated below too and is paid from the
+                    // owner's escrowed sync balance, so it counts.
+                    let sync_price_increased = match &agreement.role {
+                        ProviderRole::Replica { sync_price, .. } => provider_info
+                            .settings
+                            .replica_sync_price
+                            .is_some_and(|current| current > *sync_price),
+                        ProviderRole::Primary => false,
+                    };
+                    let price_increased = sync_price_increased
+                        || provider_info.settings.price_per_byte > agreement.price_per_byte;
 
                     // If price increased, only owner can extend
                     if price_increased {

@@ -280,6 +280,59 @@ fn top_up_replica_sync_balance_fails_not_replica() {
     });
 }
 
+/// A higher provider sync price needs the owner's consent to an extension,
+/// as a higher price per byte does.
+#[test]
+fn extend_agreement_with_higher_sync_price_is_owner_only() {
+    new_test_ext().execute_with(|| {
+        setup_provider_with_replicas(2, 200);
+        register_provider(3, 200);
+        let bucket_id = setup_agreement(3, 1, 50, 200);
+        setup_replica_agreement(
+            2,
+            1,
+            bucket_id,
+            50,
+            200,
+            ReplicaTerms {
+                sync_balance: 100,
+                min_sync_interval: 10,
+                sync_price: 10,
+            },
+        );
+
+        // The provider raises its sync price and keeps the price per byte.
+        let mut settings = Providers::<Test>::get(2).unwrap().settings;
+        settings.replica_sync_price = Some(100);
+        assert_ok!(StorageProvider::update_provider_settings(
+            RuntimeOrigin::signed(2),
+            settings,
+        ));
+
+        // The provider itself, or any other non-owner, cannot re-rate.
+        assert_noop!(
+            StorageProvider::extend_agreement(RuntimeOrigin::signed(2), bucket_id, 2, 50, 10_000),
+            Error::<Test>::NotAgreementOwner
+        );
+
+        assert_ok!(StorageProvider::extend_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            50,
+            10_000
+        ));
+        let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
+        assert!(matches!(
+            agreement.role,
+            ProviderRole::Replica {
+                sync_price: 100,
+                ..
+            }
+        ));
+    });
+}
+
 #[test]
 fn top_up_replica_sync_balance_works() {
     new_test_ext().execute_with(|| {
