@@ -128,11 +128,15 @@ fn extend_checkpoint_works_after_initial_checkpoint() {
         ));
 
         // extend_checkpoint with no additional sigs is valid (just no-ops)
+        // and emits nothing, from a non-member too.
+        frame_system::Pallet::<Test>::set_block_number(1);
+        frame_system::Pallet::<Test>::reset_events();
         assert_ok!(StorageProvider::extend_checkpoint(
-            RuntimeOrigin::signed(1),
+            RuntimeOrigin::signed(9),
             bucket_id,
             Default::default(),
         ));
+        assert!(frame_system::Pallet::<Test>::events().is_empty());
     });
 }
 

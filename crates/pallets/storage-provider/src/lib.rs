@@ -1040,7 +1040,7 @@ pub mod pallet {
         /// Parameters:
         /// - `multiaddr`: Network address for clients to connect
         /// - `public_key`: Public key for signature verification, raw bytes: 32
-        ///   (Sr25519, Ed25519) or 33 (compressed Ecdsa). Any other length
+        ///   (Sr25519, Ed25519) or 33 (compressed Ecdsa, Eth). Any other length
         ///   fails with `InvalidPublicKey`.
         /// - `stake`: Initial stake to lock
         #[pallet::call_index(0)]
@@ -2216,7 +2216,8 @@ pub mod pallet {
         /// checkpoint becomes challengeable for this snapshot once its
         /// signature is added here. Signers already in the bitfield are
         /// skipped without verification. The call cannot change the
-        /// snapshot's commitment.
+        /// snapshot's commitment. Emits `BucketCheckpointed` only when it
+        /// adds at least one signer.
         #[pallet::call_index(31)]
         #[pallet::weight(T::WeightInfo::extend_checkpoint())]
         pub fn extend_checkpoint(
@@ -2273,11 +2274,15 @@ pub mod pallet {
                 // Update snapshot
                 snapshot.primary_signers = primary_signers;
 
-                Self::deposit_event(Event::BucketCheckpointed {
-                    bucket_id,
-                    commitment: snapshot.commitment,
-                    providers: added_providers,
-                });
+                // The call is permissionless: with nothing added it must not
+                // emit an event that off-chain consumers act on.
+                if !added_providers.is_empty() {
+                    Self::deposit_event(Event::BucketCheckpointed {
+                        bucket_id,
+                        commitment: snapshot.commitment,
+                        providers: added_providers,
+                    });
+                }
 
                 Ok(())
             })
@@ -2725,8 +2730,8 @@ pub mod pallet {
             // The replica attests which roots it actually holds by signing
             // the SCALE-encoded `roots` array with its registered key.
             // There is no nonce: a replayed confirmation re-attests the same
-            // roots, and the new-root / sync-interval checks below already
-            // make that a no-op.
+            // roots, and the checks below reject it (the matched commitment
+            // must be newer than the last sync, and the sync interval).
             Self::verify_signature(&signature, &roots.encode(), &who)?;
 
             let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
