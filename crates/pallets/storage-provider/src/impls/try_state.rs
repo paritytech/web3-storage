@@ -24,7 +24,43 @@ impl<T: Config> Pallet<T> {
         Self::check_holds_back_bookkeeping()?;
         Self::check_storage_deposits()?;
         Self::check_no_empty_index_entries()?;
+        Self::check_pending_challenge_counters()?;
         Self::check_agreement_nonce_owners_exist()?;
+        Ok(())
+    }
+
+    /// Every `PendingChallenges` entry equals the number of `Challenges`
+    /// entries against that provider, every `PendingChallengesByBucket` entry
+    /// equals the number for that `(bucket, provider)`, and every provider or
+    /// pair with an open challenge has an entry. These counters gate agreement
+    /// teardown, bucket deletion and deregistration: a count above the real
+    /// number blocks them permanently, a count below lets a provider with an
+    /// open challenge exit. A zero entry fails too, since no challenge
+    /// produces a zero count.
+    fn check_pending_challenge_counters() -> Result<(), TryRuntimeError> {
+        let mut by_provider: BTreeMap<T::AccountId, u32> = BTreeMap::new();
+        let mut by_bucket: BTreeMap<(BucketId, T::AccountId), u32> = BTreeMap::new();
+        for (_deadline, _index, challenge) in Challenges::<T>::iter() {
+            *by_provider.entry(challenge.provider.clone()).or_default() += 1;
+            *by_bucket
+                .entry((challenge.bucket_id, challenge.provider))
+                .or_default() += 1;
+        }
+
+        let stored_by_provider: BTreeMap<T::AccountId, u32> =
+            PendingChallenges::<T>::iter().collect();
+        ensure!(
+            stored_by_provider == by_provider,
+            "PendingChallenges does not equal the number of open challenges per provider"
+        );
+        let stored_by_bucket: BTreeMap<(BucketId, T::AccountId), u32> =
+            PendingChallengesByBucket::<T>::iter()
+                .map(|(bucket_id, provider, count)| ((bucket_id, provider), count))
+                .collect();
+        ensure!(
+            stored_by_bucket == by_bucket,
+            "PendingChallengesByBucket does not equal the number of open challenges per bucket and provider"
+        );
         Ok(())
     }
 
@@ -67,18 +103,9 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    /// Pending-challenge counters and reverse-index vectors are deleted when
-    /// they reach zero or empty. A leftover entry is state nobody paid for,
-    /// and a stale pending entry would block its bucket's deletion.
+    /// `MemberBuckets` vectors are deleted when they become empty. A leftover
+    /// entry is state nobody paid for.
     fn check_no_empty_index_entries() -> Result<(), TryRuntimeError> {
-        ensure!(
-            PendingChallenges::<T>::iter_values().all(|count| count > 0),
-            "PendingChallenges entry with a zero count"
-        );
-        ensure!(
-            PendingChallengesByBucket::<T>::iter_values().all(|count| count > 0),
-            "PendingChallengesByBucket entry with a zero count"
-        );
         ensure!(
             MemberBuckets::<T>::iter_values().all(|buckets| !buckets.is_empty()),
             "MemberBuckets entry with no buckets"
