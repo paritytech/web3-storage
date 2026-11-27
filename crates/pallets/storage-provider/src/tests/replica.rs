@@ -782,6 +782,57 @@ fn confirm_replica_sync_fails_same_root() {
     });
 }
 
+/// A replica that synced the current snapshot is not paid again for an
+/// older published root.
+#[test]
+fn confirm_replica_sync_rejects_an_older_root_after_a_newer_one() {
+    use sp_core::H256;
+    use storage_primitives::Commitment;
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+        let current = Buckets::<Test>::get(bucket_id)
+            .unwrap()
+            .snapshot
+            .unwrap()
+            .commitment;
+
+        // An older published root: same start, fewer leaves.
+        let older = Commitment {
+            mmr_root: H256::repeat_byte(0x11),
+            start_seq: current.start_seq,
+            leaf_count: current.leaf_count - 1,
+        };
+        Buckets::<Test>::mutate(bucket_id, |bucket| {
+            bucket.as_mut().unwrap().historical_roots[0] = (1, older);
+        });
+
+        let mut roots = [None; 7];
+        roots[0] = Some(current.mmr_root);
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+
+        // Advance past min_sync_interval
+        run_to_block(12);
+
+        let mut roots = [None; 7];
+        roots[1] = Some(older.mmr_root);
+        assert_noop!(
+            StorageProvider::confirm_replica_sync(
+                RuntimeOrigin::signed(2),
+                bucket_id,
+                roots,
+                sign_sync_roots(2, &roots),
+            ),
+            Error::<Test>::InvalidSyncRoot
+        );
+    });
+}
+
 #[test]
 fn confirm_replica_sync_emits_event() {
     new_test_ext().execute_with(|| {

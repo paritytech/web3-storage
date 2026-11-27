@@ -899,7 +899,8 @@ pub mod pallet {
         /// sync.
         SyncTooFrequent,
         /// None of the submitted roots match the bucket's current snapshot or
-        /// its recent root history.
+        /// its recent root history, or the matched root is not newer than the
+        /// root of the replica's previous sync.
         InvalidSyncRoot,
         /// The sync balance cannot cover one more `sync_price`; top it up with
         /// `top_up_replica_sync_balance`.
@@ -2676,8 +2677,9 @@ pub mod pallet {
 
         /// Replica provider only. Attest, with a signature over `roots`, that
         /// the replica holds the bucket at one of them. If a root matches the
-        /// current snapshot or recent history, the replica is paid
-        /// `sync_price` from its sync balance. Rate-limited by
+        /// current snapshot or recent history and is newer than the root of
+        /// the previous sync (`InvalidSyncRoot` otherwise), the replica is
+        /// paid `sync_price` from its sync balance. Rate-limited by
         /// `min_sync_interval`. Fails with `AgreementExpired` once the anchor
         /// block reaches the agreement's `expires_at`.
         #[pallet::call_index(50)]
@@ -2736,10 +2738,13 @@ pub mod pallet {
 
                     let matched = Self::find_matching_root(&bucket, &roots)?;
 
-                    // Check it's a new root
+                    // The matched commitment must be newer than the last
+                    // synced one, by the rule a checkpoint follows. Comparing
+                    // roots only would pay a replica that alternates between
+                    // two published roots without syncing anything new.
                     if let Some(record) = last_sync {
                         ensure!(
-                            matched.commitment.mmr_root != record.commitment.mmr_root,
+                            matched.commitment.moves_forward_from(&record.commitment),
                             Error::<T>::InvalidSyncRoot
                         );
                     }
