@@ -109,9 +109,8 @@ pub struct RpcParams {
     )]
     pub chain_transport: TransportKind,
 
-    /// Time limit, in seconds, for connecting to the chain at startup and on
-    /// every reconnect. A light client that has not finished its warp sync
-    /// by then starts over.
+    /// Time limit, in seconds, for connecting to the chain. If the limit
+    /// passes at startup, the node exits; on a reconnect, the node retries.
     #[arg(
         long,
         value_name = "SECONDS",
