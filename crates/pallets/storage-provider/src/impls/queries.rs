@@ -3,7 +3,7 @@
 use crate::*;
 use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
-use sp_runtime::traits::{CheckedMul, SaturatedConversion};
+use sp_runtime::traits::SaturatedConversion;
 use storage_primitives::BucketId;
 
 fn challenge_to_response<T: Config>(
@@ -279,24 +279,7 @@ impl<T: Config> Pallet<T> {
 
     /// Check if provider can accept additional bytes.
     pub fn query_can_accept_bytes(provider: &T::AccountId, additional_bytes: u64) -> bool {
-        if let Some(provider_info) = Providers::<T>::get(provider) {
-            let new_committed_bytes = provider_info
-                .committed_bytes
-                .saturating_add(additional_bytes);
-
-            // Check capacity constraint
-            if provider_info.settings.max_capacity > 0
-                && new_committed_bytes > provider_info.settings.max_capacity
-            {
-                return false;
-            }
-
-            let bytes_as_balance: BalanceOf<T> = new_committed_bytes.saturated_into();
-
-            if let Some(required_stake) = T::MinStakePerByte::get().checked_mul(&bytes_as_balance) {
-                return provider_info.stake >= required_stake;
-            }
-        }
-        false
+        Providers::<T>::get(provider)
+            .is_some_and(|info| Self::ensure_can_commit_bytes(&info, additional_bytes).is_ok())
     }
 }
