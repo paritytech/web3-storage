@@ -280,6 +280,68 @@ fn top_up_replica_sync_balance_fails_not_replica() {
     });
 }
 
+/// A higher provider sync price needs the owner's consent to an extension,
+/// as a higher price per byte does.
+#[test]
+fn extend_agreement_with_higher_sync_price_is_owner_only() {
+    new_test_ext().execute_with(|| {
+        setup_provider_with_replicas(2, 200);
+        register_provider(3, 200);
+        let bucket_id = setup_agreement(3, 1, 50, 200);
+        setup_replica_agreement(
+            2,
+            1,
+            bucket_id,
+            50,
+            200,
+            ReplicaTerms {
+                sync_balance: 100,
+                min_sync_interval: 10,
+                sync_price: 10,
+            },
+        );
+
+        // At the unchanged sync price a non-owner can still extend.
+        assert_ok!(StorageProvider::extend_agreement(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            50,
+            10_000
+        ));
+
+        // The provider raises its sync price and keeps the price per byte.
+        let mut settings = Providers::<Test>::get(2).unwrap().settings;
+        settings.replica_sync_price = Some(100);
+        assert_ok!(StorageProvider::update_provider_settings(
+            RuntimeOrigin::signed(2),
+            settings,
+        ));
+
+        // A non-owner (here the provider) cannot extend at the higher price.
+        assert_noop!(
+            StorageProvider::extend_agreement(RuntimeOrigin::signed(2), bucket_id, 2, 50, 10_000),
+            Error::<Test>::NotAgreementOwner
+        );
+
+        assert_ok!(StorageProvider::extend_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            50,
+            10_000
+        ));
+        let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
+        assert!(matches!(
+            agreement.role,
+            ProviderRole::Replica {
+                sync_price: 100,
+                ..
+            }
+        ));
+    });
+}
+
 #[test]
 fn top_up_replica_sync_balance_works() {
     new_test_ext().execute_with(|| {
@@ -782,6 +844,147 @@ fn confirm_replica_sync_fails_same_root() {
     });
 }
 
+/// Confirm a sync as replica 2 with `root` at `position`.
+fn confirm_sync(
+    bucket_id: u64,
+    position: usize,
+    root: sp_core::H256,
+) -> sp_runtime::DispatchResult {
+    let mut roots = [None; 7];
+    roots[position] = Some(root);
+    StorageProvider::confirm_replica_sync(
+        RuntimeOrigin::signed(2),
+        bucket_id,
+        roots,
+        sign_sync_roots(2, &roots),
+    )
+}
+
+fn current_commitment(bucket_id: u64) -> storage_primitives::Commitment {
+    Buckets::<Test>::get(bucket_id)
+        .unwrap()
+        .snapshot
+        .unwrap()
+        .commitment
+}
+
+/// A replica that synced the current snapshot is not paid again for an
+/// older published root.
+#[test]
+fn confirm_replica_sync_rejects_an_older_root_after_a_newer_one() {
+    use sp_core::H256;
+    use storage_primitives::Commitment;
+    new_test_ext().execute_with(|| {
+        System::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+        let current = current_commitment(bucket_id);
+
+        // An older published root: same start, fewer leaves.
+        let older = Commitment {
+            mmr_root: H256::repeat_byte(0x11),
+            start_seq: current.start_seq,
+            leaf_count: current.leaf_count - 1,
+        };
+        Buckets::<Test>::mutate(bucket_id, |bucket| {
+            bucket.as_mut().unwrap().historical_roots[0] = (1, older);
+        });
+
+        assert_ok!(confirm_sync(bucket_id, 0, current.mmr_root));
+
+        // Advance past min_sync_interval
+        run_to_block(12);
+        assert_noop!(
+            confirm_sync(bucket_id, 1, older.mmr_root),
+            Error::<Test>::InvalidSyncRoot
+        );
+    });
+}
+
+/// A deletion checkpoint (later start, same end) and a historical entry
+/// newer than the last sync are both accepted.
+#[test]
+fn confirm_replica_sync_accepts_a_deletion_and_a_newer_historical_root() {
+    use sp_core::H256;
+    use storage_primitives::Commitment;
+    new_test_ext().execute_with(|| {
+        System::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+        let first = current_commitment(bucket_id);
+        assert_ok!(confirm_sync(bucket_id, 0, first.mmr_root));
+
+        // A deletion: the start moves forward, the end stays. Published as a
+        // historical entry.
+        let deletion = Commitment {
+            mmr_root: H256::repeat_byte(0x22),
+            start_seq: first.start_seq + 2,
+            leaf_count: first.leaf_count - 2,
+        };
+        // A later append on top of the deletion, as the current snapshot.
+        let appended = Commitment {
+            mmr_root: H256::repeat_byte(0x33),
+            start_seq: deletion.start_seq,
+            leaf_count: deletion.leaf_count + 1,
+        };
+        Buckets::<Test>::mutate(bucket_id, |bucket| {
+            let bucket = bucket.as_mut().unwrap();
+            bucket.historical_roots[0] = (1, deletion);
+            bucket.snapshot.as_mut().unwrap().commitment = appended;
+        });
+
+        run_to_block(12);
+        assert_ok!(confirm_sync(bucket_id, 1, deletion.mmr_root));
+
+        run_to_block(23);
+        assert_ok!(confirm_sync(bucket_id, 0, appended.mmr_root));
+    });
+}
+
+/// With several roots submitted, an older match in an earlier position does
+/// not hide a newer match in a later one.
+#[test]
+fn confirm_replica_sync_skips_an_older_match_for_a_newer_one() {
+    use sp_core::H256;
+    use storage_primitives::Commitment;
+    new_test_ext().execute_with(|| {
+        System::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+        let first = current_commitment(bucket_id);
+        assert_ok!(confirm_sync(bucket_id, 0, first.mmr_root));
+
+        let older = Commitment {
+            mmr_root: H256::repeat_byte(0x11),
+            start_seq: first.start_seq,
+            leaf_count: first.leaf_count - 1,
+        };
+        let newer = Commitment {
+            mmr_root: H256::repeat_byte(0x22),
+            start_seq: first.start_seq,
+            leaf_count: first.leaf_count + 1,
+        };
+        Buckets::<Test>::mutate(bucket_id, |bucket| {
+            let bucket = bucket.as_mut().unwrap();
+            bucket.historical_roots[0] = (1, older);
+            bucket.historical_roots[1] = (1, newer);
+        });
+
+        run_to_block(12);
+        let mut roots = [None; 7];
+        roots[1] = Some(older.mmr_root);
+        roots[2] = Some(newer.mmr_root);
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+        let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
+        assert!(matches!(
+            agreement.role,
+            ProviderRole::Replica { last_sync: Some(record), .. } if record.commitment == newer
+        ));
+    });
+}
+
 #[test]
 fn confirm_replica_sync_emits_event() {
     new_test_ext().execute_with(|| {
@@ -827,11 +1030,13 @@ fn confirm_replica_sync_after_interval_with_new_root() {
             sign_sync_roots(2, &roots),
         ));
 
-        // Update snapshot root
+        // Update the snapshot as a checkpoint that appends one leaf does: a
+        // new root and a longer range.
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 if let Some(snapshot) = &mut bucket.snapshot {
                     snapshot.commitment.mmr_root = sp_core::H256::repeat_byte(0xCD);
+                    snapshot.commitment.leaf_count += 1;
                 }
             }
         });

@@ -28,12 +28,21 @@ impl<T: Config> Pallet<T> {
         }
     }
 
+    /// The first submitted root that matches the current snapshot or a
+    /// historical entry and, when `last_synced` is set, is newer than it.
+    /// Comparing roots only would pay a replica that alternates between two
+    /// published roots.
     pub(crate) fn find_matching_root(
         bucket: &Bucket<T>,
         roots: &[Option<H256>; 7],
+        last_synced: Option<&Commitment>,
     ) -> Result<MatchedRoot, DispatchError> {
+        let is_newer = |commitment: &Commitment| {
+            last_synced.is_none_or(|last| commitment.moves_forward_from(last))
+        };
+
         if let (Some(snapshot), Some(root)) = (&bucket.snapshot, roots[0]) {
-            if snapshot.commitment.mmr_root == root {
+            if snapshot.commitment.mmr_root == root && is_newer(&snapshot.commitment) {
                 return Ok(MatchedRoot {
                     position: 0,
                     commitment: snapshot.commitment,
@@ -45,7 +54,10 @@ impl<T: Config> Pallet<T> {
         // commitment a replica can sync to.
         for i in 0..6 {
             let entry = bucket.historical_roots[i].1;
-            if entry.mmr_root != H256::zero() && roots[i + 1] == Some(entry.mmr_root) {
+            if entry.mmr_root != H256::zero()
+                && roots[i + 1] == Some(entry.mmr_root)
+                && is_newer(&entry)
+            {
                 return Ok(MatchedRoot {
                     position: i as u8 + 1,
                     commitment: entry,

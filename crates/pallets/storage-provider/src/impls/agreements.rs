@@ -2,7 +2,10 @@
 
 use crate::*;
 use frame_support::{pallet_prelude::*, traits::Consideration};
-use sp_runtime::traits::{CheckedAdd, CheckedMul, SaturatedConversion, Saturating, Zero};
+use sp_runtime::{
+    traits::{CheckedAdd, CheckedMul, SaturatedConversion, Saturating, Zero},
+    Percent,
+};
 use storage_primitives::{BucketId, BucketTarget, EndAction, Visibility};
 
 impl<T: Config> Pallet<T> {
@@ -48,8 +51,8 @@ impl<T: Config> Pallet<T> {
         let (to_provider, to_burn) = match action {
             EndAction::Pay => (agreement.payment_locked, Zero::zero()),
             EndAction::Burn { burn_percent } => {
-                let burn_percent = burn_percent.min(100);
-                let burn_amount = agreement.payment_locked * burn_percent.into() / 100u32.into();
+                let burn_amount =
+                    Percent::from_percent(burn_percent).mul_floor(agreement.payment_locked);
                 let pay_amount = agreement.payment_locked.saturating_sub(burn_amount);
                 (pay_amount, burn_amount)
             }
@@ -361,16 +364,22 @@ impl<T: Config> Pallet<T> {
             );
         }
 
-        let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
-        let required_stake = T::MinStakePerByte::get()
-            .checked_mul(&bytes_as_balance)
-            .ok_or(Error::<T>::ArithmeticOverflow)?;
-        ensure!(
-            provider_info.stake >= required_stake,
-            Error::<T>::InsufficientStakeForBytes
-        );
+        Self::ensure_stake_backs_bytes(provider_info.stake, new_committed)?;
 
         Ok(new_committed)
+    }
+
+    /// `InsufficientStakeForBytes` unless `stake` is at least
+    /// `MinStakePerByte × bytes`.
+    pub(crate) fn ensure_stake_backs_bytes(stake: BalanceOf<T>, bytes: u64) -> DispatchResult {
+        let required_stake = T::MinStakePerByte::get()
+            .checked_mul(&bytes.saturated_into())
+            .ok_or(Error::<T>::ArithmeticOverflow)?;
+        ensure!(
+            stake >= required_stake,
+            Error::<T>::InsufficientStakeForBytes
+        );
+        Ok(())
     }
 
     /// Deletes the agreement record and releases its storage deposit to the

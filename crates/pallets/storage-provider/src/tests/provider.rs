@@ -81,6 +81,49 @@ fn add_stake_works() {
     });
 }
 
+/// A slashed provider cannot leave the slashed state with a top-up smaller
+/// than the stake its registration and committed bytes need, so
+/// `remove_slashed` stays available to its clients.
+#[test]
+fn add_stake_rejects_a_top_up_below_the_required_stake() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 150, 100);
+        slash_provider_stake(2);
+
+        // 1 does not reach MinProviderStake (100); 100 does not back the 150
+        // committed bytes at MinStakePerByte (1).
+        assert_noop!(
+            StorageProvider::add_stake(RuntimeOrigin::signed(2), 1),
+            Error::<Test>::InsufficientStake
+        );
+        assert_noop!(
+            StorageProvider::add_stake(RuntimeOrigin::signed(2), 100),
+            Error::<Test>::InsufficientStakeForBytes
+        );
+        assert_ok!(StorageProvider::remove_slashed(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2
+        ));
+
+        // With nothing committed, MinProviderStake is the bound.
+        assert_ok!(StorageProvider::add_stake(RuntimeOrigin::signed(2), 100));
+    });
+}
+
+/// A top-up that backs the committed bytes exactly is accepted.
+#[test]
+fn add_stake_accepts_the_required_stake_with_committed_bytes() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        setup_agreement(2, 1, 150, 100);
+        slash_provider_stake(2);
+
+        assert_ok!(StorageProvider::add_stake(RuntimeOrigin::signed(2), 150));
+    });
+}
+
 #[test]
 fn add_stake_fails_if_not_registered() {
     new_test_ext().execute_with(|| {

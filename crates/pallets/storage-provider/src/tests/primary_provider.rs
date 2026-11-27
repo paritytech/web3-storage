@@ -374,8 +374,10 @@ fn added_primary_is_challengeable_only_after_it_signs_the_snapshot() {
             Error::<Test>::ProviderNotInSnapshot
         );
 
+        // Account 4 is not a member of the bucket: recording a late
+        // signature is permissionless.
         assert_ok!(StorageProvider::extend_checkpoint(
-            RuntimeOrigin::signed(1),
+            RuntimeOrigin::signed(4),
             bucket_id,
             sign_commitment(bucket_id, commitment, &[3]),
         ));
