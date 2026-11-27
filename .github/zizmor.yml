@@ -13,10 +13,12 @@ rules:
       - check-runtime-migration.yml
       - integration-tests.yml
       - release.yml
+      - build-release-artifacts.yml
       - cmd-run.yml
-  # The release caches use release-specific keys (release-provider-{linux,macos})
-  # written only on tag builds (a trusted context); no lower-privilege workflow
-  # can poison them. Restore benefits the one-shot release builds.
-  cache-poisoning:
-    ignore:
-      - release.yml
+  # The polkadot-pop-e2e release gate checks out its own main whatever ref a
+  # caller names, so a hash pin would run a stale workflow file against current
+  # gate code. Its README tells callers to use @main.
+  unpinned-uses:
+    config:
+      policies:
+        paritytech/polkadot-pop-e2e/*: ref-pin

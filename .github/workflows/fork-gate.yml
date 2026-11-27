@@ -1,0 +1,41 @@
+name: Fork Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'runtimes/web3-storage-paseo/**'
+      - 'crates/pallets/**'
+      - 'crates/primitives/**'
+      - 'crates/providers/**'
+      - 'provider-node/**'
+      - 'Cargo.lock'
+      - '.github/workflows/fork-gate.yml'
+      - '.github/workflows/build-release-artifacts.yml'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event.pull_request.draft == false
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-release-artifacts.yml
+    with:
+      tag: pr-${{ github.event.pull_request.number }}
+      stamp-spec-version: true
+
+  chain-tests:
+    needs: [build]
+    permissions:
+      contents: read
+    uses: paritytech/polkadot-pop-e2e/.github/workflows/release-gate.yml@main
+    with:
+      environment: previewnet
+      runtime_web3_storage: artifact:web3-storage-paseo-runtime
+      service_storage_provider_node: artifact:storage-provider-node
+      runs_on: parity-large
