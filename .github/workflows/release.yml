@@ -88,57 +88,15 @@ jobs:
 
   build-provider-macos:
     if: inputs.component == 'provider-node'
-    runs-on: macos-latest
-    timeout-minutes: 60
     needs: [validate]
     permissions:
       contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Load common environment variables via env file
-        run: cat .github/env >> "$GITHUB_ENV"
-
-      - name: Install Rust ${{ env.RUST_STABLE_VERSION }}
-        run: |
-          rustup toolchain install "${RUST_STABLE_VERSION}" --profile minimal --target aarch64-apple-darwin
-          rustup default "${RUST_STABLE_VERSION}"
-          rustc --version
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
-        with:
-          shared-key: release-provider-macos
-          save-if: true
-
-      - name: Build storage-provider-node (production, aarch64-apple-darwin)
-        run: cargo build --profile production -p storage-provider-node --locked --target aarch64-apple-darwin
-
-      - name: Strip binary
-        run: strip -x target/aarch64-apple-darwin/production/storage-provider-node
-
-      - name: Stage and archive
-        env:
-          TAG: ${{ needs.validate.outputs.tag }}
-        run: |
-          set -euo pipefail
-          TARGET=aarch64-apple-darwin
-          PKG="storage-provider-node-${TAG}-${TARGET}"
-          mkdir -p "dist/${PKG}"
-          cp "target/${TARGET}/production/storage-provider-node" "dist/${PKG}/"
-          cp README.md "dist/${PKG}/" 2>/dev/null || true
-          tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
-          ( cd dist && shasum -a 256 "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256" )
-          ls -la dist/
-
-      - name: Upload provider binary artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: provider-node-macos-arm64
-          path: dist/storage-provider-node-*.tar.gz*
+    uses: ./.github/workflows/build-release-artifacts.yml
+    with:
+      tag: ${{ needs.validate.outputs.tag }}
+      runtime: false
+      provider-node: false
+      provider-node-macos: true
 
   check-migration:
     if: inputs.component == 'runtime'
