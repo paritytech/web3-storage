@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Coordinator integration tests — consolidated into a single test binary.
+//!
+//! Each sub-module covers one coordinator; shared helpers live here.
+
+mod challenge;
+mod event_fanout;
+mod membership;
+
+use provider_storage::{build_merkle_tree, temp_rocksdb, ChunkTreeNode, StorageBackend};
+use sp_runtime::AccountId32;
+use std::str::FromStr;
+use std::sync::Arc;
+use storage_primitives::hash_leaf;
+use storage_provider_node::{ChallengeProofSource, DetectedChallenge, StorageProofSource};
+use tempfile::TempDir;
+
+/// Full Alice SS58 address (substrate prefix 42).
+pub const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+
+/// [`ALICE_SS58`] decoded to an [`AccountId32`].
+pub fn alice_account() -> AccountId32 {
+    AccountId32::from_str(ALICE_SS58).unwrap()
+}
+
+/// Challenge proof source over `storage`, as the node wires it.
+pub fn proof_source(storage: &Arc<dyn StorageBackend>) -> Arc<dyn ChallengeProofSource> {
+    Arc::new(StorageProofSource::new(storage.clone()))
+}
+
+/// Poll a condition with timeout. Returns `true` if the condition was met
+/// before the timeout, `false` otherwise.
+pub async fn wait_for<F, Fut>(timeout_secs: u64, poll_ms: u64, mut f: F) -> bool
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        if f().await {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(poll_ms)).await;
+    }
+}
+
+/// Create a storage backend with a bucket containing a single committed chunk,
+/// and return it along with a matching challenge.
+pub fn test_storage_with_data() -> (Arc<dyn StorageBackend>, DetectedChallenge, TempDir) {
+    let (storage, dir) = temp_rocksdb();
+    storage
+        .init_bucket(1, 1024 * 1024)
+        .expect("bucket initialises");
+
+    let chunk_data = b"test-chunk-data-for-challenge";
+    let chunk_hash = hash_leaf(chunk_data);
+    storage
+        .store_node(1, chunk_hash, ChunkTreeNode::Chunk(chunk_data.to_vec()))
+        .unwrap();
+
+    let data_root = build_merkle_tree(storage.as_ref(), 1, &[chunk_hash]).unwrap();
+    assert_eq!(data_root, chunk_hash);
+
+    let commit = storage.commit(1, vec![data_root]).unwrap();
+    assert_eq!(commit.leaf_indices, vec![0]);
+
+    let challenge = DetectedChallenge {
+        bucket_id: 1,
+        deadline: 1000,
+        index: 0,
+        commitment: storage_primitives::Commitment {
+            mmr_root: commit.mmr_root,
+            start_seq: commit.start_seq,
+            leaf_count: commit.leaf_count,
+        },
+        target: storage_primitives::ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
+    };
+
+    (storage, challenge, dir)
+}

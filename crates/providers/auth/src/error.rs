@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! Authentication error types, independent of any HTTP framework. The provider
+//! node maps these onto its HTTP error responses.
+
+use storage_primitives::BucketId;
+
+/// Split by what the caller should do: `Unavailable` is worth retrying,
+/// `Decode` is a bug.
+#[derive(Debug, thiserror::Error)]
+pub enum MembershipError {
+    #[error("chain unavailable: {0}")]
+    Unavailable(String),
+
+    #[error("could not read membership for bucket {bucket_id}: {reason}")]
+    Decode { bucket_id: BucketId, reason: String },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AuthError {
+    #[error("Authentication required")]
+    AuthRequired,
+
+    #[error("Request timestamp expired")]
+    TimestampExpired,
+
+    #[error("Insufficient role")]
+    InsufficientRole,
+
+    #[error("This node is a replica for the bucket and does not accept writes")]
+    NotPrimary,
+
+    /// The request targets a bucket this provider has no storage agreement on.
+    /// Open an agreement with this provider for the bucket, then retry.
+    #[error("This provider has no agreement for bucket {0}")]
+    NoAgreement(BucketId),
+
+    /// This provider's agreement on the bucket has expired, so it takes no
+    /// more writes. Reads work until the agreement is removed.
+    #[error("This provider's agreement for bucket {0} has expired")]
+    AgreementExpired(BucketId),
+
+    #[error("Membership lookup failed: {0}")]
+    MembershipLookup(#[from] MembershipError),
+}
