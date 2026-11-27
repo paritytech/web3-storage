@@ -788,7 +788,8 @@ pub mod pallet {
         ProviderAlreadyRegistered,
         /// The account is not a registered provider.
         ProviderNotFound,
-        /// The stake is below `MinProviderStake`.
+        /// The stake is below `MinProviderStake` or, in `add_stake`, below
+        /// what the provider's committed bytes need.
         InsufficientStake,
         /// The provider's stake cannot back the bytes it would commit to
         /// (`committed_bytes × MinStakePerByte`); add stake or commit less.
@@ -1062,6 +1063,11 @@ pub mod pallet {
 
         /// Lock more stake for the calling provider. Stake caps the bytes and
         /// capacity a provider may commit to.
+        ///
+        /// Fails with `InsufficientStake` if the resulting stake is below
+        /// `MinProviderStake` or below `MinStakePerByte` times the provider's
+        /// committed bytes. This applies to a slashed provider, whose stake
+        /// is zero.
         #[pallet::call_index(1)]
         #[pallet::weight(T::WeightInfo::add_stake())]
         pub fn add_stake(origin: OriginFor<T>, amount: BalanceOf<T>) -> DispatchResult {
@@ -1076,6 +1082,17 @@ pub mod pallet {
                     .stake
                     .checked_add(&amount)
                     .ok_or(Error::<T>::ArithmeticOverflow)?;
+
+                // A slashed provider has zero stake, which is what
+                // `remove_slashed` tests. A top-up must restore the stake a
+                // registration needs and the stake the committed bytes need;
+                // a smaller one would only block `remove_slashed`.
+                let committed: BalanceOf<T> =
+                    sp_runtime::SaturatedConversion::saturated_into(provider.committed_bytes);
+                let required = T::MinStakePerByte::get()
+                    .saturating_mul(committed)
+                    .max(T::MinProviderStake::get());
+                ensure!(provider.stake >= required, Error::<T>::InsufficientStake);
 
                 Self::hold_stake(&who, amount)?;
 
