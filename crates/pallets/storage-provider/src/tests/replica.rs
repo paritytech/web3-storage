@@ -931,11 +931,13 @@ fn confirm_replica_sync_after_interval_with_new_root() {
             sign_sync_roots(2, &roots),
         ));
 
-        // Update snapshot root
+        // Update the snapshot as a checkpoint that appends one leaf does: a
+        // new root and a longer range.
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 if let Some(snapshot) = &mut bucket.snapshot {
                     snapshot.commitment.mmr_root = sp_core::H256::repeat_byte(0xCD);
+                    snapshot.commitment.leaf_count += 1;
                 }
             }
         });
