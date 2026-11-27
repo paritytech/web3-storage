@@ -13,7 +13,8 @@ use sp_runtime::AccountId32;
 pub trait ChainFollower: Send + Sync {
     /// Connect, subscribe to finalized blocks, and publish the new connection
     /// to the node's other chain consumers. Implementations must not publish
-    /// before the subscription succeeds.
+    /// before the subscription succeeds, and must fail after a time limit:
+    /// the reconnect loop waits for this call.
     async fn connect(&self) -> Result<ChainConnection, ChainClientError>;
 }
 

@@ -59,10 +59,11 @@ pub(crate) enum Error {
 
 /// Run `fut` under `budget`, mapping expiry to [`Error::Timeout`] naming `what`.
 ///
-/// Every wait in the reconnect loop goes through this: an operation that can
+/// Every wait on a live connection goes through this: an operation that can
 /// hang forever (e.g. a wedged smoldot backend with no timeout of its own)
 /// must turn into an `Err` so the loop can rebuild the connection instead of
-/// hanging with a stale handle still published.
+/// hanging with a stale handle still published. Connecting is bounded by the
+/// [`ChainFollower`] itself.
 async fn with_timeout<T>(
     what: &'static str,
     budget: Duration,
@@ -91,28 +92,22 @@ pub struct ChainStateCoordinator {
     chain_state: Arc<ChainState>,
     /// Fan-out of decoded per-block events to the background coordinators.
     events_tx: BlockEventTx,
-    /// Time limit for each connect. The light client's sync has no time limit
-    /// of its own.
-    connect_timeout: Duration,
 }
 
 impl ChainStateCoordinator {
-    /// Coordinator for `provider_account` that writes `chain_state`, sends
-    /// decoded block events on `events_tx`, and gives each connect
-    /// `connect_timeout`. Call [`Self::start`] to run it.
+    /// Coordinator for `provider_account` that writes `chain_state` and sends
+    /// decoded block events on `events_tx`. Call [`Self::start`] to run it.
     pub fn new(
         follower: Arc<dyn ChainFollower>,
         provider_account: AccountId32,
         chain_state: Arc<ChainState>,
         events_tx: BlockEventTx,
-        connect_timeout: Duration,
     ) -> Self {
         Self {
             follower,
             provider_account,
             chain_state,
             events_tx,
-            connect_timeout,
         }
     }
 
@@ -156,11 +151,7 @@ impl ChainStateCoordinator {
     /// stream until it ends or stalls. Returns `Err` if connecting or bootstrapping
     /// fails; `Ok(())` if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
-        // A connect that never returns would keep the dead handle published.
-        let connection = with_timeout("Connecting to the chain", self.connect_timeout, async {
-            Ok(self.follower.connect().await?)
-        })
-        .await?;
+        let connection = self.follower.connect().await?;
         self.follow(connection).await
     }
 
@@ -613,7 +604,6 @@ mod tests {
             provider_account(),
             chain_state.clone(),
             events_tx,
-            Duration::from_secs(300),
         );
 
         coordinator
@@ -838,7 +828,6 @@ mod tests {
             provider_account(),
             chain_state.clone(),
             events_tx,
-            Duration::from_secs(300),
         )
         .start();
 
@@ -931,7 +920,6 @@ mod tests {
             provider_account(),
             Arc::new(chain_state),
             tokio::sync::broadcast::channel(16).0,
-            Duration::from_secs(300),
         );
         let handle = coordinator.start();
 
@@ -966,7 +954,6 @@ mod tests {
             provider_account(),
             Arc::new(ChainState::default()),
             tokio::sync::broadcast::channel(16).0,
-            Duration::from_secs(300),
         )
         .start();
 

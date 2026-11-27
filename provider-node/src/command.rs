@@ -55,14 +55,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Connect first: the store is checked against the chain when it opens,
     // and auth lookups and the multiaddr sync need the connection.
     let connect_timeout = Duration::from_secs(cli.rpc.chain_connect_timeout);
-    let handle = tokio::time::timeout(connect_timeout, chain_connection::connect(&transport))
-        .await
-        .map_err(|_| {
-            format!(
-                "Connecting to the chain via {transport:?} timed out after {}s",
-                connect_timeout.as_secs()
-            )
-        })??;
+    let handle = chain_connection::connect(&transport, connect_timeout).await?;
     let genesis_hash = H256(handle.api.genesis_hash().0);
     let storage = open_storage(&cli.storage, genesis_hash)?;
     chain_tx.send_replace(Some(handle));
@@ -162,9 +155,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let challenge_events = events_tx.subscribe();
 
     // Optional services: a startup failure here does not stop the node.
-    let follower = Arc::new(SubxtChainFollower::new(transport, chain_tx, genesis_hash));
-    let chain_state_handle =
-        start_chain_state_coordinator(follower, events_tx, state.clone(), connect_timeout);
+    let follower = Arc::new(SubxtChainFollower::new(
+        transport,
+        connect_timeout,
+        chain_tx,
+        genesis_hash,
+    ));
+    let chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), replica_events, state.clone())
             .await;
@@ -237,7 +234,6 @@ fn start_chain_state_coordinator(
     follower: Arc<dyn provider_coordinator::ChainFollower>,
     events_tx: BlockEventTx,
     state: Arc<ProviderState>,
-    connect_timeout: Duration,
 ) -> Option<ChainStateCoordinatorHandle> {
     let provider_account = match sp_runtime::AccountId32::from_str(state.provider_id()) {
         Ok(a) => a,
@@ -255,7 +251,6 @@ fn start_chain_state_coordinator(
         provider_account,
         state.chain_state().clone(),
         events_tx,
-        connect_timeout,
     );
 
     tracing::info!("Chain-state coordinator started (retries until the chain is reachable)");
