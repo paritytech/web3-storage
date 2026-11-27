@@ -128,7 +128,7 @@ bucket://42/fs/my_website/logo.png    mutable: path in the latest snapshot</code
     <h3>Keep the data stored</h3>
     <ul>
       <li><code>extend_agreement</code> before expiry. Anyone can extend if the provider's price did not increase; otherwise only the owner.</li>
-      <li><code>top_up_agreement</code> to raise the quota.</li>
+      <li><code>top_up_agreement</code> to raise the quota. It fails if the provider's <code>committed_bytes</code> would exceed its <code>max_capacity</code> (<code>CapacityExceeded</code>) or the bytes its stake backs (<code>InsufficientStakeForBytes</code>).</li>
       <li><code>add_replica_provider</code> to add a replica with a replica quote; fund its syncs with <code>top_up_replica_sync_balance</code>.</li>
       <li>To change a primary without downtime, add the new primary first, upload the data to it, and checkpoint with its signature before the old agreement ends.</li>
     </ul>
