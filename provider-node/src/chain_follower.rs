@@ -8,13 +8,15 @@
 
 use crate::chain_connection::{self, ChainHandle, ChainTransport};
 use crate::event_decoding::decode_block_contents;
-use crate::subxt_client::{fetch_current_anchor_block, subxt_account};
+use crate::runtime_conversions::subxt_account;
+use crate::subxt_client::fetch_current_anchor_block;
 use provider_coordinator::{
     ChainConnection, ChainFollower, ChainStateChainClient, FinalizedBlock, FinalizedBlocks,
 };
 use provider_types::{ChainClientError, ProviderInfo, ProviderSettings, ProviderStats};
 use sp_core::H256;
 use sp_runtime::AccountId32;
+use std::time::Duration;
 use storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderInfo as RuntimeProviderInfo;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::watch;
@@ -134,6 +136,8 @@ impl ChainStateChainClient for SubxtChainStateClient {
 /// new connection through `chain_tx`.
 pub(crate) struct SubxtChainFollower {
     transport: ChainTransport,
+    /// Time limit for each connect.
+    connect_timeout: Duration,
     chain_tx: watch::Sender<Option<ChainHandle>>,
     /// Genesis hash of the chain the store is bound to.
     genesis_hash: H256,
@@ -142,11 +146,13 @@ pub(crate) struct SubxtChainFollower {
 impl SubxtChainFollower {
     pub(crate) fn new(
         transport: ChainTransport,
+        connect_timeout: Duration,
         chain_tx: watch::Sender<Option<ChainHandle>>,
         genesis_hash: H256,
     ) -> Self {
         Self {
             transport,
+            connect_timeout,
             chain_tx,
             genesis_hash,
         }
@@ -181,11 +187,23 @@ impl SubxtChainFollower {
 
 #[async_trait::async_trait]
 impl ChainFollower for SubxtChainFollower {
+    /// One time limit covers building the connection and subscribing to its
+    /// finalized blocks.
     async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
-        let handle = chain_connection::connect(&self.transport)
-            .await
-            .map_err(|e| ChainClientError::query("chain connection", e))?;
-        self.accept(handle).await
+        let timeout = self.connect_timeout;
+        tokio::time::timeout(timeout, async {
+            let handle = chain_connection::open(&self.transport)
+                .await
+                .map_err(|e| ChainClientError::query("chain connection", e))?;
+            self.accept(handle).await
+        })
+        .await
+        .map_err(|_| {
+            ChainClientError::query(
+                "chain connection",
+                chain_connection::Error::Timeout(timeout.as_secs()),
+            )
+        })?
     }
 }
 
@@ -239,7 +257,7 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
         };
 
         let contents = match at.events().fetch().await {
-            Ok(events) => Some(decode_block_contents(&events, number)),
+            Ok(events) => decode_block_contents(&events, number),
             Err(e) => {
                 tracing::warn!(
                     "chain-state coordinator: failed to fetch events for block {number}: {e}"
@@ -474,6 +492,7 @@ mod tests {
     /// produces from `events`, in encounter order.
     fn membership_changed_bucket_ids(events: &subxt::events::Events<PolkadotConfig>) -> Vec<u64> {
         decode_block_contents(events, 0)
+            .expect("events decode")
             .events
             .into_iter()
             .filter_map(|event| match event {
@@ -772,9 +791,83 @@ mod tests {
         let events = at.events().fetch().await.expect("events fetch");
 
         assert_eq!(
-            decode_block_contents(&events, 0).lifecycle,
+            decode_block_contents(&events, 0)
+                .expect("events decode")
+                .lifecycle,
             vec![account.clone(), account]
         );
+    }
+
+    /// A block that stored a new runtime yields `RuntimeUpgraded`, so the
+    /// coordinator reads its chain state again instead of keeping what the old
+    /// runtime served.
+    #[tokio::test]
+    async fn code_updated_decodes_to_runtime_upgraded() {
+        use storage_subxt::api::runtime_types::{
+            frame_system::{pallet::Event as SystemEvent, EventRecord, Phase},
+            storage_paseo_runtime::RuntimeEvent,
+        };
+        let md = metadata();
+        let code_updated = EventRecord {
+            phase: Phase::Initialization,
+            event: RuntimeEvent::System(SystemEvent::CodeUpdated {
+                hash: subxt::utils::H256([1u8; 32]),
+            }),
+            topics: Vec::<subxt::utils::H256>::new(),
+        };
+        let events_ty = storage_value_type(&md, "System", "Events");
+        let events_bytes = encode_value(&md, events_ty, &vec![code_updated]);
+        let api = mock_api(vec![(
+            key_prefix("System", "Events"),
+            array_bytes::bytes2hex("0x", &events_bytes),
+        )])
+        .await;
+        let at = api.at_current_block().await.expect("block handle");
+        let events = at.events().fetch().await.expect("events fetch");
+
+        assert!(matches!(
+            decode_block_contents(&events, 7)
+                .expect("events decode")
+                .events
+                .as_slice(),
+            [BlockEvent::RuntimeUpgraded { at_block: 7 }]
+        ));
+    }
+
+    /// An event list that stops decoding hides every later event of the
+    /// block, so the block counts as unreadable even though an earlier event
+    /// decoded.
+    #[tokio::test]
+    async fn event_list_that_stops_decoding_yields_no_contents() {
+        use storage_subxt::api::runtime_types::{
+            frame_system::{pallet::Event as SystemEvent, EventRecord, Phase},
+            storage_paseo_runtime::RuntimeEvent,
+        };
+        let md = metadata();
+        let code_updated = EventRecord {
+            phase: Phase::Initialization,
+            event: RuntimeEvent::System(SystemEvent::CodeUpdated {
+                hash: subxt::utils::H256([1u8; 32]),
+            }),
+            topics: Vec::<subxt::utils::H256>::new(),
+        };
+        let events_ty = storage_value_type(&md, "System", "Events");
+        let mut events_bytes = encode_value(&md, events_ty, &vec![code_updated]);
+        // The length prefix now announces two events, and the second one
+        // starts with a byte that is no `Phase` variant.
+        assert_eq!(events_bytes[0], 1 << 2);
+        events_bytes[0] = 2 << 2;
+        events_bytes.push(0xff);
+        let api = mock_api(vec![(
+            key_prefix("System", "Events"),
+            array_bytes::bytes2hex("0x", &events_bytes),
+        )])
+        .await;
+        let at = api.at_current_block().await.expect("block handle");
+        let events = at.events().fetch().await.expect("events fetch");
+
+        assert!(events.iter().next().expect("first event").is_ok());
+        assert!(decode_block_contents(&events, 7).is_none());
     }
 
     #[tokio::test]
@@ -967,7 +1060,7 @@ mod tests {
             vec![member_set],
         )
         .await;
-        let contents = decode_block_contents(&events, 42);
+        let contents = decode_block_contents(&events, 42).expect("events decode");
 
         assert!(matches!(
             contents.events.as_slice(),
@@ -1009,7 +1102,7 @@ mod tests {
         assert!(crate::event_decoding::is_other_relevant_event(&registered));
         assert!(registered.decode_as::<storage_subxt::api::Event>().is_err());
 
-        let contents = decode_block_contents(&events, 42);
+        let contents = decode_block_contents(&events, 42).expect("events decode");
         assert!(contents.lifecycle.is_empty());
         assert!(matches!(
             contents.events.as_slice(),
@@ -1074,7 +1167,12 @@ mod tests {
     #[tokio::test]
     async fn accept_publishes_a_connection_to_the_bound_chain() {
         let (chain_tx, chain_rx) = watch::channel(None);
-        let follower = SubxtChainFollower::new(unused_transport(), chain_tx, mock_genesis());
+        let follower = SubxtChainFollower::new(
+            unused_transport(),
+            Duration::from_secs(1),
+            chain_tx,
+            mock_genesis(),
+        );
 
         let handle = ChainHandle::from_api(mock_api(vec![]).await);
         follower
@@ -1089,7 +1187,8 @@ mod tests {
     async fn accept_rejects_another_chain_and_publishes_nothing() {
         let other = H256::repeat_byte(0x77);
         let (chain_tx, chain_rx) = watch::channel(None);
-        let follower = SubxtChainFollower::new(unused_transport(), chain_tx, other);
+        let follower =
+            SubxtChainFollower::new(unused_transport(), Duration::from_secs(1), chain_tx, other);
 
         let handle = ChainHandle::from_api(mock_api(vec![]).await);
         let err = match follower.accept(handle).await {
@@ -1112,6 +1211,7 @@ mod tests {
             ChainTransport::Rpc {
                 url: "ws://127.0.0.1:1".to_string(),
             },
+            Duration::from_secs(5),
             chain_tx,
             H256::zero(),
         );
@@ -1124,5 +1224,31 @@ mod tests {
             err.to_string().contains("Failed to connect to chain"),
             "unexpected error: {err}"
         );
+    }
+
+    /// A node that accepts the TCP connection and never answers: `connect`
+    /// fails at the time limit instead of hanging the reconnect loop.
+    #[tokio::test(start_paused = true)]
+    async fn subxt_chain_follower_connect_fails_at_the_time_limit() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let (chain_tx, chain_rx) = watch::channel(None);
+        let follower = SubxtChainFollower::new(
+            ChainTransport::Rpc { url },
+            Duration::from_secs(1),
+            chain_tx,
+            H256::zero(),
+        );
+
+        let err = match follower.connect().await {
+            Err(e) => e,
+            Ok(_) => panic!("a node that never answers must not connect"),
+        };
+        assert!(
+            err.to_string().contains("timed out after 1s"),
+            "unexpected error: {err}"
+        );
+        assert!(chain_rx.borrow().is_none());
+        drop(listener);
     }
 }

@@ -13,6 +13,7 @@ use provider_events::BlockEvent;
 use sp_runtime::AccountId32;
 use storage_subxt::api::{
     storage_provider::{events as pallet_events, Event as StorageProviderEvent},
+    system::events as system_events,
     Event,
 };
 use subxt::{events::Event as RawEvent, PolkadotConfig};
@@ -58,16 +59,38 @@ pub(crate) fn is_other_relevant_event(event: &RawEvent<'_, PolkadotConfig>) -> b
 /// - a missed [`BlockEvent`] is covered by the coordinators' safety-net scans;
 /// - a missed lifecycle account is covered by the next lifecycle event for
 ///   the provider, except after `ProviderDeregistered`: then only the
-///   bootstrap refresh on reconnect corrects the state.
+///   next full state read (reconnect, runtime upgrade or unreadable block)
+///   corrects the state.
+///
+/// Returns `None` when the event list itself does not decode with the block's
+/// metadata. The iteration cannot continue past that point, so every later
+/// event of the block is unknown, `System::CodeUpdated` included. The caller
+/// reports the block as unreadable.
 pub fn decode_block_contents(
     events: &subxt::events::Events<PolkadotConfig>,
     block_number: u32,
-) -> BlockContents {
+) -> Option<BlockContents> {
     let mut contents = BlockContents {
         events: Vec::new(),
         lifecycle: Vec::new(),
     };
-    for event in events.iter().filter_map(|event| event.ok()) {
+    for event in events.iter() {
+        let event = match event {
+            Ok(event) => event,
+            Err(e) => {
+                tracing::warn!(
+                    "failed to decode the events of block {block_number}; treating the block \
+                     as unreadable: {e}"
+                );
+                return None;
+            }
+        };
+        if event.is::<system_events::CodeUpdated>() {
+            contents.events.push(BlockEvent::RuntimeUpgraded {
+                at_block: block_number,
+            });
+            continue;
+        }
         // Only events a coordinator uses are decoded; the check compares
         // names, which is cheaper than a decode.
         let membership = is_membership_event(&event);
@@ -93,7 +116,7 @@ pub fn decode_block_contents(
             ),
         }
     }
-    contents
+    Some(contents)
 }
 
 /// The provider account of a provider-lifecycle event, or `None` for any
@@ -163,8 +186,8 @@ fn block_event(event: StorageProviderEvent) -> Option<BlockEvent> {
 /// treated as unknown-scope rather than dropped: which bucket changed can no
 /// longer be named, so every cached member set is invalidated instead, the
 /// same reaction as a lagged or restarted feed - but via a variant of its own,
-/// since nothing actually reconnected and the other coordinators have no
-/// reason to run their full-scan reaction to this.
+/// since the other coordinators have no reason to run their full-scan
+/// reaction to this.
 fn escalate_membership_decode_failure(
     pallet: &str,
     event_name: &str,

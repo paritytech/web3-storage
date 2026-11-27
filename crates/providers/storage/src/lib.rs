@@ -9,8 +9,8 @@ pub mod error;
 #[cfg(any(test, feature = "test-helpers"))]
 pub use backend::build_merkle_tree;
 pub use backend::{
-    BucketInfo, BucketState, ChainBinding, ChunkRead, ChunkTreeNode, CommitOutcome,
-    DeletionReceipt, DiskStorage, StorageBackend, StorageBackendSpec, StorageStats,
+    BucketInfo, BucketState, ChunkRead, ChunkTreeNode, CommitOutcome, DeletionReceipt, DiskStorage,
+    StorageBackend, StorageBackendSpec, StorageStats,
 };
 pub use error::Error;
 
@@ -35,7 +35,7 @@ pub fn temp_rocksdb() -> TempBackend {
     let storage = StorageBackendSpec::RocksDb {
         path: dir.path().to_path_buf(),
     }
-    .build()
+    .build(None)
     .expect("RocksDB opens");
     (storage, dir)
 }

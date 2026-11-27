@@ -280,7 +280,7 @@ async fn refresh_clears_info_when_not_registered() {
     refresh_provider_state(&MockChainClient::default(), &cs, &provider_account()).await;
 
     assert!(cs.provider_info.read().is_none());
-    // Per-connection constants and the block height are not tied to registration.
+    // The constants and the block height are not tied to registration.
     assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 100);
     assert_eq!(cs.constants.read().as_ref().unwrap().request_timeout, 200);
 }

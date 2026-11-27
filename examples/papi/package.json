@@ -18,7 +18,7 @@
     "@web3-storage/sdk": "workspace:*",
     "@web3-storage/test-helpers": "workspace:*",
     "polkadot-api": "^3.3.0",
-    "viem": "^2.57.19",
+    "viem": "^2.58.2",
     "ws": "^8.23.0"
   },
   "devDependencies": {

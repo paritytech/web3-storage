@@ -11,6 +11,7 @@
 
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::time::Duration;
 use subxt::lightclient::LightClient;
 use subxt::{OnlineClient, PolkadotConfig};
 use subxt_rpcs::client::{rpc_params, RpcClient};
@@ -27,6 +28,10 @@ pub enum Error {
     /// start, connect or sync.
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// Connecting did not finish within the time limit.
+    #[error("Connecting to the chain timed out after {0}s")]
+    Timeout(u64),
 }
 
 /// No connection has been published yet: the node has not reached the chain
@@ -337,7 +342,26 @@ pub type ChainWatch = tokio::sync::watch::Receiver<Option<ChainHandle>>;
 /// For `Light` this boots a new embedded smoldot instance (relay + para);
 /// the watchdog's rebuild path therefore recovers even from a wedged smoldot
 /// background task, not just a dropped subscription.
-pub async fn connect(transport: &ChainTransport) -> Result<ChainHandle, Error> {
+///
+/// Fails with [`Error::Timeout`] after `timeout`: the light client's sync has
+/// no time limit of its own.
+pub async fn connect(transport: &ChainTransport, timeout: Duration) -> Result<ChainHandle, Error> {
+    within(timeout, open(transport)).await
+}
+
+/// `fut`, or [`Error::Timeout`] after `timeout`.
+async fn within<T>(
+    timeout: Duration,
+    fut: impl std::future::Future<Output = Result<T, Error>>,
+) -> Result<T, Error> {
+    tokio::time::timeout(timeout, fut)
+        .await
+        .map_err(|_| Error::Timeout(timeout.as_secs()))?
+}
+
+/// Build a connection with no time limit. Callers bound it, as
+/// [`connect`] does.
+pub(crate) async fn open(transport: &ChainTransport) -> Result<ChainHandle, Error> {
     match transport {
         ChainTransport::Rpc { url } => {
             let api = OnlineClient::<PolkadotConfig>::from_url(url).await?;
@@ -362,7 +386,7 @@ pub async fn connect(transport: &ChainTransport) -> Result<ChainHandle, Error> {
             // The client is usable before smoldot has observed relay finality
             // (after a checkpoint start, the first GrandPa commit can take
             // minutes to arrive). Wait for one finalized block here, under the
-            // caller's generous connect budget, so the chain-state follower's
+            // connect time limit, so the chain-state follower's
             // tight bootstrap budget starts on a synced connection — rebuilding
             // a not-yet-synced light client only resets its sync progress.
             let mut blocks = api.stream_blocks().await.map_err(|e| {
@@ -401,10 +425,21 @@ pub fn current_api(chain_rx: &ChainWatch) -> Result<OnlineClient<PolkadotConfig>
 mod tests {
     use super::*;
 
+    #[tokio::test(start_paused = true)]
+    async fn a_connect_that_never_returns_times_out() {
+        let result: Result<(), Error> =
+            within(Duration::from_secs(300), std::future::pending()).await;
+        assert!(matches!(result, Err(Error::Timeout(300))), "{result:?}");
+        assert_eq!(
+            Error::Timeout(300).to_string(),
+            "Connecting to the chain timed out after 300s"
+        );
+    }
+
     #[tokio::test]
     async fn rpc_connect_to_unreachable_chain_errors() {
         // Port 1 on loopback refuses immediately.
-        let result = connect(&ChainTransport::Rpc {
+        let result = open(&ChainTransport::Rpc {
             url: "ws://127.0.0.1:1".to_string(),
         })
         .await;
@@ -425,7 +460,7 @@ mod tests {
 
     #[tokio::test]
     async fn light_with_missing_spec_file_errors() {
-        let err = connect(&ChainTransport::LightClient {
+        let err = open(&ChainTransport::LightClient {
             relay_spec: SpecSource::File(PathBuf::from("/nonexistent/relay.json")),
             para_spec: SpecSource::File(PathBuf::from("/nonexistent/para.json")),
         })
@@ -446,7 +481,7 @@ mod tests {
         let path = dir.path().join("relay.json");
         std::fs::write(&path, "{\"not\": \"a chain spec\"}").unwrap();
 
-        let err = connect(&ChainTransport::LightClient {
+        let err = open(&ChainTransport::LightClient {
             relay_spec: SpecSource::File(path),
             para_spec: SpecSource::File(PathBuf::from("/nonexistent/para.json")),
         })
@@ -466,7 +501,7 @@ mod tests {
 
     #[tokio::test]
     async fn light_spec_fetch_from_unreachable_node_errors() {
-        let err = connect(&ChainTransport::LightClient {
+        let err = open(&ChainTransport::LightClient {
             relay_spec: SpecSource::FetchFromRpc("ws://127.0.0.1:1".to_string()),
             para_spec: SpecSource::File(PathBuf::from("/nonexistent/para.json")),
         })
@@ -486,7 +521,7 @@ mod tests {
         let path = dir.path().join("relay.json");
         std::fs::write(&path, "{\"id\": \"paseo-local\"}").unwrap();
 
-        let err = connect(&ChainTransport::LightClient {
+        let err = open(&ChainTransport::LightClient {
             relay_spec: SpecSource::File(path),
             para_spec: SpecSource::FetchFromRpc("ws://127.0.0.1:1".to_string()),
         })
