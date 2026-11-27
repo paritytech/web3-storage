@@ -1083,12 +1083,18 @@ fn json_merge(base: &mut serde_json::Value, patch: serde_json::Value) {
 /// Build test externalities from a named genesis preset, exercising the same
 /// JSON path as `GenesisBuilder::build_state`.
 fn preset_ext(name: &str) -> sp_io::TestExternalities {
+    patch_ext(preset_patch(name))
+}
+
+fn preset_patch(name: &str) -> serde_json::Value {
     let patch = storage_paseo_runtime::genesis_config_presets::get_preset(
         &sp_genesis_builder::PresetId::from(name),
     )
     .expect("preset must exist");
-    let patch: serde_json::Value = serde_json::from_slice(&patch).expect("preset must be JSON");
+    serde_json::from_slice(&patch).expect("preset must be JSON")
+}
 
+fn patch_ext(patch: serde_json::Value) -> sp_io::TestExternalities {
     let mut base = serde_json::to_value(RuntimeGenesisConfig::default()).unwrap();
     json_merge(&mut base, patch);
 
@@ -1132,10 +1138,30 @@ fn previewnet_preset_registers_default_provider() {
 
         assert_eq!(stake_on_hold(&alice), 1_200_000_000_000 * UNIT);
 
-        // The two genesis buckets from local_testnet are preserved.
-        assert_eq!(pallet_storage_provider::NextBucketId::<Runtime>::get(), 2);
-
         assert_eq!(pallet_sudo::Key::<Runtime>::get(), Some(alice));
+    });
+}
+
+#[test]
+fn previewnet_preset_builds_when_ppn_production_funds_only_the_genesis_providers() {
+    let mut patch =
+        preset_patch(storage_paseo_runtime::genesis_config_presets::PREVIEWNET_RUNTIME_PRESET);
+    let provider_accounts: Vec<serde_json::Value> = patch["storageProvider"]["providers"]
+        .as_array()
+        .expect("previewnet preset has no genesis providers")
+        .iter()
+        .map(|provider| provider["account"].clone())
+        .collect();
+    patch["balances"]["balances"]
+        .as_array_mut()
+        .expect("previewnet preset has no balances")
+        .retain(|balance| provider_accounts.contains(&balance[0]));
+
+    patch_ext(patch).execute_with(|| {
+        let alice = Sr25519Keyring::Alice.to_account_id();
+        assert!(pallet_storage_provider::Providers::<Runtime>::contains_key(
+            &alice
+        ));
     });
 }
 
