@@ -368,7 +368,7 @@ fn challenge_slashes_provider_on_timeout() {
 #[test]
 fn resolve_expired_challenge_refunds_challenger_without_provider_record() {
     new_test_ext().execute_with(|| {
-        frame_system::Pallet::<Test>::set_block_number(1);
+        System::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
 
         assert_ok!(StorageProvider::challenge_checkpoint(

@@ -318,7 +318,7 @@ fn extend_agreement_with_higher_sync_price_is_owner_only() {
             settings,
         ));
 
-        // The provider itself, or any other non-owner, cannot re-rate.
+        // A non-owner (here the provider) cannot extend at the higher price.
         assert_noop!(
             StorageProvider::extend_agreement(RuntimeOrigin::signed(2), bucket_id, 2, 50, 10_000),
             Error::<Test>::NotAgreementOwner
@@ -844,6 +844,30 @@ fn confirm_replica_sync_fails_same_root() {
     });
 }
 
+/// Confirm a sync as replica 2 with `root` at `position`.
+fn confirm_sync(
+    bucket_id: u64,
+    position: usize,
+    root: sp_core::H256,
+) -> sp_runtime::DispatchResult {
+    let mut roots = [None; 7];
+    roots[position] = Some(root);
+    StorageProvider::confirm_replica_sync(
+        RuntimeOrigin::signed(2),
+        bucket_id,
+        roots,
+        sign_sync_roots(2, &roots),
+    )
+}
+
+fn current_commitment(bucket_id: u64) -> storage_primitives::Commitment {
+    Buckets::<Test>::get(bucket_id)
+        .unwrap()
+        .snapshot
+        .unwrap()
+        .commitment
+}
+
 /// A replica that synced the current snapshot is not paid again for an
 /// older published root.
 #[test]
@@ -851,13 +875,9 @@ fn confirm_replica_sync_rejects_an_older_root_after_a_newer_one() {
     use sp_core::H256;
     use storage_primitives::Commitment;
     new_test_ext().execute_with(|| {
-        frame_system::Pallet::<Test>::set_block_number(1);
+        System::set_block_number(1);
         let bucket_id = setup_replica_with_snapshot();
-        let current = Buckets::<Test>::get(bucket_id)
-            .unwrap()
-            .snapshot
-            .unwrap()
-            .commitment;
+        let current = current_commitment(bucket_id);
 
         // An older published root: same start, fewer leaves.
         let older = Commitment {
@@ -869,27 +889,12 @@ fn confirm_replica_sync_rejects_an_older_root_after_a_newer_one() {
             bucket.as_mut().unwrap().historical_roots[0] = (1, older);
         });
 
-        let mut roots = [None; 7];
-        roots[0] = Some(current.mmr_root);
-        assert_ok!(StorageProvider::confirm_replica_sync(
-            RuntimeOrigin::signed(2),
-            bucket_id,
-            roots,
-            sign_sync_roots(2, &roots),
-        ));
+        assert_ok!(confirm_sync(bucket_id, 0, current.mmr_root));
 
         // Advance past min_sync_interval
         run_to_block(12);
-
-        let mut roots = [None; 7];
-        roots[1] = Some(older.mmr_root);
         assert_noop!(
-            StorageProvider::confirm_replica_sync(
-                RuntimeOrigin::signed(2),
-                bucket_id,
-                roots,
-                sign_sync_roots(2, &roots),
-            ),
+            confirm_sync(bucket_id, 1, older.mmr_root),
             Error::<Test>::InvalidSyncRoot
         );
     });
@@ -902,22 +907,10 @@ fn confirm_replica_sync_accepts_a_deletion_and_a_newer_historical_root() {
     use sp_core::H256;
     use storage_primitives::Commitment;
     new_test_ext().execute_with(|| {
-        frame_system::Pallet::<Test>::set_block_number(1);
+        System::set_block_number(1);
         let bucket_id = setup_replica_with_snapshot();
-        let first = Buckets::<Test>::get(bucket_id)
-            .unwrap()
-            .snapshot
-            .unwrap()
-            .commitment;
-
-        let mut roots = [None; 7];
-        roots[0] = Some(first.mmr_root);
-        assert_ok!(StorageProvider::confirm_replica_sync(
-            RuntimeOrigin::signed(2),
-            bucket_id,
-            roots,
-            sign_sync_roots(2, &roots),
-        ));
+        let first = current_commitment(bucket_id);
+        assert_ok!(confirm_sync(bucket_id, 0, first.mmr_root));
 
         // A deletion: the start moves forward, the end stays. Published as a
         // historical entry.
@@ -939,24 +932,10 @@ fn confirm_replica_sync_accepts_a_deletion_and_a_newer_historical_root() {
         });
 
         run_to_block(12);
-        let mut roots = [None; 7];
-        roots[1] = Some(deletion.mmr_root);
-        assert_ok!(StorageProvider::confirm_replica_sync(
-            RuntimeOrigin::signed(2),
-            bucket_id,
-            roots,
-            sign_sync_roots(2, &roots),
-        ));
+        assert_ok!(confirm_sync(bucket_id, 1, deletion.mmr_root));
 
         run_to_block(23);
-        let mut roots = [None; 7];
-        roots[0] = Some(appended.mmr_root);
-        assert_ok!(StorageProvider::confirm_replica_sync(
-            RuntimeOrigin::signed(2),
-            bucket_id,
-            roots,
-            sign_sync_roots(2, &roots),
-        ));
+        assert_ok!(confirm_sync(bucket_id, 0, appended.mmr_root));
     });
 }
 

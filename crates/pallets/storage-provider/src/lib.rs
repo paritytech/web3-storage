@@ -74,6 +74,7 @@ pub mod pallet {
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
     use sp_runtime::traits::{CheckedAdd, Saturating, Zero};
+    use sp_runtime::Percent;
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
@@ -788,8 +789,7 @@ pub mod pallet {
         ProviderAlreadyRegistered,
         /// The account is not a registered provider.
         ProviderNotFound,
-        /// The stake is below `MinProviderStake` or, in `add_stake`, below
-        /// what the provider's committed bytes need.
+        /// The stake is below `MinProviderStake`.
         InsufficientStake,
         /// The provider's stake cannot back the bytes it would commit to
         /// (`committed_bytes × MinStakePerByte`); add stake or commit less.
@@ -901,7 +901,7 @@ pub mod pallet {
         SyncTooFrequent,
         /// None of the submitted roots match the bucket's current snapshot or
         /// its recent root history, or the matched root is not newer than the
-        /// root of the replica's previous sync.
+        /// replica's previous sync; sync to a newer checkpoint and retry.
         InvalidSyncRoot,
         /// The sync balance cannot cover one more `sync_price`; top it up with
         /// `top_up_replica_sync_balance`.
@@ -1064,10 +1064,9 @@ pub mod pallet {
         /// Lock more stake for the calling provider. Stake caps the bytes and
         /// capacity a provider may commit to.
         ///
-        /// Fails with `InsufficientStake` if the resulting stake is below
-        /// `MinProviderStake` or below `MinStakePerByte` times the provider's
-        /// committed bytes. This applies to a slashed provider, whose stake
-        /// is zero.
+        /// Fails if the resulting stake is below `MinProviderStake`
+        /// (`InsufficientStake`) or below `MinStakePerByte` times the
+        /// provider's committed bytes (`InsufficientStakeForBytes`).
         #[pallet::call_index(1)]
         #[pallet::weight(T::WeightInfo::add_stake())]
         pub fn add_stake(origin: OriginFor<T>, amount: BalanceOf<T>) -> DispatchResult {
@@ -1083,16 +1082,13 @@ pub mod pallet {
                     .checked_add(&amount)
                     .ok_or(Error::<T>::ArithmeticOverflow)?;
 
-                // A slashed provider has zero stake, which is what
-                // `remove_slashed` tests. A top-up must restore the stake a
-                // registration needs and the stake the committed bytes need;
-                // a smaller one would only block `remove_slashed`.
-                let committed: BalanceOf<T> =
-                    sp_runtime::SaturatedConversion::saturated_into(provider.committed_bytes);
-                let required = T::MinStakePerByte::get()
-                    .saturating_mul(committed)
-                    .max(T::MinProviderStake::get());
-                ensure!(provider.stake >= required, Error::<T>::InsufficientStake);
+                // A smaller top-up would only make a slashed provider's
+                // stake non-zero and block `remove_slashed`.
+                ensure!(
+                    provider.stake >= T::MinProviderStake::get(),
+                    Error::<T>::InsufficientStake
+                );
+                Self::ensure_stake_backs_bytes(provider.stake, provider.committed_bytes)?;
 
                 Self::hold_stake(&who, amount)?;
 
@@ -1692,19 +1688,17 @@ pub mod pallet {
             Self::add_replica_provider_internal(&who, bucket_id, &provider, terms, &sig)
         }
 
-        /// Settle and close an agreement, choosing whether the remaining
-        /// escrow goes to the provider or is (partly) burned.
+        /// Settle and close an agreement: pay the remaining escrow to the
+        /// provider or burn part of it.
         ///
-        /// Before expiry: bucket admin only (`NotBucketAdmin`), whether or
-        /// not the admin owns the agreement, and only for a primary
-        /// agreement (`CannotTerminateReplica`). The action applies to the
-        /// whole escrow, which is on hold on the agreement owner.
+        /// - Before expiry: any bucket admin (`NotBucketAdmin`), primary
+        ///   agreements only (`CannotTerminateReplica`). The admin need not
+        ///   own the agreement.
+        /// - After expiry: the agreement owner (`NotAgreementOwner`), within
+        ///   `SettlementTimeout`; after that the provider calls
+        ///   `claim_expired_agreement`.
         ///
-        /// After expiry: agreement owner only (`NotAgreementOwner`), within
-        /// `SettlementTimeout`; then only the provider can settle, via
-        /// `claim_expired_agreement`.
-        ///
-        /// Blocked while a challenge against the agreement is pending.
+        /// Fails while a challenge against the agreement is pending.
         #[pallet::call_index(25)]
         #[pallet::weight(match action {
             EndAction::Pay => T::WeightInfo::end_agreement(0),
@@ -1993,16 +1987,13 @@ pub mod pallet {
 
                     let anchor_block = Self::current_anchor_block();
 
-                    // Check if price increased. For a replica the per-sync
-                    // price is re-rated below too and is paid from the
-                    // owner's escrowed sync balance, so it counts.
-                    let sync_price_increased = match &agreement.role {
-                        ProviderRole::Replica { sync_price, .. } => provider_info
-                            .settings
-                            .replica_sync_price
-                            .is_some_and(|current| current > *sync_price),
-                        ProviderRole::Primary => false,
-                    };
+                    // Check if price increased. For a replica, the extension
+                    // also applies the provider's current sync price.
+                    let sync_price_increased = matches!(
+                        &agreement.role,
+                        ProviderRole::Replica { sync_price, .. }
+                            if provider_info.settings.replica_sync_price > Some(*sync_price)
+                    );
                     let price_increased = sync_price_increased
                         || provider_info.settings.price_per_byte > agreement.price_per_byte;
 
@@ -2211,13 +2202,10 @@ pub mod pallet {
             })
         }
 
-        /// Anyone may call this. Add signatures from primary providers that
-        /// signed the current snapshot late. A primary added after the
-        /// checkpoint becomes challengeable for this snapshot once its
-        /// signature is added here. Signers already in the bitfield are
-        /// skipped without verification. The call cannot change the
-        /// snapshot's commitment. Emits `BucketCheckpointed` only when it
-        /// adds at least one signer.
+        /// Anyone may call. Add late signatures from primary providers to the
+        /// current snapshot; each added primary becomes challengeable for it.
+        /// Signers already recorded are skipped without verification. Emits
+        /// `BucketCheckpointed` only if a signer is added.
         #[pallet::call_index(31)]
         #[pallet::weight(T::WeightInfo::extend_checkpoint())]
         pub fn extend_checkpoint(
@@ -2228,10 +2216,7 @@ pub mod pallet {
                 T::MaxPrimaryProviders,
             >,
         ) -> DispatchResult {
-            // Permissionless: the call only records verified signatures, so
-            // it can only make more primaries challengeable. A writer-only
-            // gate would let the bucket's members decide which primaries the
-            // public can challenge.
+            // Permissionless per the design: it only adds verified signatures.
             ensure_signed(origin)?;
 
             Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
@@ -2274,8 +2259,7 @@ pub mod pallet {
                 // Update snapshot
                 snapshot.primary_signers = primary_signers;
 
-                // The call is permissionless: with nothing added it must not
-                // emit an event that off-chain consumers act on.
+                // No event when nothing changed.
                 if !added_providers.is_empty() {
                     Self::deposit_event(Event::BucketCheckpointed {
                         bucket_id,
@@ -2591,11 +2575,8 @@ pub mod pallet {
                 50u8
             };
 
-            // `Percent` multiplies without the intermediate product, so a
-            // large deposit cannot overflow.
             let challenger_share =
-                <sp_runtime::Percent as sp_runtime::PerThing>::from_percent(challenger_percent)
-                    .mul_floor(challenge.deposit);
+                Percent::from_percent(challenger_percent).mul_floor(challenge.deposit);
 
             // Pay the challenger's share to the provider for the work of
             // responding and give the rest of the deposit back to the
@@ -2730,8 +2711,8 @@ pub mod pallet {
             // The replica attests which roots it actually holds by signing
             // the SCALE-encoded `roots` array with its registered key.
             // There is no nonce: a replayed confirmation re-attests the same
-            // roots, and the checks below reject it (the matched commitment
-            // must be newer than the last sync, and the sync interval).
+            // roots, and the newer-commitment and sync-interval checks below
+            // reject it.
             Self::verify_signature(&signature, &roots.encode(), &who)?;
 
             let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
@@ -2773,10 +2754,9 @@ pub mod pallet {
 
                     let matched = Self::find_matching_root(&bucket, &roots)?;
 
-                    // The matched commitment must be newer than the last
-                    // synced one, by the rule a checkpoint follows. Comparing
-                    // roots only would pay a replica that alternates between
-                    // two published roots without syncing anything new.
+                    // Must be newer than the last synced commitment; a
+                    // root-only comparison would pay a replica that
+                    // alternates between two published roots.
                     if let Some(record) = last_sync {
                         ensure!(
                             matched.commitment.moves_forward_from(&record.commitment),

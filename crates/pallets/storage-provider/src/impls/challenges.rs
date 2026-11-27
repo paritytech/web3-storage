@@ -196,8 +196,7 @@ impl<T: Config> Pallet<T> {
         challenge: &Challenge<T>,
         challenge_id: ChallengeId<BlockNumberFor<T>>,
     ) {
-        // The refund does not depend on the provider record: with no record
-        // there is nothing to slash, and the deposit must still leave hold.
+        // Release the deposit first: it does not depend on the provider record.
         Self::release_challenge_deposit(&challenge.challenger, challenge.deposit);
 
         Providers::<T>::mutate(&challenge.provider, |maybe_provider| {
