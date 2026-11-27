@@ -50,8 +50,9 @@ impl<T: Config> Pallet<T> {
             EndAction::Burn { burn_percent } => {
                 // `Percent` multiplies without the intermediate product, so
                 // a large `payment_locked` cannot overflow.
-                let burn_amount = <sp_runtime::Percent as sp_runtime::PerThing>::from_percent(burn_percent)
-                    .mul_floor(agreement.payment_locked);
+                let burn_amount =
+                    <sp_runtime::Percent as sp_runtime::PerThing>::from_percent(burn_percent)
+                        .mul_floor(agreement.payment_locked);
                 let pay_amount = agreement.payment_locked.saturating_sub(burn_amount);
                 (pay_amount, burn_amount)
             }
