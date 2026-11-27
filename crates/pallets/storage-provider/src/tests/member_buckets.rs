@@ -83,49 +83,13 @@ fn member_buckets_index_on_bucket_delete() {
             Role::Reader
         ));
 
-        // Delete the bucket via internal function
-        assert_ok!(StorageProvider::cleanup_bucket_internal(0, &1));
+        assert_ok!(StorageProvider::delete_bucket(RuntimeOrigin::signed(1), 0));
 
         // All members should have the bucket removed from their index, and
         // nobody pays for an empty entry, so the keys must be gone.
         assert!(!pallet::MemberBuckets::<Test>::contains_key(1));
         assert!(!pallet::MemberBuckets::<Test>::contains_key(2));
         assert!(!pallet::MemberBuckets::<Test>::contains_key(3));
-    });
-}
-
-#[test]
-fn cleanup_bucket_internal_pays_prorated_lifetime_revenue() {
-    new_test_ext().execute_with(|| {
-        register_provider_with_settings(
-            2,
-            200,
-            ProviderSettings {
-                price_per_byte: 1,
-                accepting_primary: true,
-                ..Default::default()
-            },
-        );
-        let bucket_id = setup_agreement(2, 1, 10, 100); // payment = 1 * 10 * 100 = 1000
-
-        let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
-        let total_duration = agreement.expires_at - agreement.started_at;
-
-        // Delete the bucket partway through the term (40% elapsed), so the
-        // prorated split actually differs from a simple full-payment case.
-        let elapsed = total_duration * 4 / 10;
-        run_to_block(agreement.started_at + elapsed);
-
-        assert_ok!(StorageProvider::cleanup_bucket_internal(bucket_id, &1));
-
-        let remaining = total_duration - elapsed;
-        let refund_to_owner = agreement.payment_locked * remaining / total_duration;
-        let payment_to_provider = agreement.payment_locked - refund_to_owner;
-
-        assert_eq!(
-            Providers::<Test>::get(2).unwrap().stats.lifetime_revenue,
-            payment_to_provider
-        );
     });
 }
 

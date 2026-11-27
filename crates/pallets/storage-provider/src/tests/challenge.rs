@@ -2831,10 +2831,6 @@ mod challenge_tests {
             assert!(StorageAgreements::<Test>::iter_prefix(0).next().is_none());
 
             assert_noop!(
-                StorageProvider::cleanup_bucket_internal(0, &1),
-                Error::<Test>::BucketHasPendingChallenge
-            );
-            assert_noop!(
                 StorageProvider::delete_bucket(RuntimeOrigin::signed(1), 0),
                 Error::<Test>::BucketHasPendingChallenge
             );

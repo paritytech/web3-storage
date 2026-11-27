@@ -25,26 +25,62 @@ export interface CreateBucketOptions {
 
 export interface PutObjectOptions {
   contentType?: string;
-  /** Round-tripped as x-amz-meta-* headers. */
+  /** User metadata, stored in the object's manifest. Keys are lowercased. */
   metadata?: Record<string, string>;
   signal?: AbortSignal;
 }
 
 export interface PutObjectResult {
-  /** data_root CID (falls back to the provider's etag field). */
-  cid?: string;
+  /** CID of the object content (its `data_root`), 0x-hex. */
+  cid: string;
+  /** Same as `cid`. */
+  etag: string;
+  /** CID of the bucket's new root directory, 0x-hex. */
+  rootCid: string;
   size: number;
 }
 
-export interface GetObjectResponse {
-  data: Uint8Array;
-  /** MIME type from the provider's `Content-Type` header, or a generic fallback. */
+export interface HeadObjectResponse {
+  key: string;
+  /** Stored content type (`application/octet-stream` when none was given). */
   contentType: string;
+  size: number;
+  /** User metadata with lowercased keys. */
+  metadata: Record<string, string>;
+  /** CID of the object content, 0x-hex. */
+  etag: string;
+  /** Milliseconds since epoch (stored with second precision). */
+  lastModified: number;
+}
+
+export interface GetObjectResponse extends HeadObjectResponse {
+  data: Uint8Array;
 }
 
 export interface ObjectSummary {
   key: string;
   size: number;
+  /** Not set by `listObjects`; use `headObject` for the content CID. */
   etag?: string;
+  /** Milliseconds since epoch (stored with second precision). */
   lastModified?: number;
+}
+
+export interface ListObjectsOptions {
+  prefix?: string;
+  /** Keys containing this after the prefix are grouped into `commonPrefixes`. */
+  delimiter?: string;
+  /** Return only keys after this one (S3 `start-after`). */
+  startAfter?: string;
+  /** Maximum objects plus common prefixes to return (default 1000). */
+  maxKeys?: number;
+  signal?: AbortSignal;
+}
+
+export interface ListObjectsResult {
+  objects: ObjectSummary[];
+  commonPrefixes: string[];
+  isTruncated: boolean;
+  /** When truncated: pass as `startAfter` to get the next page. */
+  nextStartAfter?: string;
 }

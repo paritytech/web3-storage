@@ -6,6 +6,23 @@
  */
 export * from "./fs/index.js";
 export * from "./s3/index.js";
+export {
+  DEFAULT_CONTENT_TYPE,
+  FileSystemError,
+  FsTree,
+  parsePath,
+  providerBlobStore,
+  validateEntryName,
+  type BlobStore,
+  type DeleteOptions,
+  type FileInfo,
+  type FileRead,
+  type FileSystemErrorCode,
+  type PutFileOptions,
+  type PutFileResult,
+  type TreeEntry,
+  type TreeWriteResult,
+} from "./tree.js";
 export { getBucketInfos, listMemberBuckets } from "./bucket-info.js";
 export {
   ProviderUrlResolver,

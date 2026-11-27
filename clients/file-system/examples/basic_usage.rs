@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📡 Step 1: Connecting to blockchain and provider...");
 
     let signer = Signer::from_seed("//Alice")?;
-    let mut fs_client = FileSystemClient::new(chain_ws, provider_url, signer.clone()).await?;
+    let fs_client = FileSystemClient::new(chain_ws, provider_url, signer.clone()).await?;
 
     let owner: AccountId32 = dev_signer::alice().public_key().0.into();
     let provider = ProviderClient::fetch_provider_id(provider_url).await?;
@@ -130,7 +130,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         readme_content.len()
     );
     fs_client
-        .upload_file(bucket_id, "/README.md", readme_content)
+        .upload_file(
+            bucket_id,
+            "/README.md",
+            readme_content,
+            Some("text/markdown"),
+        )
         .await?;
     println!("   ✅ Uploaded /README.md");
 
@@ -142,7 +147,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         report_content.len()
     );
     fs_client
-        .upload_file(bucket_id, "/documents/work/report.txt", report_content)
+        .upload_file(
+            bucket_id,
+            "/documents/work/report.txt",
+            report_content,
+            Some("text/plain"),
+        )
         .await?;
     println!("   ✅ Uploaded /documents/work/report.txt");
 
@@ -153,7 +163,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         notes_content.len()
     );
     fs_client
-        .upload_file(bucket_id, "/documents/notes.txt", notes_content)
+        .upload_file(
+            bucket_id,
+            "/documents/notes.txt",
+            notes_content,
+            Some("text/plain"),
+        )
         .await?;
     println!("   ✅ Uploaded /documents/notes.txt");
 

@@ -6,9 +6,7 @@
 //! there is no external dependency. On-chain operations are not exercised
 //! here — see the end-to-end demo in `justfile` for those.
 
-mod common;
-
-use common::{make_client, start_test_provider};
+use client_test_support::{make_client, start_test_provider};
 use sp_core::H256;
 use storage_client::{ChunkingStrategy, ClientError, EncryptionKey, Node, ENCRYPTION_OVERHEAD};
 use storage_primitives::DEFAULT_CHUNK_SIZE;
@@ -670,6 +668,50 @@ async fn test_different_buckets_are_independent() {
     assert_eq!(c1.bucket_id, 1);
     assert_eq!(c2.bucket_id, 2);
     assert_ne!(c1.mmr_root, c2.mmr_root);
+}
+
+// ============================================================================
+// Commitment and MMR proof
+// ============================================================================
+
+#[tokio::test]
+async fn test_commitment_if_exists_is_none_for_an_unknown_bucket() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+    assert!(client.get_commitment_if_exists(99).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn test_mmr_proof_of_last_leaf_verifies_against_commitment() {
+    let url = start_test_provider().await;
+    let client = make_client(url);
+
+    let first = client
+        .upload(1, b"first", ChunkingStrategy::default())
+        .await
+        .unwrap();
+    let second = client
+        .upload(1, b"second", ChunkingStrategy::default())
+        .await
+        .unwrap();
+    client.commit(1, vec![first, second]).await.unwrap();
+
+    let commitment = client.get_commitment_if_exists(1).await.unwrap().unwrap();
+    assert_eq!(commitment.leaf_count, 2);
+    let proof = client
+        .get_mmr_proof(1, commitment.leaf_count - 1)
+        .await
+        .unwrap();
+    assert_eq!(proof.leaf.data_root, second);
+    assert!(storage_primitives::verify_mmr_proof(
+        proof,
+        commitment.leaf_count - 1,
+        &storage_primitives::Commitment {
+            mmr_root: commitment.mmr_root,
+            start_seq: 0,
+            leaf_count: commitment.leaf_count,
+        }
+    ));
 }
 
 // ============================================================================

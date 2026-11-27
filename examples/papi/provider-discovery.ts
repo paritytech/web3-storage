@@ -29,7 +29,6 @@ import {
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
-  type ChainSigner,
   type ParachainApi,
 } from "@web3-storage/sdk";
 

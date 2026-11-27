@@ -11,9 +11,7 @@
 //!
 //! Tests are skipped (not failed) when the chain is unreachable.
 
-mod common;
-
-use common::{alice_challenger, chain_guard, chain_setup};
+use client_test_support::{alice_challenger, chain_guard, chain_setup};
 
 // ─── Read-only — no extrinsics submitted ──────────────────────────────────────
 

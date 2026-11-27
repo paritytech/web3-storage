@@ -295,26 +295,6 @@ fn remove_slashed_releases_the_replica_escrow_and_sync_balance() {
 }
 
 #[test]
-fn bucket_cleanup_releases_the_replica_sync_balance() {
-    new_test_ext().execute_with(|| {
-        let (bucket_id, _fee) = setup_replica_escrow();
-        let owner_free = Balances::free_balance(1);
-        let owner_deposits = held(HoldReason::StorageDeposit, 1);
-
-        // Past expiry the whole fee is earned by the provider; only the sync
-        // balance returns to the owner.
-        run_to_block(101);
-        let refunded = StorageProvider::cleanup_bucket_internal(bucket_id, &1).unwrap();
-
-        assert_eq!(refunded, 100);
-        assert_eq!(held(HoldReason::AgreementPayment, 1), 0);
-        assert_eq!(held(HoldReason::StorageDeposit, 1), 0);
-        assert_eq!(Balances::free_balance(1), owner_free + 100 + owner_deposits);
-        assert_ok!(StorageProvider::do_try_state());
-    });
-}
-
-#[test]
 fn extend_after_top_up_cannot_settle_more_than_the_escrow() {
     new_test_ext().execute_with(|| {
         // Owner 1's two escrows share one AgreementPayment hold.
