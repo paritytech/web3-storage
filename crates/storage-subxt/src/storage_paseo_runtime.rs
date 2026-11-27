@@ -370,9 +370,10 @@ pub mod api {
                         "apply_extrinsic",
                         (extrinsic,),
                         [
-                            192u8, 184u8, 199u8, 4u8, 85u8, 136u8, 214u8, 205u8, 29u8, 29u8, 98u8,
-                            145u8, 172u8, 92u8, 168u8, 161u8, 150u8, 133u8, 100u8, 243u8, 100u8,
-                            100u8, 118u8, 28u8, 104u8, 82u8, 93u8, 63u8, 79u8, 36u8, 149u8, 144u8,
+                            186u8, 175u8, 17u8, 192u8, 223u8, 239u8, 2u8, 172u8, 100u8, 156u8,
+                            17u8, 180u8, 66u8, 117u8, 219u8, 247u8, 122u8, 82u8, 210u8, 233u8,
+                            15u8, 46u8, 65u8, 14u8, 63u8, 121u8, 145u8, 216u8, 56u8, 46u8, 144u8,
+                            32u8,
                         ],
                     )
                 }
@@ -508,10 +509,10 @@ pub mod api {
                         "validate_transaction",
                         (source, tx, block_hash),
                         [
-                            19u8, 53u8, 170u8, 115u8, 75u8, 121u8, 231u8, 50u8, 199u8, 181u8,
-                            243u8, 170u8, 163u8, 224u8, 213u8, 134u8, 206u8, 207u8, 88u8, 242u8,
-                            80u8, 139u8, 233u8, 87u8, 175u8, 249u8, 178u8, 169u8, 255u8, 171u8,
-                            4u8, 125u8,
+                            3u8, 60u8, 206u8, 62u8, 186u8, 130u8, 243u8, 158u8, 190u8, 201u8, 10u8,
+                            146u8, 59u8, 154u8, 104u8, 107u8, 158u8, 141u8, 39u8, 134u8, 51u8,
+                            151u8, 82u8, 14u8, 116u8, 156u8, 166u8, 200u8, 125u8, 186u8, 101u8,
+                            161u8,
                         ],
                     )
                 }
@@ -2090,9 +2091,10 @@ pub mod api {
                         "dry_run_call",
                         (origin, call, result_xcms_version),
                         [
-                            126u8, 171u8, 218u8, 33u8, 249u8, 134u8, 7u8, 53u8, 73u8, 32u8, 134u8,
-                            245u8, 31u8, 128u8, 105u8, 29u8, 96u8, 6u8, 114u8, 131u8, 162u8, 82u8,
-                            184u8, 61u8, 65u8, 202u8, 138u8, 5u8, 76u8, 153u8, 246u8, 75u8,
+                            60u8, 21u8, 61u8, 63u8, 128u8, 90u8, 99u8, 224u8, 45u8, 135u8, 143u8,
+                            243u8, 22u8, 207u8, 125u8, 141u8, 190u8, 252u8, 88u8, 205u8, 80u8,
+                            77u8, 211u8, 99u8, 140u8, 159u8, 141u8, 104u8, 227u8, 126u8, 102u8,
+                            116u8,
                         ],
                     )
                 }
@@ -2395,7 +2397,10 @@ pub mod api {
                 #[doc = ""]
                 #[doc = " # Note"]
                 #[doc = ""]
-                #[doc = " Each entry corresponds to the appropriate Ethereum transaction in the current block."]
+                #[doc = " Each entry corresponds to the appropriate Ethereum transaction in the current block. A"]
+                #[doc = " block may also carry a synthetic transaction for the logs emitted outside any ethereum"]
+                #[doc = " transaction; it has no entry here, and only `eth_receipt_data_versioned` at version 2"]
+                #[doc = " or above reports it."]
                 pub fn eth_receipt_data(
                     &self,
                 ) -> ::subxt::runtime_apis::StaticPayload<(), eth_receipt_data::output::Output>
@@ -3023,9 +3028,9 @@ pub mod api {
                         "eth_receipt_data_versioned",
                         (input,),
                         [
-                            141u8, 14u8, 176u8, 55u8, 1u8, 222u8, 9u8, 227u8, 245u8, 162u8, 21u8,
-                            35u8, 254u8, 74u8, 24u8, 9u8, 87u8, 11u8, 120u8, 134u8, 209u8, 106u8,
-                            225u8, 87u8, 114u8, 94u8, 51u8, 2u8, 13u8, 1u8, 54u8, 109u8,
+                            77u8, 176u8, 224u8, 55u8, 226u8, 60u8, 241u8, 99u8, 3u8, 137u8, 178u8,
+                            80u8, 95u8, 239u8, 0u8, 65u8, 199u8, 209u8, 231u8, 95u8, 133u8, 136u8,
+                            222u8, 1u8, 189u8, 187u8, 24u8, 232u8, 150u8, 236u8, 5u8, 123u8,
                         ],
                     )
                 }
@@ -4108,9 +4113,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                191u8, 254u8, 246u8, 164u8, 197u8, 61u8, 113u8, 58u8, 127u8, 80u8, 233u8, 11u8,
-                204u8, 243u8, 146u8, 49u8, 206u8, 183u8, 52u8, 138u8, 233u8, 242u8, 136u8, 5u8,
-                198u8, 207u8, 30u8, 40u8, 190u8, 108u8, 193u8, 188u8,
+                42u8, 212u8, 92u8, 10u8, 187u8, 133u8, 167u8, 235u8, 59u8, 172u8, 220u8, 134u8,
+                108u8, 212u8, 241u8, 105u8, 168u8, 184u8, 9u8, 182u8, 34u8, 57u8, 117u8, 70u8,
+                221u8, 130u8, 250u8, 23u8, 29u8, 204u8, 193u8, 241u8,
             ]
     }
     pub mod system {
@@ -6268,9 +6273,10 @@ pub mod api {
                         "ParachainSystem",
                         "LastProcessedHrmpMessage",
                         [
-                            170u8, 114u8, 249u8, 92u8, 203u8, 248u8, 248u8, 182u8, 128u8, 220u8,
-                            133u8, 0u8, 248u8, 85u8, 110u8, 239u8, 18u8, 212u8, 16u8, 37u8, 178u8,
-                            80u8, 36u8, 4u8, 212u8, 164u8, 138u8, 172u8, 29u8, 3u8, 114u8, 248u8,
+                            79u8, 102u8, 145u8, 96u8, 177u8, 178u8, 156u8, 254u8, 127u8, 156u8,
+                            147u8, 161u8, 105u8, 239u8, 110u8, 164u8, 163u8, 232u8, 66u8, 98u8,
+                            127u8, 100u8, 236u8, 157u8, 6u8, 183u8, 103u8, 124u8, 64u8, 213u8,
+                            216u8, 59u8,
                         ],
                     )
                 }
@@ -6661,7 +6667,7 @@ pub mod api {
                 pub mod input {
                     use super::runtime_types;
                 }
-                pub type Output = runtime_types :: cumulus_pallet_parachain_system :: parachain_inherent :: InboundMessageId ;
+                pub type Output = runtime_types :: cumulus_pallet_parachain_system :: parachain_inherent :: InboundHrmpMessageId ;
             }
             pub mod hrmp_outbound_messages {
                 use super::root_mod;
@@ -7175,6 +7181,9 @@ pub mod api {
             #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
             #[doc = "Unreserve some balance from a user by force."]
             #[doc = ""]
+            #[doc = "Only acts on the part of the reserved balance that does not back a hold or a named"]
+            #[doc = "reserve."]
+            #[doc = ""]
             #[doc = "Can only be called by ROOT."]
             pub struct ForceUnreserve {
                 pub who: force_unreserve::Who,
@@ -7190,6 +7199,42 @@ pub mod api {
                 const CALL_NAME: &'static str = "force_unreserve";
             }
             impl ::subxt::extrinsics::DecodeAsExtrinsic for ForceUnreserve {
+                fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
+                    pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
+                }
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            #[doc = "Unreserve some balance of the named reserve `id` from a user by force."]
+            #[doc = ""]
+            #[doc = "Only acts on that named reserve, and never on the part of the reserved balance that"]
+            #[doc = "backs a hold."]
+            #[doc = ""]
+            #[doc = "Can only be called by ROOT."]
+            pub struct ForceUnreserveNamed {
+                pub id: force_unreserve_named::Id,
+                pub who: force_unreserve_named::Who,
+                pub amount: force_unreserve_named::Amount,
+            }
+            pub mod force_unreserve_named {
+                use super::runtime_types;
+                pub type Id = [::core::primitive::u8; 8usize];
+                pub type Who = ::subxt::utils::MultiAddress<::subxt::utils::AccountId32, ()>;
+                pub type Amount = ::core::primitive::u128;
+            }
+            impl ForceUnreserveNamed {
+                const PALLET_NAME: &'static str = "Balances";
+                const CALL_NAME: &'static str = "force_unreserve_named";
+            }
+            impl ::subxt::extrinsics::DecodeAsExtrinsic for ForceUnreserveNamed {
                 fn is_extrinsic(pallet_name: &str, call_name: &str) -> bool {
                     pallet_name == Self::PALLET_NAME && call_name == Self::CALL_NAME
                 }
@@ -7442,6 +7487,9 @@ pub mod api {
                     }
                     #[doc = "Unreserve some balance from a user by force."]
                     #[doc = ""]
+                    #[doc = "Only acts on the part of the reserved balance that does not back a hold or a named"]
+                    #[doc = "reserve."]
+                    #[doc = ""]
                     #[doc = "Can only be called by ROOT."]
                     pub fn force_unreserve(
                         &self,
@@ -7458,6 +7506,31 @@ pub mod api {
                                 223u8, 140u8, 120u8, 153u8, 35u8, 165u8, 187u8, 38u8, 157u8, 200u8,
                                 123u8, 199u8, 198u8, 168u8, 208u8, 159u8, 39u8, 134u8, 92u8, 103u8,
                                 84u8, 171u8,
+                            ],
+                        )
+                    }
+                    #[doc = "Unreserve some balance of the named reserve `id` from a user by force."]
+                    #[doc = ""]
+                    #[doc = "Only acts on that named reserve, and never on the part of the reserved balance that"]
+                    #[doc = "backs a hold."]
+                    #[doc = ""]
+                    #[doc = "Can only be called by ROOT."]
+                    pub fn force_unreserve_named(
+                        &self,
+                        id: super::force_unreserve_named::Id,
+                        who: super::force_unreserve_named::Who,
+                        amount: super::force_unreserve_named::Amount,
+                    ) -> ::subxt::transactions::StaticPayload<super::ForceUnreserveNamed>
+                    {
+                        ::subxt::transactions::StaticPayload::new_static(
+                            "Balances",
+                            "force_unreserve_named",
+                            super::ForceUnreserveNamed { id, who, amount },
+                            [
+                                93u8, 166u8, 248u8, 101u8, 83u8, 1u8, 145u8, 9u8, 68u8, 190u8,
+                                150u8, 57u8, 53u8, 41u8, 247u8, 63u8, 253u8, 252u8, 62u8, 211u8,
+                                142u8, 191u8, 247u8, 203u8, 114u8, 254u8, 177u8, 79u8, 11u8, 46u8,
+                                4u8, 137u8,
                             ],
                         )
                     }
@@ -8747,21 +8820,6 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " The maximum number of individual freeze locks that can exist on an account at any time."]
-                pub fn max_freezes(
-                    &self,
-                ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
-                    ::subxt::constants::StaticAddress::new_static(
-                        "Balances",
-                        "MaxFreezes",
-                        [
-                            98u8, 252u8, 116u8, 72u8, 26u8, 180u8, 225u8, 83u8, 200u8, 157u8,
-                            125u8, 151u8, 53u8, 76u8, 168u8, 26u8, 10u8, 9u8, 98u8, 68u8, 9u8,
-                            178u8, 197u8, 113u8, 31u8, 79u8, 200u8, 90u8, 203u8, 100u8, 41u8,
-                            145u8,
-                        ],
-                    )
-                }
             }
         }
     }
@@ -9102,10 +9160,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                166u8, 93u8, 214u8, 219u8, 198u8, 109u8, 231u8, 216u8, 187u8, 99u8,
-                                103u8, 67u8, 89u8, 34u8, 98u8, 108u8, 255u8, 43u8, 22u8, 238u8,
-                                111u8, 117u8, 6u8, 208u8, 15u8, 98u8, 3u8, 23u8, 100u8, 88u8, 1u8,
-                                84u8,
+                                89u8, 60u8, 54u8, 65u8, 4u8, 113u8, 21u8, 113u8, 184u8, 217u8,
+                                160u8, 145u8, 70u8, 180u8, 91u8, 162u8, 21u8, 144u8, 67u8, 0u8,
+                                144u8, 19u8, 14u8, 36u8, 85u8, 127u8, 42u8, 129u8, 121u8, 187u8,
+                                226u8, 135u8,
                             ],
                         )
                     }
@@ -9128,10 +9186,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                23u8, 77u8, 34u8, 6u8, 80u8, 28u8, 166u8, 145u8, 189u8, 43u8, 52u8,
-                                248u8, 144u8, 206u8, 198u8, 12u8, 96u8, 144u8, 78u8, 78u8, 244u8,
-                                146u8, 26u8, 55u8, 61u8, 163u8, 24u8, 106u8, 46u8, 64u8, 229u8,
-                                107u8,
+                                171u8, 253u8, 246u8, 41u8, 179u8, 104u8, 10u8, 57u8, 136u8, 39u8,
+                                141u8, 128u8, 75u8, 73u8, 147u8, 230u8, 204u8, 155u8, 108u8, 104u8,
+                                253u8, 215u8, 202u8, 236u8, 118u8, 88u8, 98u8, 244u8, 77u8, 155u8,
+                                153u8, 242u8,
                             ],
                         )
                     }
@@ -9170,10 +9228,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                109u8, 205u8, 142u8, 10u8, 156u8, 22u8, 33u8, 36u8, 192u8, 183u8,
-                                194u8, 160u8, 178u8, 106u8, 156u8, 128u8, 57u8, 154u8, 8u8, 226u8,
-                                182u8, 200u8, 181u8, 215u8, 121u8, 231u8, 216u8, 219u8, 220u8,
-                                147u8, 151u8, 108u8,
+                                143u8, 204u8, 56u8, 200u8, 19u8, 158u8, 123u8, 0u8, 142u8, 120u8,
+                                81u8, 238u8, 70u8, 175u8, 100u8, 149u8, 216u8, 53u8, 154u8, 43u8,
+                                82u8, 35u8, 49u8, 66u8, 44u8, 109u8, 188u8, 159u8, 4u8, 108u8,
+                                125u8, 35u8,
                             ],
                         )
                     }
@@ -15370,10 +15428,10 @@ pub mod api {
                             "batch",
                             super::Batch { calls },
                             [
-                                80u8, 253u8, 53u8, 222u8, 171u8, 243u8, 89u8, 207u8, 209u8, 3u8,
-                                41u8, 247u8, 98u8, 232u8, 159u8, 94u8, 147u8, 154u8, 211u8, 88u8,
-                                128u8, 43u8, 54u8, 207u8, 137u8, 9u8, 88u8, 5u8, 151u8, 200u8,
-                                210u8, 101u8,
+                                155u8, 68u8, 236u8, 249u8, 190u8, 174u8, 216u8, 90u8, 10u8, 207u8,
+                                55u8, 158u8, 82u8, 46u8, 164u8, 250u8, 196u8, 222u8, 94u8, 163u8,
+                                24u8, 117u8, 31u8, 43u8, 201u8, 179u8, 52u8, 214u8, 103u8, 63u8,
+                                147u8, 200u8,
                             ],
                         )
                     }
@@ -15404,10 +15462,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                15u8, 79u8, 207u8, 114u8, 19u8, 161u8, 150u8, 171u8, 91u8, 219u8,
-                                165u8, 27u8, 187u8, 50u8, 44u8, 247u8, 4u8, 58u8, 158u8, 56u8,
-                                74u8, 44u8, 49u8, 192u8, 226u8, 48u8, 183u8, 146u8, 216u8, 103u8,
-                                151u8, 69u8,
+                                42u8, 197u8, 237u8, 57u8, 75u8, 162u8, 97u8, 75u8, 164u8, 2u8,
+                                146u8, 112u8, 104u8, 148u8, 180u8, 210u8, 179u8, 100u8, 11u8,
+                                115u8, 222u8, 42u8, 70u8, 72u8, 97u8, 51u8, 76u8, 253u8, 157u8,
+                                250u8, 31u8, 165u8,
                             ],
                         )
                     }
@@ -15433,10 +15491,10 @@ pub mod api {
                             "batch_all",
                             super::BatchAll { calls },
                             [
-                                102u8, 147u8, 9u8, 223u8, 40u8, 174u8, 62u8, 222u8, 23u8, 226u8,
-                                101u8, 152u8, 67u8, 250u8, 172u8, 116u8, 240u8, 147u8, 223u8,
-                                153u8, 247u8, 58u8, 42u8, 156u8, 28u8, 122u8, 241u8, 127u8, 213u8,
-                                9u8, 243u8, 252u8,
+                                173u8, 194u8, 29u8, 120u8, 192u8, 162u8, 70u8, 89u8, 169u8, 59u8,
+                                140u8, 175u8, 208u8, 96u8, 61u8, 16u8, 200u8, 130u8, 211u8, 126u8,
+                                86u8, 172u8, 173u8, 130u8, 245u8, 253u8, 169u8, 57u8, 78u8, 12u8,
+                                110u8, 34u8,
                             ],
                         )
                     }
@@ -15460,10 +15518,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                110u8, 7u8, 40u8, 219u8, 231u8, 46u8, 221u8, 244u8, 173u8, 104u8,
-                                93u8, 165u8, 17u8, 214u8, 9u8, 88u8, 71u8, 74u8, 153u8, 113u8,
-                                163u8, 39u8, 220u8, 115u8, 146u8, 195u8, 169u8, 69u8, 14u8, 184u8,
-                                197u8, 32u8,
+                                84u8, 144u8, 145u8, 227u8, 228u8, 82u8, 38u8, 18u8, 42u8, 233u8,
+                                28u8, 253u8, 163u8, 190u8, 240u8, 217u8, 157u8, 150u8, 93u8, 235u8,
+                                46u8, 138u8, 24u8, 20u8, 228u8, 24u8, 66u8, 68u8, 131u8, 40u8,
+                                15u8, 185u8,
                             ],
                         )
                     }
@@ -15490,10 +15548,10 @@ pub mod api {
                             "force_batch",
                             super::ForceBatch { calls },
                             [
-                                230u8, 94u8, 26u8, 151u8, 7u8, 249u8, 220u8, 189u8, 154u8, 203u8,
-                                78u8, 160u8, 184u8, 22u8, 71u8, 211u8, 98u8, 227u8, 92u8, 93u8,
-                                150u8, 168u8, 39u8, 70u8, 178u8, 166u8, 130u8, 158u8, 204u8, 87u8,
-                                244u8, 168u8,
+                                63u8, 135u8, 45u8, 127u8, 179u8, 179u8, 32u8, 6u8, 22u8, 92u8,
+                                52u8, 103u8, 43u8, 57u8, 28u8, 19u8, 199u8, 173u8, 72u8, 105u8,
+                                178u8, 218u8, 4u8, 132u8, 217u8, 104u8, 122u8, 253u8, 39u8, 38u8,
+                                134u8, 35u8,
                             ],
                         )
                     }
@@ -15517,10 +15575,10 @@ pub mod api {
                                 weight,
                             },
                             [
-                                128u8, 226u8, 10u8, 143u8, 180u8, 13u8, 17u8, 86u8, 211u8, 207u8,
-                                167u8, 121u8, 102u8, 1u8, 15u8, 187u8, 240u8, 85u8, 161u8, 225u8,
-                                30u8, 65u8, 68u8, 103u8, 201u8, 12u8, 196u8, 199u8, 186u8, 2u8,
-                                207u8, 211u8,
+                                87u8, 182u8, 88u8, 177u8, 0u8, 252u8, 168u8, 235u8, 187u8, 37u8,
+                                190u8, 227u8, 84u8, 39u8, 240u8, 45u8, 181u8, 127u8, 190u8, 175u8,
+                                33u8, 81u8, 151u8, 11u8, 90u8, 84u8, 34u8, 151u8, 219u8, 230u8,
+                                43u8, 227u8,
                             ],
                         )
                     }
@@ -15560,10 +15618,10 @@ pub mod api {
                                 fallback: ::subxt::alloc::boxed::Box::new(fallback),
                             },
                             [
-                                83u8, 101u8, 216u8, 84u8, 173u8, 40u8, 50u8, 75u8, 170u8, 252u8,
-                                241u8, 155u8, 26u8, 230u8, 216u8, 174u8, 176u8, 209u8, 176u8, 17u8,
-                                60u8, 172u8, 249u8, 204u8, 5u8, 150u8, 21u8, 66u8, 37u8, 162u8,
-                                81u8, 62u8,
+                                59u8, 202u8, 66u8, 83u8, 137u8, 217u8, 226u8, 135u8, 61u8, 88u8,
+                                182u8, 35u8, 138u8, 38u8, 192u8, 165u8, 223u8, 153u8, 106u8, 72u8,
+                                225u8, 139u8, 247u8, 232u8, 18u8, 225u8, 231u8, 172u8, 138u8, 86u8,
+                                89u8, 211u8,
                             ],
                         )
                     }
@@ -15586,10 +15644,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                198u8, 194u8, 154u8, 191u8, 153u8, 205u8, 210u8, 35u8, 131u8,
-                                167u8, 196u8, 200u8, 102u8, 247u8, 230u8, 232u8, 219u8, 100u8,
-                                175u8, 123u8, 221u8, 96u8, 215u8, 64u8, 8u8, 188u8, 105u8, 211u8,
-                                181u8, 149u8, 72u8, 248u8,
+                                185u8, 92u8, 131u8, 204u8, 64u8, 152u8, 100u8, 148u8, 207u8, 7u8,
+                                70u8, 49u8, 169u8, 47u8, 176u8, 32u8, 187u8, 141u8, 156u8, 245u8,
+                                182u8, 204u8, 248u8, 104u8, 24u8, 9u8, 108u8, 215u8, 243u8, 16u8,
+                                165u8, 242u8,
                             ],
                         )
                     }
@@ -19806,8 +19864,8 @@ pub mod api {
             #[doc = "* `transaction_encoded`: The RLP encoding of the signed Ethereum transaction,"]
             #[doc = "  represented as [crate::evm::TransactionSigned], provided by the Ethereum wallet. This"]
             #[doc = "  is used for building the Ethereum transaction root."]
-            #[doc = "* effective_gas_price: the price of a unit of gas"]
-            #[doc = "* encoded len: the byte code size of the `eth_transact` extrinsic"]
+            #[doc = "* `effective_gas_price`: the price of a unit of gas"]
+            #[doc = "* `encoded_len`: the byte code size of the `eth_transact` extrinsic"]
             #[doc = ""]
             #[doc = "Calling this dispatchable ensures that the origin's nonce is bumped only once,"]
             #[doc = "via the `CheckNonce` transaction extension. In contrast, [`Self::instantiate_with_code`]"]
@@ -19867,8 +19925,9 @@ pub mod api {
             #[doc = "* `transaction_encoded`: The RLP encoding of the signed Ethereum transaction,"]
             #[doc = "  represented as [crate::evm::TransactionSigned], provided by the Ethereum wallet. This"]
             #[doc = "  is used for building the Ethereum transaction root."]
-            #[doc = "* effective_gas_price: the price of a unit of gas"]
-            #[doc = "* encoded len: the byte code size of the `eth_transact` extrinsic"]
+            #[doc = "* `effective_gas_price`: the price of a unit of gas"]
+            #[doc = "* `encoded_len`: the byte code size of the `eth_transact` extrinsic"]
+            #[doc = "* `authorization_list`: EIP-7702 authorization tuples to process before execution"]
             pub struct EthCall {
                 pub dest: eth_call::Dest,
                 pub value: eth_call::Value,
@@ -19878,6 +19937,7 @@ pub mod api {
                 pub transaction_encoded: eth_call::TransactionEncoded,
                 pub effective_gas_price: eth_call::EffectiveGasPrice,
                 pub encoded_len: eth_call::EncodedLen,
+                pub authorization_list: eth_call::AuthorizationList,
             }
             pub mod eth_call {
                 use super::runtime_types;
@@ -19889,6 +19949,9 @@ pub mod api {
                 pub type TransactionEncoded = ::subxt::alloc::vec::Vec<::core::primitive::u8>;
                 pub type EffectiveGasPrice = runtime_types::primitive_types::U256;
                 pub type EncodedLen = ::core::primitive::u32;
+                pub type AuthorizationList = ::subxt::alloc::vec::Vec<
+                    runtime_types::pallet_revive::evm::api::transaction::AuthorizationListEntry,
+                >;
             }
             impl EthCall {
                 const PALLET_NAME: &'static str = "Revive";
@@ -20338,8 +20401,8 @@ pub mod api {
                     #[doc = "* `transaction_encoded`: The RLP encoding of the signed Ethereum transaction,"]
                     #[doc = "  represented as [crate::evm::TransactionSigned], provided by the Ethereum wallet. This"]
                     #[doc = "  is used for building the Ethereum transaction root."]
-                    #[doc = "* effective_gas_price: the price of a unit of gas"]
-                    #[doc = "* encoded len: the byte code size of the `eth_transact` extrinsic"]
+                    #[doc = "* `effective_gas_price`: the price of a unit of gas"]
+                    #[doc = "* `encoded_len`: the byte code size of the `eth_transact` extrinsic"]
                     #[doc = ""]
                     #[doc = "Calling this dispatchable ensures that the origin's nonce is bumped only once,"]
                     #[doc = "via the `CheckNonce` transaction extension. In contrast, [`Self::instantiate_with_code`]"]
@@ -20392,8 +20455,9 @@ pub mod api {
                     #[doc = "* `transaction_encoded`: The RLP encoding of the signed Ethereum transaction,"]
                     #[doc = "  represented as [crate::evm::TransactionSigned], provided by the Ethereum wallet. This"]
                     #[doc = "  is used for building the Ethereum transaction root."]
-                    #[doc = "* effective_gas_price: the price of a unit of gas"]
-                    #[doc = "* encoded len: the byte code size of the `eth_transact` extrinsic"]
+                    #[doc = "* `effective_gas_price`: the price of a unit of gas"]
+                    #[doc = "* `encoded_len`: the byte code size of the `eth_transact` extrinsic"]
+                    #[doc = "* `authorization_list`: EIP-7702 authorization tuples to process before execution"]
                     pub fn eth_call(
                         &self,
                         dest: super::eth_call::Dest,
@@ -20404,6 +20468,7 @@ pub mod api {
                         transaction_encoded: super::eth_call::TransactionEncoded,
                         effective_gas_price: super::eth_call::EffectiveGasPrice,
                         encoded_len: super::eth_call::EncodedLen,
+                        authorization_list: super::eth_call::AuthorizationList,
                     ) -> ::subxt::transactions::StaticPayload<super::EthCall> {
                         ::subxt::transactions::StaticPayload::new_static(
                             "Revive",
@@ -20417,12 +20482,13 @@ pub mod api {
                                 transaction_encoded,
                                 effective_gas_price,
                                 encoded_len,
+                                authorization_list,
                             },
                             [
-                                97u8, 28u8, 122u8, 24u8, 13u8, 232u8, 162u8, 111u8, 248u8, 56u8,
-                                22u8, 226u8, 81u8, 141u8, 101u8, 71u8, 200u8, 149u8, 254u8, 189u8,
-                                106u8, 122u8, 171u8, 223u8, 72u8, 16u8, 254u8, 92u8, 139u8, 188u8,
-                                227u8, 76u8,
+                                60u8, 16u8, 246u8, 203u8, 202u8, 97u8, 19u8, 185u8, 130u8, 232u8,
+                                57u8, 19u8, 105u8, 65u8, 183u8, 28u8, 219u8, 152u8, 32u8, 149u8,
+                                116u8, 19u8, 143u8, 180u8, 26u8, 67u8, 179u8, 176u8, 243u8, 128u8,
+                                175u8, 17u8,
                             ],
                         )
                     }
@@ -20450,10 +20516,10 @@ pub mod api {
                                 transaction_encoded,
                             },
                             [
-                                106u8, 11u8, 181u8, 89u8, 135u8, 132u8, 6u8, 235u8, 63u8, 110u8,
-                                32u8, 163u8, 148u8, 191u8, 135u8, 19u8, 238u8, 80u8, 214u8, 85u8,
-                                146u8, 241u8, 154u8, 186u8, 111u8, 185u8, 156u8, 105u8, 223u8,
-                                164u8, 148u8, 223u8,
+                                30u8, 249u8, 206u8, 68u8, 18u8, 50u8, 125u8, 41u8, 175u8, 19u8,
+                                84u8, 9u8, 104u8, 201u8, 68u8, 176u8, 75u8, 45u8, 127u8, 117u8,
+                                6u8, 18u8, 187u8, 184u8, 180u8, 105u8, 51u8, 183u8, 158u8, 105u8,
+                                81u8, 190u8,
                             ],
                         )
                     }
@@ -20621,10 +20687,10 @@ pub mod api {
                                 call: ::subxt::alloc::boxed::Box::new(call),
                             },
                             [
-                                168u8, 236u8, 215u8, 45u8, 128u8, 22u8, 101u8, 120u8, 194u8, 32u8,
-                                207u8, 181u8, 238u8, 30u8, 67u8, 7u8, 217u8, 70u8, 217u8, 236u8,
-                                77u8, 125u8, 119u8, 61u8, 102u8, 91u8, 44u8, 219u8, 47u8, 178u8,
-                                129u8, 45u8,
+                                201u8, 207u8, 236u8, 248u8, 46u8, 137u8, 237u8, 190u8, 122u8,
+                                161u8, 208u8, 37u8, 57u8, 202u8, 66u8, 147u8, 89u8, 139u8, 110u8,
+                                35u8, 113u8, 155u8, 98u8, 15u8, 103u8, 79u8, 197u8, 56u8, 120u8,
+                                181u8, 22u8, 221u8,
                             ],
                         )
                     }
@@ -20783,10 +20849,10 @@ pub mod api {
                         "Revive",
                         "AccountInfoOf",
                         [
-                            109u8, 30u8, 33u8, 12u8, 186u8, 46u8, 154u8, 230u8, 151u8, 190u8,
-                            117u8, 137u8, 228u8, 118u8, 79u8, 120u8, 187u8, 96u8, 188u8, 185u8,
-                            207u8, 59u8, 117u8, 171u8, 32u8, 48u8, 7u8, 225u8, 86u8, 21u8, 239u8,
-                            59u8,
+                            123u8, 148u8, 217u8, 213u8, 222u8, 43u8, 19u8, 238u8, 249u8, 37u8,
+                            107u8, 135u8, 23u8, 151u8, 166u8, 171u8, 229u8, 186u8, 39u8, 247u8,
+                            160u8, 139u8, 91u8, 96u8, 241u8, 157u8, 250u8, 74u8, 134u8, 57u8, 83u8,
+                            202u8,
                         ],
                     )
                 }
@@ -20863,8 +20929,12 @@ pub mod api {
                         ],
                     )
                 }
-                #[doc = " A pair of monotonic counters used to track the latest contract marked for deletion"]
+                #[doc = " A pair of counters used to track the latest contract marked for deletion"]
                 #[doc = " and the latest deleted contract in queue."]
+                #[doc = ""]
+                #[doc = " Both counters only ever increment, wrapping on overflow. `ContractInfo::new` mixes the"]
+                #[doc = " insert counter into the child trie id of every contract it creates, so it must never"]
+                #[doc = " decrease or be reset, apart from wrapping."]
                 pub fn deletion_queue_counter(
                     &self,
                 ) -> ::subxt::storage::StaticAddress<
@@ -20975,14 +21045,40 @@ pub mod api {
                         ],
                     )
                 }
+                #[doc = " What the block committed to its synthetic transaction, if it has one."]
+                #[doc = ""]
+                #[doc = " Separate from [`ReceiptInfoData`] rather than a field alongside it, so that item's encoding"]
+                #[doc = " is unchanged: a runtime upgrade enacts mid-block, and a runtime API call at the enacting"]
+                #[doc = " block reads what the previous runtime wrote."]
+                pub fn synthetic_receipt_info(
+                    &self,
+                ) -> ::subxt::storage::StaticAddress<
+                    (),
+                    synthetic_receipt_info::Output,
+                    ::subxt::utils::Yes,
+                > {
+                    ::subxt::storage::StaticAddress::new_static(
+                        "Revive",
+                        "SyntheticReceiptInfo",
+                        [
+                            164u8, 56u8, 217u8, 190u8, 221u8, 199u8, 140u8, 164u8, 219u8, 190u8,
+                            6u8, 173u8, 202u8, 251u8, 90u8, 250u8, 123u8, 222u8, 207u8, 116u8,
+                            239u8, 158u8, 20u8, 142u8, 165u8, 115u8, 237u8, 79u8, 216u8, 160u8,
+                            66u8, 217u8,
+                        ],
+                    )
+                }
                 #[doc = " What the open ethereum transaction has committed to its receipt, see"]
                 #[doc = " `block_storage::capture_into_receipt`. Taken when the transaction's receipt is built, so it"]
                 #[doc = " is empty between transactions."]
                 #[doc = ""]
                 #[doc = " Accessed only while a receipt is open, in an ethereum transaction or its dry run. Read on"]
-                #[doc = " every log, and written as well until a log overflows the receipt. Read for its overflow"]
-                #[doc = " flag at the successful end of every contract frame, see"]
-                #[doc = " `block_storage::ensure_receipt_within_limit`."]
+                #[doc = " every log, and written as well until a log overflows the receipt. Read, for its overflow"]
+                #[doc = " flag, see `block_storage::ensure_receipt_within_limit`:"]
+                #[doc = " - at the successful end of every contract frame;"]
+                #[doc = " - after the storage deposits in `bare_call` and a successful `bare_instantiate`;"]
+                #[doc = " - after the runtime call dispatched by `eth_substrate_call`;"]
+                #[doc = " - after the runtime call dispatched by a dry run."]
                 #[doc = ""]
                 #[doc = " Whitelisted like `frame_system::Events`: accessed this often, yet never in a block's"]
                 #[doc = " pre-state, so a block pays one absence lookup for it however many logs and frames it holds."]
@@ -21018,9 +21114,10 @@ pub mod api {
                         "Revive",
                         "EthBlockBuilderIR",
                         [
-                            62u8, 22u8, 204u8, 180u8, 89u8, 208u8, 118u8, 104u8, 70u8, 79u8, 254u8,
-                            35u8, 81u8, 30u8, 181u8, 91u8, 139u8, 0u8, 140u8, 81u8, 45u8, 123u8,
-                            181u8, 158u8, 118u8, 82u8, 95u8, 24u8, 133u8, 117u8, 33u8, 133u8,
+                            202u8, 196u8, 178u8, 139u8, 1u8, 79u8, 215u8, 113u8, 139u8, 234u8,
+                            105u8, 11u8, 114u8, 125u8, 179u8, 184u8, 101u8, 241u8, 61u8, 46u8,
+                            177u8, 3u8, 62u8, 253u8, 150u8, 226u8, 95u8, 14u8, 70u8, 21u8, 24u8,
+                            24u8,
                         ],
                     )
                 }
@@ -21043,6 +21140,61 @@ pub mod api {
                             166u8, 113u8, 73u8, 171u8, 38u8, 107u8, 112u8, 101u8, 244u8, 186u8,
                             102u8, 58u8, 85u8, 91u8, 213u8, 17u8, 231u8, 18u8, 242u8, 240u8, 94u8,
                             80u8,
+                        ],
+                    )
+                }
+                #[doc = " Logs emitted during the block outside of any ethereum transaction (e.g. by pallet-assets"]
+                #[doc = " balance-change callbacks on non-`eth_transact` paths), in emission order."]
+                #[doc = ""]
+                #[doc = " One value grown with `append`, like `frame_system::Events`: buffering a log extends the"]
+                #[doc = " encoding in place at the cost of that log's bytes. Written and taken within one block, so"]
+                #[doc = " it is never in the pre-state and the proof holds one absence lookup for the key, nothing"]
+                #[doc = " per entry. Drained in `on_finalize` and flushed"]
+                #[doc = " as a single synthetic transaction receipt, so the logs enter the block's `logs_bloom`,"]
+                #[doc = " `receipts_root` and transaction trie."]
+                #[doc = ""]
+                #[doc = " Whitelisted like `frame_system::Events` and for the same reason: a block pays that one"]
+                #[doc = " lookup however many logs it buffers, so counting it in every producer's benchmark would"]
+                #[doc = " bill each mirrored balance change for a database access the block makes once."]
+                #[doc = ""]
+                #[doc = " NOTE: unbounded; accumulated across the block and consumed in `on_finalize`."]
+                pub fn outside_frame_logs(
+                    &self,
+                ) -> ::subxt::storage::StaticAddress<
+                    (),
+                    outside_frame_logs::Output,
+                    ::subxt::utils::Yes,
+                > {
+                    ::subxt::storage::StaticAddress::new_static(
+                        "Revive",
+                        "OutsideFrameLogs",
+                        [
+                            167u8, 241u8, 214u8, 249u8, 116u8, 191u8, 76u8, 182u8, 8u8, 162u8,
+                            47u8, 150u8, 141u8, 166u8, 1u8, 58u8, 49u8, 221u8, 137u8, 118u8, 75u8,
+                            189u8, 135u8, 152u8, 107u8, 179u8, 236u8, 111u8, 156u8, 52u8, 89u8,
+                            170u8,
+                        ],
+                    )
+                }
+                #[doc = " The bytes the logs in [`OutsideFrameLogs`] take up on the synthetic transaction's receipt,"]
+                #[doc = " counted like an ethereum transaction's logs against [`limits::MAX_RECEIPT_LOGS_BYTES`]."]
+                #[doc = ""]
+                #[doc = " Written and taken together with [`OutsideFrameLogs`], and whitelisted for the same reason."]
+                pub fn outside_frame_logs_bytes(
+                    &self,
+                ) -> ::subxt::storage::StaticAddress<
+                    (),
+                    outside_frame_logs_bytes::Output,
+                    ::subxt::utils::Yes,
+                > {
+                    ::subxt::storage::StaticAddress::new_static(
+                        "Revive",
+                        "OutsideFrameLogsBytes",
+                        [
+                            52u8, 143u8, 111u8, 205u8, 195u8, 57u8, 38u8, 103u8, 178u8, 162u8,
+                            55u8, 179u8, 199u8, 38u8, 168u8, 145u8, 208u8, 13u8, 255u8, 62u8,
+                            122u8, 70u8, 9u8, 99u8, 220u8, 79u8, 106u8, 177u8, 131u8, 199u8, 129u8,
+                            248u8,
                         ],
                     )
                 }
@@ -21166,6 +21318,15 @@ pub mod api {
                     runtime_types::pallet_revive::evm::block_hash::ReceiptGasInfo,
                 >;
             }
+            pub mod synthetic_receipt_info {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod input {
+                    use super::runtime_types;
+                }
+                pub type Output =
+                    runtime_types::pallet_revive::evm::block_hash::SyntheticTransactionInfo;
+            }
             pub mod receipt_logs_committed {
                 use super::root_mod;
                 use super::runtime_types;
@@ -21193,6 +21354,24 @@ pub mod api {
                     ::subxt::alloc::vec::Vec<::core::primitive::u8>,
                     ::subxt::alloc::vec::Vec<::core::primitive::u8>,
                 )>;
+            }
+            pub mod outside_frame_logs {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod input {
+                    use super::runtime_types;
+                }
+                pub type Output = ::subxt::alloc::vec::Vec<
+                    runtime_types::pallet_revive::evm::block_hash::OutsideFrameLog,
+                >;
+            }
+            pub mod outside_frame_logs_bytes {
+                use super::root_mod;
+                use super::runtime_types;
+                pub mod input {
+                    use super::runtime_types;
+                }
+                pub type Output = ::core::primitive::u32;
             }
             pub mod debug_settings_of {
                 use super::root_mod;
@@ -21414,6 +21593,26 @@ pub mod api {
                     ::subxt::constants::StaticAddress::new_static(
                         "Revive",
                         "GasScale",
+                        [
+                            98u8, 252u8, 116u8, 72u8, 26u8, 180u8, 225u8, 83u8, 200u8, 157u8,
+                            125u8, 151u8, 53u8, 76u8, 168u8, 26u8, 10u8, 9u8, 98u8, 68u8, 9u8,
+                            178u8, 197u8, 113u8, 31u8, 79u8, 200u8, 90u8, 203u8, 100u8, 41u8,
+                            145u8,
+                        ],
+                    )
+                }
+                #[doc = " Maximum number of logs that may be buffered outside any ethereum transaction within a"]
+                #[doc = " single block, for the block's synthetic transaction."]
+                #[doc = ""]
+                #[doc = " Each log's drain is charged where it is emitted, so this bounds the buffer's size, not"]
+                #[doc = " its cost. Zero disables the buffer; a log arriving past a non-zero cap is likewise not"]
+                #[doc = " buffered, so the block's bloom omits it while its `ContractEmitted` still stands."]
+                pub fn max_outside_frame_logs(
+                    &self,
+                ) -> ::subxt::constants::StaticAddress<::core::primitive::u32> {
+                    ::subxt::constants::StaticAddress::new_static(
+                        "Revive",
+                        "MaxOutsideFrameLogs",
                         [
                             98u8, 252u8, 116u8, 72u8, 26u8, 180u8, 225u8, 83u8, 200u8, 157u8,
                             125u8, 151u8, 53u8, 76u8, 168u8, 26u8, 10u8, 9u8, 98u8, 68u8, 9u8,
@@ -21651,6 +21850,18 @@ pub mod api {
                         >,
                     >,
                 }
+                #[derive(
+                    :: subxt :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                pub enum InboundHrmpMessageId {
+                    # [codec (index = 0)] Generic (runtime_types :: cumulus_pallet_parachain_system :: parachain_inherent :: InboundMessageId ,) , # [codec (index = 1)] Specific { sent_at : :: core :: primitive :: u32 , sender : runtime_types :: polkadot_parachain_primitives :: primitives :: Id , reverse_idx : :: core :: primitive :: u32 , } , }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
                     :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -21929,6 +22140,9 @@ pub mod api {
                     #[codec(index = 4)]
                     #[doc = "The message is too big."]
                     TooBig,
+                    #[codec(index = 5)]
+                    #[doc = "The page couldn't be processed, but it should be retried."]
+                    RetryPage,
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -22854,8 +23068,23 @@ pub mod api {
                     #[codec(index = 5)]
                     #[doc = "Unreserve some balance from a user by force."]
                     #[doc = ""]
+                    #[doc = "Only acts on the part of the reserved balance that does not back a hold or a named"]
+                    #[doc = "reserve."]
+                    #[doc = ""]
                     #[doc = "Can only be called by ROOT."]
                     force_unreserve {
+                        who: ::subxt::utils::MultiAddress<::subxt::utils::AccountId32, ()>,
+                        amount: ::core::primitive::u128,
+                    },
+                    #[codec(index = 11)]
+                    #[doc = "Unreserve some balance of the named reserve `id` from a user by force."]
+                    #[doc = ""]
+                    #[doc = "Only acts on that named reserve, and never on the part of the reserved balance that"]
+                    #[doc = "backs a hold."]
+                    #[doc = ""]
+                    #[doc = "Can only be called by ROOT."]
+                    force_unreserve_named {
+                        id: [::core::primitive::u8; 8usize],
                         who: ::subxt::utils::MultiAddress<::subxt::utils::AccountId32, ()>,
                         amount: ::core::primitive::u128,
                     },
@@ -22945,7 +23174,7 @@ pub mod api {
                     #[doc = "Number of holds exceed `VariantCountOf<T::RuntimeHoldReason>`."]
                     TooManyHolds,
                     #[codec(index = 9)]
-                    #[doc = "Number of freezes exceed `MaxFreezes`."]
+                    #[doc = "Number of freezes exceed `VariantCountOf<T::RuntimeFreezeReason>`."]
                     TooManyFreezes,
                     #[codec(index = 10)]
                     #[doc = "The issuance cannot be modified since it is already deactivated."]
@@ -24004,9 +24233,39 @@ pub mod api {
                     )]
                     #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                     #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                    pub struct OutsideFrameLog {
+                        pub event_index: ::core::primitive::u32,
+                        pub contract: ::subxt::utils::H160,
+                        pub topics: ::subxt::alloc::vec::Vec<::subxt::utils::H256>,
+                        pub data: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
+                    }
+                    #[derive(
+                        :: subxt :: ext :: scale_decode :: DecodeAsType,
+                        :: subxt :: ext :: scale_encode :: EncodeAsType,
+                        Clone,
+                        Debug,
+                        Eq,
+                        PartialEq,
+                    )]
+                    #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                    #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                     pub struct ReceiptGasInfo {
                         pub gas_used: runtime_types::primitive_types::U256,
                         pub effective_gas_price: runtime_types::primitive_types::U256,
+                    }
+                    #[derive(
+                        :: subxt :: ext :: scale_decode :: DecodeAsType,
+                        :: subxt :: ext :: scale_encode :: EncodeAsType,
+                        Clone,
+                        Debug,
+                        Eq,
+                        PartialEq,
+                    )]
+                    #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                    #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                    pub struct SyntheticTransactionInfo {
+                        pub gas_info: runtime_types::pallet_revive::evm::block_hash::ReceiptGasInfo,
+                        pub log_event_indices: ::subxt::alloc::vec::Vec<::core::primitive::u32>,
                     }
                 }
                 pub mod tx_extension {
@@ -24038,254 +24297,7 @@ pub mod api {
                 #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                 #[doc = "Contains a variant per dispatchable extrinsic that this pallet has."]
                 pub enum Call {
-                    #[codec(index = 0)]
-                    #[doc = "A raw EVM transaction, typically dispatched by an Ethereum JSON-RPC server."]
-                    #[doc = ""]
-                    #[doc = "# Parameters"]
-                    #[doc = ""]
-                    #[doc = "* `payload`: The encoded [`crate::evm::TransactionSigned`]."]
-                    #[doc = ""]
-                    #[doc = "# Note"]
-                    #[doc = ""]
-                    #[doc = "This call cannot be dispatched directly; attempting to do so will result in a failed"]
-                    #[doc = "transaction. It serves as a wrapper for an Ethereum transaction. When submitted, the"]
-                    #[doc = "runtime converts it into a [`sp_runtime::generic::CheckedExtrinsic`] by recovering the"]
-                    #[doc = "signer and validating the transaction."]
-                    eth_transact {
-                        payload: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                    },
-                    #[codec(index = 1)]
-                    #[doc = "Makes a call to an account, optionally transferring some balance."]
-                    #[doc = ""]
-                    #[doc = "# Parameters"]
-                    #[doc = ""]
-                    #[doc = "* `dest`: Address of the contract to call."]
-                    #[doc = "* `value`: The balance to transfer from the `origin` to `dest`."]
-                    #[doc = "* `weight_limit`: The weight limit enforced when executing the constructor."]
-                    #[doc = "* `storage_deposit_limit`: The maximum amount of balance that can be charged from the"]
-                    #[doc = "  caller to pay for the storage consumed."]
-                    #[doc = "* `data`: The input data to pass to the contract."]
-                    #[doc = ""]
-                    #[doc = "* If the account is a smart-contract account, the associated code will be"]
-                    #[doc = "executed and any value will be transferred."]
-                    #[doc = "* If the account is a regular account, any value will be transferred."]
-                    #[doc = "* If no account exists and the call value is not less than `existential_deposit`,"]
-                    #[doc = "a regular account will be created and any value will be transferred."]
-                    call {
-                        dest: ::subxt::utils::H160,
-                        #[codec(compact)]
-                        value: ::core::primitive::u128,
-                        weight_limit: runtime_types::sp_weights::weight_v2::Weight,
-                        #[codec(compact)]
-                        storage_deposit_limit: ::core::primitive::u128,
-                        data: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                    },
-                    #[codec(index = 2)]
-                    #[doc = "Instantiates a contract from a previously deployed vm binary."]
-                    #[doc = ""]
-                    #[doc = "This function is identical to [`Self::instantiate_with_code`] but without the"]
-                    #[doc = "code deployment step. Instead, the `code_hash` of an on-chain deployed vm binary"]
-                    #[doc = "must be supplied."]
-                    instantiate {
-                        #[codec(compact)]
-                        value: ::core::primitive::u128,
-                        weight_limit: runtime_types::sp_weights::weight_v2::Weight,
-                        #[codec(compact)]
-                        storage_deposit_limit: ::core::primitive::u128,
-                        code_hash: ::subxt::utils::H256,
-                        data: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        salt: ::core::option::Option<[::core::primitive::u8; 32usize]>,
-                    },
-                    #[codec(index = 3)]
-                    #[doc = "Instantiates a new contract from the supplied `code` optionally transferring"]
-                    #[doc = "some balance."]
-                    #[doc = ""]
-                    #[doc = "This dispatchable has the same effect as calling [`Self::upload_code`] +"]
-                    #[doc = "[`Self::instantiate`]. Bundling them together provides efficiency gains. Please"]
-                    #[doc = "also check the documentation of [`Self::upload_code`]."]
-                    #[doc = ""]
-                    #[doc = "# Parameters"]
-                    #[doc = ""]
-                    #[doc = "* `value`: The balance to transfer from the `origin` to the newly created contract."]
-                    #[doc = "* `weight_limit`: The weight limit enforced when executing the constructor."]
-                    #[doc = "* `storage_deposit_limit`: The maximum amount of balance that can be charged/reserved"]
-                    #[doc = "  from the caller to pay for the storage consumed."]
-                    #[doc = "* `code`: The contract code to deploy in raw bytes."]
-                    #[doc = "* `data`: The input data to pass to the contract constructor."]
-                    #[doc = "* `salt`: Used for the address derivation. If `Some` is supplied then `CREATE2`"]
-                    #[doc = "\tsemantics are used. If `None` then `CRATE1` is used."]
-                    #[doc = ""]
-                    #[doc = ""]
-                    #[doc = "Instantiation is executed as follows:"]
-                    #[doc = ""]
-                    #[doc = "- The supplied `code` is deployed, and a `code_hash` is created for that code."]
-                    #[doc = "- If the `code_hash` already exists on the chain the underlying `code` will be shared."]
-                    #[doc = "- The destination address is computed based on the sender, code_hash and the salt."]
-                    #[doc = "- The smart-contract account is created at the computed address."]
-                    #[doc = "- The `value` is transferred to the new account."]
-                    #[doc = "- The `deploy` function is executed in the context of the newly-created account."]
-                    instantiate_with_code {
-                        #[codec(compact)]
-                        value: ::core::primitive::u128,
-                        weight_limit: runtime_types::sp_weights::weight_v2::Weight,
-                        #[codec(compact)]
-                        storage_deposit_limit: ::core::primitive::u128,
-                        code: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        data: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        salt: ::core::option::Option<[::core::primitive::u8; 32usize]>,
-                    },
-                    #[codec(index = 10)]
-                    #[doc = "Same as [`Self::instantiate_with_code`], but intended to be dispatched **only**"]
-                    #[doc = "by an EVM transaction through the EVM compatibility layer."]
-                    #[doc = ""]
-                    #[doc = "# Parameters"]
-                    #[doc = ""]
-                    #[doc = "* `value`: The balance to transfer from the `origin` to the newly created contract."]
-                    #[doc = "* `weight_limit`: The gas limit used to derive the transaction weight for transaction"]
-                    #[doc = "  payment"]
-                    #[doc = "* `eth_gas_limit`: The Ethereum gas limit governing the resource usage of the execution"]
-                    #[doc = "* `code`: The contract code to deploy in raw bytes."]
-                    #[doc = "* `data`: The input data to pass to the contract constructor."]
-                    #[doc = "* `transaction_encoded`: The RLP encoding of the signed Ethereum transaction,"]
-                    #[doc = "  represented as [crate::evm::TransactionSigned], provided by the Ethereum wallet. This"]
-                    #[doc = "  is used for building the Ethereum transaction root."]
-                    #[doc = "* effective_gas_price: the price of a unit of gas"]
-                    #[doc = "* encoded len: the byte code size of the `eth_transact` extrinsic"]
-                    #[doc = ""]
-                    #[doc = "Calling this dispatchable ensures that the origin's nonce is bumped only once,"]
-                    #[doc = "via the `CheckNonce` transaction extension. In contrast, [`Self::instantiate_with_code`]"]
-                    #[doc = "also bumps the nonce after contract instantiation, since it may be invoked multiple"]
-                    #[doc = "times within a batch call transaction."]
-                    eth_instantiate_with_code {
-                        value: runtime_types::primitive_types::U256,
-                        weight_limit: runtime_types::sp_weights::weight_v2::Weight,
-                        eth_gas_limit: runtime_types::primitive_types::U256,
-                        code: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        data: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        transaction_encoded: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        effective_gas_price: runtime_types::primitive_types::U256,
-                        encoded_len: ::core::primitive::u32,
-                    },
-                    #[codec(index = 11)]
-                    #[doc = "Same as [`Self::call`], but intended to be dispatched **only**"]
-                    #[doc = "by an EVM transaction through the EVM compatibility layer."]
-                    #[doc = ""]
-                    #[doc = "# Parameters"]
-                    #[doc = ""]
-                    #[doc = "* `dest`: The Ethereum address of the account to be called"]
-                    #[doc = "* `value`: The balance to transfer from the `origin` to the newly created contract."]
-                    #[doc = "* `weight_limit`: The gas limit used to derive the transaction weight for transaction"]
-                    #[doc = "  payment"]
-                    #[doc = "* `eth_gas_limit`: The Ethereum gas limit governing the resource usage of the execution"]
-                    #[doc = "* `data`: The input data to pass to the contract constructor."]
-                    #[doc = "* `transaction_encoded`: The RLP encoding of the signed Ethereum transaction,"]
-                    #[doc = "  represented as [crate::evm::TransactionSigned], provided by the Ethereum wallet. This"]
-                    #[doc = "  is used for building the Ethereum transaction root."]
-                    #[doc = "* effective_gas_price: the price of a unit of gas"]
-                    #[doc = "* encoded len: the byte code size of the `eth_transact` extrinsic"]
-                    eth_call {
-                        dest: ::subxt::utils::H160,
-                        value: runtime_types::primitive_types::U256,
-                        weight_limit: runtime_types::sp_weights::weight_v2::Weight,
-                        eth_gas_limit: runtime_types::primitive_types::U256,
-                        data: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        transaction_encoded: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        effective_gas_price: runtime_types::primitive_types::U256,
-                        encoded_len: ::core::primitive::u32,
-                    },
-                    #[codec(index = 12)]
-                    #[doc = "Executes a Substrate runtime call from an Ethereum transaction."]
-                    #[doc = ""]
-                    #[doc = "This dispatchable is intended to be called **only** through the EVM compatibility"]
-                    #[doc = "layer. The provided call will be dispatched using `RawOrigin::Signed`."]
-                    #[doc = ""]
-                    #[doc = "# Parameters"]
-                    #[doc = ""]
-                    #[doc = "* `origin`: Must be an [`Origin::EthTransaction`] origin."]
-                    #[doc = "* `call`: The Substrate runtime call to execute."]
-                    #[doc = "* `transaction_encoded`: The RLP encoding of the Ethereum transaction,"]
-                    eth_substrate_call {
-                        call: ::subxt::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
-                        >,
-                        transaction_encoded: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                    },
-                    #[codec(index = 4)]
-                    #[doc = "Upload new `code` without instantiating a contract from it."]
-                    #[doc = ""]
-                    #[doc = "If the code does not already exist a deposit is reserved from the caller"]
-                    #[doc = "The size of the reserve depends on the size of the supplied `code`."]
-                    #[doc = ""]
-                    #[doc = "# Note"]
-                    #[doc = ""]
-                    #[doc = "Anyone can instantiate a contract from any uploaded code and thus prevent its removal."]
-                    #[doc = "To avoid this situation a constructor could employ access control so that it can"]
-                    #[doc = "only be instantiated by permissioned entities. The same is true when uploading"]
-                    #[doc = "through [`Self::instantiate_with_code`]."]
-                    #[doc = ""]
-                    #[doc = "If the refcount of the code reaches zero after terminating the last contract that"]
-                    #[doc = "references this code, the code will be removed automatically."]
-                    upload_code {
-                        code: ::subxt::alloc::vec::Vec<::core::primitive::u8>,
-                        #[codec(compact)]
-                        storage_deposit_limit: ::core::primitive::u128,
-                    },
-                    #[codec(index = 5)]
-                    #[doc = "Remove the code stored under `code_hash` and refund the deposit to its owner."]
-                    #[doc = ""]
-                    #[doc = "A code can only be removed by its original uploader (its owner) and only if it is"]
-                    #[doc = "not used by any contract."]
-                    remove_code { code_hash: ::subxt::utils::H256 },
-                    #[codec(index = 6)]
-                    #[doc = "Privileged function that changes the code of an existing contract."]
-                    #[doc = ""]
-                    #[doc = "This takes care of updating refcounts and all other necessary operations. Returns"]
-                    #[doc = "an error if either the `code_hash` or `dest` do not exist."]
-                    #[doc = ""]
-                    #[doc = "# Note"]
-                    #[doc = ""]
-                    #[doc = "This does **not** change the address of the contract in question. This means"]
-                    #[doc = "that the contract address is no longer derived from its code hash after calling"]
-                    #[doc = "this dispatchable."]
-                    set_code {
-                        dest: ::subxt::utils::H160,
-                        code_hash: ::subxt::utils::H256,
-                    },
-                    #[codec(index = 7)]
-                    #[doc = "Register the callers account id so that it can be used in contract interactions."]
-                    #[doc = ""]
-                    #[doc = "This will error if the origin is already mapped or is a eth native `Address20`. It will"]
-                    #[doc = "take a deposit that can be released by calling [`Self::unmap_account`]."]
-                    #[doc = ""]
-                    #[doc = "Noop when [`Config::AutoMap`] is enabled, as accounts are automatically mapped"]
-                    #[doc = "on creation via [`AutoMapper`]."]
-                    map_account,
-                    #[codec(index = 13)]
-                    #[doc = "Map many accounts and make the TX free if at least 90% were unmapped or held deposits."]
-                    batch_map_accounts {
-                        accounts: ::subxt::alloc::vec::Vec<::subxt::utils::AccountId32>,
-                    },
-                    #[codec(index = 8)]
-                    #[doc = "Unregister the callers account id in order to free the deposit."]
-                    #[doc = ""]
-                    #[doc = "There is no reason to ever call this function other than freeing up the deposit."]
-                    #[doc = "This is only useful when the account should no longer be used."]
-                    #[doc = ""]
-                    #[doc = "Disabled when [`Config::AutoMap`] is enabled, as accounts are automatically unmapped"]
-                    #[doc = "on kill via [`AutoMapper`]."]
-                    unmap_account,
-                    #[codec(index = 9)]
-                    #[doc = "Dispatch an `call` with the origin set to the callers fallback address."]
-                    #[doc = ""]
-                    #[doc = "Every `AccountId32` can control its corresponding fallback account. The fallback account"]
-                    #[doc = "is the `AccountId20` with the last 12 bytes set to `0xEE`. This is essentially a"]
-                    #[doc = "recovery function in case an `AccountId20` was used without creating a mapping first."]
-                    dispatch_as_fallback_account {
-                        call: ::subxt::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
-                        >,
-                    },
-                }
+                    # [codec (index = 0)] # [doc = "A raw EVM transaction, typically dispatched by an Ethereum JSON-RPC server."] # [doc = ""] # [doc = "# Parameters"] # [doc = ""] # [doc = "* `payload`: The encoded [`crate::evm::TransactionSigned`]."] # [doc = ""] # [doc = "# Note"] # [doc = ""] # [doc = "This call cannot be dispatched directly; attempting to do so will result in a failed"] # [doc = "transaction. It serves as a wrapper for an Ethereum transaction. When submitted, the"] # [doc = "runtime converts it into a [`sp_runtime::generic::CheckedExtrinsic`] by recovering the"] # [doc = "signer and validating the transaction."] eth_transact { payload : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , } , # [codec (index = 1)] # [doc = "Makes a call to an account, optionally transferring some balance."] # [doc = ""] # [doc = "# Parameters"] # [doc = ""] # [doc = "* `dest`: Address of the contract to call."] # [doc = "* `value`: The balance to transfer from the `origin` to `dest`."] # [doc = "* `weight_limit`: The weight limit enforced when executing the constructor."] # [doc = "* `storage_deposit_limit`: The maximum amount of balance that can be charged from the"] # [doc = "  caller to pay for the storage consumed."] # [doc = "* `data`: The input data to pass to the contract."] # [doc = ""] # [doc = "* If the account is a smart-contract account, the associated code will be"] # [doc = "executed and any value will be transferred."] # [doc = "* If the account is a regular account, any value will be transferred."] # [doc = "* If no account exists and the call value is not less than `existential_deposit`,"] # [doc = "a regular account will be created and any value will be transferred."] call { dest : :: subxt :: utils :: H160 , # [codec (compact)] value : :: core :: primitive :: u128 , weight_limit : runtime_types :: sp_weights :: weight_v2 :: Weight , # [codec (compact)] storage_deposit_limit : :: core :: primitive :: u128 , data : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , } , # [codec (index = 2)] # [doc = "Instantiates a contract from a previously deployed vm binary."] # [doc = ""] # [doc = "This function is identical to [`Self::instantiate_with_code`] but without the"] # [doc = "code deployment step. Instead, the `code_hash` of an on-chain deployed vm binary"] # [doc = "must be supplied."] instantiate { # [codec (compact)] value : :: core :: primitive :: u128 , weight_limit : runtime_types :: sp_weights :: weight_v2 :: Weight , # [codec (compact)] storage_deposit_limit : :: core :: primitive :: u128 , code_hash : :: subxt :: utils :: H256 , data : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , salt : :: core :: option :: Option < [:: core :: primitive :: u8 ; 32usize] > , } , # [codec (index = 3)] # [doc = "Instantiates a new contract from the supplied `code` optionally transferring"] # [doc = "some balance."] # [doc = ""] # [doc = "This dispatchable has the same effect as calling [`Self::upload_code`] +"] # [doc = "[`Self::instantiate`]. Bundling them together provides efficiency gains. Please"] # [doc = "also check the documentation of [`Self::upload_code`]."] # [doc = ""] # [doc = "# Parameters"] # [doc = ""] # [doc = "* `value`: The balance to transfer from the `origin` to the newly created contract."] # [doc = "* `weight_limit`: The weight limit enforced when executing the constructor."] # [doc = "* `storage_deposit_limit`: The maximum amount of balance that can be charged/reserved"] # [doc = "  from the caller to pay for the storage consumed."] # [doc = "* `code`: The contract code to deploy in raw bytes."] # [doc = "* `data`: The input data to pass to the contract constructor."] # [doc = "* `salt`: Used for the address derivation. If `Some` is supplied then `CREATE2`"] # [doc = "\tsemantics are used. If `None` then `CRATE1` is used."] # [doc = ""] # [doc = ""] # [doc = "Instantiation is executed as follows:"] # [doc = ""] # [doc = "- The supplied `code` is deployed, and a `code_hash` is created for that code."] # [doc = "- If the `code_hash` already exists on the chain the underlying `code` will be shared."] # [doc = "- The destination address is computed based on the sender, code_hash and the salt."] # [doc = "- The smart-contract account is created at the computed address."] # [doc = "- The `value` is transferred to the new account."] # [doc = "- The `deploy` function is executed in the context of the newly-created account."] instantiate_with_code { # [codec (compact)] value : :: core :: primitive :: u128 , weight_limit : runtime_types :: sp_weights :: weight_v2 :: Weight , # [codec (compact)] storage_deposit_limit : :: core :: primitive :: u128 , code : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , data : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , salt : :: core :: option :: Option < [:: core :: primitive :: u8 ; 32usize] > , } , # [codec (index = 10)] # [doc = "Same as [`Self::instantiate_with_code`], but intended to be dispatched **only**"] # [doc = "by an EVM transaction through the EVM compatibility layer."] # [doc = ""] # [doc = "# Parameters"] # [doc = ""] # [doc = "* `value`: The balance to transfer from the `origin` to the newly created contract."] # [doc = "* `weight_limit`: The gas limit used to derive the transaction weight for transaction"] # [doc = "  payment"] # [doc = "* `eth_gas_limit`: The Ethereum gas limit governing the resource usage of the execution"] # [doc = "* `code`: The contract code to deploy in raw bytes."] # [doc = "* `data`: The input data to pass to the contract constructor."] # [doc = "* `transaction_encoded`: The RLP encoding of the signed Ethereum transaction,"] # [doc = "  represented as [crate::evm::TransactionSigned], provided by the Ethereum wallet. This"] # [doc = "  is used for building the Ethereum transaction root."] # [doc = "* `effective_gas_price`: the price of a unit of gas"] # [doc = "* `encoded_len`: the byte code size of the `eth_transact` extrinsic"] # [doc = ""] # [doc = "Calling this dispatchable ensures that the origin's nonce is bumped only once,"] # [doc = "via the `CheckNonce` transaction extension. In contrast, [`Self::instantiate_with_code`]"] # [doc = "also bumps the nonce after contract instantiation, since it may be invoked multiple"] # [doc = "times within a batch call transaction."] eth_instantiate_with_code { value : runtime_types :: primitive_types :: U256 , weight_limit : runtime_types :: sp_weights :: weight_v2 :: Weight , eth_gas_limit : runtime_types :: primitive_types :: U256 , code : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , data : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , transaction_encoded : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , effective_gas_price : runtime_types :: primitive_types :: U256 , encoded_len : :: core :: primitive :: u32 , } , # [codec (index = 11)] # [doc = "Same as [`Self::call`], but intended to be dispatched **only**"] # [doc = "by an EVM transaction through the EVM compatibility layer."] # [doc = ""] # [doc = "# Parameters"] # [doc = ""] # [doc = "* `dest`: The Ethereum address of the account to be called"] # [doc = "* `value`: The balance to transfer from the `origin` to the newly created contract."] # [doc = "* `weight_limit`: The gas limit used to derive the transaction weight for transaction"] # [doc = "  payment"] # [doc = "* `eth_gas_limit`: The Ethereum gas limit governing the resource usage of the execution"] # [doc = "* `data`: The input data to pass to the contract constructor."] # [doc = "* `transaction_encoded`: The RLP encoding of the signed Ethereum transaction,"] # [doc = "  represented as [crate::evm::TransactionSigned], provided by the Ethereum wallet. This"] # [doc = "  is used for building the Ethereum transaction root."] # [doc = "* `effective_gas_price`: the price of a unit of gas"] # [doc = "* `encoded_len`: the byte code size of the `eth_transact` extrinsic"] # [doc = "* `authorization_list`: EIP-7702 authorization tuples to process before execution"] eth_call { dest : :: subxt :: utils :: H160 , value : runtime_types :: primitive_types :: U256 , weight_limit : runtime_types :: sp_weights :: weight_v2 :: Weight , eth_gas_limit : runtime_types :: primitive_types :: U256 , data : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , transaction_encoded : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , effective_gas_price : runtime_types :: primitive_types :: U256 , encoded_len : :: core :: primitive :: u32 , authorization_list : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive :: evm :: api :: transaction :: AuthorizationListEntry > , } , # [codec (index = 12)] # [doc = "Executes a Substrate runtime call from an Ethereum transaction."] # [doc = ""] # [doc = "This dispatchable is intended to be called **only** through the EVM compatibility"] # [doc = "layer. The provided call will be dispatched using `RawOrigin::Signed`."] # [doc = ""] # [doc = "# Parameters"] # [doc = ""] # [doc = "* `origin`: Must be an [`Origin::EthTransaction`] origin."] # [doc = "* `call`: The Substrate runtime call to execute."] # [doc = "* `transaction_encoded`: The RLP encoding of the Ethereum transaction,"] eth_substrate_call { call : :: subxt :: alloc :: boxed :: Box < runtime_types :: storage_paseo_runtime :: RuntimeCall > , transaction_encoded : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , } , # [codec (index = 4)] # [doc = "Upload new `code` without instantiating a contract from it."] # [doc = ""] # [doc = "If the code does not already exist a deposit is reserved from the caller"] # [doc = "The size of the reserve depends on the size of the supplied `code`."] # [doc = ""] # [doc = "# Note"] # [doc = ""] # [doc = "Anyone can instantiate a contract from any uploaded code and thus prevent its removal."] # [doc = "To avoid this situation a constructor could employ access control so that it can"] # [doc = "only be instantiated by permissioned entities. The same is true when uploading"] # [doc = "through [`Self::instantiate_with_code`]."] # [doc = ""] # [doc = "If the refcount of the code reaches zero after terminating the last contract that"] # [doc = "references this code, the code will be removed automatically."] upload_code { code : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u8 > , # [codec (compact)] storage_deposit_limit : :: core :: primitive :: u128 , } , # [codec (index = 5)] # [doc = "Remove the code stored under `code_hash` and refund the deposit to its owner."] # [doc = ""] # [doc = "A code can only be removed by its original uploader (its owner) and only if it is"] # [doc = "not used by any contract."] remove_code { code_hash : :: subxt :: utils :: H256 , } , # [codec (index = 6)] # [doc = "Privileged function that changes the code of an existing contract."] # [doc = ""] # [doc = "This takes care of updating refcounts and all other necessary operations. Returns"] # [doc = "an error if either the `code_hash` or `dest` do not exist."] # [doc = ""] # [doc = "# Note"] # [doc = ""] # [doc = "This does **not** change the address of the contract in question. This means"] # [doc = "that the contract address is no longer derived from its code hash after calling"] # [doc = "this dispatchable."] set_code { dest : :: subxt :: utils :: H160 , code_hash : :: subxt :: utils :: H256 , } , # [codec (index = 7)] # [doc = "Register the callers account id so that it can be used in contract interactions."] # [doc = ""] # [doc = "This will error if the origin is already mapped or is a eth native `Address20`. It will"] # [doc = "take a deposit that can be released by calling [`Self::unmap_account`]."] # [doc = ""] # [doc = "Noop when [`Config::AutoMap`] is enabled, as accounts are automatically mapped"] # [doc = "on creation via [`AutoMapper`]."] map_account , # [codec (index = 13)] # [doc = "Map many accounts and make the TX free if at least 90% were unmapped or held deposits."] batch_map_accounts { accounts : :: subxt :: alloc :: vec :: Vec < :: subxt :: utils :: AccountId32 > , } , # [codec (index = 8)] # [doc = "Unregister the callers account id in order to free the deposit."] # [doc = ""] # [doc = "There is no reason to ever call this function other than freeing up the deposit."] # [doc = "This is only useful when the account should no longer be used."] # [doc = ""] # [doc = "Disabled when [`Config::AutoMap`] is enabled, as accounts are automatically unmapped"] # [doc = "on kill via [`AutoMapper`]."] unmap_account , # [codec (index = 9)] # [doc = "Dispatch an `call` with the origin set to the callers fallback address."] # [doc = ""] # [doc = "Every `AccountId32` can control its corresponding fallback account. The fallback account"] # [doc = "is the `AccountId20` with the last 12 bytes set to `0xEE`. This is essentially a"] # [doc = "recovery function in case an `AccountId20` was used without creating a mapping first."] dispatch_as_fallback_account { call : :: subxt :: alloc :: boxed :: Box < runtime_types :: storage_paseo_runtime :: RuntimeCall > , } , }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
                     :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -24503,6 +24515,10 @@ pub mod api {
                     #[doc = "[`NativeDepositOf`] entries from a previously terminated contract that the deletion"]
                     #[doc = "queue has not yet drained."]
                     PendingDepositCleanup,
+                    #[codec(index = 68)]
+                    #[doc = "`seal_terminate` was invoked on an EIP-7702 delegated EOA. Delegated accounts"]
+                    #[doc = "cannot be torn down via the contract-termination path."]
+                    CannotTerminateDelegatedAccount,
                     #[codec(index = 69)]
                     #[doc = "The logs of the ethereum transaction would exceed"]
                     #[doc = "[`limits::MAX_RECEIPT_LOGS_BYTES`] in its receipt."]
@@ -24676,6 +24692,12 @@ pub mod api {
                     Contract(runtime_types::pallet_revive::storage::ContractInfo),
                     #[codec(index = 1)]
                     EOA,
+                    #[codec(index = 2)]
+                    DelegatedEOA {
+                        delegate_target: ::core::option::Option<::subxt::utils::H160>,
+                        contract_info: runtime_types::pallet_revive::storage::ContractInfo,
+                        payer: ::core::option::Option<::subxt::utils::AccountId32>,
+                    },
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -25806,6 +25828,17 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct ReceiptDataInputPayloadV2;
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                         pub struct ReceiptDataOutputPayloadV1 { pub receipt_data : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: receipt :: ReceiptGasInfoV1 > , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -25817,8 +25850,19 @@ pub mod api {
                         )]
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct ReceiptDataOutputPayloadV2 { pub receipt_data : :: subxt :: alloc :: vec :: Vec < runtime_types :: pallet_revive_types :: runtime_api :: types :: receipt :: ReceiptGasInfoV1 > , pub synthetic : :: core :: option :: Option < runtime_types :: pallet_revive_types :: runtime_api :: types :: receipt :: SyntheticTransactionV1 > , }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                         pub enum ReceiptDataVersionedInputPayload {
-                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: receipt_data :: ReceiptDataInputPayloadV1 ,) , }
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: receipt_data :: ReceiptDataInputPayloadV1 ,) , # [codec (index = 1)] V2 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: receipt_data :: ReceiptDataInputPayloadV2 ,) , }
                         #[derive(
                             :: subxt :: ext :: scale_decode :: DecodeAsType,
                             :: subxt :: ext :: scale_encode :: EncodeAsType,
@@ -25830,7 +25874,7 @@ pub mod api {
                         #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
                         #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
                         pub enum ReceiptDataVersionedOutputPayload {
-                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: receipt_data :: ReceiptDataOutputPayloadV1 ,) , }
+                            # [codec (index = 0)] V1 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: receipt_data :: ReceiptDataOutputPayloadV1 ,) , # [codec (index = 1)] V2 (runtime_types :: pallet_revive_types :: runtime_api :: payloads :: receipt_data :: ReceiptDataOutputPayloadV2 ,) , }
                     }
                     pub mod runtime_pallets_address {
                         use super::runtime_types;
@@ -26300,6 +26344,17 @@ pub mod api {
                             pub gas_used: runtime_types::primitive_types::U256,
                             pub effective_gas_price: runtime_types::primitive_types::U256,
                         }
+                        #[derive(
+                            :: subxt :: ext :: scale_decode :: DecodeAsType,
+                            :: subxt :: ext :: scale_encode :: EncodeAsType,
+                            Clone,
+                            Debug,
+                            Eq,
+                            PartialEq,
+                        )]
+                        #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+                        #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+                        pub struct SyntheticTransactionV1 { pub gas_info : runtime_types :: pallet_revive_types :: runtime_api :: types :: receipt :: ReceiptGasInfoV1 , pub log_event_indices : :: subxt :: alloc :: vec :: Vec < :: core :: primitive :: u32 > , }
                     }
                     pub mod state_overrides {
                         use super::runtime_types;
@@ -30890,6 +30945,8 @@ pub mod api {
                     IndeterminateImplicit,
                     #[codec(index = 12)]
                     UnknownOrigin,
+                    #[codec(index = 13)]
+                    Module(runtime_types::sp_runtime::ModuleInvalidity),
                 }
                 #[derive(
                     :: subxt :: ext :: scale_decode :: DecodeAsType,
@@ -31048,6 +31105,20 @@ pub mod api {
             pub struct ModuleError {
                 pub index: ::core::primitive::u8,
                 pub error: [::core::primitive::u8; 4usize],
+            }
+            #[derive(
+                :: subxt :: ext :: scale_decode :: DecodeAsType,
+                :: subxt :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt :: ext :: scale_encode")]
+            pub struct ModuleInvalidity {
+                pub index: ::core::primitive::u8,
+                pub error: ::core::primitive::u16,
             }
             #[derive(
                 :: subxt :: ext :: scale_decode :: DecodeAsType,
