@@ -8,8 +8,7 @@ use sp_core::H256;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Open the store and bind it to the chain with `genesis_hash`. Fails when
-/// the store belongs to another chain.
+/// Open the store, bound to the chain with `genesis_hash`.
 pub(crate) fn open_storage(
     params: &StorageParams,
     genesis_hash: H256,
@@ -27,7 +26,7 @@ pub(crate) fn open_storage(
         })
 }
 
-/// Operator message for a store that belongs to another chain.
+/// Operator message for [`provider_storage::Error::ChainMismatch`].
 pub(crate) fn chain_mismatch_message(
     expected: H256,
     connected: H256,

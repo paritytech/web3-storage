@@ -111,8 +111,8 @@ pub enum Error {
     #[error("Incompatible on-disk format: {0}")]
     IncompatibleFormat(String),
 
-    /// The store was opened for one chain but records another. Open it for
-    /// the chain that wrote it, or use another store.
+    /// The store records another chain. Connect to that chain, or use another
+    /// storage path.
     #[error("Store belongs to chain {expected:?}, not to chain {connected:?}")]
     ChainMismatch {
         /// Genesis hash recorded in the store.

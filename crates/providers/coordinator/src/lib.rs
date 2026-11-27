@@ -37,12 +37,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 
-/// Budget for building a cold chain connection (on the light transport,
-/// until its first finalized block), used at node startup and by every
-/// reconnect. On the light transport, connecting awaits smoldot's peer
-/// discovery and warp sync with no timeout of its own, so a wedged light
-/// client would otherwise hang forever. Generous because killing a slow warp
-/// sync throws its progress away.
+/// Time limit for connecting to the chain, at startup and on every reconnect.
+/// The light client's sync has no time limit of its own. Long, because a
+/// cancelled warp sync starts over.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 
 // ── Error ─────────────────────────────────────────────────────────────────────
@@ -125,8 +122,8 @@ impl ChainStateCoordinator {
     /// drops the connection later is retried with a fixed backoff instead of
     /// taking the coordinator down. Runs until
     /// [`ChainStateCoordinatorHandle::stop`] is called or a connection reports
-    /// [`ChainClientError::ChainMismatch`]; the handle's
-    /// [`fatal_error`](ChainStateCoordinatorHandle::fatal_error) returns that error.
+    /// [`ChainClientError::ChainMismatch`], which
+    /// [`fatal_error`](ChainStateCoordinatorHandle::fatal_error) returns.
     pub fn start(self) -> ChainStateCoordinatorHandle {
         let task = tokio::spawn(self.run());
         ChainStateCoordinatorHandle { task }
@@ -158,8 +155,7 @@ impl ChainStateCoordinator {
     /// stream until it ends or stalls. Returns `Err` if connecting or bootstrapping
     /// fails; `Ok(())` if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
-        // Without the budget, a hung connect keeps the previous dead handle
-        // published and the loop never rebuilds it.
+        // A connect that never returns would keep the dead handle published.
         let connection = with_timeout("Connecting to the chain", CONNECT_TIMEOUT, async {
             Ok(self.follower.connect().await?)
         })
@@ -354,8 +350,8 @@ pub async fn refresh_if_relevant_event(
 
 // ── ChainStateCoordinatorHandle ───────────────────────────────────────────────
 
-/// Handle to the coordinator task. Dropping it leaves the task running; call
-/// [`stop`](Self::stop) to shut it down.
+/// Handle to the coordinator task. Dropping it does not stop the task; call
+/// [`stop`](Self::stop).
 pub struct ChainStateCoordinatorHandle {
     task: JoinHandle<ChainClientError>,
 }

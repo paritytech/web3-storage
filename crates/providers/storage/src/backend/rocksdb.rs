@@ -111,14 +111,13 @@ impl DiskStorage {
         Self::open(path, None)
     }
 
-    /// Open the store at `path`. With `genesis_hash`, bind it to that chain:
-    /// a store that records no chain records it, and a store that records
-    /// another chain fails with [`Error::ChainMismatch`].
+    /// Open the store at `path`. With `genesis_hash`, the store records that
+    /// chain on its first open and later fails with [`Error::ChainMismatch`]
+    /// for any other chain.
     ///
-    /// The chain is identified by its genesis hash only. A chain restarted
-    /// from the same runtime and genesis config has the same hash, so this
-    /// check accepts the old store for it; start such a chain with a new
-    /// storage path.
+    /// Only the genesis hash identifies the chain, so a chain restarted from
+    /// the same runtime and genesis config passes. Use a new storage path for
+    /// it.
     pub fn open(path: impl AsRef<Path>, genesis_hash: Option<H256>) -> Result<Self, Error> {
         let mut txn_db_opts = TransactionDBOptions::default();
         txn_db_opts.set_txn_lock_timeout(BUCKET_LOCK_TIMEOUT_MS);
@@ -193,8 +192,7 @@ impl DiskStorage {
         opts
     }
 
-    /// Record `genesis_hash` in a store that records no chain; fail when the
-    /// store records another chain.
+    /// Record `genesis_hash`, or fail if the store records another chain.
     fn bind_chain(db: &TransactionDB, path: &Path, genesis_hash: H256) -> Result<(), Error> {
         let cf = db
             .cf_handle(CF_METADATA)
@@ -1876,9 +1874,8 @@ mod tests {
         ));
     }
 
-    /// A store written before stores recorded their chain holds data but no
-    /// chain: the first open with a chain records it and keeps the data, and
-    /// later opens enforce it.
+    /// A store with data but no recorded chain records the chain on its first
+    /// open and keeps the data.
     #[test]
     fn open_records_the_chain_for_a_store_with_data_but_no_recorded_chain() {
         let (storage, dir) = storage_with_bucket(1024);

@@ -67,8 +67,8 @@ pub enum StorageBackendSpec {
 }
 
 impl StorageBackendSpec {
-    /// Build the backend, bound to the chain with `genesis_hash` when given.
-    /// See [`DiskStorage::open`].
+    /// Build the backend; with `genesis_hash`, bound to that chain (see
+    /// [`DiskStorage::open`]).
     pub fn build(&self, genesis_hash: Option<H256>) -> Result<Arc<dyn StorageBackend>, Error> {
         match self {
             Self::RocksDb { path } => Ok(Arc::new(DiskStorage::open(path, genesis_hash)?)),

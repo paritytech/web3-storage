@@ -53,9 +53,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // background coordinators.
     let (events_tx, _) = broadcast::channel::<BlockEvent>(EVENT_CHANNEL_CAPACITY);
 
-    // Connect before opening the store, so the store is checked against the
-    // chain before any request reaches it, and auth lookups and the one-shot
-    // multiaddr sync work right away.
+    // Connect first: the store is checked against the chain when it opens,
+    // and auth lookups and the multiaddr sync need the connection.
     let handle = tokio::time::timeout(CONNECT_TIMEOUT, chain_connection::connect(&transport))
         .await
         .map_err(|_| {
@@ -162,8 +161,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let replica_events = events_tx.subscribe();
     let challenge_events = events_tx.subscribe();
 
-    // The replica sync coordinator and the challenge responder are optional;
-    // their startup failures are non-fatal.
+    // Optional services: a startup failure here does not stop the node.
     let follower = Arc::new(SubxtChainFollower::new(transport, chain_tx, genesis_hash));
     let chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
     let _replica_sync_handle =
@@ -195,8 +193,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     );
-    // The chain-state coordinator stops only on a chain mismatch or a panic.
-    // Either one ends the node instead of serving with stale chain state.
+    // The chain-state coordinator stops only on a chain mismatch or a panic;
+    // both end the node.
     let storage_path = &cli.storage.storage_path;
     tokio::select! {
         result = serve => result?,
