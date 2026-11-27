@@ -363,6 +363,41 @@ fn challenge_slashes_provider_on_timeout() {
     });
 }
 
+/// Resolving an expired challenge refunds the challenger even when the
+/// provider record is missing.
+#[test]
+fn resolve_expired_challenge_refunds_challenger_without_provider_record() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        ));
+        assert!(held(HoldReason::ChallengeDeposit, 3) > 0);
+
+        // No extrinsic removes the record while a challenge is open; remove
+        // it directly.
+        Providers::<Test>::remove(2);
+
+        System::set_block_number(102);
+        assert_ok!(StorageProvider::resolve_expired_challenge(
+            RuntimeOrigin::signed(3),
+            ChallengeId {
+                deadline: 101,
+                index: 0,
+            }
+        ));
+        assert_eq!(held(HoldReason::ChallengeDeposit, 3), 0);
+    });
+}
+
 /// The fee split measures the response time from the stored creation block,
 /// so changing `ChallengeTimeout` while a challenge is open does not change
 /// its split.

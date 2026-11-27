@@ -196,6 +196,10 @@ impl<T: Config> Pallet<T> {
         challenge: &Challenge<T>,
         challenge_id: ChallengeId<BlockNumberFor<T>>,
     ) {
+        // The refund does not depend on the provider record: with no record
+        // there is nothing to slash, and the deposit must still leave hold.
+        Self::release_challenge_deposit(&challenge.challenger, challenge.deposit);
+
         Providers::<T>::mutate(&challenge.provider, |maybe_provider| {
             let Some(provider_info) = maybe_provider else {
                 return;
@@ -205,8 +209,6 @@ impl<T: Config> Pallet<T> {
             // than burning it, keeping total issuance whole.
             let actually_slashed =
                 Self::slash_stake_to_treasury(&challenge.provider, provider_info.stake);
-
-            Self::release_challenge_deposit(&challenge.challenger, challenge.deposit);
 
             provider_info.stats.challenges_failed =
                 provider_info.stats.challenges_failed.saturating_add(1);
