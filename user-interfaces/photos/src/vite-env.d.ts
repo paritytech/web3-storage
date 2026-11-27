@@ -2,8 +2,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  /** Optional dev override for the deployed Photos contract H160 address. */
-  readonly VITE_PHOTOS_CONTRACT?: string
+  /** Genesis hash of the parachain, for reaching it through a TrUAPI host. */
+  readonly VITE_PHOTOS_PARACHAIN_GENESIS?: string
 }
 
 interface ImportMeta {

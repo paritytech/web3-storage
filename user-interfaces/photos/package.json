@@ -2,7 +2,7 @@
   "name": "@web3-storage/photos",
   "version": "0.1.0",
   "license": "GPL-3.0-only",
-  "description": "Photos — decentralized photo storage dApp (bucket + custom Photos contract)",
+  "description": "Photos \u2014 decentralized photo storage dApp (bucket + custom Photos contract)",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,15 +14,16 @@
     "photos-flow": "tsx --tsconfig tsconfig.scripts.json scripts/photos-flow.ts"
   },
   "dependencies": {
+    "@parity/truapi": "link:../../../trinity-user-agents/js/packages/truapi",
     "@polkadot-api/descriptors": "workspace:*",
+    "@polkadot-api/signers-common": "0.4.0",
+    "@polkadot-api/substrate-bindings": "^0.21.2",
     "@polkadot-labs/hdkd-helpers": "^0.0.34",
     "@radix-ui/react-slot": "^1.5.0",
     "@react-rxjs/core": "^0.10.8",
     "@react-rxjs/utils": "^0.9.7",
     "@web3-storage/chain-client": "workspace:*",
     "@web3-storage/format": "workspace:*",
-    "@web3-storage/network-config": "workspace:*",
-    "@web3-storage/network-picker": "workspace:*",
     "@web3-storage/papi": "workspace:*",
     "@web3-storage/sdk": "workspace:*",
     "class-variance-authority": "^0.7.1",

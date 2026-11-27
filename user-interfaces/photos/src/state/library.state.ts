@@ -1,232 +1,143 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Library State — the M5 "create a library" flow. Lists providers from chain
-// and walks a fresh account A→B: map the account, negotiate signed terms with
-// the chosen provider (owner = the contract's mapped account), then call
-// `createLibrary{value}` on the Photos contract. Mirrors the headless sequence
-// in `scripts/photos-flow.ts`, submitting via PAPI `createAndSubmit`.
+// Library State — the library's storage plan. A library exists once its plan
+// has bytes: the host opens the bucket on the first `setPlan`, picks the
+// provider, and asks the user to approve the price. Growing or extending the
+// plan is another `setPlan` with the new totals. `quotePlan` prices a target
+// first, and `setPlan` for that target then charges at most the quoted price.
 
 import { BehaviorSubject } from 'rxjs'
 import { bind } from '@react-rxjs/core'
-import type { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
-import { fromHex, toHex, negotiateProviderTerms } from '@web3-storage/papi'
-import { getAgreementNonce, h160ToSubstrate } from '@web3-storage/sdk'
-import { requireApi } from '@/lib/chain-client'
-import type { ResolvedContract } from '@/lib/photos-contract'
-import {
-  computePaymentAndValue,
-  encodeCreateLibrary,
-  ensureAccountMapped,
-  providerAccountToBytes32,
-  submitCreateLibrary,
-  toContractTerms,
-  type CreateLibraryError,
-  type SubmitCreateLibraryResult,
-} from '@/lib/photos-contract-write'
-import { belowMinimumReason, listProviders, type PhotosProvider } from '@/lib/photos-providers'
+import type { RemoteStoragePlan, RemoteStorageQuote } from '@parity/truapi'
+import { getPlan, quotePlan as quoteRemotePlan, setPlan, RemoteStorageError } from '@/lib/remote-library'
 
-export type CreationStage =
-  | 'idle'
-  | 'mapping'
-  | 'negotiating'
-  | 'submitting'
-  | 'ready'
-  | 'failed'
+const DAY_SECONDS = 24n * 60n * 60n
 
-export interface CreationState {
-  stage: CreationStage
-  error?: CreateLibraryError
-  bucketId?: bigint
+/**
+ * The largest `u128`: a quote limit that every price meets, so a quote shows
+ * any price. `setPlan` enforces the user's limit with the quoted price.
+ */
+const ANY_PRICE = (1n << 128n) - 1n
+
+export type PlanRequestStage = 'idle' | 'requesting' | 'failed'
+
+export interface PlanRequestState {
+  stage: PlanRequestStage
+  /** Why the last request failed. */
+  message?: string
+  /** The host's price when it was above the most the user would pay. */
+  quoted?: bigint
 }
 
-export interface CreateLibraryInput {
-  account: InjectedPolkadotAccount
-  contract: ResolvedContract
-  provider: PhotosProvider
-  sizeBytes: bigint
-  durationBlocks: number
+/** A plan photos asks for: a total size, funded until a time. */
+export interface PlanTarget {
+  /** Total bytes the library may hold. */
+  bytes: bigint
+  /** When the plan stays funded until, in seconds since the Unix epoch. */
+  fundedUntil: bigint
+}
+
+/** A target's quote, or why it could not be quoted. */
+export type PlanQuote =
+  | { ok: true; target: PlanTarget; quote: RemoteStorageQuote }
+  | { ok: false; target: PlanTarget; message: string }
+
+/**
+ * The target of a plan of `bytes` funded for `days` more days: from the end of
+ * `plan` if it is still funded, otherwise from now. The host treats
+ * `fundedUntil` as the exact end, so counting from now would shorten a plan.
+ */
+export function planTarget(bytes: bigint, days: number, plan: RemoteStoragePlan | null): PlanTarget {
+  const now = BigInt(Math.floor(Date.now() / 1000))
+  const start = plan !== null && !hasLapsed(plan) && plan.fundedUntil > now ? plan.fundedUntil : now
+  return { bytes, fundedUntil: start + BigInt(days) * DAY_SECONDS }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────────────────────────────
 
-const providers$ = new BehaviorSubject<PhotosProvider[]>([])
-const providersLoading$ = new BehaviorSubject<boolean>(false)
-const providersError$ = new BehaviorSubject<string | undefined>(undefined)
-const creation$ = new BehaviorSubject<CreationState>({ stage: 'idle' })
+const plan$ = new BehaviorSubject<RemoteStoragePlan | null>(null)
+const planError$ = new BehaviorSubject<string | undefined>(undefined)
+const planRequest$ = new BehaviorSubject<PlanRequestState>({ stage: 'idle' })
 
-// The last attempt's input, so a failed create can be retried without the panel
-// re-threading the form values.
-let lastInput: CreateLibraryInput | null = null
+export const [usePlan] = bind(plan$, null)
+export const [usePlanError] = bind(planError$, undefined)
+export const [usePlanRequest] = bind(planRequest$, { stage: 'idle' })
 
-// The contract's mapped account is shared by every library created through
-// it, so its agreement nonce is a serial queue: a concurrent creator can
-// claim the nonce this attempt negotiated before it lands on-chain. Re-read
-// and retry a bounded number of times rather than fail outright.
-const NONCE_MISMATCH_MAX_ATTEMPTS = 3
+/** Whether `plan` describes a library: one with room for files. */
+export function hasLibrary(plan: RemoteStoragePlan | null): boolean {
+  return plan !== null && plan.bytes > 0n
+}
 
-export const [useProviders] = bind(providers$, [])
-export const [useProvidersLoading] = bind(providersLoading$, false)
-export const [useProvidersError] = bind(providersError$, undefined)
-export const [useCreation] = bind(creation$, { stage: 'idle' })
+/**
+ * Whether `plan`'s library has lapsed: its funding ended without renewal, so
+ * the backend no longer keeps the files, and the host rejects reads.
+ */
+export function hasLapsed(plan: RemoteStoragePlan | null): boolean {
+  return plan?.state === 'Lapsed'
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Actions
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function loadProviders(): Promise<void> {
-  providersLoading$.next(true)
-  providersError$.next(undefined)
+/** Read the library's plan. */
+export async function loadPlan(): Promise<void> {
+  planError$.next(undefined)
   try {
-    providers$.next(await listProviders(requireApi()))
+    plan$.next(await getPlan())
   } catch (err) {
-    providersError$.next(err instanceof Error ? err.message : 'Failed to list providers')
-    providers$.next([])
-  } finally {
-    providersLoading$.next(false)
+    planError$.next(err instanceof Error ? err.message : 'Could not read the storage plan.')
   }
 }
 
-export function resetCreation(): void {
-  // Drop the cached attempt too, so a later `retryCreate()` can't fire against a
-  // stale account/provider after the user switched context.
-  lastInput = null
-  creation$.next({ stage: 'idle' })
-}
-
-/** Retry the most recent create attempt (re-negotiates fresh terms). */
-export async function retryCreate(): Promise<void> {
-  if (lastInput) await createLibrary(lastInput)
+/** Price `target` without asking the user or paying. */
+export async function quotePlan(target: PlanTarget): Promise<PlanQuote> {
+  try {
+    return { ok: true, target, quote: await quoteRemotePlan(target.bytes, target.fundedUntil, ANY_PRICE) }
+  } catch (err) {
+    return { ok: false, target, message: failure(err).message ?? 'Could not price this plan.' }
+  }
 }
 
 /**
- * Run the full A→B create flow. Sets `creation$` through
- * mapping → negotiating → submitting → ready|failed. On success the caller
- * re-reads `libraryOf` (the page's `refresh` bump) to flip to State B.
+ * Ask the user to pay for `target`, at most `maxPrice`, normally the price
+ * `quotePlan` gave for the same target. Returns whether the plan was set.
  */
-export async function createLibrary(input: CreateLibraryInput): Promise<void> {
-  lastInput = input
-  const { account, contract, provider, sizeBytes, durationBlocks } = input
-  const api = requireApi()
-  const signer = account.txCreator
-
+export async function requestPlan(target: PlanTarget, maxPrice: bigint): Promise<boolean> {
+  planRequest$.next({ stage: 'requesting' })
   try {
-    // Idempotent: a fresh account must be mapped before any contract write.
-    creation$.next({ stage: 'mapping' })
-    await ensureAccountMapped(api, signer)
-
-    // Re-read the provider's locked price right before negotiating — the list
-    // may be stale, and a drifted price means `PaymentExceedsMax`. Same runtime
-    // API the list uses, so free capacity has one definition, not two.
-    const info = await api.apis.StorageProviderApi.provider_info(provider.account)
-    if (!info) {
-      creation$.next({
-        stage: 'failed',
-        error: { kind: 'negotiate', message: `Provider ${provider.account} is no longer registered.` },
-      })
-      return
-    }
-    if (!info.accepting_primary) {
-      creation$.next({
-        stage: 'failed',
-        error: { kind: 'negotiate', message: 'Provider is no longer accepting new agreements.' },
-      })
-      return
-    }
-    // Re-check capacity against fresh state too — the cached list (which gated
-    // the button) can be stale. `null` is unlimited, not "full".
-    const availableCapacity =
-      info.available_capacity == null ? undefined : BigInt(info.available_capacity)
-    if (availableCapacity !== undefined && availableCapacity < sizeBytes) {
-      creation$.next({
-        stage: 'failed',
-        error: {
-          kind: 'capacity',
-          message: `Provider no longer has room for ${sizeBytes} bytes (free: ${availableCapacity}). Pick another provider or reduce the size.`,
-        },
-      })
-      return
-    }
-    const belowMinimum = belowMinimumReason(info.min_agreement_bytes, sizeBytes)
-    if (belowMinimum) {
-      creation$.next({
-        stage: 'failed',
-        error: { kind: 'min-size', message: `${belowMinimum}. Increase the size or pick another provider.` },
-      })
-      return
-    }
-    const pricePerByte = info.price_per_byte
-    const { value } = computePaymentAndValue(pricePerByte, sizeBytes, durationBlocks)
-
-    // The terms are bound to the *contract's* mapped account, not the user's —
-    // every library created through this contract shares that one account, so
-    // its agreement nonce is a serial queue concurrent creators race against.
-    const contractOwner = h160ToSubstrate(fromHex(contract.address))
-    // Negotiate against the provider's *current* endpoint — its registered
-    // multiaddr may have changed since the list loaded.
-    const multiaddr = new TextDecoder().decode(info.multiaddr)
-
-    let result: SubmitCreateLibraryResult | undefined
-    for (let attempt = 1; ; attempt++) {
-      creation$.next({ stage: 'negotiating' })
-      const nonce = await getAgreementNonce(api, contractOwner.address)
-      const negotiated = await negotiateProviderTerms(
-        { account: contractOwner.address, multiaddr },
-        {
-          owner: contractOwner.address,
-          max_bytes: sizeBytes,
-          duration: durationBlocks,
-          price_per_byte: pricePerByte,
-          nonce,
-          replica_params: null,
-          bucket: null,
-        },
-      )
-      if (!negotiated.ok) {
-        creation$.next({ stage: 'failed', error: { kind: 'negotiate', message: negotiated.error } })
-        return
-      }
-
-      const { terms, signature } = toContractTerms(contractOwner.publicKey, negotiated.signed)
-      const data = encodeCreateLibrary({
-        userAccount: toHex(signer.publicKey) as `0x${string}`,
-        provider: providerAccountToBytes32(provider.account),
-        terms,
-        signature,
-      })
-
-      creation$.next({ stage: 'submitting' })
-      result = await submitCreateLibrary(api, signer, fromHex(contract.address), data, { value })
-      // Another creator through the same contract claimed this nonce first —
-      // re-read the current value and retry, the same shape as the tx-level
-      // stale-nonce retry in `photos-contract-write.ts`.
-      if (result.ok || result.error.kind !== 'nonce-mismatch' || attempt >= NONCE_MISMATCH_MAX_ATTEMPTS) {
-        break
-      }
-    }
-    if (!result.ok) {
-      creation$.next({ stage: 'failed', error: result.error })
-      return
-    }
-
-    creation$.next({ stage: 'ready', bucketId: result.bucketId })
+    const { plan } = await setPlan(target.bytes, target.fundedUntil, maxPrice)
+    plan$.next(plan)
+    planRequest$.next({ stage: 'idle' })
+    return true
   } catch (err) {
-    creation$.next({ stage: 'failed', error: { kind: 'unknown', message: formatThrown(err) } })
+    planRequest$.next(failure(err))
+    return false
   }
 }
 
-/** Render a thrown value (Error or a raw PAPI error object) as readable text. */
-function formatThrown(err: unknown): string {
-  if (err instanceof Error) return err.message
-  let text: string
-  try {
-    text = JSON.stringify(err)
-  } catch {
-    text = String(err)
+export function resetPlanRequest(): void {
+  planRequest$.next({ stage: 'idle' })
+}
+
+function failure(err: unknown): PlanRequestState {
+  if (!(err instanceof RemoteStorageError)) {
+    return { stage: 'failed', message: err instanceof Error ? err.message : 'The plan request failed.' }
   }
-  if (/stale/i.test(text)) {
-    return 'The transaction nonce was stale (the chain view lagged). Please try again.'
+  switch (err.code) {
+    case 'PriceExceeded':
+      return { stage: 'failed', message: 'The price changed since it was shown.', quoted: err.quoted }
+    case 'Declined':
+      return { stage: 'failed', message: 'You declined the payment.' }
+    case 'InsufficientFunds':
+      return { stage: 'failed', message: 'The balance does not cover the price.' }
+    case 'NotAvailable':
+      return { stage: 'failed', message: 'No storage provider offers this plan.' }
+    case 'BelowUsage':
+      return { stage: 'failed', message: 'The library already holds more than that.' }
+    default:
+      return { stage: 'failed', message: err.message }
   }
-  return `Transaction failed: ${text}`
 }

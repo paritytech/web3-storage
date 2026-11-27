@@ -370,9 +370,18 @@ importers:
 
   user-interfaces/photos:
     dependencies:
+      '@parity/truapi':
+        specifier: link:../../../trinity-user-agents/js/packages/truapi
+        version: link:../../../trinity-user-agents/js/packages/truapi
       '@polkadot-api/descriptors':
         specifier: workspace:*
         version: link:../../packages/papi/.papi/descriptors
+      '@polkadot-api/signers-common':
+        specifier: 0.4.0
+        version: 0.4.0(rxjs@7.8.2)
+      '@polkadot-api/substrate-bindings':
+        specifier: ^0.21.2
+        version: 0.21.2
       '@polkadot-labs/hdkd-helpers':
         specifier: ^0.0.34
         version: 0.0.34
@@ -391,12 +400,6 @@ importers:
       '@web3-storage/format':
         specifier: workspace:*
         version: link:../shared/format
-      '@web3-storage/network-config':
-        specifier: workspace:*
-        version: link:../shared/network-config
-      '@web3-storage/network-picker':
-        specifier: workspace:*
-        version: link:../shared/network-picker
       '@web3-storage/papi':
         specifier: workspace:*
         version: link:../../packages/papi
