@@ -37,6 +37,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 
+/// Budget for building a cold chain connection (on the light transport,
+/// until its first finalized block), used at node startup and by every
+/// reconnect. On the light transport, connecting awaits smoldot's peer
+/// discovery and warp sync with no timeout of its own, so a wedged light
+/// client would otherwise hang forever. Generous because killing a slow warp
+/// sync throws its progress away.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
+
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 /// Why the coordinator's reconnect loop dropped a connection. The loop logs it
@@ -150,15 +158,8 @@ impl ChainStateCoordinator {
     /// stream until it ends or stalls. Returns `Err` if connecting or bootstrapping
     /// fails; `Ok(())` if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
-        /// Budget for building a cold connection and subscribing to its
-        /// finalized blocks. On the light transport, `connect` awaits
-        /// smoldot's peer discovery and warp sync with no timeout of its own,
-        /// so a wedged light client would otherwise hang here forever — with
-        /// the previous (dead) handle still published to consumers — and the
-        /// reconnect loop could never rebuild it. Generous because killing a
-        /// slow warp sync throws its progress away.
-        const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
-
+        // Without the budget, a hung connect keeps the previous dead handle
+        // published and the loop never rebuilds it.
         let connection = with_timeout("Connecting to the chain", CONNECT_TIMEOUT, async {
             Ok(self.follower.connect().await?)
         })

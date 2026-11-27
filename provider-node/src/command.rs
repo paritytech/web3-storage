@@ -3,7 +3,7 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
-    chain_connection::{self, ChainHandle},
+    chain_connection::{self, ChainHandle, ChainTransport},
     chain_follower::SubxtChainFollower,
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, DEFAULT_PROVIDER_ID},
@@ -16,6 +16,7 @@ use crate::{
 };
 use clap::Parser;
 use provider_auth::Authenticator;
+use provider_coordinator::CONNECT_TIMEOUT;
 use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
 use provider_http::{create_router, ProviderDeps, ProviderState};
 use provider_types::ChainClientError;
@@ -55,7 +56,18 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Connect before opening the store, so the store is checked against the
     // chain before any request reaches it, and auth lookups and the one-shot
     // multiaddr sync work right away.
-    let handle = chain_connection::connect(&transport).await?;
+    let handle = tokio::time::timeout(CONNECT_TIMEOUT, chain_connection::connect(&transport))
+        .await
+        .map_err(|_| {
+            let via = match transport {
+                ChainTransport::Rpc { .. } => "RPC",
+                ChainTransport::LightClient { .. } => "the light client",
+            };
+            format!(
+                "Connecting to the chain via {via} timed out after {}s",
+                CONNECT_TIMEOUT.as_secs()
+            )
+        })??;
     let genesis_hash = H256(handle.api.genesis_hash().0);
     let storage = open_storage(&cli.storage, genesis_hash)?;
     chain_tx.send_replace(Some(handle));
