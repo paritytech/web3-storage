@@ -1871,6 +1871,25 @@ mod tests {
         ));
     }
 
+    /// A store written before stores recorded their chain holds data but no
+    /// chain: the first open with a chain records it and keeps the data, and
+    /// later opens enforce it.
+    #[test]
+    fn open_records_the_chain_for_a_store_with_data_but_no_recorded_chain() {
+        let (storage, dir) = storage_with_bucket(1024);
+        drop(storage);
+        let expected = H256::repeat_byte(0xaa);
+
+        let storage = DiskStorage::open(dir.path(), Some(expected)).unwrap();
+        assert!(storage.get_bucket(1).unwrap().is_some());
+        drop(storage);
+
+        assert!(matches!(
+            DiskStorage::open(dir.path(), Some(H256::repeat_byte(0xbb))),
+            Err(Error::ChainMismatch { expected: e, .. }) if e == expected
+        ));
+    }
+
     /// Roots built by the provider equal the values the primitives and the
     /// TypeScript package assert for the same chunks.
     #[test]
