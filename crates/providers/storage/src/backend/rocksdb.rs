@@ -114,6 +114,11 @@ impl DiskStorage {
     /// Open the store at `path`. With `genesis_hash`, bind it to that chain:
     /// a store that records no chain records it, and a store that records
     /// another chain fails with [`Error::ChainMismatch`].
+    ///
+    /// The chain is identified by its genesis hash only. A chain restarted
+    /// from the same runtime and genesis config has the same hash, so this
+    /// check accepts the old store for it; start such a chain with a new
+    /// storage path.
     pub fn open(path: impl AsRef<Path>, genesis_hash: Option<H256>) -> Result<Self, Error> {
         let mut txn_db_opts = TransactionDBOptions::default();
         txn_db_opts.set_txn_lock_timeout(BUCKET_LOCK_TIMEOUT_MS);
