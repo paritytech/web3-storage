@@ -1037,7 +1037,9 @@ pub mod pallet {
         ///
         /// Parameters:
         /// - `multiaddr`: Network address for clients to connect
-        /// - `public_key`: Public key for signature verification (raw bytes, 32-64 bytes)
+        /// - `public_key`: Public key for signature verification, raw bytes: 32
+        ///   (Sr25519, Ed25519) or 33 (compressed Ecdsa). Any other length
+        ///   fails with `InvalidPublicKey`.
         /// - `stake`: Initial stake to lock
         #[pallet::call_index(0)]
         #[pallet::weight(T::WeightInfo::register_provider())]
