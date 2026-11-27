@@ -452,7 +452,7 @@ pub struct ProviderSettings<T: Config> {
     /// Whether accepting extensions on existing agreements
     pub accepting_extensions: bool,
     /// Maximum storage capacity in bytes. `0` means unlimited.
-    /// When non-zero, the provider cannot accept agreements that would push
+    /// When non-zero, the provider cannot accept agreements or top-ups that would push
     /// `committed_bytes` past this value, and the provider's stake must back
     /// it: `stake >= max_capacity * MinStakePerByte`.
     pub max_capacity: u64,
@@ -1610,6 +1610,9 @@ impl<T: Config> Pallet<T> {
     /// Increases max_bytes, does not change duration.
     /// Actual payment = provider.price_per_byte * additional_bytes * remaining_duration.
     /// Fails if calculated payment > max_payment.
+    /// Fails if the provider's `committed_bytes` would exceed a non-zero
+    /// `max_capacity` (`CapacityExceeded`) or the bytes its stake backs at
+    /// `MinStakePerByte` (`InsufficientStakeForBytes`).
     #[pallet::weight(...)]
     pub fn top_up_agreement(
         origin: OriginFor<T>,

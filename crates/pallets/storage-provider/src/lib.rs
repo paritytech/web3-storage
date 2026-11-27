@@ -808,7 +808,8 @@ pub mod pallet {
         ProviderNotSlashed,
         /// Cannot set max_capacity below current committed_bytes.
         CapacityBelowCommitted,
-        /// Provider capacity exceeded on accept (committed + request > max_capacity).
+        /// A new agreement or a top-up would raise the provider's
+        /// `committed_bytes` above its `max_capacity`; request fewer bytes.
         CapacityExceeded,
         /// Stake insufficient to back declared capacity.
         InsufficientStakeForCapacity,
@@ -1784,6 +1785,9 @@ pub mod pallet {
         ///
         /// Increases max_bytes, does not change duration.
         /// Actual payment = provider.price_per_byte * additional_bytes * remaining_duration.
+        ///
+        /// Fails with `CapacityExceeded` or `InsufficientStakeForBytes` if the
+        /// provider's capacity or stake does not cover the added bytes.
         #[pallet::call_index(28)]
         #[pallet::weight(T::WeightInfo::top_up_agreement())]
         pub fn top_up_agreement(
@@ -1816,6 +1820,9 @@ pub mod pallet {
                         return Err(Error::<T>::AgreementExpired.into());
                     };
 
+                    let new_committed =
+                        Self::ensure_can_commit_bytes(&provider_info, additional_bytes)?;
+
                     // Calculate payment for additional bytes over remaining duration
                     let payment = Self::calculate_payment(
                         provider_info.settings.price_per_byte,
@@ -1845,9 +1852,7 @@ pub mod pallet {
                     // Update provider committed_bytes
                     Providers::<T>::mutate(&provider, |maybe_provider| {
                         if let Some(provider_info) = maybe_provider {
-                            provider_info.committed_bytes = provider_info
-                                .committed_bytes
-                                .saturating_add(additional_bytes);
+                            provider_info.committed_bytes = new_committed;
                         }
                     });
 

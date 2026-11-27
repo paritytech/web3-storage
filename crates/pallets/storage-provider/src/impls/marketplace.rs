@@ -4,7 +4,7 @@ use crate::*;
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
-use sp_runtime::traits::{CheckedMul, SaturatedConversion};
+use sp_runtime::traits::SaturatedConversion;
 
 impl<T: Config> Pallet<T> {
     /// Find providers matching the given storage requirements.
@@ -146,29 +146,13 @@ impl<T: Config> Pallet<T> {
                     return false;
                 }
 
-                // Check capacity
-                let max_capacity = info.settings.max_capacity;
-                if max_capacity > 0 {
-                    let available = max_capacity.saturating_sub(info.committed_bytes);
-                    if available < bytes_needed {
-                        return false;
-                    }
-                }
-
                 // Check minimum agreement size
                 if bytes_needed < info.settings.min_agreement_bytes {
                     return false;
                 }
 
-                // Check stake (can they back the additional bytes?)
-                let new_committed = info.committed_bytes.saturating_add(bytes_needed);
-                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
-                if let Some(required_stake) =
-                    T::MinStakePerByte::get().checked_mul(&bytes_as_balance)
-                {
-                    return info.stake >= required_stake;
-                }
-                false
+                // Check capacity and stake
+                Self::ensure_can_commit_bytes(info, bytes_needed).is_ok()
             })
             .skip(offset as usize)
             .take(limit as usize)
