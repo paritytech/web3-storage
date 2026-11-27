@@ -81,8 +81,8 @@ async fn with_timeout<T>(
 
 /// Builds and starts the live chain-state synchronisation for a single provider.
 ///
-/// Start with [`ChainStateCoordinator::start`]; keep the returned
-/// [`ChainStateCoordinatorHandle`] alive for the duration of the server.
+/// Start with [`ChainStateCoordinator::start`]; stop it with
+/// [`ChainStateCoordinatorHandle::stop`].
 pub struct ChainStateCoordinator {
     /// Opens the chain connection and publishes it to the node's other chain
     /// consumers.
@@ -115,8 +115,8 @@ impl ChainStateCoordinator {
     /// The spawned task connects to the chain, follows finalized blocks, and
     /// reconnects automatically: a chain that is unreachable at startup or that
     /// drops the connection later is retried with a fixed backoff instead of
-    /// taking the coordinator down. Runs until the returned handle is dropped,
-    /// [`ChainStateCoordinatorHandle::stop`] is called, or a connection reports
+    /// taking the coordinator down. Runs until
+    /// [`ChainStateCoordinatorHandle::stop`] is called or a connection reports
     /// [`ChainClientError::ChainMismatch`]; the handle's
     /// [`fatal_error`](ChainStateCoordinatorHandle::fatal_error) returns that error.
     pub fn start(self) -> ChainStateCoordinatorHandle {
