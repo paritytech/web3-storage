@@ -60,6 +60,7 @@ impl pallet_revive::Config for Runtime {
     type AutoMap = ConstBool<false>;
     type GasScale = ConstU32<1000>;
     type OnBurn = ();
+    type MaxOutsideFrameLogs = ConstU32<0>;
 }
 
 /// Builds the transaction extension stack for Ethereum-signed transactions
