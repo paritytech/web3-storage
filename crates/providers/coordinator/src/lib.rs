@@ -364,10 +364,10 @@ impl ChainStateCoordinatorHandle {
     }
 }
 
-/// A finalized block's handle or events could not be fetched at all, so its
-/// membership events (if any) are lost rather than merely dropped one at a
-/// time - the same "no bucket id left to invalidate" situation an undecodable
-/// event escalates to, and for the same reason: a plain `continue` here would
+/// A finalized block's handle or events could not be read, or its event list
+/// does not decode, so its membership events (if any) are lost - the same
+/// "no bucket id left to invalidate" situation an undecodable event escalates
+/// to, and for the same reason: a plain `continue` here would
 /// let a revoked member keep authorizing for a full `--auth-cache-ttl` on a
 /// node that is otherwise connected and healthy.
 fn escalate_block_read_failure(events_tx: &BlockEventTx, block_number: u32) {
