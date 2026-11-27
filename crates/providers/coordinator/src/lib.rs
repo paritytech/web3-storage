@@ -59,10 +59,11 @@ pub(crate) enum Error {
 
 /// Run `fut` under `budget`, mapping expiry to [`Error::Timeout`] naming `what`.
 ///
-/// Every wait in the reconnect loop goes through this: an operation that can
+/// Every wait on a live connection goes through this: an operation that can
 /// hang forever (e.g. a wedged smoldot backend with no timeout of its own)
 /// must turn into an `Err` so the loop can rebuild the connection instead of
-/// hanging with a stale handle still published.
+/// hanging with a stale handle still published. Connecting is bounded by the
+/// [`ChainFollower`] itself.
 async fn with_timeout<T>(
     what: &'static str,
     budget: Duration,
@@ -81,8 +82,8 @@ async fn with_timeout<T>(
 
 /// Builds and starts the live chain-state synchronisation for a single provider.
 ///
-/// Start with [`ChainStateCoordinator::start`]; keep the returned
-/// [`ChainStateCoordinatorHandle`] alive for the duration of the server.
+/// Start with [`ChainStateCoordinator::start`]; stop it with
+/// [`ChainStateCoordinatorHandle::stop`].
 pub struct ChainStateCoordinator {
     /// Opens the chain connection and publishes it to the node's other chain
     /// consumers.
@@ -115,8 +116,10 @@ impl ChainStateCoordinator {
     /// The spawned task connects to the chain, follows finalized blocks, and
     /// reconnects automatically: a chain that is unreachable at startup or that
     /// drops the connection later is retried with a fixed backoff instead of
-    /// taking the coordinator down. Runs until the returned handle is dropped or
-    /// [`ChainStateCoordinatorHandle::stop`] is called.
+    /// taking the coordinator down. Runs until
+    /// [`ChainStateCoordinatorHandle::stop`] is called or a connection reports
+    /// [`ChainClientError::ChainMismatch`], which
+    /// [`fatal_error`](ChainStateCoordinatorHandle::fatal_error) returns.
     pub fn start(self) -> ChainStateCoordinatorHandle {
         let task = tokio::spawn(self.run());
         ChainStateCoordinatorHandle { task }
@@ -148,19 +151,7 @@ impl ChainStateCoordinator {
     /// stream until it ends or stalls. Returns `Err` if connecting or bootstrapping
     /// fails; `Ok(())` if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
-        /// Budget for building a cold connection and subscribing to its
-        /// finalized blocks. On the light transport, `connect` awaits
-        /// smoldot's peer discovery and warp sync with no timeout of its own,
-        /// so a wedged light client would otherwise hang here forever — with
-        /// the previous (dead) handle still published to consumers — and the
-        /// reconnect loop could never rebuild it. Generous because killing a
-        /// slow warp sync throws its progress away.
-        const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
-
-        let connection = with_timeout("Connecting to the chain", CONNECT_TIMEOUT, async {
-            Ok(self.follower.connect().await?)
-        })
-        .await?;
+        let connection = self.follower.connect().await?;
         self.follow(connection).await
     }
 
@@ -351,16 +342,17 @@ pub async fn refresh_if_relevant_event(
 
 // ── ChainStateCoordinatorHandle ───────────────────────────────────────────────
 
-/// Keeps the coordinator alive. Drop or call [`stop`](Self::stop) to shut down.
+/// Handle to the coordinator task. Dropping it does not stop the task; call
+/// [`stop`](Self::stop).
 pub struct ChainStateCoordinatorHandle {
     task: JoinHandle<ChainClientError>,
 }
 
 impl ChainStateCoordinatorHandle {
     /// Resolves when the coordinator stops on a fatal error. `Err` if the
-    /// task panicked or was aborted.
-    pub async fn fatal_error(&mut self) -> Result<ChainClientError, tokio::task::JoinError> {
-        (&mut self.task).await
+    /// task panicked.
+    pub async fn fatal_error(self) -> Result<ChainClientError, tokio::task::JoinError> {
+        self.task.await
     }
 
     /// Stop the coordinator. Aborting the loop drops the stream, which aborts the
@@ -372,10 +364,10 @@ impl ChainStateCoordinatorHandle {
     }
 }
 
-/// A finalized block's handle or events could not be fetched at all, so its
-/// membership events (if any) are lost rather than merely dropped one at a
-/// time - the same "no bucket id left to invalidate" situation an undecodable
-/// event escalates to, and for the same reason: a plain `continue` here would
+/// A finalized block's handle or events could not be read, or its event list
+/// does not decode, so its membership events (if any) are lost - the same
+/// "no bucket id left to invalidate" situation an undecodable event escalates
+/// to, and for the same reason: a plain `continue` here would
 /// let a revoked member keep authorizing for a full `--auth-cache-ttl` on a
 /// node that is otherwise connected and healthy.
 fn escalate_block_read_failure(events_tx: &BlockEventTx, block_number: u32) {
@@ -957,7 +949,7 @@ mod tests {
             expected,
             connected,
         });
-        let mut handle = ChainStateCoordinator::new(
+        let handle = ChainStateCoordinator::new(
             follower,
             provider_account(),
             Arc::new(ChainState::default()),

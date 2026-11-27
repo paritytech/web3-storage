@@ -67,10 +67,11 @@ pub enum StorageBackendSpec {
 }
 
 impl StorageBackendSpec {
-    /// Build the backend.
-    pub fn build(&self) -> Result<Arc<dyn StorageBackend>, Error> {
+    /// Build the backend; with `genesis_hash`, bound to that chain (see
+    /// [`DiskStorage::open`]).
+    pub fn build(&self, genesis_hash: Option<H256>) -> Result<Arc<dyn StorageBackend>, Error> {
         match self {
-            Self::RocksDb { path } => Ok(Arc::new(DiskStorage::new(path)?)),
+            Self::RocksDb { path } => Ok(Arc::new(DiskStorage::open(path, genesis_hash)?)),
         }
     }
 }
@@ -146,24 +147,9 @@ pub struct EraseOutcome {
     pub bytes_freed: u64,
 }
 
-/// Result of [`StorageBackend::bind_chain`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChainBinding {
-    /// The store had no chain recorded; it now records the given genesis hash.
-    Recorded,
-    /// The store already records the given genesis hash.
-    Matched,
-}
-
 /// Storage engine interface. Callers hold an `Arc<dyn StorageBackend>` rather
 /// than a concrete engine.
 pub trait StorageBackend: Send + Sync {
-    /// Bind this store to the chain with `genesis_hash`.
-    ///
-    /// Records the hash when the store has none. Fails with
-    /// [`Error::ChainMismatch`] when the store records a different chain.
-    fn bind_chain(&self, genesis_hash: H256) -> Result<ChainBinding, Error>;
-
     /// Initialize a bucket with the given quota.
     fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error>;
 
@@ -682,7 +668,7 @@ mod tests {
     /// chunk hashes.
     fn storage_with_chunks(quota: u64, chunks: &[Vec<u8>]) -> (TempDir, DiskStorage, Vec<H256>) {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         storage.init_bucket(1, quota).unwrap();
         let hashes = chunks
             .iter()

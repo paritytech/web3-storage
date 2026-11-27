@@ -59,16 +59,32 @@ pub(crate) fn is_other_relevant_event(event: &RawEvent<'_, PolkadotConfig>) -> b
 /// - a missed [`BlockEvent`] is covered by the coordinators' safety-net scans;
 /// - a missed lifecycle account is covered by the next lifecycle event for
 ///   the provider, except after `ProviderDeregistered`: then only the
-///   next full state read (reconnect or runtime upgrade) corrects the state.
+///   next full state read (reconnect, runtime upgrade or unreadable block)
+///   corrects the state.
+///
+/// Returns `None` when the event list itself does not decode with the block's
+/// metadata. The iteration cannot continue past that point, so every later
+/// event of the block is unknown, `System::CodeUpdated` included. The caller
+/// reports the block as unreadable.
 pub fn decode_block_contents(
     events: &subxt::events::Events<PolkadotConfig>,
     block_number: u32,
-) -> BlockContents {
+) -> Option<BlockContents> {
     let mut contents = BlockContents {
         events: Vec::new(),
         lifecycle: Vec::new(),
     };
-    for event in events.iter().filter_map(|event| event.ok()) {
+    for event in events.iter() {
+        let event = match event {
+            Ok(event) => event,
+            Err(e) => {
+                tracing::warn!(
+                    "failed to decode the events of block {block_number}; treating the block \
+                     as unreadable: {e}"
+                );
+                return None;
+            }
+        };
         if event.is::<system_events::CodeUpdated>() {
             contents.events.push(BlockEvent::RuntimeUpgraded {
                 at_block: block_number,
@@ -100,7 +116,7 @@ pub fn decode_block_contents(
             ),
         }
     }
-    contents
+    Some(contents)
 }
 
 /// The provider account of a provider-lifecycle event, or `None` for any
