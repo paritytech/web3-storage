@@ -257,7 +257,7 @@ impl FinalizedBlocks for SubxtFinalizedBlocks {
         };
 
         let contents = match at.events().fetch().await {
-            Ok(events) => Some(decode_block_contents(&events, number)),
+            Ok(events) => decode_block_contents(&events, number),
             Err(e) => {
                 tracing::warn!(
                     "chain-state coordinator: failed to fetch events for block {number}: {e}"
@@ -492,6 +492,7 @@ mod tests {
     /// produces from `events`, in encounter order.
     fn membership_changed_bucket_ids(events: &subxt::events::Events<PolkadotConfig>) -> Vec<u64> {
         decode_block_contents(events, 0)
+            .expect("events decode")
             .events
             .into_iter()
             .filter_map(|event| match event {
@@ -790,7 +791,9 @@ mod tests {
         let events = at.events().fetch().await.expect("events fetch");
 
         assert_eq!(
-            decode_block_contents(&events, 0).lifecycle,
+            decode_block_contents(&events, 0)
+                .expect("events decode")
+                .lifecycle,
             vec![account.clone(), account]
         );
     }
@@ -823,9 +826,48 @@ mod tests {
         let events = at.events().fetch().await.expect("events fetch");
 
         assert!(matches!(
-            decode_block_contents(&events, 7).events.as_slice(),
+            decode_block_contents(&events, 7)
+                .expect("events decode")
+                .events
+                .as_slice(),
             [BlockEvent::RuntimeUpgraded { at_block: 7 }]
         ));
+    }
+
+    /// An event list that stops decoding hides every later event of the
+    /// block, so the block counts as unreadable even though an earlier event
+    /// decoded.
+    #[tokio::test]
+    async fn event_list_that_stops_decoding_yields_no_contents() {
+        use storage_subxt::api::runtime_types::{
+            frame_system::{pallet::Event as SystemEvent, EventRecord, Phase},
+            storage_paseo_runtime::RuntimeEvent,
+        };
+        let md = metadata();
+        let code_updated = EventRecord {
+            phase: Phase::Initialization,
+            event: RuntimeEvent::System(SystemEvent::CodeUpdated {
+                hash: subxt::utils::H256([1u8; 32]),
+            }),
+            topics: Vec::<subxt::utils::H256>::new(),
+        };
+        let events_ty = storage_value_type(&md, "System", "Events");
+        let mut events_bytes = encode_value(&md, events_ty, &vec![code_updated]);
+        // The length prefix now announces two events, and the second one
+        // starts with a byte that is no `Phase` variant.
+        assert_eq!(events_bytes[0], 1 << 2);
+        events_bytes[0] = 2 << 2;
+        events_bytes.push(0xff);
+        let api = mock_api(vec![(
+            key_prefix("System", "Events"),
+            array_bytes::bytes2hex("0x", &events_bytes),
+        )])
+        .await;
+        let at = api.at_current_block().await.expect("block handle");
+        let events = at.events().fetch().await.expect("events fetch");
+
+        assert!(events.iter().next().expect("first event").is_ok());
+        assert!(decode_block_contents(&events, 7).is_none());
     }
 
     #[tokio::test]
@@ -1018,7 +1060,7 @@ mod tests {
             vec![member_set],
         )
         .await;
-        let contents = decode_block_contents(&events, 42);
+        let contents = decode_block_contents(&events, 42).expect("events decode");
 
         assert!(matches!(
             contents.events.as_slice(),
@@ -1060,7 +1102,7 @@ mod tests {
         assert!(crate::event_decoding::is_other_relevant_event(&registered));
         assert!(registered.decode_as::<storage_subxt::api::Event>().is_err());
 
-        let contents = decode_block_contents(&events, 42);
+        let contents = decode_block_contents(&events, 42).expect("events decode");
         assert!(contents.lifecycle.is_empty());
         assert!(matches!(
             contents.events.as_slice(),
