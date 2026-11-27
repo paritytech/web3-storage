@@ -3,7 +3,7 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
-    chain_connection::{self, ChainHandle, ChainTransport},
+    chain_connection::{self, ChainHandle},
     chain_follower::SubxtChainFollower,
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, DEFAULT_PROVIDER_ID},
@@ -59,12 +59,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let handle = tokio::time::timeout(CONNECT_TIMEOUT, chain_connection::connect(&transport))
         .await
         .map_err(|_| {
-            let via = match transport {
-                ChainTransport::Rpc { .. } => "RPC",
-                ChainTransport::LightClient { .. } => "the light client",
-            };
             format!(
-                "Connecting to the chain via {via} timed out after {}s",
+                "Connecting to the chain via {transport:?} timed out after {}s",
                 CONNECT_TIMEOUT.as_secs()
             )
         })??;
