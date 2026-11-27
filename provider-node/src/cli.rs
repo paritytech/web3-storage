@@ -109,6 +109,18 @@ pub struct RpcParams {
     )]
     pub chain_transport: TransportKind,
 
+    /// Time limit, in seconds, for connecting to the chain at startup and on
+    /// every reconnect. A light client that has not finished its warp sync
+    /// by then starts over.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 300,
+        value_parser = clap::value_parser!(u64).range(1..),
+        env = "CHAIN_CONNECT_TIMEOUT"
+    )]
+    pub chain_connect_timeout: u64,
+
     /// Relay-chain spec for the light transport: a spec file path (a raw
     /// spec with reachable boot nodes — the trust-preserving option), or a
     /// ws:// / wss:// node URL to fetch it from at startup (dev convenience;
@@ -384,6 +396,7 @@ mod tests {
         assert_eq!(cli.storage.storage_path, PathBuf::from("./provider-data"));
         assert_eq!(cli.rpc.bind_addr, "0.0.0.0:3333");
         assert_eq!(cli.rpc.chain_rpc, "ws://127.0.0.1:2222");
+        assert_eq!(cli.rpc.chain_connect_timeout, 300);
         assert!(cli.key.keyfile.is_none());
         assert!(cli.key.provider_id.is_none());
         assert!(!cli.replica_sync.enable_replica_sync);
@@ -415,6 +428,16 @@ mod tests {
         for flag in ["--read-max-bytes", "--read-max-chunks"] {
             assert!(Cli::try_parse_from(["storage-provider-node", flag, "0"]).is_err());
         }
+    }
+
+    #[test]
+    fn chain_connect_timeout_parses_and_rejects_zero() {
+        let cli = Cli::try_parse_from(["storage-provider-node", "--chain-connect-timeout", "900"])
+            .unwrap();
+        assert_eq!(cli.rpc.chain_connect_timeout, 900);
+        assert!(
+            Cli::try_parse_from(["storage-provider-node", "--chain-connect-timeout", "0"]).is_err()
+        );
     }
 
     #[test]

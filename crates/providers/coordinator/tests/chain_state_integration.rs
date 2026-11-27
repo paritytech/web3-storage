@@ -58,6 +58,7 @@ fn unreachable_coordinator(chain_state: Arc<ChainState>) -> ChainStateCoordinato
         provider_account(),
         chain_state,
         tokio::sync::broadcast::channel(16).0,
+        Duration::from_secs(300),
     )
 }
 

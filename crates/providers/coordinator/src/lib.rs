@@ -37,11 +37,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 
-/// Time limit for connecting to the chain, at startup and on every reconnect.
-/// The light client's sync has no time limit of its own. Long, because a
-/// cancelled warp sync starts over.
-pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
-
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 /// Why the coordinator's reconnect loop dropped a connection. The loop logs it
@@ -96,22 +91,28 @@ pub struct ChainStateCoordinator {
     chain_state: Arc<ChainState>,
     /// Fan-out of decoded per-block events to the background coordinators.
     events_tx: BlockEventTx,
+    /// Time limit for each connect. The light client's sync has no time limit
+    /// of its own.
+    connect_timeout: Duration,
 }
 
 impl ChainStateCoordinator {
-    /// Coordinator for `provider_account` that writes `chain_state` and sends
-    /// decoded block events on `events_tx`. Call [`Self::start`] to run it.
+    /// Coordinator for `provider_account` that writes `chain_state`, sends
+    /// decoded block events on `events_tx`, and gives each connect
+    /// `connect_timeout`. Call [`Self::start`] to run it.
     pub fn new(
         follower: Arc<dyn ChainFollower>,
         provider_account: AccountId32,
         chain_state: Arc<ChainState>,
         events_tx: BlockEventTx,
+        connect_timeout: Duration,
     ) -> Self {
         Self {
             follower,
             provider_account,
             chain_state,
             events_tx,
+            connect_timeout,
         }
     }
 
@@ -156,7 +157,7 @@ impl ChainStateCoordinator {
     /// fails; `Ok(())` if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
         // A connect that never returns would keep the dead handle published.
-        let connection = with_timeout("Connecting to the chain", CONNECT_TIMEOUT, async {
+        let connection = with_timeout("Connecting to the chain", self.connect_timeout, async {
             Ok(self.follower.connect().await?)
         })
         .await?;
@@ -612,6 +613,7 @@ mod tests {
             provider_account(),
             chain_state.clone(),
             events_tx,
+            Duration::from_secs(300),
         );
 
         coordinator
@@ -836,6 +838,7 @@ mod tests {
             provider_account(),
             chain_state.clone(),
             events_tx,
+            Duration::from_secs(300),
         )
         .start();
 
@@ -928,6 +931,7 @@ mod tests {
             provider_account(),
             Arc::new(chain_state),
             tokio::sync::broadcast::channel(16).0,
+            Duration::from_secs(300),
         );
         let handle = coordinator.start();
 
@@ -962,6 +966,7 @@ mod tests {
             provider_account(),
             Arc::new(ChainState::default()),
             tokio::sync::broadcast::channel(16).0,
+            Duration::from_secs(300),
         )
         .start();
 
