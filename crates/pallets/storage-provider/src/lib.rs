@@ -1672,14 +1672,19 @@ pub mod pallet {
             Self::add_replica_provider_internal(&who, bucket_id, &provider, terms, &sig)
         }
 
-        /// Owner only. Settle and close an agreement, choosing whether the
-        /// remaining escrow goes to the provider or is (partly) burned.
+        /// Settle and close an agreement, choosing whether the remaining
+        /// escrow goes to the provider or is (partly) burned.
         ///
-        /// Before expiry the owner must also be a bucket admin, and only
-        /// primary agreements can be ended early. After expiry the owner has
-        /// `SettlementTimeout` to call this; then only the provider can
-        /// settle, via `claim_expired_agreement`. Blocked while a challenge
-        /// against the agreement is pending.
+        /// Before expiry: bucket admin only (`NotBucketAdmin`), whether or
+        /// not the admin owns the agreement, and only for a primary
+        /// agreement (`CannotTerminateReplica`). The action applies to the
+        /// whole escrow, which is on hold on the agreement owner.
+        ///
+        /// After expiry: agreement owner only (`NotAgreementOwner`), within
+        /// `SettlementTimeout`; then only the provider can settle, via
+        /// `claim_expired_agreement`.
+        ///
+        /// Blocked while a challenge against the agreement is pending.
         #[pallet::call_index(25)]
         #[pallet::weight(match action {
             EndAction::Pay => T::WeightInfo::end_agreement(0),
