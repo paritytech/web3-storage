@@ -16,6 +16,7 @@ use provider_coordinator::{
 use provider_types::{ChainClientError, ProviderInfo, ProviderSettings, ProviderStats};
 use sp_core::H256;
 use sp_runtime::AccountId32;
+use std::time::Duration;
 use storage_subxt::api::runtime_types::pallet_storage_provider::types::ProviderInfo as RuntimeProviderInfo;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::watch;
@@ -135,6 +136,8 @@ impl ChainStateChainClient for SubxtChainStateClient {
 /// new connection through `chain_tx`.
 pub(crate) struct SubxtChainFollower {
     transport: ChainTransport,
+    /// Time limit for each connect.
+    connect_timeout: Duration,
     chain_tx: watch::Sender<Option<ChainHandle>>,
     /// Genesis hash of the chain the store is bound to.
     genesis_hash: H256,
@@ -143,11 +146,13 @@ pub(crate) struct SubxtChainFollower {
 impl SubxtChainFollower {
     pub(crate) fn new(
         transport: ChainTransport,
+        connect_timeout: Duration,
         chain_tx: watch::Sender<Option<ChainHandle>>,
         genesis_hash: H256,
     ) -> Self {
         Self {
             transport,
+            connect_timeout,
             chain_tx,
             genesis_hash,
         }
@@ -182,11 +187,23 @@ impl SubxtChainFollower {
 
 #[async_trait::async_trait]
 impl ChainFollower for SubxtChainFollower {
+    /// One time limit covers building the connection and subscribing to its
+    /// finalized blocks.
     async fn connect(&self) -> Result<ChainConnection, ChainClientError> {
-        let handle = chain_connection::connect(&self.transport)
-            .await
-            .map_err(|e| ChainClientError::query("chain connection", e))?;
-        self.accept(handle).await
+        let timeout = self.connect_timeout;
+        tokio::time::timeout(timeout, async {
+            let handle = chain_connection::open(&self.transport)
+                .await
+                .map_err(|e| ChainClientError::query("chain connection", e))?;
+            self.accept(handle).await
+        })
+        .await
+        .map_err(|_| {
+            ChainClientError::query(
+                "chain connection",
+                chain_connection::Error::Timeout(timeout.as_secs()),
+            )
+        })?
     }
 }
 
@@ -1108,7 +1125,12 @@ mod tests {
     #[tokio::test]
     async fn accept_publishes_a_connection_to_the_bound_chain() {
         let (chain_tx, chain_rx) = watch::channel(None);
-        let follower = SubxtChainFollower::new(unused_transport(), chain_tx, mock_genesis());
+        let follower = SubxtChainFollower::new(
+            unused_transport(),
+            Duration::from_secs(1),
+            chain_tx,
+            mock_genesis(),
+        );
 
         let handle = ChainHandle::from_api(mock_api(vec![]).await);
         follower
@@ -1123,7 +1145,8 @@ mod tests {
     async fn accept_rejects_another_chain_and_publishes_nothing() {
         let other = H256::repeat_byte(0x77);
         let (chain_tx, chain_rx) = watch::channel(None);
-        let follower = SubxtChainFollower::new(unused_transport(), chain_tx, other);
+        let follower =
+            SubxtChainFollower::new(unused_transport(), Duration::from_secs(1), chain_tx, other);
 
         let handle = ChainHandle::from_api(mock_api(vec![]).await);
         let err = match follower.accept(handle).await {
@@ -1146,6 +1169,7 @@ mod tests {
             ChainTransport::Rpc {
                 url: "ws://127.0.0.1:1".to_string(),
             },
+            Duration::from_secs(5),
             chain_tx,
             H256::zero(),
         );
@@ -1158,5 +1182,31 @@ mod tests {
             err.to_string().contains("Failed to connect to chain"),
             "unexpected error: {err}"
         );
+    }
+
+    /// A node that accepts the TCP connection and never answers: `connect`
+    /// fails at the time limit instead of hanging the reconnect loop.
+    #[tokio::test(start_paused = true)]
+    async fn subxt_chain_follower_connect_fails_at_the_time_limit() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let (chain_tx, chain_rx) = watch::channel(None);
+        let follower = SubxtChainFollower::new(
+            ChainTransport::Rpc { url },
+            Duration::from_secs(1),
+            chain_tx,
+            H256::zero(),
+        );
+
+        let err = match follower.connect().await {
+            Err(e) => e,
+            Ok(_) => panic!("a node that never answers must not connect"),
+        };
+        assert!(
+            err.to_string().contains("timed out after 1s"),
+            "unexpected error: {err}"
+        );
+        assert!(chain_rx.borrow().is_none());
+        drop(listener);
     }
 }

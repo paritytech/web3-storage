@@ -8,6 +8,7 @@ use crate::{
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, DEFAULT_PROVIDER_ID},
     membership::{BlockEventInvalidations, ChainMembershipResolver},
+    storage::{chain_mismatch_message, open_storage},
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
@@ -17,7 +18,7 @@ use clap::Parser;
 use provider_auth::Authenticator;
 use provider_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY};
 use provider_http::{create_router, ProviderDeps, ProviderState};
-use provider_storage::{ChainBinding, StorageBackend};
+use provider_types::ChainClientError;
 use sp_core::crypto::{AccountId32, Ss58Codec};
 use sp_core::H256;
 use std::net::SocketAddr;
@@ -51,16 +52,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // background coordinators.
     let (events_tx, _) = broadcast::channel::<BlockEvent>(EVENT_CHANNEL_CAPACITY);
 
-    let backend = cli.storage.spec();
-    tracing::info!("Storage backend: {backend}");
-    let storage = backend.build()?;
-
-    // Connect before serving anything, so auth lookups and the one-shot
-    // multiaddr sync work right away and the store is checked against the
-    // chain before any request reaches it.
-    let handle = chain_connection::connect(&transport).await?;
+    // Connect first: the store is checked against the chain when it opens,
+    // and auth lookups and the multiaddr sync need the connection.
+    let connect_timeout = Duration::from_secs(cli.rpc.chain_connect_timeout);
+    let handle = chain_connection::connect(&transport, connect_timeout).await?;
     let genesis_hash = H256(handle.api.genesis_hash().0);
-    bind_storage_to_chain(&*storage, genesis_hash, &cli.storage.storage_path)?;
+    let storage = open_storage(&cli.storage, genesis_hash)?;
     chain_tx.send_replace(Some(handle));
 
     // The provider identity, resolved once: the sr25519 submission account
@@ -157,9 +154,14 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let replica_events = events_tx.subscribe();
     let challenge_events = events_tx.subscribe();
 
-    // Start optional background services (failures are non-fatal)
-    let follower = Arc::new(SubxtChainFollower::new(transport, chain_tx, genesis_hash));
-    let mut chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
+    // Optional services: a startup failure here does not stop the node.
+    let follower = Arc::new(SubxtChainFollower::new(
+        transport,
+        connect_timeout,
+        chain_tx,
+        genesis_hash,
+    ));
+    let chain_state_handle = start_chain_state_coordinator(follower, events_tx, state.clone());
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), replica_events, state.clone())
             .await;
@@ -189,48 +191,29 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     );
+    // The chain-state coordinator stops only on a chain mismatch or a panic;
+    // both end the node.
+    let storage_path = &cli.storage.storage_path;
     tokio::select! {
         result = serve => result?,
-        error = chain_state_fatal_error(&mut chain_state_handle) => return Err(error),
+        error = chain_state_fatal_error(chain_state_handle, storage_path) => return Err(error),
     }
 
     Ok(())
 }
 
-/// Bind `storage` to the chain with `genesis_hash`. Fails when `storage`
-/// belongs to another chain.
-fn bind_storage_to_chain(
-    storage: &dyn StorageBackend,
-    genesis_hash: H256,
-    storage_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    match storage.bind_chain(genesis_hash) {
-        Ok(ChainBinding::Recorded) => {
-            tracing::info!(
-                "Storage at {} is now bound to chain {genesis_hash:?}",
-                storage_path.display()
-            );
-            Ok(())
-        }
-        Ok(ChainBinding::Matched) => Ok(()),
-        Err(provider_storage::Error::ChainMismatch { stored, connected }) => Err(format!(
-            "The data in {} belongs to chain {stored:?}, but the node is connected to chain \
-             {connected:?}. Connect to the chain that wrote this data, or use another \
-             --storage-path.",
-            storage_path.display()
-        )
-        .into()),
-        Err(e) => Err(e.into()),
-    }
-}
-
 /// Resolves with the error that stopped the chain-state coordinator, or never
 /// when there is no coordinator.
 async fn chain_state_fatal_error(
-    handle: &mut Option<ChainStateCoordinatorHandle>,
+    handle: Option<ChainStateCoordinatorHandle>,
+    storage_path: &Path,
 ) -> Box<dyn std::error::Error> {
     match handle {
         Some(handle) => match handle.fatal_error().await {
+            Ok(ChainClientError::ChainMismatch {
+                expected,
+                connected,
+            }) => chain_mismatch_message(expected, connected, storage_path).into(),
             Ok(e) => e.into(),
             Err(e) => e.into(),
         },
