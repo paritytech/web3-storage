@@ -301,6 +301,15 @@ fn extend_agreement_with_higher_sync_price_is_owner_only() {
             },
         );
 
+        // At the unchanged sync price a non-owner can still extend.
+        assert_ok!(StorageProvider::extend_agreement(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            50,
+            10_000
+        ));
+
         // The provider raises its sync price and keeps the price per byte.
         let mut settings = Providers::<Test>::get(2).unwrap().settings;
         settings.replica_sync_price = Some(100);
@@ -883,6 +892,71 @@ fn confirm_replica_sync_rejects_an_older_root_after_a_newer_one() {
             ),
             Error::<Test>::InvalidSyncRoot
         );
+    });
+}
+
+/// A deletion checkpoint (later start, same end) and a historical entry
+/// newer than the last sync are both accepted.
+#[test]
+fn confirm_replica_sync_accepts_a_deletion_and_a_newer_historical_root() {
+    use sp_core::H256;
+    use storage_primitives::Commitment;
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+        let first = Buckets::<Test>::get(bucket_id)
+            .unwrap()
+            .snapshot
+            .unwrap()
+            .commitment;
+
+        let mut roots = [None; 7];
+        roots[0] = Some(first.mmr_root);
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+
+        // A deletion: the start moves forward, the end stays. Published as a
+        // historical entry.
+        let deletion = Commitment {
+            mmr_root: H256::repeat_byte(0x22),
+            start_seq: first.start_seq + 2,
+            leaf_count: first.leaf_count - 2,
+        };
+        // A later append on top of the deletion, as the current snapshot.
+        let appended = Commitment {
+            mmr_root: H256::repeat_byte(0x33),
+            start_seq: deletion.start_seq,
+            leaf_count: deletion.leaf_count + 1,
+        };
+        Buckets::<Test>::mutate(bucket_id, |bucket| {
+            let bucket = bucket.as_mut().unwrap();
+            bucket.historical_roots[0] = (1, deletion);
+            bucket.snapshot.as_mut().unwrap().commitment = appended;
+        });
+
+        run_to_block(12);
+        let mut roots = [None; 7];
+        roots[1] = Some(deletion.mmr_root);
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+
+        run_to_block(23);
+        let mut roots = [None; 7];
+        roots[0] = Some(appended.mmr_root);
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
     });
 }
 
