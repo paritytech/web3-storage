@@ -7,7 +7,7 @@ interface CardProps extends React.HTMLAttributes<HTMLDivElement> {}
 function Card({ className, ...props }: CardProps) {
   return (
     <div
-      className={cn('rounded-lg border border-gray-800 bg-gray-900/50 shadow-sm', className)}
+      className={cn('rounded-container bg-surface-container', className)}
       {...props}
     />
   )
@@ -20,14 +20,14 @@ function CardHeader({ className, ...props }: CardProps) {
 function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h3
-      className={cn('font-semibold leading-none tracking-tight text-gray-100', className)}
+      className={cn('font-semibold leading-tight text-primary', className)}
       {...props}
     />
   )
 }
 
 function CardDescription({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
-  return <p className={cn('text-sm text-gray-400', className)} {...props} />
+  return <p className={cn('text-sm text-secondary', className)} {...props} />
 }
 
 function CardContent({ className, ...props }: CardProps) {

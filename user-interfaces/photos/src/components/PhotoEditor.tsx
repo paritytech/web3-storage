@@ -4,8 +4,7 @@
 // currently in view; renders the full-resolution image (reusing the lightbox's
 // object URL — no second download) onto a canvas, lets the user rotate in 90°
 // steps and drag a crop rectangle, then composes the result via `applyEdit` and
-// hands the edited bytes to `saveEdit`. Save re-PUTs to the *same* path
-// (copy-on-write) and re-anchors the metadata root.
+// hands the edited bytes to `saveEdit`, which stores them at the *same* path.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RotateCcw, RotateCw, RefreshCw, X } from 'lucide-react'
@@ -191,7 +190,7 @@ function Editor({ photo }: { photo: LightboxState }) {
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex flex-col items-center justify-between gap-4 bg-black/85 p-6"
+      className="fixed inset-0 z-[60] flex flex-col items-center justify-between gap-4 bg-surface-main p-6"
       data-testid="photo-editor"
     >
       {/* Toolbar */}
@@ -223,7 +222,7 @@ function Editor({ photo }: { photo: LightboxState }) {
           type="button"
           onClick={() => !saving && closeEditor()}
           aria-label="Cancel"
-          className="rounded-md p-2 text-gray-300 hover:bg-white/10 hover:text-white disabled:opacity-50"
+          className="cursor-pointer rounded-full p-2 text-secondary transition-colors hover:bg-selection-container-hover hover:text-secondary-hover disabled:cursor-not-allowed disabled:opacity-50"
           disabled={saving}
         >
           <X className="h-6 w-6" />
@@ -235,7 +234,7 @@ function Editor({ photo }: { photo: LightboxState }) {
         <div className="relative inline-block">
           <canvas
             ref={canvasRef}
-            className="block max-h-[68vh] max-w-full rounded-md"
+            className="block max-h-[68vh] max-w-full rounded-small"
             data-testid="editor-canvas"
           />
           <div
@@ -247,7 +246,7 @@ function Editor({ photo }: { photo: LightboxState }) {
           >
             {crop && (
               <div
-                className="absolute border border-purple-400"
+                className="absolute border border-indicator"
                 style={{
                   left: crop.x,
                   top: crop.y,
@@ -260,7 +259,7 @@ function Editor({ photo }: { photo: LightboxState }) {
                 {(['nw', 'ne', 'sw', 'se'] as const).map((c) => (
                   <span
                     key={c}
-                    className="pointer-events-none absolute h-3 w-3 rounded-full border border-white bg-purple-500"
+                    className="pointer-events-none absolute h-3 w-3 rounded-full bg-action-primary"
                     style={cornerStyle(c)}
                   />
                 ))}
@@ -272,7 +271,7 @@ function Editor({ photo }: { photo: LightboxState }) {
 
       {/* Footer */}
       <div className="flex w-full max-w-3xl items-center justify-between">
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-secondary">
           {crop ? 'Drag the rectangle or its corners to crop.' : 'Drag on the photo to crop.'}{' '}
           Saving replaces this photo (the original blob lingers — copy-on-write).
         </p>

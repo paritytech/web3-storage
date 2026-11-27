@@ -15,12 +15,20 @@ use crate::common::{account_ss58, build_config, signer_from_suri, ProviderKey};
 /// (1000 tokens at 12 decimals).
 const STAKE: u128 = 1_000_000_000_000_000;
 
+/// Relay-chain blocks per day at 6-second blocks.
+const RELAY_BLOCKS_PER_DAY: u32 = 14_400;
+
+/// Longest agreement the registered provider accepts: 365 days, in relay-chain
+/// blocks.
+const MAX_DURATION: u32 = 365 * RELAY_BLOCKS_PER_DAY;
+
 #[derive(Debug, Subcommand)]
 pub enum Provider {
     /// Register the provider account as a storage provider that accepts
-    /// primary agreements at 1 per byte-block. Does nothing if the account is
-    /// already registered with the same signing key. The provider node can start
-    /// before or after this command.
+    /// primary agreements of up to 365 days at 1 per byte-block. If the
+    /// account is already registered with the same signing key, only applies
+    /// these settings. The provider node can start before or after this
+    /// command.
     Register(RegisterArgs),
 }
 
@@ -79,19 +87,20 @@ pub async fn register(global: &GlobalArgs, args: &RegisterArgs) -> Result<()> {
             );
         }
         eprintln!("Provider {provider_ss58} is already registered with this key");
-        return Ok(());
+    } else {
+        eprintln!("Registering provider {provider_ss58} at {}", args.multiaddr);
+        client
+            .register(args.multiaddr.clone(), signing_key, STAKE)
+            .await
+            .with_context(|| format!("failed to register provider {provider_ss58}"))?;
     }
-
-    eprintln!("Registering provider {provider_ss58} at {}", args.multiaddr);
-    client
-        .register(args.multiaddr.clone(), signing_key, STAKE)
-        .await
-        .with_context(|| format!("failed to register provider {provider_ss58}"))?;
+    // Apply the settings on every run so an existing registration also gets
+    // the current values.
     client
         .update_settings(ProviderSettings {
             price_per_byte: 1,
             min_duration: 10,
-            max_duration: 100_000,
+            max_duration: MAX_DURATION,
             accepting_primary: true,
             replica_sync_price: None,
             accepting_extensions: true,

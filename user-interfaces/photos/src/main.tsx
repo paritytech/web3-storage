@@ -5,15 +5,14 @@ import { createRoot } from 'react-dom/client'
 import { Subscribe } from '@react-rxjs/core'
 import App from './App'
 import { connect as connectChain } from '@/state/chain.state'
-import { getParachainWs } from '@/state/network.state'
-import { restoreWalletConnection } from '@/state/wallet.state'
+import { connectHostAccount } from '@/state/wallet.state'
 import './index.css'
 
 function AppWithInit() {
   useEffect(() => {
-    // Connect to chain and restore wallet in parallel (non-blocking)
-    connectChain(getParachainWs()).catch((e) => console.warn('Failed to connect to chain:', e))
-    restoreWalletConnection().catch((e) => console.warn('Failed to restore wallet:', e))
+    // Both do nothing outside a host.
+    connectChain().catch((e) => console.warn('Failed to connect to chain:', e))
+    connectHostAccount().catch((e) => console.warn('Failed to read the host account:', e))
   }, [])
 
   return <App />
@@ -21,7 +20,7 @@ function AppWithInit() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <Subscribe fallback={<div className="min-h-screen bg-gray-950" />}>
+    <Subscribe fallback={<div className="min-h-screen bg-surface-main" />}>
       <AppWithInit />
     </Subscribe>
   </StrictMode>

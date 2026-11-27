@@ -1,30 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// M6 — photo upload. A file picker (images, multi-select) that uploads into the
-// selected album via `album.state.ts` (full photo + client-generated thumbnail),
-// then surfaces the batch progress and the on-chain anchor status.
+// Photo upload. A file picker (images, multi-select) that uploads into the
+// selected album, or into the default album from the all-photos view.
 
 import { useRef } from 'react'
 import { Upload } from 'lucide-react'
-import { uploadPhotos, useUploads, useAnchorStatus, useSelectedAlbum } from '@/state/album.state'
+import { uploadPhotos, useUploads } from '@/state/album.state'
 import { Button } from '@/components/ui/Button'
-import { Spinner } from '@/components/ui/Spinner'
 
-const ANCHOR_LABEL: Record<string, string> = {
-  recomputing: 'Recomputing library root…',
-  anchoring: 'Anchoring root on-chain…',
-}
-
-export function UploadButton() {
-  const selectedAlbum = useSelectedAlbum()
+export function UploadButton({ compact }: { compact?: boolean }) {
   const uploads = useUploads()
-  const anchor = useAnchorStatus()
   const inputRef = useRef<HTMLInputElement>(null)
-
-  // Only the in-progress upload blocks the button; the background re-anchor is
-  // shown as a status indicator but never disables further uploads.
-  const uploading = uploads !== null
-  const anchoring = anchor.stage === 'recomputing' || anchor.stage === 'anchoring'
 
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? [])
@@ -33,7 +19,7 @@ export function UploadButton() {
   }
 
   return (
-    <div className="flex items-center gap-3">
+    <>
       <input
         ref={inputRef}
         type="file"
@@ -45,23 +31,14 @@ export function UploadButton() {
       />
       <Button
         size="sm"
+        variant={compact ? 'ghost' : 'default'}
         onClick={() => inputRef.current?.click()}
-        disabled={!selectedAlbum || uploading}
+        disabled={uploads !== null}
         data-testid="upload-button"
       >
-        <Upload className="mr-1.5 h-4 w-4" /> Upload
+        <Upload className="h-4 w-4 sm:mr-1.5" />
+        <span className={compact ? 'hidden sm:inline' : undefined}>Upload</span>
       </Button>
-
-      {(uploading || anchoring) && (
-        <span className="flex items-center gap-2 text-xs text-gray-400" data-testid="upload-status">
-          <Spinner size="sm" />
-          {uploads
-            ? `Uploading ${Math.min(uploads.done + 1, uploads.total)}/${uploads.total}${
-                uploads.current ? ` — ${uploads.current}` : ''
-              }`
-            : (ANCHOR_LABEL[anchor.stage] ?? '')}
-        </span>
-      )}
-    </div>
+    </>
   )
 }

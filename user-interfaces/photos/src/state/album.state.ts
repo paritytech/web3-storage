@@ -1,44 +1,43 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Album State — the M6 "State B" interaction layer. Once a library exists, this
-// drives the library bucket's file system through the SDK's file tree
-// (the browser port of the M2/M3 headless flow):
-// list/create albums (directories), upload photos with a client-generated
-// thumbnail, render a grid from those thumbnails, and open a photo full-res. Every
-// mutation refreshes its listing immediately and then schedules a background
-// re-anchor (`scheduleReanchor`): a single-flight, coalescing worker recomputes the
-// bucket's metadata Merkle root locally and anchors it on-chain via `setRoot`
-// (copy-on-write; the root moves each time) without blocking further interaction.
+// Album State — the library's interaction layer over the host's remote storage
+// (`lib/remote-library.ts`): list albums, upload photos with a client-generated
+// thumbnail, render a grid from those thumbnails, open a photo full-res, and
+// rename, edit or delete one. The host keeps the file tree in the library's
+// bucket, so a second device sees the same albums.
 //
-// Mirrors `library.state.ts` conventions: raw `BehaviorSubject`s, `bind` hooks,
-// and action functions that `.next(...)` them. Path layout matches
-// `scripts/photos-flow.ts`: album `/<Album>`, photo `/<Album>/<file>`, thumb
-// `/.thumbs/<Album>/<file>`.
+// Path layout: album `/<Album>`, photo `/<Album>/<file>`, thumbnail
+// `/.thumbs/<Album>/<file>`. Remote storage has files only, so an album is the
+// top-level directory of its files, and a new album holds an empty
+// `/<Album>/.album` marker until its first photo.
 
 import { BehaviorSubject } from 'rxjs'
 import { bind } from '@react-rxjs/core'
-import type { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
-import { fromHex, type ParachainApi } from '@web3-storage/papi'
-import { requireApi } from '@/lib/chain-client'
-import type { ResolvedContract } from '@/lib/photos-contract'
-import { getDrive, setFsSigner } from '@/lib/fs-client'
-import { recomputeRoot } from '@/lib/fs-root'
-import { FileSystemError, hexToBytes, toHex } from '@web3-storage/sdk'
-import { LocalIndex } from '@/lib/local-index'
-import { loadIndex, saveIndex } from '@/lib/index-store'
-import { getParachainWs } from '@/state/network.state'
-import { rootToBytes32, submitSetRoot } from '@/lib/photos-contract-write'
+import {
+  listFiles,
+  readFile,
+  removeFile,
+  writeFile,
+  RemoteStorageError,
+  type LibraryFile,
+} from '@/lib/remote-library'
 import { makeThumbnail } from '@/lib/thumbnail'
+import { loadPlan } from '@/state/library.state'
 
 /** Parallel `.thumbs/` subtree that holds the downscaled grid thumbnails. */
 const THUMBS_ROOT = '/.thumbs'
 
-/** Max photo uploads kept in flight at once within a single batch. */
-const UPLOAD_CONCURRENCY = 4
+/** The empty file that keeps an album with no photos. */
+const ALBUM_MARKER = '.album'
+
+/** The album that receives uploads made from the all-photos view. */
+export const DEFAULT_ALBUM = 'Camera roll'
 
 /** A photo as rendered in the grid (thumbnail-backed). */
 export interface GridItem {
   name: string
+  /** The album the photo is in. */
+  album: string
   /** Full-resolution path, e.g. `/Beach/photo.jpg`. */
   path: string
   /** Thumbnail path, e.g. `/.thumbs/Beach/photo.jpg`. */
@@ -47,6 +46,8 @@ export interface GridItem {
   thumbUrl?: string
   /** Full-resolution byte size. */
   size: number
+  /** Last stored, in milliseconds since the Unix epoch. */
+  modified: number
 }
 
 /** Batch upload progress. */
@@ -54,13 +55,6 @@ export interface UploadProgress {
   total: number
   done: number
   current?: string
-}
-
-export type AnchorStage = 'idle' | 'recomputing' | 'anchoring' | 'done' | 'error'
-
-export interface AnchorStatus {
-  stage: AnchorStage
-  message?: string
 }
 
 /** The currently-open lightbox photo (full-resolution object URL). */
@@ -75,203 +69,141 @@ export interface LightboxState {
 // State
 // ─────────────────────────────────────────────────────────────────────────────
 
-const bucketId$ = new BehaviorSubject<bigint | null>(null)
 const libraryError$ = new BehaviorSubject<string | undefined>(undefined)
 const albums$ = new BehaviorSubject<string[]>([])
+/** The album shown in the grid, or `null` for every album's photos. */
 const selectedAlbum$ = new BehaviorSubject<string | null>(null)
 const entries$ = new BehaviorSubject<GridItem[]>([])
 const gridLoading$ = new BehaviorSubject<boolean>(false)
 const uploads$ = new BehaviorSubject<UploadProgress | null>(null)
-const anchorStatus$ = new BehaviorSubject<AnchorStatus>({ stage: 'idle' })
 const lightbox$ = new BehaviorSubject<LightboxState | null>(null)
 const lightboxLoading$ = new BehaviorSubject<boolean>(false)
 const editorOpen$ = new BehaviorSubject<boolean>(false)
+/** A photo the user deleted that stays restorable until `UNDO_WINDOW_MS` passes. */
+const pendingDelete$ = new BehaviorSubject<GridItem | null>(null)
 
-export const [useBucketId] = bind(bucketId$, null)
 export const [useLibraryError] = bind(libraryError$, undefined)
 export const [useAlbums] = bind(albums$, [])
 export const [useSelectedAlbum] = bind(selectedAlbum$, null)
 export const [useEntries] = bind(entries$, [])
 export const [useGridLoading] = bind(gridLoading$, false)
 export const [useUploads] = bind(uploads$, null)
-export const [useAnchorStatus] = bind(anchorStatus$, { stage: 'idle' })
 export const [useLightbox] = bind(lightbox$, null)
 export const [useLightboxLoading] = bind(lightboxLoading$, false)
 export const [useEditorOpen] = bind(editorOpen$, false)
+export const [usePendingDelete] = bind(pendingDelete$, null)
+
+/** How long a deleted photo stays restorable before it is removed. */
+export const UNDO_WINDOW_MS = 8_000
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Non-reactive session state (current library + caches)
+// Non-reactive session state
 // ─────────────────────────────────────────────────────────────────────────────
 
-let api: ParachainApi | null = null
-let signer: InjectedPolkadotAccount['txCreator'] | null = null
-let contractBytes: Uint8Array | null = null
-
-/**
- * Client-maintained bucket index — the source of truth for the anchored metadata
- * root, updated on every upload/edit/delete. `indexAuthoritative` is true once the
- * index is known to fully describe the tree (a freshly-created bucket, a persisted
- * snapshot that matched the on-chain anchor, or a completed provider recompute); it
- * then anchors from `index.root()` with no downloads. `indexKey` is the per-bucket
- * IndexedDB key (`${parachainWs}:${bucketId}`) the index persists under.
- */
-let index = new LocalIndex()
-let indexAuthoritative = false
-let indexKey: string | null = null
+/** The library's files as last listed. */
+let files: LibraryFile[] = []
 /**
  * Live grid thumbnail object URLs keyed by thumb path. Reused across grid reloads
  * so a single-photo mutation doesn't re-download the whole album; an entry is
  * revoked when its path leaves the grid (`replaceGrid`), when its content is
- * rewritten (`storeFile`), or when the library resets.
+ * rewritten (`store`), or when the library resets.
  */
 const gridThumbUrls = new Map<string, string>()
-/** Called after a successful `setRoot` so the page can re-read the on-chain anchor. */
-let anchoredCallback: (() => void) | null = null
-/** Set by `scheduleReanchor` when the tree changed; drained by the background anchor worker. */
-let anchorDirty = false
-/** True while the single-flight background anchor worker is running. */
-let anchorRunning = false
+/**
+ * The tail of the write queue. The host commits each write on top of the root it
+ * read, and retries when another write committed first, so concurrent writes
+ * from this device would only race each other. Writes run one at a time.
+ */
+let writes: Promise<unknown> = Promise.resolve()
+/** Removes the pending delete's photo when the undo window ends. */
+let pendingDeleteTimer: ReturnType<typeof setTimeout> | undefined
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Actions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Bind the album layer to a library's bucket and load its albums. Safe to call
- * repeatedly; resets the session only when the bucket changes. `onAnchored` is invoked after each successful `setRoot` so the page
- * can refresh the on-chain anchor it displays.
- */
-export async function initLibrary(
-  bucketId: bigint,
-  contract: ResolvedContract,
-  account: InjectedPolkadotAccount,
-  rootCid: `0x${string}`,
-  onAnchored: () => void,
-): Promise<void> {
-  api = requireApi()
-  signer = account.txCreator
-  setFsSigner({ signer: account.txCreator, address: account.address, publicKey: account.txCreator.publicKey })
-  contractBytes = fromHex(contract.address)
-  anchoredCallback = onAnchored
-
-  if (bucketId$.getValue() === bucketId) {
-    // Same bucket — keep caches/selection, just refresh listings.
-    await loadAlbums()
-    return
-  }
-
-  resetSession()
+/** Load the library's albums. Safe to call repeatedly. */
+export async function initLibrary(): Promise<void> {
   libraryError$.next(undefined)
-  bucketId$.next(bucketId)
-  try {
-    await loadPersistedIndex(bucketId, rootCid)
-    await loadAlbums()
-  } catch (err) {
-    libraryError$.next(err instanceof Error ? err.message : 'Could not reach the storage provider.')
-  }
+  await loadAlbums()
 }
 
-/**
- * Seed the in-memory index for `bucketId` from its persisted snapshot, trusting it
- * only if its root still matches the on-chain anchor. A match ⇒ authoritative:
- * future roots anchor from `index.root()` with no downloads. A miss or mismatch
- * (cold cache, a freshly-created bucket with no snapshot, or a bucket changed
- * elsewhere) ⇒ start empty and fall back to a provider recompute on the next
- * anchor, which repopulates the index and persists it for subsequent reloads.
- */
-async function loadPersistedIndex(bucketId: bigint, rootCid: `0x${string}`): Promise<void> {
-  indexKey = `${getParachainWs()}:${bucketId}`
-  const persisted = await loadIndex(indexKey)
-  if (persisted && toHex(persisted.root()).toLowerCase() === rootCid.toLowerCase()) {
-    index = persisted
-    indexAuthoritative = true
-  } else {
-    index = new LocalIndex()
-    indexAuthoritative = false
-  }
-}
-
-/** List top-level directories as albums (hiding the `.thumbs` subtree and dotfolders). */
+/** List the albums (hiding the `.thumbs` subtree and dotfolders) and refresh the grid. */
 export async function loadAlbums(): Promise<void> {
-  const bucketId = bucketId$.getValue()
-  if (bucketId === null) return
   try {
-    const drive = await getDrive(bucketId)
-    const listing = await drive.list('/')
-    const names = listing
-      .filter((e) => e.entryType === 'directory' && !e.name.startsWith('.'))
-      .map((e) => e.name)
-      .sort()
+    files = await listFiles()
+    const names = albumsOf(files)
     albums$.next(names)
 
-    // Keep the current selection if still present; otherwise pick the first album.
+    // Keep the current album if it still exists; otherwise show every photo.
     const selected = selectedAlbum$.getValue()
-    if (selected && names.includes(selected)) {
-      await loadGrid()
-    } else if (names.length > 0) {
-      await selectAlbum(names[0])
-    } else {
-      selectedAlbum$.next(null)
-      replaceGrid([])
-    }
+    if (selected && !names.includes(selected)) selectedAlbum$.next(null)
+    await loadGrid()
   } catch (err) {
-    libraryError$.next(err instanceof Error ? err.message : 'Could not list albums.')
+    libraryError$.next(message(err, 'Could not list albums.'))
   }
 }
 
-/** Select an album and (re)load its photo grid. */
-export async function selectAlbum(name: string): Promise<void> {
+/** Select an album, or `null` for every photo, and (re)load the grid. */
+export async function selectAlbum(name: string | null): Promise<void> {
   selectedAlbum$.next(name)
   await loadGrid()
 }
 
-/** List the selected album's files and load each photo's thumbnail into the grid. */
+/**
+ * Show the selected album's photos, or every album's photos, newest first, and
+ * load each one's thumbnail.
+ */
 export async function loadGrid(): Promise<void> {
-  const bucketId = bucketId$.getValue()
-  const album = selectedAlbum$.getValue()
-  if (bucketId === null || !album) {
-    replaceGrid([])
-    return
-  }
+  const selected = selectedAlbum$.getValue()
 
   gridLoading$.next(true)
   try {
-    const drive = await getDrive(bucketId)
-    const files = (await drive.list(`/${album}`)).filter((e) => e.entryType === 'file')
+    const paths = new Set(files.map((f) => f.path))
+    const albums = new Set(albumsOf(files))
+    const photos = files
+      .filter((f) => {
+        const album = albumOf(f.path)
+        return (
+          album !== null &&
+          albums.has(album) &&
+          (selected === null || album === selected) &&
+          isPhoto(f.path) &&
+          f.path !== pendingDelete$.getValue()?.path
+        )
+      })
+      .sort((a, b) => b.modified - a.modified)
     const items: GridItem[] = await Promise.all(
-      files.map(async (f): Promise<GridItem> => {
-        const thumbPath = `${THUMBS_ROOT}/${album}/${f.name}`
+      photos.map(async (f): Promise<GridItem> => {
+        const album = albumOf(f.path) as string
+        const name = baseName(f.path)
+        const thumbPath = `${THUMBS_ROOT}/${album}/${name}`
         // Reuse an already-loaded thumbnail; only download ones we haven't cached
-        // (new/changed paths — `storeFile` evicts a thumb path when rewritten).
+        // (new/changed paths — `store` evicts a thumb path when rewritten).
         let thumbUrl = gridThumbUrls.get(thumbPath)
-        if (!thumbUrl) {
+        if (!thumbUrl && paths.has(thumbPath)) {
           try {
-            const { bytes } = await drive.getFile(thumbPath)
+            const bytes = await readFile(thumbPath)
             thumbUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/jpeg' }))
             gridThumbUrls.set(thumbPath, thumbUrl)
           } catch {
-            // No thumbnail (e.g. uploaded outside the app) — the grid shows a fallback.
+            // Unreadable thumbnail — the grid shows a fallback.
           }
         }
-        return { name: f.name, path: `/${album}/${f.name}`, thumbPath, thumbUrl, size: Number(f.size) }
+        return { name, album, path: f.path, thumbPath, thumbUrl, size: f.size, modified: f.modified }
       }),
     )
     replaceGrid(items)
   } catch (err) {
-    libraryError$.next(err instanceof Error ? err.message : 'Could not load photos.')
+    libraryError$.next(message(err, 'Could not load photos.'))
     replaceGrid([])
   } finally {
     gridLoading$.next(false)
   }
 }
 
-/**
- * Create a new album: make `/<name>` plus its parallel `/.thumbs/<name>` subtree,
- * then schedule a background re-anchor. Rejects an empty/slashed/dot name.
- */
+/** Create a new album, kept by its marker file until its first photo. */
 export async function createAlbum(rawName: string): Promise<void> {
-  const bucketId = bucketId$.getValue()
-  if (bucketId === null) return
   const name = rawName.trim()
   if (!name || name.includes('/') || name.startsWith('.')) {
     libraryError$.next('Album name cannot be empty, contain "/", or start with ".".')
@@ -284,99 +216,79 @@ export async function createAlbum(rawName: string): Promise<void> {
 
   libraryError$.next(undefined)
   try {
-    await ensureDir(bucketId, `/${name}`)
-    await ensureDir(bucketId, THUMBS_ROOT)
-    await ensureDir(bucketId, `${THUMBS_ROOT}/${name}`)
+    await store(`/${name}/${ALBUM_MARKER}`, new Uint8Array(), 'application/octet-stream')
     await loadAlbums()
     await selectAlbum(name)
-    scheduleReanchor()
   } catch (err) {
-    libraryError$.next(err instanceof Error ? err.message : 'Could not create the album.')
+    libraryError$.next(message(err, 'Could not create the album.'))
   }
 }
 
 /**
- * Upload `files` into the selected album: for each, generate a thumbnail, PUT the
- * full photo and the thumbnail (verifying each against its local `data_root`),
- * refresh the grid, then schedule a background re-anchor for the whole batch.
+ * Upload `files` into the selected album, or into `DEFAULT_ALBUM` from the
+ * all-photos view, each with a generated thumbnail.
  */
-export async function uploadPhotos(files: File[]): Promise<void> {
-  const bucketId = bucketId$.getValue()
-  const album = selectedAlbum$.getValue()
-  if (bucketId === null || !album || files.length === 0) return
+export async function uploadPhotos(picked: File[]): Promise<void> {
+  const album = selectedAlbum$.getValue() ?? DEFAULT_ALBUM
+  if (picked.length === 0) return
 
   libraryError$.next(undefined)
-  uploads$.next({ total: files.length, done: 0 })
-
+  uploads$.next({ total: picked.length, done: 0 })
   let uploaded = 0
-  let done = 0
-  let firstError: unknown = null
   try {
-    // Make sure the thumbnail subtree for this album exists (older albums may predate it).
-    await ensureDir(bucketId, THUMBS_ROOT)
-    await ensureDir(bucketId, `${THUMBS_ROOT}/${album}`)
-
-    const uploadOne = async (file: File): Promise<void> => {
-      const bytes = new Uint8Array(await file.arrayBuffer())
-      await storeFile(bucketId, `/${album}/${file.name}`, bytes, file.type || 'application/octet-stream')
+    for (const [done, file] of picked.entries()) {
+      uploads$.next({ total: picked.length, done, current: file.name })
+      await store(`/${album}/${file.name}`, file, file.type || 'application/octet-stream')
       uploaded++
       try {
         const thumb = await makeThumbnail(file)
-        await storeFile(bucketId, `${THUMBS_ROOT}/${album}/${file.name}`, thumb.bytes, thumb.contentType)
+        await store(`${THUMBS_ROOT}/${album}/${file.name}`, thumb.bytes, thumb.contentType)
       } catch {
         // Thumbnail generation failed (unsupported/corrupt image) — keep the full
         // photo; the grid will fall back for this one.
       }
     }
-
-    // Bounded-concurrency pool: keep up to UPLOAD_CONCURRENCY photos in flight.
-    // On the first failure, stop starting new files but let in-flight ones settle
-    // so their already-stored bytes are displayed and anchored in the finally.
-    let next = 0
-    const worker = async (): Promise<void> => {
-      while (next < files.length && firstError === null) {
-        const file = files[next++]
-        try {
-          await uploadOne(file)
-        } catch (err) {
-          if (firstError === null) firstError = err
-        } finally {
-          done++
-          uploads$.next({ total: files.length, done, current: file.name })
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, files.length) }, worker))
-
-    if (firstError !== null) throw firstError
   } catch (err) {
-    libraryError$.next(err instanceof Error ? err.message : 'Upload failed.')
+    libraryError$.next(message(err, 'Upload failed.'))
   } finally {
-    // Refresh + anchor whatever made it in, even if the batch aborted partway.
-    if (uploaded > 0) {
-      await loadGrid()
-      scheduleReanchor()
-    }
+    // Show whatever made it in, even if the batch stopped partway.
+    if (uploaded > 0) await loadAlbums()
     uploads$.next(null)
   }
 }
 
 /** Open a photo full-resolution in the lightbox. */
 export async function openPhoto(item: GridItem): Promise<void> {
-  const bucketId = bucketId$.getValue()
-  if (bucketId === null) return
   lightboxLoading$.next(true)
   try {
-    const drive = await getDrive(bucketId)
-    const { bytes } = await drive.getFile(item.path)
+    const bytes = await readFile(item.path)
     revokeLightbox()
     const url = URL.createObjectURL(new Blob([bytes as BlobPart]))
     lightbox$.next({ name: item.name, url, item })
   } catch (err) {
-    libraryError$.next(err instanceof Error ? err.message : 'Could not open the photo.')
+    libraryError$.next(message(err, 'Could not open the photo.'))
   } finally {
     lightboxLoading$.next(false)
   }
+}
+
+/**
+ * The photo `offset` places after the open one in the grid (negative for
+ * earlier ones), or `undefined` past either end.
+ */
+export function adjacentPhoto(offset: number): GridItem | undefined {
+  const current = lightbox$.getValue()
+  if (!current) return undefined
+  const entries = entries$.getValue()
+  const index = entries.findIndex((e) => e.path === current.item.path)
+  return index === -1 ? undefined : entries[index + offset]
+}
+
+/** Open the photo `offset` places after the open one. Does nothing past either end. */
+export async function openAdjacentPhoto(offset: number): Promise<void> {
+  if (lightboxLoading$.getValue()) return
+  const next = adjacentPhoto(offset)
+  if (next) await openPhoto(next)
 }
 
 /** Close the lightbox and release its object URL (also closes the editor). */
@@ -397,112 +309,126 @@ export function closeEditor(): void {
 }
 
 /**
- * Save an edited photo (M7). Re-PUT `editedBytes` to the open photo's *same* path
- * (copy-on-write: a new content-addressed blob is written and the path repointed;
- * the original blob lingers), regenerate its thumbnail, refresh the grid, then
- * schedule a background re-anchor. Mirrors `uploadPhotos`: a thumbnail failure
- * doesn't abort the edit, and on a PUT error the editor stays open for retry.
+ * Save an edited photo to the open photo's same path, regenerate its thumbnail,
+ * and refresh the grid. A thumbnail failure doesn't abort the edit, and on a
+ * store error the editor stays open for retry.
  */
 export async function saveEdit(editedBytes: Uint8Array, contentType: string): Promise<void> {
-  const bucketId = bucketId$.getValue()
   const photo = lightbox$.getValue()
-  if (bucketId === null || !photo) return
+  if (!photo) return
 
   const { path, thumbPath } = photo.item
   libraryError$.next(undefined)
   try {
-    await storeFile(bucketId, path, editedBytes, contentType)
+    await store(path, editedBytes, contentType)
 
     try {
       const thumb = await makeThumbnail(new Blob([editedBytes as BlobPart], { type: contentType }))
-      await storeFile(bucketId, thumbPath, thumb.bytes, thumb.contentType)
+      await store(thumbPath, thumb.bytes, thumb.contentType)
     } catch {
       // Thumbnail regeneration failed — keep the edited full photo; the grid falls back.
     }
 
     closeEditor()
     closePhoto()
-    await loadGrid()
-    scheduleReanchor()
+    await loadAlbums()
   } catch (err) {
-    libraryError$.next(err instanceof Error ? err.message : 'Could not save the edit.')
+    libraryError$.next(message(err, 'Could not save the edit.'))
     throw err
   }
 }
 
 /**
- * Rename a photo and its thumbnail within the album with tree renames, which
- * move the directory entries without copying bytes. Refreshes the grid and
- * schedules a background re-anchor. `rawName` is the full new filename (the
- * caller preserves the extension).
+ * Rename a photo and its thumbnail within the album. Remote storage has no
+ * rename, so each is stored at its new path and removed from the old one.
+ * `rawName` is the full new filename (the caller preserves the extension).
  */
 export async function renamePhoto(item: GridItem, rawName: string): Promise<void> {
-  const bucketId = bucketId$.getValue()
-  const album = selectedAlbum$.getValue()
-  if (bucketId === null || !album) return
-
+  const { album } = item
   const name = rawName.trim()
   if (!name || name.includes('/') || name.startsWith('.')) {
     libraryError$.next('Name cannot be empty, contain "/", or start with ".".')
     return
   }
   if (name === item.name) return
-  if (entries$.getValue().some((e) => e.name === name)) {
+  if (files.some((f) => f.path === `/${album}/${name}`)) {
     libraryError$.next(`A photo named "${name}" already exists in this album.`)
     return
   }
 
-  const newPath = `/${album}/${name}`
-  const newThumbPath = `${THUMBS_ROOT}/${album}/${name}`
   libraryError$.next(undefined)
+  const path = `/${album}/${name}`
+  const thumbPath = `${THUMBS_ROOT}/${album}/${name}`
   try {
-    // A rename moves the directory entry; the photo's bytes are not copied.
-    const drive = await getDrive(bucketId)
-    await drive.rename(item.path, newPath)
-    moveIndexed(item.path, newPath)
+    await move(item.path, path)
     try {
-      await drive.rename(item.thumbPath, newThumbPath)
-      moveIndexed(item.thumbPath, newThumbPath)
+      await move(item.thumbPath, thumbPath)
     } catch (err) {
       // No thumbnail to carry over (e.g. uploaded outside the app) — skip it.
-      if (!(err instanceof FileSystemError && err.code === 'PathNotFound')) throw err
+      if (!isNotFound(err)) throw err
     }
-    await loadGrid()
-    scheduleReanchor()
+    // Keep the lightbox on the renamed photo.
+    const open = lightbox$.getValue()
+    if (open?.item.path === item.path) lightbox$.next({ ...open, name, item: { ...open.item, name, path, thumbPath } })
+    await loadAlbums()
   } catch (err) {
-    libraryError$.next(err instanceof Error ? err.message : 'Could not rename the photo.')
+    libraryError$.next(message(err, 'Could not rename the photo.'))
   }
 }
 
 /**
- * Delete a photo (and its thumbnail) from the album. Removes their directory entries;
- * the underlying blobs linger in the MMR (no GC), matching the app's copy-on-write
- * model. Refreshes the grid and schedules a background re-anchor.
+ * Hide a photo from the grid now and remove it when `UNDO_WINDOW_MS` passes,
+ * unless `undoDelete` runs first. An earlier pending delete is removed at once.
  */
-export async function deletePhoto(item: GridItem): Promise<void> {
-  const bucketId = bucketId$.getValue()
-  if (bucketId === null) return
+export function deleteWithUndo(item: GridItem): void {
+  void commitPendingDelete()
+  pendingDelete$.next(item)
+  entries$.next(entries$.getValue().filter((e) => e.path !== item.path))
+  pendingDeleteTimer = setTimeout(() => void commitPendingDelete(), UNDO_WINDOW_MS)
+}
 
+/** Restore the pending delete's photo to the grid. */
+export async function undoDelete(): Promise<void> {
+  clearTimeout(pendingDeleteTimer)
+  if (!pendingDelete$.getValue()) return
+  pendingDelete$.next(null)
+  await loadGrid()
+}
+
+/** Remove the pending delete's photo now. */
+export async function commitPendingDelete(): Promise<void> {
+  clearTimeout(pendingDeleteTimer)
+  const item = pendingDelete$.getValue()
+  if (!item) return
+  pendingDelete$.next(null)
+  await deletePhoto(item)
+}
+
+/** Delete a photo and its thumbnail from the album. */
+async function deletePhoto(item: GridItem): Promise<void> {
   libraryError$.next(undefined)
   try {
-    const drive = await getDrive(bucketId)
-    await drive.delete(item.path)
-    await drive.delete(item.thumbPath).catch(() => {})
-    index.remove(item.path)
-    index.remove(item.thumbPath)
-
-    await loadGrid()
-    scheduleReanchor()
+    await remove(item.path)
+    await remove(item.thumbPath).catch((err: unknown) => {
+      if (!isNotFound(err)) throw err
+    })
+    await loadAlbums()
   } catch (err) {
-    libraryError$.next(err instanceof Error ? err.message : 'Could not delete the photo.')
+    libraryError$.next(message(err, 'Could not delete the photo.'))
   }
 }
 
-/** Tear down the album layer (on wallet/network/bucket change). */
+/** Tear down the album layer (on unmount). A pending delete is removed now. */
 export function resetLibrary(): void {
-  setFsSigner(null)
-  bucketId$.next(null)
-  resetSession()
+  void commitPendingDelete()
+  files = []
+  replaceGrid([])
+  revokeLightbox()
+  lightbox$.next(null)
+  editorOpen$.next(false)
+  albums$.next([])
+  selectedAlbum$.next(null)
+  uploads$.next(null)
 }
 
 /** Dismiss a transient error banner. */
@@ -514,112 +440,65 @@ export function clearLibraryError(): void {
 // Internals
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Mark the metadata root dirty and ensure the background anchor worker is running.
- * Mutations call this instead of awaiting the anchor, so the user can keep working
- * while the (slow) recompute + `setRoot` tx happen in the background.
- */
-function scheduleReanchor(): void {
-  anchorDirty = true
-  void runAnchorWorker()
-}
-
-/**
- * Single-flight background worker that anchors the latest tree state. Coalesces
- * concurrent mutations: each `scheduleReanchor` sets `anchorDirty`, and the worker
- * keeps re-running until nothing is pending, so only one `setRoot` tx is ever in
- * flight and the on-chain anchor converges to the live tree. On failure it stops
- * (rather than hot-looping); since the next mutation reschedules and `recomputeRoot`
- * always covers the whole tree, no change is lost once anchoring succeeds again.
- */
-async function runAnchorWorker(): Promise<void> {
-  if (anchorRunning) return
-  anchorRunning = true
-  try {
-    while (anchorDirty) {
-      anchorDirty = false
-      await runReanchor()
-    }
-  } catch {
-    // `runReanchor` already surfaced the failure via `anchorStatus$`.
-  } finally {
-    anchorRunning = false
-  }
-}
-
-/** Recompute the metadata root from the live tree and anchor it via `setRoot`. */
-async function runReanchor(): Promise<void> {
-  // Snapshot the session up front: a background anchor can outlive a library/account
-  // switch that reassigns these module-level vars, and it must sign for the bucket it
-  // started on (not whatever is selected by the time the slow recompute finishes).
-  const bucketId = bucketId$.getValue()
-  const sessionApi = api
-  const sessionSigner = signer
-  const sessionContract = contractBytes
-  const sessionIndex = index
-  const sessionKey = indexKey
-  const sessionAuthoritative = indexAuthoritative
-  if (bucketId === null || !sessionApi || !sessionSigner || !sessionContract) return
-  try {
-    anchorStatus$.next({ stage: 'recomputing' })
-    // Authoritative ⇒ the index already mirrors the whole tree, so anchor its root
-    // directly (no provider round-trip). Otherwise recompute from the provider,
-    // which repopulates the index — mark it authoritative for the next anchor
-    // (unless a library switch swapped the module index out from under us).
-    let root: Uint8Array
-    if (sessionAuthoritative) {
-      root = sessionIndex.root()
-    } else {
-      root = await recomputeRoot(await getDrive(bucketId), sessionIndex)
-      if (index === sessionIndex) indexAuthoritative = true
-    }
-    anchorStatus$.next({ stage: 'anchoring' })
-    await submitSetRoot(sessionApi, sessionSigner, sessionContract, rootToBytes32(root))
-    // Snapshot the now-anchored index so a reload matches the on-chain root and
-    // skips the recompute. Never throws (see `saveIndex`).
-    if (sessionKey) await saveIndex(sessionKey, sessionIndex)
-    anchorStatus$.next({ stage: 'done' })
-    anchoredCallback?.()
-  } catch (err) {
-    anchorStatus$.next({
-      stage: 'error',
-      message: err instanceof Error ? err.message : 'Could not anchor the library root on-chain.',
-    })
-    throw err
-  }
-}
-
-/** Move the index entry of a renamed file. */
-function moveIndexed(from: string, to: string): void {
-  const cached = index.getFile(from)
-  index.remove(from)
-  if (cached) index.setFile(to, cached.dataRoot, cached.size)
-}
-
-/** Store a file and record its content root in the index. */
-async function storeFile(bucketId: bigint, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
-  const drive = await getDrive(bucketId)
-  const res = await drive.putFile(path, bytes, { contentType })
-  index.setFile(path, hexToBytes(res.contentRoot), BigInt(bytes.length))
+/** Store a file through the write queue, dropping a stale cached thumbnail. */
+async function store(path: string, content: Blob | Uint8Array, contentType: string): Promise<void> {
+  await queued(() => writeFile(path, content, contentType))
+  void loadPlan()
   // A rewritten thumbnail must not keep being served from its stale cached URL.
-  if (path.startsWith(`${THUMBS_ROOT}/`)) {
-    const stale = gridThumbUrls.get(path)
-    if (stale) {
-      URL.revokeObjectURL(stale)
-      gridThumbUrls.delete(path)
-    }
+  const stale = gridThumbUrls.get(path)
+  if (stale) {
+    URL.revokeObjectURL(stale)
+    gridThumbUrls.delete(path)
   }
 }
 
-/** Create `path` if a directory of that name isn't already present in its parent; record it in the index. */
-async function ensureDir(bucketId: bigint, path: string): Promise<void> {
-  const slash = path.lastIndexOf('/')
-  const parent = slash <= 0 ? '/' : path.slice(0, slash)
-  const name = path.slice(slash + 1)
-  const drive = await getDrive(bucketId)
-  const siblings = await drive.list(parent)
-  if (!siblings.some((e) => e.entryType === 'directory' && e.name === name)) await drive.mkdir(path)
-  index.setDir(path)
+/** Remove a file through the write queue. */
+async function remove(path: string): Promise<void> {
+  await queued(() => removeFile(path))
+  void loadPlan()
+}
+
+/** Store the file at `from` at `to`, then remove `from`. */
+async function move(from: string, to: string): Promise<void> {
+  const bytes = await readFile(from)
+  await store(to, bytes, 'application/octet-stream')
+  await remove(from)
+}
+
+/** Run `write` once every earlier write has settled. */
+function queued<T>(write: () => Promise<T>): Promise<T> {
+  const result = writes.then(write, write)
+  writes = result.catch(() => {})
+  return result
+}
+
+/** The album names: top-level directories that hold a file, without dotfolders. */
+function albumsOf(listing: LibraryFile[]): string[] {
+  const names = new Set(listing.map((f) => albumOf(f.path)).filter((name): name is string => name !== null))
+  return [...names].filter((name) => !name.startsWith('.')).sort()
+}
+
+/** The album a path is directly in, or `null` for a file at the root or deeper down. */
+function albumOf(path: string): string | null {
+  const names = path.split('/').slice(1)
+  return names.length === 2 ? names[0] : null
+}
+
+/** Whether a path names a photo rather than a marker or another hidden file. */
+function isPhoto(path: string): boolean {
+  return !baseName(path).startsWith('.')
+}
+
+function baseName(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1)
+}
+
+function isNotFound(err: unknown): boolean {
+  return err instanceof RemoteStorageError && err.code === 'NotFound'
+}
+
+function message(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback
 }
 
 /** Replace the grid, revoking only cached thumbnails whose path left the grid. */
@@ -637,21 +516,4 @@ function replaceGrid(items: GridItem[]): void {
 function revokeLightbox(): void {
   const current = lightbox$.getValue()
   if (current) URL.revokeObjectURL(current.url)
-}
-
-/** Clear per-library caches, grid, selection, and any open lightbox. */
-function resetSession(): void {
-  index = new LocalIndex()
-  indexAuthoritative = false
-  indexKey = null
-  replaceGrid([])
-  revokeLightbox()
-  lightbox$.next(null)
-  editorOpen$.next(false)
-  albums$.next([])
-  selectedAlbum$.next(null)
-  uploads$.next(null)
-  anchorStatus$.next({ stage: 'idle' })
-  // Stop the background anchor worker from coalescing across a library/account switch.
-  anchorDirty = false
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-import { defineConfig } from 'vite'
+import { defineConfig, searchForWorkspaceRoot } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
@@ -17,5 +17,11 @@ export default defineConfig({
   },
   server: {
     port: 5178,
+    fs: {
+      allow: [
+        searchForWorkspaceRoot(process.cwd()),
+        '../../../trinity-user-agents/js/packages/truapi'
+      ],
+    },
   },
 })

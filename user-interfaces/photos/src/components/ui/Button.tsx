@@ -6,22 +6,22 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/utils/cn'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-purple-500 disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded-small text-sm font-medium transition-colors disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
   {
     variants: {
       variant: {
-        default: 'bg-purple-600 text-white hover:bg-purple-700',
-        destructive: 'bg-red-600 text-white hover:bg-red-700',
-        outline: 'border border-gray-700 bg-transparent hover:bg-gray-800 hover:text-white',
-        secondary: 'bg-gray-800 text-white hover:bg-gray-700',
-        ghost: 'hover:bg-gray-800 hover:text-white',
-        link: 'text-purple-400 underline-offset-4 hover:underline',
+        default: 'bg-action-primary text-primary-inverted hover:bg-action-primary-hover',
+        destructive: 'bg-status-error text-primary-inverted hover:bg-status-error-hover',
+        outline: 'border bg-transparent text-primary hover:bg-action-secondary-hover',
+        secondary: 'bg-action-secondary text-primary hover:bg-action-secondary-hover',
+        ghost: 'bg-transparent text-primary hover:bg-action-secondary-hover',
+        link: 'text-link underline-offset-4 hover:text-link-hover hover:underline',
       },
       size: {
         default: 'h-9 px-4 py-2',
-        sm: 'h-8 rounded-md px-3 text-xs',
-        lg: 'h-10 rounded-md px-8',
-        icon: 'h-9 w-9',
+        sm: 'h-8 px-3 text-xs',
+        lg: 'h-10 px-8',
+        icon: 'h-9 w-9 rounded-full',
       },
     },
     defaultVariants: {

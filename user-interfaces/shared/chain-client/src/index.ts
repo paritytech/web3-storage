@@ -8,7 +8,7 @@
  * `lib/chain-client.ts` keeps its domain queries and tx submission.
  */
 
-import { createClient, type PolkadotClient } from 'polkadot-api'
+import { createClient, type JsonRpcProvider, type PolkadotClient } from 'polkadot-api'
 import { getWsProvider } from 'polkadot-api/ws'
 import { parachain } from '@polkadot-api/descriptors'
 import { BehaviorSubject } from 'rxjs'
@@ -26,7 +26,11 @@ let currentEndpoint: string = ''
 
 export const clientReady$ = new BehaviorSubject<boolean>(false)
 
-export async function connectToChain(endpoint: string): Promise<PolkadotClient> {
+/**
+ * Connect to `endpoint` over a WebSocket, or over `provider` when given, for
+ * instance a host-routed one; `endpoint` still names the connection.
+ */
+export async function connectToChain(endpoint: string, provider?: JsonRpcProvider): Promise<PolkadotClient> {
   if (client) {
     if (currentEndpoint === endpoint) return client
     // Endpoint changed: tear down the old client (and its WebSocket) first.
@@ -35,7 +39,7 @@ export async function connectToChain(endpoint: string): Promise<PolkadotClient> 
 
   try {
     currentEndpoint = endpoint
-    client = createClient(getWsProvider(endpoint))
+    client = createClient(provider ?? getWsProvider(endpoint))
     api = client.getTypedApi(parachain)
     clientReady$.next(true)
     return client
