@@ -2211,11 +2211,12 @@ pub mod pallet {
             })
         }
 
-        /// Writer or admin. Add signatures from primary providers that signed
-        /// the current snapshot late. A primary added after the checkpoint
-        /// becomes challengeable for this snapshot once its signature is added
-        /// here. Signers already in the bitfield are skipped without
-        /// verification.
+        /// Anyone may call this. Add signatures from primary providers that
+        /// signed the current snapshot late. A primary added after the
+        /// checkpoint becomes challengeable for this snapshot once its
+        /// signature is added here. Signers already in the bitfield are
+        /// skipped without verification. The call cannot change the
+        /// snapshot's commitment.
         #[pallet::call_index(31)]
         #[pallet::weight(T::WeightInfo::extend_checkpoint())]
         pub fn extend_checkpoint(
@@ -2226,13 +2227,14 @@ pub mod pallet {
                 T::MaxPrimaryProviders,
             >,
         ) -> DispatchResult {
-            let who = ensure_signed(origin)?;
+            // Permissionless: the call only records verified signatures, so
+            // it can only make more primaries challengeable. A writer-only
+            // gate would let the bucket's members decide which primaries the
+            // public can challenge.
+            ensure_signed(origin)?;
 
             Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
                 let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
-
-                // Must be writer or admin
-                Self::ensure_writer_or_admin(&who, bucket)?;
 
                 // Must have existing snapshot
                 let snapshot = bucket.snapshot.as_mut().ok_or(Error::<T>::NoSnapshot)?;
