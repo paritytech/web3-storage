@@ -2542,20 +2542,24 @@ pub mod pallet {
             //   Block 1: 90/10, 2-5: 80/20, 6-24: 70/30, 25-95: 60/40,
             //   96+: 50/50 (challenger/provider).
             let challenger_percent = if !challenge.authorized {
-                100u32
+                100u8
             } else if response_time <= BlockNumberFor::<T>::from(1u32) {
-                90u32
+                90u8
             } else if response_time <= BlockNumberFor::<T>::from(5u32) {
-                80u32
+                80u8
             } else if response_time <= BlockNumberFor::<T>::from(24u32) {
-                70u32
+                70u8
             } else if response_time <= BlockNumberFor::<T>::from(95u32) {
-                60u32
+                60u8
             } else {
-                50u32
+                50u8
             };
 
-            let challenger_share = challenge.deposit * challenger_percent.into() / 100u32.into();
+            // `Percent` multiplies without the intermediate product, so a
+            // large deposit cannot overflow.
+            let challenger_share =
+                <sp_runtime::Percent as sp_runtime::PerThing>::from_percent(challenger_percent)
+                    .mul_floor(challenge.deposit);
 
             // Pay the challenger's share to the provider for the work of
             // responding and give the rest of the deposit back to the
