@@ -668,7 +668,7 @@ mod tests {
     /// chunk hashes.
     fn storage_with_chunks(quota: u64, chunks: &[Vec<u8>]) -> (TempDir, DiskStorage, Vec<H256>) {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         storage.init_bucket(1, quota).unwrap();
         let hashes = chunks
             .iter()

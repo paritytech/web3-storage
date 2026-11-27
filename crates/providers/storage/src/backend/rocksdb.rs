@@ -106,11 +106,6 @@ fn bucket_write_error(bucket_id: BucketId, error: rocksdb::Error) -> Error {
 }
 
 impl DiskStorage {
-    /// Open the store at `path` without binding it to a chain.
-    pub fn new(path: impl AsRef<Path>) -> Result<Self, Error> {
-        Self::open(path, None)
-    }
-
     /// Open the store at `path`. With `genesis_hash`, the store records that
     /// chain on its first open and later fails with [`Error::ChainMismatch`]
     /// for any other chain.
@@ -1188,7 +1183,7 @@ mod tests {
     use storage_primitives::{hash_leaf, verify_merkle_proof, MmrProof};
     use tempfile::TempDir;
 
-    /// Open the database at `path` directly, bypassing `DiskStorage::new` and
+    /// Open the database at `path` directly, bypassing `DiskStorage::open` and
     /// its format-version check.
     fn open_raw(path: &Path) -> DB {
         DB::open_cf(&DiskStorage::db_options(), path, COLUMN_FAMILIES).unwrap()
@@ -1289,7 +1284,7 @@ mod tests {
     /// A database with bucket 1 of `quota` bytes.
     fn storage_with_bucket(quota: u64) -> (DiskStorage, TempDir) {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         storage.init_bucket(1, quota).unwrap();
         (storage, dir)
     }
@@ -1315,7 +1310,7 @@ mod tests {
         );
 
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
 
         // CF_BUCKETS: key = bucket_id as u64 little-endian, value = SCALE(BucketState).
         let bucket_id: BucketId = 0x0102030405060708;
@@ -1794,7 +1789,7 @@ mod tests {
     #[test]
     fn a_fresh_database_records_the_current_format_version() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
 
         let cf = storage.db.cf_handle(CF_METADATA).unwrap();
         let raw = storage
@@ -1811,16 +1806,17 @@ mod tests {
     #[test]
     fn reopening_a_database_this_build_created_succeeds() {
         let dir = TempDir::new().unwrap();
-        DiskStorage::new(dir.path()).unwrap();
-        DiskStorage::new(dir.path()).expect("reopening this build's own database must succeed");
+        DiskStorage::open(dir.path(), None).unwrap();
+        DiskStorage::open(dir.path(), None)
+            .expect("reopening this build's own database must succeed");
     }
 
     #[test]
     fn opening_a_database_with_a_different_format_version_fails() {
         let dir = TempDir::new().unwrap();
-        DiskStorage::new(dir.path()).unwrap();
+        DiskStorage::open(dir.path(), None).unwrap();
 
-        // Corrupt the recorded version directly, bypassing DiskStorage::new.
+        // Corrupt the recorded version directly, bypassing DiskStorage::open.
         let db = open_raw(dir.path());
         let cf = db.cf_handle(CF_METADATA).unwrap();
         db.put_cf(&cf, KEY_FORMAT_VERSION, 9999u32.to_le_bytes())
@@ -1828,7 +1824,7 @@ mod tests {
         drop(db);
 
         assert!(matches!(
-            DiskStorage::new(dir.path()),
+            DiskStorage::open(dir.path(), None),
             Err(Error::IncompatibleFormat(_))
         ));
     }
@@ -1860,7 +1856,7 @@ mod tests {
     #[test]
     fn open_rejects_a_corrupt_recorded_chain() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         let cf = storage.db.cf_handle(CF_METADATA).unwrap();
         storage
             .db
@@ -1897,7 +1893,7 @@ mod tests {
     #[test]
     fn provider_roots_match_the_shared_hash_vectors() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         storage.init_bucket(1, 1_000_000).unwrap();
 
         let mut leaves = Vec::new();
@@ -1938,7 +1934,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
 
         // Simulate a database written before format versioning existed: real
-        // data, but no format_version key - bypassing DiskStorage::new so no
+        // data, but no format_version key - bypassing DiskStorage::open so no
         // version ever gets recorded.
         let db = open_raw(dir.path());
         let cf = db.cf_handle(CF_BUCKETS).unwrap();
@@ -1947,7 +1943,7 @@ mod tests {
         drop(db);
 
         assert!(matches!(
-            DiskStorage::new(dir.path()),
+            DiskStorage::open(dir.path(), None),
             Err(Error::IncompatibleFormat(_))
         ));
     }
@@ -2005,7 +2001,7 @@ mod tests {
         // Stands for: the client asked about a bucket id that genuinely
         // does not exist.
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
 
         let err = storage
             .get_mmr_proof_for_commitment(42, &Commitment::default(), 0)
@@ -2134,7 +2130,7 @@ mod tests {
     #[test]
     fn proof_for_older_commitment_matches_cited_root() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         storage.init_bucket(1, u64::MAX).unwrap();
 
         // Three commits; the challenge cites the root after the second.
@@ -2215,7 +2211,7 @@ mod tests {
     #[test]
     fn proof_after_prune_rebases_leaf_index() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         bucket_with_leaves(&storage, 1, 3);
         let expected = storage.get_bucket(1).unwrap().unwrap().leaves[2].clone();
 
@@ -2241,7 +2237,7 @@ mod tests {
     #[test]
     fn proof_from_stash_until_erased() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         bucket_with_leaves(&storage, 1, 2);
         let cited = Commitment {
             mmr_root: storage.get_bucket(1).unwrap().unwrap().mmr_root,
@@ -2353,7 +2349,7 @@ mod tests {
     #[test]
     fn shared_chunk_across_buckets_counts_twice_charges_once() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         storage.init_bucket(1, u64::MAX).unwrap();
         storage.init_bucket(2, u64::MAX).unwrap();
 
@@ -2500,7 +2496,7 @@ mod tests {
     #[test]
     fn erase_keeps_shared_nodes_and_credits_the_charged_bucket() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         storage.init_bucket(1, u64::MAX).unwrap();
         storage.init_bucket(2, u64::MAX).unwrap();
 
@@ -2557,7 +2553,7 @@ mod tests {
     #[test]
     fn commit_fails_when_an_erase_deletes_a_walked_node() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         storage.init_bucket(1, u64::MAX).unwrap();
         let hash = stash_and_reupload(&storage);
         let before = storage.get_bucket(1).unwrap().unwrap();
@@ -2578,7 +2574,7 @@ mod tests {
     #[test]
     fn erase_keeps_a_node_committed_again_before_it() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         storage.init_bucket(1, u64::MAX).unwrap();
         let hash = stash_and_reupload(&storage);
 
@@ -2593,7 +2589,7 @@ mod tests {
     #[test]
     fn erase_is_idempotent() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         bucket_with_leaves(&storage, 1, 2);
         storage.delete_before(1, 1).unwrap();
 
@@ -2729,7 +2725,7 @@ mod tests {
     #[test]
     fn erase_keeps_a_node_committed_again_after_the_walk() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         let roots = bucket_with_leaves(&storage, 1, 2);
         storage.delete_before(1, 1).unwrap();
         let range = storage.get_bucket(1).unwrap().unwrap().pruned[0].clone();
@@ -2748,7 +2744,7 @@ mod tests {
     #[test]
     fn erase_applies_after_bucket_writes_since_the_walk() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         let roots = bucket_with_leaves(&storage, 1, 3);
         storage.delete_before(1, 1).unwrap();
         let range = storage.get_bucket(1).unwrap().unwrap().pruned[0].clone();
@@ -2775,7 +2771,7 @@ mod tests {
     #[test]
     fn condemn_then_erase_removes_bucket_row() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         let roots = bucket_with_leaves(&storage, 1, 2);
 
         storage.condemn_bucket(1).unwrap();
@@ -2835,12 +2831,12 @@ mod tests {
     fn bucket_quota_survives_reopen() {
         let dir = TempDir::new().unwrap();
         {
-            let storage = DiskStorage::new(dir.path()).unwrap();
+            let storage = DiskStorage::open(dir.path(), None).unwrap();
             storage.init_bucket(1, u64::MAX).unwrap();
             storage.init_bucket_or_set_quota(1, 100).unwrap();
         }
 
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         let data = vec![7u8; 128];
         let hash = hash_leaf(&data);
         assert!(matches!(
@@ -2852,7 +2848,7 @@ mod tests {
     #[test]
     fn proof_for_commitment_past_the_local_end_is_leaves_not_held() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         bucket_with_leaves(&storage, 1, 1);
 
         // Cites two leaves; this store only holds one (e.g. a replica that
@@ -2883,7 +2879,7 @@ mod tests {
         let path = dir.path().join("not_a_directory");
         std::fs::write(&path, b"not a rocksdb database").unwrap();
 
-        let Err(err) = DiskStorage::new(&path) else {
+        let Err(err) = DiskStorage::open(&path, None) else {
             panic!("opening a non-directory path must fail");
         };
         assert!(
@@ -2943,7 +2939,7 @@ mod tests {
     #[test]
     fn traversal_rejects_tree_over_node_budget() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path())
+        let storage = DiskStorage::open(dir.path(), None)
             .unwrap()
             .with_max_tree_walk_visits(100);
         storage.init_bucket(BUCKET, u64::MAX).unwrap();
@@ -3079,7 +3075,7 @@ mod tests {
     #[test]
     fn traversal_fails_on_missing_node() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         let missing = H256::repeat_byte(7);
 
         assert!(matches!(
@@ -3098,7 +3094,7 @@ mod tests {
     #[test]
     fn lock_cycle_fails_fast_with_busy() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         for bucket_id in [1u64, 2] {
             storage.init_bucket(bucket_id, u64::MAX).unwrap();
         }
@@ -3142,7 +3138,7 @@ mod tests {
         const NODE_LEN: u64 = 8;
 
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         for bucket_id in [1, 2] {
             storage.init_bucket(bucket_id, u64::MAX).unwrap();
         }
@@ -3175,7 +3171,7 @@ mod tests {
     #[test]
     fn delete_before_rejects_rewind_and_overshoot() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         bucket_with_leaves(&storage, 1, 3);
 
         storage.delete_before(1, 2).unwrap();
@@ -3205,7 +3201,7 @@ mod tests {
     #[test]
     fn delete_before_noop_at_current_start_seq() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         bucket_with_leaves(&storage, 1, 2);
         let before = storage.get_bucket(1).unwrap().unwrap();
 
@@ -3219,7 +3215,7 @@ mod tests {
     #[test]
     fn delete_before_prunes_prefix_and_rebuilds_mmr() {
         let dir = TempDir::new().unwrap();
-        let storage = DiskStorage::new(dir.path()).unwrap();
+        let storage = DiskStorage::open(dir.path(), None).unwrap();
         bucket_with_leaves(&storage, 1, 3);
         let before = storage.get_bucket(1).unwrap().unwrap();
 
