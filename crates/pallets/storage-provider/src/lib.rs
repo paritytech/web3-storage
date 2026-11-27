@@ -900,8 +900,8 @@ pub mod pallet {
         /// sync.
         SyncTooFrequent,
         /// None of the submitted roots match the bucket's current snapshot or
-        /// its recent root history, or the matched root is not newer than the
-        /// replica's previous sync; sync to a newer checkpoint and retry.
+        /// its recent root history, or none is newer than the replica's
+        /// previous sync; sync to a newer checkpoint and retry.
         InvalidSyncRoot,
         /// The sync balance cannot cover one more `sync_price`; top it up with
         /// `top_up_replica_sync_balance`.
@@ -2752,17 +2752,12 @@ pub mod pallet {
                         ensure!(anchor_block >= min_next_block, Error::<T>::SyncTooFrequent);
                     }
 
-                    let matched = Self::find_matching_root(&bucket, &roots)?;
-
-                    // Must be newer than the last synced commitment; a
-                    // root-only comparison would pay a replica that
-                    // alternates between two published roots.
-                    if let Some(record) = last_sync {
-                        ensure!(
-                            matched.commitment.moves_forward_from(&record.commitment),
-                            Error::<T>::InvalidSyncRoot
-                        );
-                    }
+                    // Must be newer than the last synced commitment.
+                    let matched = Self::find_matching_root(
+                        &bucket,
+                        &roots,
+                        last_sync.as_ref().map(|record| &record.commitment),
+                    )?;
 
                     // Pay for sync
                     ensure!(

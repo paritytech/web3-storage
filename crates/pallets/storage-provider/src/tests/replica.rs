@@ -939,6 +939,52 @@ fn confirm_replica_sync_accepts_a_deletion_and_a_newer_historical_root() {
     });
 }
 
+/// With several roots submitted, an older match in an earlier position does
+/// not hide a newer match in a later one.
+#[test]
+fn confirm_replica_sync_skips_an_older_match_for_a_newer_one() {
+    use sp_core::H256;
+    use storage_primitives::Commitment;
+    new_test_ext().execute_with(|| {
+        System::set_block_number(1);
+        let bucket_id = setup_replica_with_snapshot();
+        let first = current_commitment(bucket_id);
+        assert_ok!(confirm_sync(bucket_id, 0, first.mmr_root));
+
+        let older = Commitment {
+            mmr_root: H256::repeat_byte(0x11),
+            start_seq: first.start_seq,
+            leaf_count: first.leaf_count - 1,
+        };
+        let newer = Commitment {
+            mmr_root: H256::repeat_byte(0x22),
+            start_seq: first.start_seq,
+            leaf_count: first.leaf_count + 1,
+        };
+        Buckets::<Test>::mutate(bucket_id, |bucket| {
+            let bucket = bucket.as_mut().unwrap();
+            bucket.historical_roots[0] = (1, older);
+            bucket.historical_roots[1] = (1, newer);
+        });
+
+        run_to_block(12);
+        let mut roots = [None; 7];
+        roots[1] = Some(older.mmr_root);
+        roots[2] = Some(newer.mmr_root);
+        assert_ok!(StorageProvider::confirm_replica_sync(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            roots,
+            sign_sync_roots(2, &roots),
+        ));
+        let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
+        assert!(matches!(
+            agreement.role,
+            ProviderRole::Replica { last_sync: Some(record), .. } if record.commitment == newer
+        ));
+    });
+}
+
 #[test]
 fn confirm_replica_sync_emits_event() {
     new_test_ext().execute_with(|| {
