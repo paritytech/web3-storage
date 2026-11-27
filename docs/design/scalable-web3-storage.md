@@ -11,7 +11,7 @@
 
 | Version | Changes |
 |---------|---------|
-| 2.9 | Virtual providers, and the rework of stake, agreements, signatures, checkpoints and challenges they need; Layer-0 hashing, MMR proofs and the provider API specified in detail.<br>**Virtual providers:** a group of physical providers acts as one provider. Commitments need a threshold of member signatures, each agreement snapshots the members it holds liable, a failure slashes the signers, and the group governs itself by seniority. Replacement agreements swap members without downtime. **Read**: [Virtual Provider Extension](./001-virtual-provider-extension.md).<br>**Stake and agreements:** stake can change; each agreement snapshots the stake it was made at, and open challenges keep it locked. Quotes carry no price; the client pins the provider's terms with `expected_version`. Only the owner extends an agreement, a provider can refund, and slashed and burned funds go to configurable handlers. **Read**: "Provider Stake", "Storage Agreements" here; impl "Changeable Stake", "Term Pinning", "Replacement agreements".<br>**Signatures and checkpoints:** every provider signature names its agreement and the chain; calls accept several provider signatures, as virtual providers need; checkpoints count signed slots instead of providers, and an appending checkpoint proves that it extends the previous state. **Read**: impl `CommitmentPayload`, `checkpoint`, "Commit".<br>**MMR and hashing:** each hash kind has its own prefix, the MMR root binds its range, the leaf format drops `total_size`, and proofs carry only hashes. **Read**: "MMR Commitments" here; impl "Hash Prefixes", "MMR Leaf", "MMR Proof".<br>**Provider API:** providers store only canonical chunk trees; the client names the state a commit builds on and computes the result itself, so the provider returns only signatures; a new primary catches up from an empty MMR; MMR reads and pruning are specified. **Read**: impl "Off-Chain: Provider Node API", "Commit", "Storage Model".<br>**Challenges:** a challenge stores everything its resolution needs, so agreements and payments continue while it is open; the challenge deposit is fixed and duplicate responses are free; a challenge on a deleted bucket settles as a cancellation; a provider may challenge itself, and only members can challenge a private bucket's primary. **Read**: "The Challenge Game" here; impl "Challenge Protocol", comment "Who may challenge" in "Extrinsics".<br>**Replicas and buckets:** a replica sync must advance the state; bucket members move to their own map, and only the last member can delete a bucket. **Read**: impl `confirm_replica_sync`, `BucketMembers`, `delete_bucket`.<br>**Removed:** provider-initiated checkpoints, on-chain provider discovery, `remove_slashed` and some calls and runtime APIs; some calls and events are renamed. **Read**: impl "Runtime API", "Events". |
+| 2.9 | Virtual providers, and the rework of stake, agreements, signatures, checkpoints and challenges they need; Layer-0 hashing, MMR proofs and the provider API specified in detail.<br>**Virtual providers:** a group of physical providers acts as one provider. Commitments need a threshold of member signatures, each agreement snapshots the members it holds liable, a failure slashes the signers, and the group governs itself by seniority. Replacement agreements swap members without downtime. **Read**: [Virtual Provider Extension](./001-virtual-provider-extension.md).<br>**Stake and agreements:** stake can change; each agreement snapshots the stake it was made at, and open challenges keep it locked. Quotes carry no price; the client pins the provider's terms with `expected_version`. Only the owner extends an agreement, a provider can refund, and slashed and burned funds go to configurable handlers. **Read**: "Provider Stake", "Storage Agreements" here; impl "Changeable Stake", "Term Pinning", "Replacement agreements".<br>**Signatures and checkpoints:** every provider signature names its agreement and the chain; calls accept several provider signatures, as virtual providers need; checkpoints count signed slots instead of providers, and an appending checkpoint proves that it extends the previous state. **Read**: impl `CommitmentPayload`, `checkpoint`, "Commit".<br>**MMR and hashing:** each hash kind has its own prefix, the MMR root binds its range, the leaf format drops `total_size`, and proofs carry only hashes. **Read**: "MMR Commitments" here; impl "Hash Prefixes", "MMR Leaf", "MMR Proof".<br>**Provider API:** providers store only canonical chunk trees; the client names the state a commit builds on and computes the result itself, so the provider returns only signatures; a new primary catches up from an empty MMR; MMR reads and pruning are specified. **Read**: impl "Off-Chain: Provider Node API", "Commit", "Storage Model".<br>**Challenges:** a challenge stores everything its resolution needs and names its leaf by sequence number, so agreements and payments continue while it is open; the challenge deposit is fixed and duplicate responses are free; a challenge on a deleted bucket settles as a cancellation; `challenge_offchain` accepts only leaves past the snapshot's end, and only an off-chain challenge can be answered with `Superseded`; a provider may challenge itself, and only members can challenge a private bucket's primary. **Read**: "The Challenge Game" here; impl "Challenge Protocol", comment "Who may challenge" in "Extrinsics".<br>**Replicas and buckets:** a replica sync must advance the state; bucket members move to their own map, and only the last member can delete a bucket. **Read**: impl `confirm_replica_sync`, `BucketMembers`, `delete_bucket`.<br>**Removed:** provider-initiated checkpoints, on-chain provider discovery, `remove_slashed` and some calls and runtime APIs; some calls and events are renamed. **Read**: impl "Runtime API", "Events". |
 | 2.8 | Introduced storage deposits and `delete_bucket`. |
 | 2.7 | Layer-0 read access spelled out: bucket-bound reads gate at Reader on primaries; hash-keyed lookups (`/node`, `/read`, `/chunk_proof`, `/fetch_nodes`) take a bucket id but are **capability reads** — possession of the hash grants the bytes, with the enumeration surfaces gated; operator self-read allowance. **Read**: "Read access at Layer 0" under Bucket Visibility & Access. |
 | 2.6 | Chunk tree fixed: a binary RFC 9162 Merkle tree over 256 KiB chunks (only the last chunk is shorter), chunk and node hashes with different prefixes, no padding, chunk count derived from the leaf's `data_size`, empty data rejected, a `chunk_index` at or beyond the chunk count answered with the leaf alone. `MmrLeaf` starts with `leaf_version`, which defines the leaf's fields, `CHUNK_SIZE` and the tree shape. Proofs carry only hashes: `MmrProof { leaf, items }` with `polkadot-ckb-merkle-mountain-range` as the reference implementation and the leaf position taken from the challenge, a chunk proof is the sibling list, `GET /mmr_proof` returns `items` and `GET /chunk_proof` a sibling list. **Read**: "Content-Addressed Chunks", "MMR Commitments"; "Hash Prefixes", "Chunk Tree", "MMR Leaf", "MMR Proof", `POST /commit`, `GET /mmr_proof`, `GET /chunk_proof` and `verify_challenge_response` in [Implementation Details](./scalable-web3-storage-implementation.md). |
@@ -674,7 +674,7 @@ bucket limits who can challenge its primaries (see below). The challenge flow:
 
 ```
 1. Challenger initiates
-   - Specifies: bucket, provider, leaf_index, chunk_index
+   - Specifies: bucket, provider, the leaf's sequence number, chunk_index
    - Deposits: the fixed `ChallengeDeposit` (the expected tx cost of the
      provider's on-chain response, with margin for fee fluctuations)
 
@@ -701,6 +701,7 @@ bucket limits who can challenge its primaries (see below). The challenge flow:
      - challenger's deposit refunded
      - the challenger pays its own fee for creating the challenge (no
        reward from the slash)
+     - if the bucket was deleted: no slash, the deposit is refunded in full
 ```
 
 **Stake is never touched on a valid response.** The only thing in play is who
@@ -1130,7 +1131,7 @@ Setup:
 
 Operation:
 ├── Member uploads image → gets data_root
-├── Message contains: {bucket_id, data_root, leaf_index}
+├── Message contains: {bucket_id, data_root, sequence number}
 ├── Recipient fetches directly from provider
 
 Concurrent writes:
@@ -1147,13 +1148,13 @@ Setup:
 ├── Frozen (append-only for version history)
 
 Discovery:
-├── DNS TXT record: bucket_id + current leaf_index
+├── DNS TXT record: bucket_id + the current leaf's sequence number
 ├── Client picks fastest provider for their region
 
 Updates:
 ├── New content → new MMR leaf
-├── Update DNS to new leaf_index
-├── Old versions remain accessible via old leaf_index
+├── Update DNS to the new leaf's sequence number
+├── Old versions remain accessible via their sequence numbers
 ```
 
 ### Business Compliance Archive
