@@ -349,10 +349,20 @@ impl<T: Config> Pallet<T> {
             terms.max_bytes >= provider_info.settings.min_agreement_bytes,
             Error::<T>::MaxBytesBelowMinimum
         );
+        Self::ensure_can_commit_bytes(provider_info, terms.max_bytes)
+    }
 
+    /// Returns the provider's `committed_bytes` with `additional_bytes` added.
+    /// Fails if the sum overflows, exceeds a non-zero `max_capacity`, or needs
+    /// more stake than the provider has. Every call that raises
+    /// `committed_bytes` stores the value this returns.
+    pub(crate) fn ensure_can_commit_bytes(
+        provider_info: &ProviderInfo<T>,
+        additional_bytes: u64,
+    ) -> Result<u64, DispatchError> {
         let new_committed = provider_info
             .committed_bytes
-            .checked_add(terms.max_bytes)
+            .checked_add(additional_bytes)
             .ok_or(Error::<T>::ArithmeticOverflow)?;
         if provider_info.settings.max_capacity > 0 {
             ensure!(

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use storage_primitives::EndAction;
 
 #[test]
 fn extend_agreement_works() {
@@ -309,6 +310,100 @@ fn extend_agreement_fails_after_expiry() {
         assert_noop!(
             StorageProvider::extend_agreement(RuntimeOrigin::signed(1), bucket_id, 2, 50, 10_000),
             Error::<Test>::AgreementExpired
+        );
+    });
+}
+
+#[test]
+fn top_up_agreement_fails_capacity_exceeded() {
+    new_test_ext().execute_with(|| {
+        register_provider_with_settings(
+            2,
+            200,
+            ProviderSettings {
+                accepting_primary: true,
+                max_capacity: 60,
+                ..Default::default()
+            },
+        );
+        let bucket_id = setup_agreement(2, 1, 50, 100);
+
+        assert_noop!(
+            StorageProvider::top_up_agreement(RuntimeOrigin::signed(1), bucket_id, 2, 11, 0),
+            Error::<Test>::CapacityExceeded
+        );
+
+        // A top-up that reaches `max_capacity` exactly is accepted.
+        assert_ok!(StorageProvider::top_up_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            10,
+            0
+        ));
+        assert_eq!(Providers::<Test>::get(2).unwrap().committed_bytes, 60);
+    });
+}
+
+#[test]
+fn top_up_agreement_fails_insufficient_stake() {
+    new_test_ext().execute_with(|| {
+        // Stake 200 backs 200 bytes at the mock's `MinStakePerByte` of 1. Two
+        // agreements commit 100 of them.
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 100);
+        setup_agreement(2, 3, 50, 100);
+
+        assert_noop!(
+            StorageProvider::top_up_agreement(RuntimeOrigin::signed(1), bucket_id, 2, 101, 0),
+            Error::<Test>::InsufficientStakeForBytes
+        );
+
+        // A top-up that uses the whole stake is accepted.
+        assert_ok!(StorageProvider::top_up_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            100,
+            0
+        ));
+        assert_eq!(Providers::<Test>::get(2).unwrap().committed_bytes, 200);
+    });
+}
+
+#[test]
+fn top_up_agreement_overflow_keeps_committed_bytes() {
+    new_test_ext().execute_with(|| {
+        // Price 0, so the top-up costs nothing and only the byte checks apply.
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 100);
+        setup_agreement(2, 3, 50, 100);
+
+        // `agreement.max_bytes` reaches `u64::MAX` without overflow; the
+        // provider's `committed_bytes` (100) plus the same amount overflows `u64`.
+        assert_noop!(
+            StorageProvider::top_up_agreement(
+                RuntimeOrigin::signed(1),
+                bucket_id,
+                2,
+                u64::MAX - 50,
+                0
+            ),
+            Error::<Test>::ArithmeticOverflow
+        );
+
+        // Ending the first agreement leaves the second one counted, so the
+        // provider cannot deregister.
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            EndAction::Pay
+        ));
+        assert_eq!(Providers::<Test>::get(2).unwrap().committed_bytes, 50);
+        assert_noop!(
+            StorageProvider::deregister_provider(RuntimeOrigin::signed(2)),
+            Error::<Test>::ProviderHasActiveAgreements
         );
     });
 }

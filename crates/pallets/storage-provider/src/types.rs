@@ -112,8 +112,8 @@ pub struct ProviderSettings<T: Config> {
     /// Whether the provider accepts extensions of existing agreements.
     pub accepting_extensions: bool,
     /// Maximum storage capacity in bytes. 0 means unlimited. The pallet
-    /// rejects a new agreement that would raise `committed_bytes` above a
-    /// non-zero capacity.
+    /// rejects a new agreement or a top-up that would raise `committed_bytes`
+    /// above a non-zero capacity.
     pub max_capacity: u64,
     /// Smallest agreement size, in bytes, that the provider accepts, for
     /// primary and replica agreements. 0 means no minimum. Must not exceed a
